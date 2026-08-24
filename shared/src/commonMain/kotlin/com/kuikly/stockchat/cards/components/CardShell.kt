@@ -16,6 +16,7 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
             if (context.density == com.kuikly.stockchat.cards.core.CardDensity.MINI) {
                 padding(0f)
             } else {
+                alignSelfStretch()
                 marginTop(10f)
                 padding(14f)
                 backgroundColor(theme.surface)

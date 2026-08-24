@@ -6,6 +6,9 @@ import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.CardAssembler
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
+import com.kuikly.stockchat.cards.core.SkeletonCardModel
+import com.kuikly.stockchat.cards.core.StockChartCardModel
+import com.kuikly.stockchat.cards.core.StockChartMode
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -405,6 +408,7 @@ private fun ViewContainer<*, *>.ChatMessageView(
         View {
             attr {
                 if (user) marginLeft(58f) else marginRight(24f)
+                if (!user && message.content.contains("```card:")) alignSelfStretch()
                 padding(12f)
                 backgroundColor(if (user) theme.brand else theme.surface)
                 borderRadius(14f)
@@ -477,10 +481,14 @@ private fun ViewContainer<*, *>.AssistantContent(
                         is AttributionIntent -> onQuoteNeeded(intent.symbol)
                         else -> Unit
                     }
-                    CardShell(
-                        CardAssembler.assemble(block, quoteFor),
-                        CardContext(theme, CardDensity.COMPACT, onCardStock, onTerm),
-                    )
+                    if (intent is SymbolCardIntent && intent.type == "stock-chart") {
+                        ChatStockChartCard(block, intent, theme, onCardStock, onTerm, quoteFor)
+                    } else {
+                        CardShell(
+                            CardAssembler.assemble(block, quoteFor),
+                            CardContext(theme, CardDensity.COMPACT, onCardStock, onTerm),
+                        )
+                    }
                 }
             }
             is SkeletonBlock -> CardShell(
@@ -518,6 +526,30 @@ private fun ViewContainer<*, *>.AssistantContent(
             }
             if (message.failed) event { click { onRetry() } }
         }
+    }
+}
+
+private fun ViewContainer<*, *>.ChatStockChartCard(
+    block: CardBlock,
+    intent: SymbolCardIntent,
+    theme: StockChatTheme,
+    onCardStock: (String) -> Unit,
+    onTerm: (String) -> Unit,
+    quoteFor: (String) -> Quote?,
+) {
+    val context = CardContext(theme, CardDensity.COMPACT, onCardStock, onTerm)
+    vif({ quoteFor(intent.symbol)?.timeline?.isNotEmpty() == true }) {
+        quoteFor(intent.symbol)?.let { quote ->
+            CardShell(StockChartCardModel(quote, cardId = block.id), context)
+        }
+    }
+    vif({ quoteFor(intent.symbol)?.let { it.timeline.isEmpty() && it.kLines.isNotEmpty() } == true }) {
+        quoteFor(intent.symbol)?.let { quote ->
+            CardShell(StockChartCardModel(quote, StockChartMode.K_LINE, cardId = block.id), context)
+        }
+    }
+    vif({ quoteFor(intent.symbol)?.let { it.timeline.isEmpty() && it.kLines.isEmpty() } != false }) {
+        CardShell(SkeletonCardModel("stock-chart", block.id), context)
     }
 }
 

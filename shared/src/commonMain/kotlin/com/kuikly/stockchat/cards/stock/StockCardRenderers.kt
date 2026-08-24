@@ -154,7 +154,7 @@ private fun KLineChart(container: ViewContainer<*, *>, model: StockChartCardMode
         KLineCalculator.movingAverage(sourceLines, period).takeLast(lines.size)
     }
     val theme = context.theme
-    container.Canvas({ attr { height(168f); marginTop(10f) } }) { canvas, width, height ->
+    container.Canvas({ attr { height(168f); marginTop(10f); alignSelfStretch() } }) { canvas, width, height ->
         if (lines.isEmpty() || width <= 0f) return@Canvas
         val low = lines.minOf { it.low }
         val high = lines.maxOf { it.high }
@@ -325,7 +325,7 @@ private fun MiniTimeline(
     val quote = model.quote
     val theme = context.theme
     container.Canvas({
-        attr { height(height); marginTop(10f) }
+        attr { height(height); marginTop(10f); alignSelfStretch() }
     }) { canvas, width, canvasHeight ->
         val geometry = TimeLineCalculator.calculate(quote.timeline, width, canvasHeight, quote.previousClose)
         if (geometry.points.isNotEmpty()) {
