@@ -66,7 +66,7 @@ object CardPayloadParser {
     }
 
     private fun arrayBody(payload: String, field: String): String? {
-        val start = Regex("\\\"$field\\\"\\s*:\\s*\\[").find(payload)?.range?.last?.plus(1) ?: return null
+        val start = Regex("\"$field\"\\s*:\\s*\\[").find(payload)?.range?.last?.plus(1) ?: return null
         var depth = 1
         for (index in start until payload.length) {
             when (payload[index]) {
@@ -81,10 +81,10 @@ object CardPayloadParser {
     }
 
     private fun stringField(payload: String, field: String): String? =
-        Regex("\\\"$field\\\"\\s*:\\s*\\\"([^\\\"]*)\\\"").find(payload)?.groupValues?.get(1)
+        Regex("\"$field\"\\s*:\\s*\"([^\"]*)\"").find(payload)?.groupValues?.get(1)
 
     private fun numberField(payload: String, field: String): Double? =
-        Regex("\\\"$field\\\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)").find(payload)?.groupValues?.get(1)?.toDoubleOrNull()
+        Regex("\"$field\"\\s*:\\s*(-?[0-9]+(?:\\.[0-9]+)?)").find(payload)?.groupValues?.get(1)?.toDoubleOrNull()
 
     private fun defaultFactors() = listOf(
         FactorIntent("资金面", 0.42, "high", "成交放大且价格承压，主动卖出力量偏强。", "行情数据推断"),
