@@ -40,7 +40,15 @@ H5 需要同时提供 `shared` 的 `nativevue2.js` 与 `h5App` 产物。开发�
 
 ## 在线服务配置
 
-腾讯行情不需要密钥。DeepSeek 密钥通过打开 `ChatPage` 时的页面参数 `deepSeekApiKey` 注入，工程不会读取或提交硬编码密钥。密钥为空或在线请求失败时，AI 会自动回退到离线 Provider，行情请求失败时也会显示明确的离线数据标识。
+腾讯行情不需要密钥。Android 开发环境在根目录 `local.properties` 中配置 DeepSeek：
+
+```properties
+DEEPSEEK_API_KEY=sk-你的密钥
+```
+
+`local.properties` 已被 Git 忽略，构建时密钥会写入 Android `BuildConfig` 并自动注入 `ChatPage`。H5 调试通过 URL 参数传入，例如 `?deepSeekApiKey=sk-你的密钥`；不要把生产密钥发布到前端产物中。密钥为空或在线请求失败时，AI 会自动回退到离线 Provider，行情请求失败时也会显示明确的离线数据标识。
+
+客户端内的密钥仍可能从 APK 或浏览器请求中提取，正式环境应改为由自己的后端代理 DeepSeek 请求。
 
 ## 产品边界
 

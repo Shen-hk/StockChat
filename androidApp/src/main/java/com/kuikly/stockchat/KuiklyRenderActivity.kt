@@ -88,9 +88,17 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
     }
 
     private fun createPageData(): Map<String, Any> {
-        val param = argsToMap()
-        param["appId"] = 1
-        return param
+        val pageData = argsToMap()
+        val businessParams = (pageData["param"] as? Map<*, *>)
+            ?.entries
+            ?.associateTo(mutableMapOf()) { it.key.toString() to it.value.toString() }
+            ?: mutableMapOf()
+        if (businessParams[DEEPSEEK_API_KEY_PARAM].isNullOrBlank() && BuildConfig.DEEPSEEK_API_KEY.isNotBlank()) {
+            businessParams[DEEPSEEK_API_KEY_PARAM] = BuildConfig.DEEPSEEK_API_KEY
+        }
+        pageData["param"] = businessParams
+        pageData["appId"] = 1
+        return pageData
     }
 
     private fun argsToMap(): MutableMap<String, Any> {
@@ -114,6 +122,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
 
         private const val KEY_PAGE_NAME = "pageName"
         private const val KEY_PAGE_DATA = "pageData"
+        private const val DEEPSEEK_API_KEY_PARAM = "deepSeekApiKey"
 
         init {
             initKuiklyAdapter()
