@@ -60,6 +60,7 @@ internal class ChatPage : BasePager() {
     private var ambiguousSymbols: ObservableList<String> by observableList()
     private var ambiguousEntityText: String by observable("")
     private var ambiguousAction: EntityAction by observable(EntityAction.PREVIEW)
+    private var keyboardHeight: Float by observable(0f)
     private var suppressNextStockClickSymbol = ""
     private var peekVersion = 0
     private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
@@ -216,7 +217,7 @@ internal class ChatPage : BasePager() {
             View {
                 attr {
                     padding(12f)
-                    paddingBottom(12f + page.pagerData.safeAreaInsets.bottom)
+                    paddingBottom(12f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
                     backgroundColor(page.theme.surface)
                     flexDirectionRow()
                     alignItemsFlexEnd()
@@ -243,6 +244,7 @@ internal class ChatPage : BasePager() {
                         }
                         event {
                             textDidChange { page.viewModel.inputText = it.text }
+                            keyboardHeightChange { page.keyboardHeight = it.height }
                             inputReturn {
                                 page.submitInput()
                             }
