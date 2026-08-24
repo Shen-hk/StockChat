@@ -14,7 +14,7 @@ fun main() {
     // Process URL parameters
     val urlParams = URL.parseParams(window.location.href)
     // Page name, default is router
-    val pageName = urlParams["page_name"] ?: "router"
+    val pageName = urlParams["page_name"] ?: "ChatPage"
     // Container size
     val containerWidth = window.innerWidth
     val containerHeight = window.innerHeight

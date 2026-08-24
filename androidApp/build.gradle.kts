@@ -6,6 +6,9 @@ plugins {
 android {
     namespace = "com.kuikly.stockchat"
     compileSdk = 34
+    buildFeatures {
+        buildConfig = true
+    }
     defaultConfig {
         applicationId = "com.kuikly.stockchat"
         minSdk = 23
@@ -33,8 +36,6 @@ dependencies {
 
     implementation("androidx.recyclerview:recyclerview:1.2.1")
     implementation("androidx.appcompat:appcompat:1.3.1")
-
-    implementation("com.squareup.picasso:picasso:2.71828")
 
     implementation("androidx.core:core-ktx:1.6.0")
     implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
