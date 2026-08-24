@@ -1,21 +1,7 @@
-import java.util.Properties
-
 plugins {
     id("com.android.application")
     kotlin("android")
 }
-
-val localProperties = Properties().apply {
-    val propertiesFile = rootProject.file("local.properties")
-    if (propertiesFile.exists()) {
-        propertiesFile.inputStream().use(::load)
-    }
-}
-
-fun String.asBuildConfigString(): String =
-    "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
-
-val deepSeekApiKey = localProperties.getProperty("DEEPSEEK_API_KEY", "").trim()
 
 android {
     namespace = "com.kuikly.stockchat"
@@ -29,7 +15,6 @@ android {
         targetSdk = 30
         versionCode = 1
         versionName = "1.0"
-        buildConfigField("String", "DEEPSEEK_API_KEY", deepSeekApiKey.asBuildConfigString())
     }
 
     buildTypes {

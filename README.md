@@ -10,7 +10,7 @@
 - 股票/术语实体识别，以及股票 Context Bar 预览
 - 股票详情页、指标区、图表、归因和资讯区
 - 腾讯行情接口适配，失败时自动回退到内存缓存或确定性的离线演示数据
-- DeepSeek OpenAI 兼容接口适配；未配置密钥时使用可流式演示的本地 AI Provider
+- DeepSeek OpenAI 兼容接口适配，以及应用内 API 配置和连接测试
 - 明暗主题、A 股红涨绿跌语义和风险提示
 
 ## 工程结构
@@ -40,15 +40,9 @@ H5 需要同时提供 `shared` 的 `nativevue2.js` 与 `h5App` 产物。开发�
 
 ## 在线服务配置
 
-腾讯行情不需要密钥。Android 开发环境在根目录 `local.properties` 中配置 DeepSeek：
+腾讯行情不需要密钥。DeepSeek 配置不写入源码、`local.properties`、URL 参数或 Android `BuildConfig`。启动应用后，从聊天页右上角进入“API 设置”，填写 API 地址、模型名称和 API Key，可先测试连接再保存。
 
-```properties
-DEEPSEEK_API_KEY=sk-你的密钥
-```
-
-`local.properties` 已被 Git 忽略，构建时密钥会写入 Android `BuildConfig` 并自动注入 `ChatPage`。H5 调试通过 URL 参数传入，例如 `?deepSeekApiKey=sk-你的密钥`；不要把生产密钥发布到前端产物中。密钥为空或在线请求失败时，AI 会自动回退到离线 Provider，行情请求失败时也会显示明确的离线数据标识。
-
-客户端内的密钥仍可能从 APK 或浏览器请求中提取，正式环境应改为由自己的后端代理 DeepSeek 请求。
+配置只保存在当前设备。Android 本地配置不会进入 APK；H5 配置保存在浏览器本地存储中，但浏览器前端无法安全隐藏密钥，因此正式 Web 环境必须改为由自己的后端代理 DeepSeek 请求。未配置或接口调用失败时，页面会显示真实错误，不会自动用 Mock 回答冒充在线结果。
 
 ## 产品边界
 

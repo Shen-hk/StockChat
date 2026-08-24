@@ -40,7 +40,7 @@ import com.tencent.kuikly.core.views.View
 
 @Page(Routes.CHAT, supportInLocal = true)
 internal class ChatPage : BasePager() {
-    private val viewModel by lazy { ChatViewModel(pagerId, pagerData.params.optString("deepSeekApiKey")) }
+    private val viewModel by lazy { ChatViewModel(pagerId) }
     private lateinit var inputRef: ViewRef<InputView>
     private var peekSymbol: String by observable("")
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
@@ -48,6 +48,11 @@ internal class ChatPage : BasePager() {
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
+    }
+
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        viewModel.refreshConfigStatus()
     }
 
     override fun body(): ViewBuilder {
@@ -60,6 +65,7 @@ internal class ChatPage : BasePager() {
                 statusBarHeight = page.pagerData.statusBarHeight,
                 theme = page.theme,
                 actions = listOf(
+                    "API 设置" to { page.openPage(Routes.API_CONFIG) },
                     "组件" to { page.openPage(Routes.CARD_GALLERY) },
                     "新会话" to { page.viewModel.clear() },
                 ),
@@ -73,10 +79,13 @@ internal class ChatPage : BasePager() {
                     flexDirectionRow()
                     alignItemsCenter()
                 }
-                DataModeBadge(page.theme)
+                DataModeBadge(
+                    page.theme,
+                    if (page.viewModel.apiConfigured) "AI API 已配置" else "AI API 未配置",
+                )
                 Text {
                     attr {
-                        text("行情数字由数据层填充")
+                        text(if (page.viewModel.apiConfigured) "回答将调用已配置的真实模型" else "请先在右上角完成 API 设置")
                         marginLeft(8f)
                         fontSize(10f)
                         color(page.theme.textTertiary)

@@ -1,0 +1,4 @@
+package com.kuikly.stockchat.common
+
+internal actual fun platformOpenPage(page: String): Boolean = false
+internal actual fun platformClosePage(): Boolean = false

@@ -1,20 +1,25 @@
 package com.kuikly.stockchat.chat
 
 import com.kuikly.stockchat.data.provider.AiProvider
-import com.kuikly.stockchat.data.provider.FallbackAiProvider
+import com.kuikly.stockchat.data.config.AiConfigStore
+import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
 import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
 
-class ChatViewModel(override val pagerId: String, apiKey: String = "") : PagerScope {
+class ChatViewModel(override val pagerId: String) : PagerScope {
     var messages: ObservableList<ChatMessage> by observableList()
     var inputText: String by observable("")
     var streamState: StreamState by observable(StreamState.IDLE)
-    private val aiProvider: AiProvider = FallbackAiProvider(pagerId, apiKey)
+    var apiConfigured: Boolean by observable(false)
+        private set
+    private val configStore = AiConfigStore(pagerId)
+    private var aiProvider: AiProvider? = null
     private var nextId = 1
 
     init {
+        refreshConfigStatus()
         messages.add(
             ChatMessage(
                 pagerId = pagerId,
@@ -31,11 +36,30 @@ class ChatViewModel(override val pagerId: String, apiKey: String = "") : PagerSc
         inputText = ""
         messages.add(ChatMessage(pagerId, newId(), MessageRole.USER, value))
         val assistantId = newId()
+        val config = configStore.load()
+        val configError = config.validationError()
+        if (configError != null) {
+            apiConfigured = false
+            messages.add(
+                ChatMessage(
+                    pagerId,
+                    assistantId,
+                    MessageRole.ASSISTANT,
+                    "$configError。请先打开右上角“API 设置”完成配置。",
+                    failed = true,
+                ),
+            )
+            streamState = StreamState.ERROR
+            return
+        }
+        apiConfigured = true
         val assistantMessage = ChatMessage(pagerId, assistantId, MessageRole.ASSISTANT, "正在组织回答…", streaming = true)
         messages.add(assistantMessage)
         streamState = StreamState.STREAMING
         var content = ""
-        aiProvider.ask(
+        val provider = DeepSeekAiProvider(pagerId, config)
+        aiProvider = provider
+        provider.ask(
             question = value,
             onDelta = { delta ->
                 content += delta
@@ -56,7 +80,7 @@ class ChatViewModel(override val pagerId: String, apiKey: String = "") : PagerSc
     }
 
     fun stop() {
-        aiProvider.stop()
+        aiProvider?.stop()
         streamState = StreamState.STOPPED
         val index = messages.lastIndex
         if (index >= 0 && messages[index].streaming) {
@@ -69,6 +93,10 @@ class ChatViewModel(override val pagerId: String, apiKey: String = "") : PagerSc
         messages.clear()
         messages.add(ChatMessage(pagerId, newId(), MessageRole.ASSISTANT, "新会话已开始。想先看哪只股票？"))
         streamState = StreamState.IDLE
+    }
+
+    fun refreshConfigStatus() {
+        apiConfigured = configStore.load().validationError() == null
     }
 
     private fun newId(): String = "m${nextId++}"

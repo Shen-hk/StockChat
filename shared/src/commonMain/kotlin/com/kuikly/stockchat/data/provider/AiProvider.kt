@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.data.provider
 
 import com.tencent.kuikly.core.base.PagerScope
+import com.kuikly.stockchat.data.config.AiConfig
 import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
@@ -13,39 +14,29 @@ interface AiProvider {
 
 class DeepSeekAiProvider(
     override val pagerId: String,
-    private val apiKey: String,
+    private val config: AiConfig,
 ) : AiProvider, PagerScope {
     private var generation = 0
     private val network: NetworkModule get() = getPager().acquireModule(NetworkModule.MODULE_NAME)
 
     override fun ask(question: String, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) {
         val current = ++generation
-        val messages = JSONArray().apply {
-            put(JSONObject().apply { put("role", "system"); put("content", SYSTEM_PROMPT) })
-            put(JSONObject().apply { put("role", "user"); put("content", question) })
-        }
-        val body = JSONObject().apply {
-            put("model", "deepseek-chat")
-            put("temperature", 0.2)
-            put("stream", false)
-            put("messages", messages)
-        }
-        val headers = JSONObject().apply {
-            put("Content-Type", "application/json")
-            put("Authorization", "Bearer $apiKey")
-        }
-        network.httpRequest(DEEPSEEK_URL, true, body, headers, timeout = 45) { data, success, error, _ ->
-            if (current != generation) return@httpRequest
-            val content = data.optJSONArray("choices")
-                ?.optJSONObject(0)
-                ?.optJSONObject("message")
-                ?.optString("content")
-                .orEmpty()
-            if (!success || content.isEmpty()) {
-                onError(error.ifEmpty { "AI 服务暂时不可用" })
+        requestCompletion(question, SYSTEM_PROMPT, null) { content, error ->
+            if (current != generation) return@requestCompletion
+            if (error != null) {
+                onError(error)
             } else {
-                emitChunks(content, current, onDelta, onDone)
+                emitChunks(content.orEmpty(), current, onDelta, onDone)
             }
+        }
+    }
+
+    fun testConnection(onResult: (Boolean, String) -> Unit) {
+        val current = ++generation
+        requestCompletion("只回复 OK", "你是 API 连通性检测助手。", 8) { content, error ->
+            if (current != generation) return@requestCompletion
+            if (error != null) onResult(false, error)
+            else onResult(true, "连接成功，模型返回：${content.orEmpty().trim().take(40)}")
         }
     }
 
@@ -65,8 +56,50 @@ class DeepSeekAiProvider(
         }
     }
 
+    private fun requestCompletion(
+        question: String,
+        systemPrompt: String,
+        maxTokens: Int?,
+        callback: (String?, String?) -> Unit,
+    ) {
+        val value = config.normalized()
+        value.validationError()?.let {
+            callback(null, it)
+            return
+        }
+        val messages = JSONArray().apply {
+            put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
+            put(JSONObject().apply { put("role", "user"); put("content", question) })
+        }
+        val body = JSONObject().apply {
+            put("model", value.model)
+            put("temperature", 0.2)
+            put("stream", false)
+            put("messages", messages)
+            maxTokens?.let { put("max_tokens", it) }
+        }
+        val headers = JSONObject().apply {
+            put("Content-Type", "application/json")
+            put("Authorization", "Bearer ${value.apiKey}")
+        }
+        network.httpRequest(value.endpoint, true, body, headers, timeout = 45) { data, success, error, response ->
+            val content = data.optJSONArray("choices")
+                ?.optJSONObject(0)
+                ?.optJSONObject("message")
+                ?.optString("content")
+                .orEmpty()
+            if (success && content.isNotEmpty()) {
+                callback(content, null)
+            } else {
+                val apiMessage = data.optJSONObject("error")?.optString("message").orEmpty()
+                val status = response.statusCode?.let { "HTTP $it" }.orEmpty()
+                val detail = apiMessage.ifEmpty { error }.ifEmpty { "接口未返回有效内容" }
+                callback(null, listOf(status, detail).filter { it.isNotEmpty() }.joinToString("："))
+            }
+        }
+    }
+
     companion object {
-        private const val DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
         private val SYSTEM_PROMPT = """
             你是面向中文个人投资者的股票解释助手。只做信息解释，不预测收益，不给出买入、卖出或仓位建议。
             回答要简洁、可核验；区分事实、推断与不确定性。需要结构化内容时，在自然语言后输出卡片块：
@@ -76,29 +109,6 @@ class DeepSeekAiProvider(
             可用类型：stock-quote、stock-chart、attribution、insight、definition、suggestions。
             suggestions 的 JSON 格式是 {"chips":[{"text":"继续追问","type":"drill"}]}。不要在 JSON 中编造实时价格，行情由客户端数据层填充。
         """.trimIndent()
-    }
-}
-
-class FallbackAiProvider(pagerId: String, apiKey: String) : AiProvider {
-    private val offline = MockAiProvider(pagerId)
-    private val online = apiKey.trim()
-        .takeIf { it.startsWith("sk-") && it.length > 20 }
-        ?.let { DeepSeekAiProvider(pagerId, it) }
-
-    override fun ask(question: String, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) {
-        val remote = online
-        if (remote == null) {
-            offline.ask(question, onDelta, onDone, onError)
-            return
-        }
-        remote.ask(question, onDelta, onDone) {
-            offline.ask(question, onDelta, onDone, onError)
-        }
-    }
-
-    override fun stop() {
-        online?.stop()
-        offline.stop()
     }
 }
 
