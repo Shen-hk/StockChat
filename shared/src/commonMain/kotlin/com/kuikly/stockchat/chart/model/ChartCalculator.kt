@@ -44,4 +44,18 @@ object KLineCalculator {
             else lines.subList(index + 1 - period, index + 1).map { it.close }.average()
         }
     }
+
+    fun aggregate(lines: List<KLinePoint>, grouping: Int): List<KLinePoint> {
+        if (grouping <= 1) return lines
+        return lines.chunked(grouping).map { group ->
+            KLinePoint(
+                date = "${group.first().date}~${group.last().date}",
+                open = group.first().open,
+                close = group.last().close,
+                high = group.maxOf { it.high },
+                low = group.minOf { it.low },
+                volume = group.sumOf { it.volume },
+            )
+        }
+    }
 }

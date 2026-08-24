@@ -1,6 +1,6 @@
 package com.kuikly.stockchat.cards.core
 
-import com.kuikly.stockchat.data.mock.MockDataBank
+import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardBlock
 import com.kuikly.stockchat.protocol.CardPayloadParser
@@ -10,20 +10,20 @@ import com.kuikly.stockchat.protocol.SymbolCardIntent
 import com.kuikly.stockchat.protocol.UnknownIntent
 
 object CardAssembler {
-    fun assemble(block: CardBlock): CardModel {
+    fun assemble(block: CardBlock, quoteFor: (String) -> Quote?): CardModel {
         return when (val intent = CardPayloadParser.parse(block.type, block.payload)) {
             is SymbolCardIntent -> {
-                val quote = MockDataBank.quote(intent.symbol) ?: MockDataBank.quote("600519.SH")!!
+                val quote = quoteFor(intent.symbol) ?: return UnknownCardModel(intent.type, block.payload, block.id)
                 when (intent.type) {
                     "stock-quote" -> StockQuoteCardModel(quote, block.id)
-                    "stock-chart" -> StockChartCardModel(quote, block.id)
+                    "stock-chart" -> StockChartCardModel(quote, cardId = block.id)
                     "insight" -> InsightCardModel(
                         quote,
                         "当前波动主要由短线资金与板块联动共同驱动，基本面判断仍需结合后续公告。",
                         block.id,
                     )
                     "stock-compare" -> StockCompareCardModel(
-                        listOfNotNull(quote, MockDataBank.quote(if (quote.symbol == "000858.SZ") "600519.SH" else "000858.SZ")),
+                        listOfNotNull(quote, quoteFor(if (quote.symbol == "000858.SZ") "600519.SH" else "000858.SZ")),
                         block.id,
                     )
                     "news" -> NewsCardModel(
@@ -40,8 +40,8 @@ object CardAssembler {
             }
             is DefinitionIntent -> DefinitionCardModel(intent.term, intent.plainText, intent.example, block.id)
             is AttributionIntent -> {
-                val quote = MockDataBank.quote(intent.symbol) ?: MockDataBank.quote("600519.SH")!!
-                AttributionCardModel(quote, intent.direction, intent.factors, block.id)
+                quoteFor(intent.symbol)?.let { AttributionCardModel(it, intent.direction, intent.factors, block.id) }
+                    ?: UnknownCardModel(intent.type, block.payload, block.id)
             }
             is UnknownIntent -> UnknownCardModel(intent.type, intent.rawPayload, block.id)
             else -> UnknownCardModel(block.type, block.payload, block.id)

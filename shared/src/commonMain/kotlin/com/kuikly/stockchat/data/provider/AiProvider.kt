@@ -1,14 +1,28 @@
 package com.kuikly.stockchat.data.provider
 
-import com.tencent.kuikly.core.base.PagerScope
+import com.kuikly.stockchat.chat.AiChatMessage
 import com.kuikly.stockchat.data.config.AiConfig
-import com.tencent.kuikly.core.module.NetworkModule
+import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.timer.setTimeout
+import io.ktor.client.request.header
+import io.ktor.client.request.preparePost
+import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.contentType
+import io.ktor.utils.io.readUTF8Line
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 interface AiProvider {
-    fun ask(question: String, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit)
+    fun ask(messages: List<AiChatMessage>, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit)
     fun stop()
 }
 
@@ -17,86 +31,113 @@ class DeepSeekAiProvider(
     private val config: AiConfig,
 ) : AiProvider, PagerScope {
     private var generation = 0
-    private val network: NetworkModule get() = getPager().acquireModule(NetworkModule.MODULE_NAME)
+    private val client = createPlatformHttpClient()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var activeRequest: Job? = null
 
-    override fun ask(question: String, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) {
-        val current = ++generation
-        requestCompletion(question, SYSTEM_PROMPT, null) { content, error ->
-            if (current != generation) return@requestCompletion
-            if (error != null) {
-                onError(error)
-            } else {
-                emitChunks(content.orEmpty(), current, onDelta, onDone)
-            }
-        }
-    }
+    override fun ask(messages: List<AiChatMessage>, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) =
+        requestStream(messages, null, onDelta, onDone, onError)
 
     fun testConnection(onResult: (Boolean, String) -> Unit) {
-        val current = ++generation
-        requestCompletion("只回复 OK", "你是 API 连通性检测助手。", 8) { content, error ->
-            if (current != generation) return@requestCompletion
-            if (error != null) onResult(false, error)
-            else onResult(true, "连接成功，模型返回：${content.orEmpty().trim().take(40)}")
-        }
+        var content = ""
+        requestStream(
+            messages = listOf(AiChatMessage("user", "只回复 OK")),
+            maxTokens = 8,
+            onDelta = { content += it },
+            onDone = { onResult(true, "连接成功，模型返回：${content.trim().take(40)}") },
+            onError = { onResult(false, it) },
+            systemPrompt = "你是 API 连通性检测助手。",
+        )
     }
 
     override fun stop() {
+        activeRequest?.cancel()
         generation++
     }
 
-    private fun emitChunks(content: String, current: Int, onDelta: (String) -> Unit, onDone: () -> Unit) {
-        val chunks = content.chunked(12)
-        chunks.forEachIndexed { index, chunk ->
-            this.setTimeout(index * 18) {
-                if (current == generation) onDelta(chunk)
-            }
-        }
-        this.setTimeout(chunks.size * 18 + 1) {
-            if (current == generation) onDone()
-        }
-    }
-
-    private fun requestCompletion(
-        question: String,
-        systemPrompt: String,
+    private fun requestStream(
+        messages: List<AiChatMessage>,
         maxTokens: Int?,
-        callback: (String?, String?) -> Unit,
+        onDelta: (String) -> Unit,
+        onDone: () -> Unit,
+        onError: (String) -> Unit,
+        systemPrompt: String = SYSTEM_PROMPT,
     ) {
         val value = config.normalized()
         value.validationError()?.let {
-            callback(null, it)
+            onError(it)
             return
         }
-        val messages = JSONArray().apply {
+        val payloadMessages = JSONArray().apply {
             put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
-            put(JSONObject().apply { put("role", "user"); put("content", question) })
+            messages.forEach { message ->
+                put(JSONObject().apply { put("role", message.role); put("content", message.content) })
+            }
         }
         val body = JSONObject().apply {
             put("model", value.model)
             put("temperature", 0.2)
-            put("stream", false)
-            put("messages", messages)
+            put("stream", true)
+            put("messages", payloadMessages)
             maxTokens?.let { put("max_tokens", it) }
         }
-        val headers = JSONObject().apply {
-            put("Content-Type", "application/json")
-            put("Authorization", "Bearer ${value.apiKey}")
-        }
-        network.httpRequest(value.endpoint, true, body, headers, timeout = 45) { data, success, error, response ->
-            val content = data.optJSONArray("choices")
-                ?.optJSONObject(0)
-                ?.optJSONObject("message")
-                ?.optString("content")
-                .orEmpty()
-            if (success && content.isNotEmpty()) {
-                callback(content, null)
-            } else {
-                val apiMessage = data.optJSONObject("error")?.optString("message").orEmpty()
-                val status = response.statusCode?.let { "HTTP $it" }.orEmpty()
-                val detail = apiMessage.ifEmpty { error }.ifEmpty { "接口未返回有效内容" }
-                callback(null, listOf(status, detail).filter { it.isNotEmpty() }.joinToString("："))
+        stop()
+        val current = ++generation
+        activeRequest = scope.launch {
+            try {
+                client.preparePost(value.endpoint) {
+                    contentType(ContentType.Application.Json)
+                    header(HttpHeaders.Authorization, "Bearer ${value.apiKey}")
+                    header(HttpHeaders.Accept, "text/event-stream")
+                    setBody(body.toString())
+                }.execute { response ->
+                    if (response.status.value !in 200..299) {
+                        val detail = response.bodyAsChannel().readUTF8Line().orEmpty()
+                        if (current == generation) onError(classifyError(response.status.value, detail))
+                        return@execute
+                    }
+                    var received = false
+                    val channel = response.bodyAsChannel()
+                    while (true) {
+                        val line = channel.readUTF8Line() ?: break
+                        val event = line.trim()
+                        if (!event.startsWith("data:")) continue
+                        val payload = event.removePrefix("data:").trim()
+                        if (payload == "[DONE]") break
+                        val delta = SseEventParser.delta("data: $payload").orEmpty()
+                        if (delta.isNotEmpty() && current == generation) {
+                            received = true
+                            onDelta(delta)
+                        }
+                    }
+                    if (current == generation) {
+                        if (received) onDone() else onError("接口未返回有效内容")
+                    }
+                }
+            } catch (_: CancellationException) {
+                // stop() owns the visible state; cancelled requests must not append or report an error.
+            } catch (error: Throwable) {
+                if (current == generation) onError(classifyThrowable(error))
             }
         }
+    }
+
+    private fun classifyError(status: Int, body: String): String {
+        val apiMessage = try { JSONObject(body).optJSONObject("error")?.optString("message").orEmpty() } catch (_: Throwable) { "" }
+        val summary = when (status) {
+            401, 403 -> "鉴权失败，请检查 API Key"
+            402 -> "额度不足或账户不可用"
+            408, 504 -> "请求超时，请稍后重试"
+            429 -> "请求过于频繁或额度已耗尽，请稍后重试"
+            in 500..599 -> "模型服务暂时不可用，请稍后重试"
+            else -> "请求失败（HTTP $status）"
+        }
+        return if (apiMessage.isEmpty()) summary else "$summary：$apiMessage"
+    }
+
+    private fun classifyThrowable(error: Throwable): String {
+        val detail = error.message.orEmpty()
+        return if (detail.contains("timeout", ignoreCase = true)) "请求超时，请检查网络后重试" else "网络连接失败：${detail.ifEmpty { "请检查网络后重试" }}"
     }
 
     companion object {
@@ -115,8 +156,9 @@ class DeepSeekAiProvider(
 class MockAiProvider(override val pagerId: String) : AiProvider, PagerScope {
     private var generation = 0
 
-    override fun ask(question: String, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) {
+    override fun ask(messages: List<AiChatMessage>, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) {
         val current = ++generation
+        val question = messages.lastOrNull { it.role == "user" }?.content.orEmpty()
         val answer = answerFor(question)
         val chunks = answer.chunked(10)
         chunks.forEachIndexed { index, chunk ->

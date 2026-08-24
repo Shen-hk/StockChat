@@ -2,19 +2,19 @@ package com.kuikly.stockchat.cards.core
 
 import com.tencent.kuikly.core.base.ViewContainer
 
-interface CardRenderer<M : CardModel> {
+interface CardRenderer {
     val cardType: String
-    fun render(container: ViewContainer<*, *>, model: M, context: CardContext)
+    fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext)
 }
 
 object CardRegistry {
-    private val renderers = mutableMapOf<String, CardRenderer<out CardModel>>()
+    private val renderers = mutableMapOf<String, CardRenderer>()
 
-    fun register(renderer: CardRenderer<out CardModel>) {
+    fun register(renderer: CardRenderer) {
         renderers[renderer.cardType] = renderer
     }
 
-    fun dispatch(type: String): CardRenderer<out CardModel>? = renderers[type]
+    fun dispatch(type: String): CardRenderer? = renderers[type]
 
     fun registeredTypes(): List<String> = renderers.keys.sorted()
 

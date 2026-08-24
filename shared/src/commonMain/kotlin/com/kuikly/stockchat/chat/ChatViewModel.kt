@@ -15,19 +15,28 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
     var apiConfigured: Boolean by observable(false)
         private set
     private val configStore = AiConfigStore(pagerId)
+    private val sessionStore = ChatSessionStore(pagerId)
     private var aiProvider: AiProvider? = null
     private var nextId = 1
 
     init {
         refreshConfigStatus()
-        messages.add(
-            ChatMessage(
-                pagerId = pagerId,
-                id = newId(),
-                role = MessageRole.ASSISTANT,
-                content = "你好，我是股问。可以问我一只股票为什么涨跌、当前走势，或一个金融术语是什么意思。",
-            ),
-        )
+        val restored = sessionStore.load()
+        restored.forEach { item ->
+            messages.add(ChatMessage(pagerId, item.id.ifEmpty { newId() }, item.role, item.content, failed = item.failed, cancelled = item.cancelled))
+        }
+        if (messages.isEmpty()) {
+            messages.add(
+                ChatMessage(
+                    pagerId = pagerId,
+                    id = newId(),
+                    role = MessageRole.ASSISTANT,
+                    content = "你好，我是股问。可以问我一只股票为什么涨跌、当前走势，或一个金融术语是什么意思。",
+                ),
+            )
+            persist()
+        }
+        nextId = maxOf(nextId, messages.size + 1)
     }
 
     fun send(question: String = inputText) {
@@ -35,6 +44,7 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         if (value.isEmpty() || streamState == StreamState.STREAMING) return
         inputText = ""
         messages.add(ChatMessage(pagerId, newId(), MessageRole.USER, value))
+        persist()
         val assistantId = newId()
         val config = configStore.load()
         val configError = config.validationError()
@@ -50,6 +60,7 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
                 ),
             )
             streamState = StreamState.ERROR
+            persist()
             return
         }
         apiConfigured = true
@@ -60,7 +71,7 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         val provider = DeepSeekAiProvider(pagerId, config)
         aiProvider = provider
         provider.ask(
-            question = value,
+            messages = ChatContext.build(messages),
             onDelta = { delta ->
                 content += delta
                 assistantMessage.content = content.substringBefore("```card").trim().ifEmpty { "正在整理结构化信息…" }
@@ -69,12 +80,14 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
                 streamState = StreamState.IDLE
                 assistantMessage.content = content
                 assistantMessage.streaming = false
+                persist()
             },
             onError = { error ->
                 streamState = StreamState.ERROR
                 assistantMessage.content = error
                 assistantMessage.streaming = false
                 assistantMessage.failed = true
+                persist()
             },
         )
     }
@@ -85,7 +98,9 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         val index = messages.lastIndex
         if (index >= 0 && messages[index].streaming) {
             messages[index].streaming = false
+            messages[index].cancelled = true
         }
+        persist()
     }
 
     fun clear() {
@@ -93,11 +108,22 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         messages.clear()
         messages.add(ChatMessage(pagerId, newId(), MessageRole.ASSISTANT, "新会话已开始。想先看哪只股票？"))
         streamState = StreamState.IDLE
+        persist()
     }
 
     fun refreshConfigStatus() {
         apiConfigured = configStore.load().validationError() == null
     }
+
+    fun retryLast() {
+        val failed = messages.lastOrNull { it.role == MessageRole.ASSISTANT && it.failed } ?: return
+        messages.remove(failed)
+        val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
+        persist()
+        if (question.isNotBlank()) send(question)
+    }
+
+    private fun persist() = sessionStore.save(messages)
 
     private fun newId(): String = "m${nextId++}"
 

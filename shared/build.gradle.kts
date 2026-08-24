@@ -60,6 +60,8 @@ kotlin {
             dependencies {
                 implementation("com.tencent.kuikly-open:core:${Version.getKuiklyVersion()}")
                 implementation("com.tencent.kuikly-open:core-annotations:${Version.getKuiklyVersion()}")
+                implementation("io.ktor:ktor-client-core:3.0.3")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 
             }
         }
@@ -71,6 +73,13 @@ kotlin {
         val androidMain by getting {
             dependencies {
                 api("com.tencent.kuikly-open:core-render-android:${Version.getKuiklyVersion()}")
+                implementation("io.ktor:ktor-client-okhttp:3.0.3")
+            }
+        }
+
+        val jsMain by getting {
+            dependencies {
+                implementation("io.ktor:ktor-client-js:3.0.3")
             }
         }
 
@@ -79,6 +88,9 @@ kotlin {
         val iosSimulatorArm64Main by getting
         val iosMain by creating {
             dependsOn(commonMain)
+            dependencies {
+                implementation("io.ktor:ktor-client-darwin:3.0.3")
+            }
             iosX64Main.dependsOn(this)
             iosArm64Main.dependsOn(this)
             iosSimulatorArm64Main.dependsOn(this)

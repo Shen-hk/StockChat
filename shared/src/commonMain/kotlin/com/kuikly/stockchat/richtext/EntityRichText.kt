@@ -8,7 +8,9 @@ import com.tencent.kuikly.core.views.Span
 fun ViewContainer<*, *>.EntityRichText(
     rawText: String,
     theme: StockChatTheme,
-    onStockClick: (String) -> Unit,
+    contextSymbols: List<String> = emptyList(),
+    onStockClick: (EntitySpan) -> Unit,
+    onStockLongPress: (EntitySpan, String, Boolean) -> Unit,
     onTermClick: (String) -> Unit,
 ) {
     val text = rawText
@@ -25,7 +27,7 @@ fun ViewContainer<*, *>.EntityRichText(
                 else -> line
             }
         }
-    val spans = EntityRecognizer.recognize(text)
+    val spans = EntityRecognizer.recognize(text, contextSymbols)
     RichText {
         attr {
             fontSize(14f)
@@ -48,8 +50,11 @@ fun ViewContainer<*, *>.EntityRichText(
                 color(theme.brand)
                 textDecorationUnderLine()
                 click {
-                    if (entity.type == EntityType.STOCK) onStockClick(entity.target)
+                    if (entity.type == EntityType.STOCK) onStockClick(entity)
                     else onTermClick(entity.text)
+                }
+                if (entity.type == EntityType.STOCK) {
+                    longPress { params -> onStockLongPress(entity, params.state, params.isCancel) }
                 }
             }
             cursor = entity.endExclusive

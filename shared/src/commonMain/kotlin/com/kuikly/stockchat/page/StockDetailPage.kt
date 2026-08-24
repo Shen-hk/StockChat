@@ -7,15 +7,16 @@ import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.InsightCardModel
 import com.kuikly.stockchat.cards.core.StockChartCardModel
+import com.kuikly.stockchat.cards.core.StockChartMode
+import com.kuikly.stockchat.cards.core.StockChartPeriod
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
-import com.kuikly.stockchat.data.mock.MockDataBank
 import com.kuikly.stockchat.data.provider.DataMode
-import com.kuikly.stockchat.data.provider.FallbackQuoteProvider
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.DataModeBadge
 import com.kuikly.stockchat.protocol.AttributionIntent
@@ -33,19 +34,21 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.STOCK_DETAIL, supportInLocal = true)
 internal class StockDetailPage : BasePager() {
     private var symbol = "600519.SH"
-    private var quote: Quote by observable(MockDataBank.quote("600519.SH")!!)
+    private var quote: Quote by observable(QuoteRepositoryStore.shared(pagerId).cachedOrOffline("600519.SH")!!)
     private var dataModeLabel: String by observable("正在连接行情")
-    private val quoteProvider by lazy { FallbackQuoteProvider(pagerId) }
+    private var chartMode: StockChartMode by observable(StockChartMode.TIMELINE)
+    private var chartPeriod: StockChartPeriod by observable(StockChartPeriod.DAY)
+    private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
 
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
         symbol = pagerData.params.optString("symbol").ifEmpty { "600519.SH" }
-        quote = MockDataBank.quote(symbol) ?: MockDataBank.quote("600519.SH")!!
-        quoteProvider.snapshot(symbol) { latest ->
-            if (latest != null) quote = latest
-            dataModeLabel = when (quoteProvider.mode) {
+        quote = quoteRepository.cachedOrOffline(symbol) ?: quote
+        quoteRepository.load(symbol) { result ->
+            result.quote?.let { quote = it }
+            dataModeLabel = when (result.mode) {
                 DataMode.ONLINE -> "实时行情"
                 DataMode.CACHE -> "缓存行情"
                 DataMode.OFFLINE -> "离线演示模式"
@@ -114,9 +117,28 @@ internal class StockDetailPage : BasePager() {
                         DetailMetric("换手率", "${Format.decimal(page.quote.turnoverRate, 2)}%", page.theme, this)
                         DetailMetric("总市值", Format.compactAmount(page.quote.marketCap), page.theme, this)
                     }
+                    Text {
+                        attr {
+                            text("数据源：${page.quote.source} · 更新于 ${page.quote.timestamp}")
+                            marginTop(14f)
+                            fontSize(10f)
+                            color(page.theme.textTertiary)
+                        }
+                    }
+                }
+                View {
+                    attr { marginTop(10f); flexDirectionRow() }
+                    listOf(StockChartMode.TIMELINE to "分时", StockChartMode.K_LINE to "日 K", StockChartMode.K_LINE to "周 K", StockChartMode.K_LINE to "月 K").forEachIndexed { index, (mode, label) ->
+                        View {
+                            val period = when (index) { 2 -> StockChartPeriod.WEEK; 3 -> StockChartPeriod.MONTH; else -> StockChartPeriod.DAY }
+                            attr { marginRight(6f); paddingLeft(10f); paddingRight(10f); height(32f); justifyContentCenter(); borderRadius(9f); backgroundColor(if (page.chartMode == mode && (mode == StockChartMode.TIMELINE || page.chartPeriod == period)) page.theme.brandSoft else page.theme.surfaceMuted) }
+                            Text { attr { text(label); fontSize(12f); color(if (page.chartMode == mode && (mode == StockChartMode.TIMELINE || page.chartPeriod == period)) page.theme.brand else page.theme.textSecondary) } }
+                            event { click { page.chartMode = mode; page.chartPeriod = period } }
+                        }
+                    }
                 }
                 CardShell(
-                    StockChartCardModel(page.quote),
+                    StockChartCardModel(page.quote, page.chartMode, page.chartPeriod),
                     CardContext(page.theme, CardDensity.FULL, { }),
                 )
                 View {

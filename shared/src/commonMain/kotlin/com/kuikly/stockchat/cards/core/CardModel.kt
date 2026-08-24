@@ -15,8 +15,13 @@ data class StockQuoteCardModel(
 
 data class StockChartCardModel(
     val quote: Quote,
+    val mode: StockChartMode = StockChartMode.TIMELINE,
+    val period: StockChartPeriod = StockChartPeriod.DAY,
     override val cardId: String = "stock-chart:${quote.symbol}",
 ) : CardModel { override val cardType: String = "stock-chart" }
+
+enum class StockChartMode { TIMELINE, K_LINE }
+enum class StockChartPeriod(val label: String, val grouping: Int) { DAY("日 K", 1), WEEK("周 K", 5), MONTH("月 K", 20) }
 
 data class InsightCardModel(
     val quote: Quote,

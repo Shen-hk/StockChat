@@ -1,6 +1,7 @@
 package com.kuikly.stockchat
 
 import com.kuikly.stockchat.data.provider.TencentQuoteParser
+import com.kuikly.stockchat.data.provider.KLineInterval
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -29,5 +30,19 @@ class TencentQuoteParserTest {
         assertEquals(2, points.size)
         assertEquals("09:30", points.first().time)
         assertEquals(1271.01, points.first().price)
+    }
+
+    @Test
+    fun parsesProviderNativeWeeklyAndMonthlyKLines() {
+        val payload = JSONObject(
+            """{"data":{"sh600519":{"qfqweek":[["2026-08-21","1271.01","1304.66","1313.80","1270.33","48440"]],"qfqmonth":[["2026-08-31","1200.00","1304.66","1313.80","1190.00","484400"]]}}}""",
+        )
+
+        val weekly = TencentQuoteParser.parseKLines(payload, "600519.SH", KLineInterval.WEEK)
+        val monthly = TencentQuoteParser.parseKLines(payload, "600519.SH", KLineInterval.MONTH)
+
+        assertEquals(1, weekly.size)
+        assertEquals(1313.80, weekly.single().high)
+        assertEquals("2026-08-31", monthly.single().date)
     }
 }

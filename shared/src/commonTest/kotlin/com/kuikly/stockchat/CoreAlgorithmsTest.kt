@@ -6,6 +6,7 @@ import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.CardBlock
 import com.kuikly.stockchat.protocol.SkeletonBlock
 import com.kuikly.stockchat.richtext.EntityRecognizer
+import com.kuikly.stockchat.richtext.EntityType
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -39,6 +40,20 @@ class CoreAlgorithmsTest {
         val spans = EntityRecognizer.recognize("贵州茅台的 PE 和换手率怎么看")
         assertEquals("贵州茅台", spans.first().text)
         assertTrue(spans.any { it.text == "PE" })
+    }
+
+    @Test
+    fun entityRecognizerUsesContextForAmbiguousAlias() {
+        val spans = EntityRecognizer.recognize("平安今天怎么样", contextSymbols = listOf("601318.SH", "000001.SZ"))
+        assertEquals("000001.SZ", spans.single().target)
+        assertEquals(2, spans.single().candidates.size)
+    }
+
+    @Test
+    fun entityRecognizerRecognizesAsciiTermsWithoutChangingOffsets() {
+        val spans = EntityRecognizer.recognize("看看macd和PE")
+        assertEquals(listOf("macd", "PE"), spans.map { it.text })
+        assertTrue(spans.all { it.type == EntityType.TERM })
     }
 
     @Test

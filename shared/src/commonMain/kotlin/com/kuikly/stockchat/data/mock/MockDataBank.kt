@@ -101,8 +101,30 @@ class MockQuoteProvider : QuoteProvider {
     override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) =
         onResult(MockDataBank.quote(symbol)?.timeline.orEmpty())
 
-    override fun kLines(symbol: String, count: Int, onResult: (List<KLinePoint>) -> Unit) =
-        onResult(MockDataBank.quote(symbol)?.kLines?.takeLast(count).orEmpty())
+    override fun kLines(symbol: String, count: Int, interval: com.kuikly.stockchat.data.provider.KLineInterval, onResult: (List<KLinePoint>) -> Unit) =
+        onResult(
+            MockDataBank.quote(symbol)?.kLines
+                ?.let { lines ->
+                    when (interval) {
+                        com.kuikly.stockchat.data.provider.KLineInterval.DAY -> lines
+                        com.kuikly.stockchat.data.provider.KLineInterval.WEEK -> aggregate(lines, 5)
+                        com.kuikly.stockchat.data.provider.KLineInterval.MONTH -> aggregate(lines, 20)
+                    }
+                }
+                ?.takeLast(count)
+                .orEmpty(),
+        )
+
+    private fun aggregate(lines: List<KLinePoint>, grouping: Int): List<KLinePoint> = lines.chunked(grouping).map { group ->
+        KLinePoint(
+            date = "${group.first().date}~${group.last().date}",
+            open = group.first().open,
+            close = group.last().close,
+            high = group.maxOf { it.high },
+            low = group.minOf { it.low },
+            volume = group.sumOf { it.volume },
+        )
+    }
 }
 
 internal class DeterministicRandom(seed: Int) {

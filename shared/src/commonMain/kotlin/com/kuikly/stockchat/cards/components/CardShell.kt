@@ -1,23 +1,10 @@
 package com.kuikly.stockchat.cards.components
 
-import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardModel
-import com.kuikly.stockchat.cards.core.DefinitionCardModel
-import com.kuikly.stockchat.cards.core.InsightCardModel
-import com.kuikly.stockchat.cards.core.NewsCardModel
+import com.kuikly.stockchat.cards.core.CardRegistry
 import com.kuikly.stockchat.cards.core.SkeletonCardModel
-import com.kuikly.stockchat.cards.core.StockChartCardModel
-import com.kuikly.stockchat.cards.core.StockQuoteCardModel
-import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.cards.core.UnknownCardModel
-import com.kuikly.stockchat.cards.stock.AttributionCardRenderer
-import com.kuikly.stockchat.cards.stock.DefinitionCardRenderer
-import com.kuikly.stockchat.cards.stock.InsightCardRenderer
-import com.kuikly.stockchat.cards.stock.NewsCardRenderer
-import com.kuikly.stockchat.cards.stock.StockChartCardRenderer
-import com.kuikly.stockchat.cards.stock.StockQuoteCardRenderer
-import com.kuikly.stockchat.cards.stock.StockCompareCardRenderer
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -26,21 +13,20 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
     val theme = context.theme
     View {
         attr {
-            marginTop(10f)
-            padding(14f)
-            backgroundColor(theme.surface)
-            borderRadius(theme.cardRadius)
+            if (context.density == com.kuikly.stockchat.cards.core.CardDensity.MINI) {
+                padding(0f)
+            } else {
+                marginTop(10f)
+                padding(14f)
+                backgroundColor(theme.surface)
+                borderRadius(theme.cardRadius)
+            }
         }
         when (model) {
-            is StockQuoteCardModel -> StockQuoteCardRenderer.render(this, model, context)
-            is StockChartCardModel -> StockChartCardRenderer.render(this, model, context)
-            is AttributionCardModel -> AttributionCardRenderer.render(this, model, context)
-            is DefinitionCardModel -> DefinitionCardRenderer.render(this, model, context)
-            is InsightCardModel -> InsightCardRenderer.render(this, model, context)
-            is StockCompareCardModel -> StockCompareCardRenderer.render(this, model, context)
-            is NewsCardModel -> NewsCardRenderer.render(this, model, context)
             is SkeletonCardModel -> SkeletonCard(model.cardType, theme)
             is UnknownCardModel -> UnknownCard(model, theme)
+            else -> CardRegistry.dispatch(model.cardType)?.render(this, model, context)
+                ?: UnknownCard(UnknownCardModel(model.cardType, ""), theme)
         }
     }
 }

@@ -14,7 +14,8 @@ object Securities {
         Security("000001.SH", "上证指数", listOf("上证", "大盘")),
         Security("300750.SZ", "宁德时代", listOf("宁德", "300750")),
         Security("00700.HK", "腾讯控股", listOf("腾讯", "00700")),
-        Security("000001.SZ", "平安银行", listOf("000001")),
+        // “平安” is intentionally shared with 中国平安 so the chat UI can exercise contextual disambiguation.
+        Security("000001.SZ", "平安银行", listOf("平安", "000001")),
     )
 
     fun find(query: String): Security? {

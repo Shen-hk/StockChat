@@ -12,7 +12,7 @@ object TencentQuoteParser {
         val marketData = root.optJSONObject("data")?.optJSONObject(code) ?: return null
         val quoteArray = marketData.optJSONObject("qt")?.optJSONArray(code) ?: return null
         if (quoteArray.length() < 6) return null
-        val kLines = parseKLines(marketData.optJSONArray("qfqday") ?: marketData.optJSONArray("day"))
+        val kLines = parseKLines(marketData.optJSONArray(KLineInterval.DAY.responseField) ?: marketData.optJSONArray(KLineInterval.DAY.fallbackField))
         val price = quoteArray.number(3)
         val previousClose = quoteArray.number(4)
         return Quote(
@@ -53,6 +53,14 @@ object TencentQuoteParser {
                 }
             }
         }
+    }
+
+    fun parseKLines(root: JSONObject, symbol: String, interval: KLineInterval): List<KLinePoint> {
+        val code = remoteCode(symbol)
+        val marketData = root.optJSONObject("data")?.optJSONObject(code) ?: return emptyList()
+        return parseKLines(
+            marketData.optJSONArray(interval.responseField) ?: marketData.optJSONArray(interval.fallbackField),
+        )
     }
 
     fun remoteCode(symbol: String): String {
@@ -102,7 +110,7 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
 
     override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) {
         val code = TencentQuoteParser.remoteCode(symbol)
-        val url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$code,day,,,30,qfq"
+        val url = kLineUrl(code, KLineInterval.DAY, KLineInterval.DAY.defaultCount)
         network.requestGet(url, JSONObject()) { data, success, _, _ ->
             onResult(if (success) TencentQuoteParser.parseSnapshot(data, symbol) else null)
         }
@@ -116,9 +124,15 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
         }
     }
 
-    override fun kLines(symbol: String, count: Int, onResult: (List<KLinePoint>) -> Unit) {
-        snapshot(symbol) { quote -> onResult(quote?.kLines?.takeLast(count).orEmpty()) }
+    override fun kLines(symbol: String, count: Int, interval: KLineInterval, onResult: (List<KLinePoint>) -> Unit) {
+        val code = TencentQuoteParser.remoteCode(symbol)
+        network.requestGet(kLineUrl(code, interval, count), JSONObject()) { data, success, _, _ ->
+            onResult(if (success) TencentQuoteParser.parseKLines(data, symbol, interval).takeLast(count) else emptyList())
+        }
     }
+
+    private fun kLineUrl(code: String, interval: KLineInterval, count: Int): String =
+        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$code,${interval.requestPeriod},,,$count,qfq"
 }
 
 class FallbackQuoteProvider(pagerId: String) : QuoteProvider {
@@ -153,10 +167,10 @@ class FallbackQuoteProvider(pagerId: String) : QuoteProvider {
         }
     }
 
-    override fun kLines(symbol: String, count: Int, onResult: (List<KLinePoint>) -> Unit) {
-        online.kLines(symbol, count) { points ->
+    override fun kLines(symbol: String, count: Int, interval: KLineInterval, onResult: (List<KLinePoint>) -> Unit) {
+        online.kLines(symbol, count, interval) { points ->
             if (points.isNotEmpty()) onResult(points)
-            else offline.kLines(symbol, count, onResult)
+            else offline.kLines(symbol, count, interval, onResult)
         }
     }
 }
