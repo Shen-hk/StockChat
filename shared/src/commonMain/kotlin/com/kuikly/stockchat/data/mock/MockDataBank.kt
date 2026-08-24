@@ -1,0 +1,115 @@
+package com.kuikly.stockchat.data.mock
+
+import com.kuikly.stockchat.data.entity.Securities
+import com.kuikly.stockchat.data.provider.DataMode
+import com.kuikly.stockchat.data.provider.KLinePoint
+import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.QuotePoint
+import com.kuikly.stockchat.data.provider.QuoteProvider
+import kotlin.math.max
+import kotlin.math.min
+
+object MockDataBank {
+    private data class SeedQuote(
+        val price: Double,
+        val previousClose: Double,
+        val pe: Double,
+        val pb: Double,
+        val marketCap: Double,
+    )
+
+    private val seeds = mapOf(
+        "600519.SH" to SeedQuote(1272.83, 1291.50, 19.54, 6.33, 1_591_141_000_000.0),
+        "000858.SZ" to SeedQuote(128.46, 131.20, 18.72, 4.25, 498_600_000_000.0),
+        "601318.SH" to SeedQuote(61.38, 60.92, 7.81, 1.18, 1_119_000_000_000.0),
+        "000001.SH" to SeedQuote(3825.76, 3806.58, 0.0, 0.0, 0.0),
+        "300750.SZ" to SeedQuote(312.90, 307.44, 24.31, 5.62, 1_376_000_000_000.0),
+        "00700.HK" to SeedQuote(621.50, 614.00, 23.12, 4.87, 5_918_000_000_000.0),
+        "000001.SZ" to SeedQuote(12.68, 12.54, 5.48, 0.62, 230_000_000_000.0),
+    )
+
+    fun quote(symbol: String): Quote? {
+        val security = Securities.all.firstOrNull { it.symbol == symbol } ?: return null
+        val seed = seeds[symbol] ?: return null
+        val random = DeterministicRandom(symbol.fold(17) { acc, char -> acc * 31 + char.code })
+        val timeline = buildTimeline(seed.previousClose, seed.price, random)
+        val kLines = buildKLines(seed.previousClose, random)
+        return Quote(
+            symbol = symbol,
+            name = security.name,
+            price = seed.price,
+            previousClose = seed.previousClose,
+            open = timeline.firstOrNull()?.price ?: seed.previousClose,
+            high = timeline.maxOfOrNull { it.price } ?: seed.price,
+            low = timeline.minOfOrNull { it.price } ?: seed.price,
+            volume = 33_472.0 + random.nextDouble() * 40_000.0,
+            amount = seed.price * (33_472.0 + random.nextDouble() * 40_000.0) * 100,
+            turnoverRate = 0.27 + random.nextDouble() * 1.8,
+            peTtm = seed.pe,
+            pb = seed.pb,
+            marketCap = seed.marketCap,
+            timestamp = "2026-08-24 10:30",
+            source = "离线演示数据",
+            timeline = timeline,
+            kLines = kLines,
+        )
+    }
+
+    private fun buildTimeline(start: Double, target: Double, random: DeterministicRandom): List<QuotePoint> {
+        val points = mutableListOf<QuotePoint>()
+        var current = start
+        val count = 48
+        repeat(count) { index ->
+            val progress = (index + 1).toDouble() / count
+            val pull = (target - current) * (0.08 + progress * 0.02)
+            val noise = (random.nextDouble() - 0.5) * start * 0.0025
+            current = max(start * 0.94, min(start * 1.06, current + pull + noise))
+            val totalMinutes = 9 * 60 + 30 + index * 5
+            points += QuotePoint(
+                time = "${(totalMinutes / 60).toString().padStart(2, '0')}:${(totalMinutes % 60).toString().padStart(2, '0')}",
+                price = if (index == count - 1) target else current,
+                volume = 400.0 + random.nextDouble() * 1600.0,
+            )
+        }
+        return points
+    }
+
+    private fun buildKLines(anchor: Double, random: DeterministicRandom): List<KLinePoint> {
+        var close = anchor * 0.94
+        return List(30) { index ->
+            val open = close * (0.992 + random.nextDouble() * 0.016)
+            close = open * (0.986 + random.nextDouble() * 0.028)
+            val high = max(open, close) * (1.002 + random.nextDouble() * 0.012)
+            val low = min(open, close) * (0.998 - random.nextDouble() * 0.012)
+            KLinePoint(
+                date = "08-${(index + 1).toString().padStart(2, '0')}",
+                open = open,
+                close = close,
+                high = high,
+                low = low,
+                volume = 20_000.0 + random.nextDouble() * 60_000.0,
+            )
+        }
+    }
+}
+
+class MockQuoteProvider : QuoteProvider {
+    override val mode: DataMode = DataMode.OFFLINE
+
+    override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) = onResult(MockDataBank.quote(symbol))
+
+    override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) =
+        onResult(MockDataBank.quote(symbol)?.timeline.orEmpty())
+
+    override fun kLines(symbol: String, count: Int, onResult: (List<KLinePoint>) -> Unit) =
+        onResult(MockDataBank.quote(symbol)?.kLines?.takeLast(count).orEmpty())
+}
+
+internal class DeterministicRandom(seed: Int) {
+    private var state: Long = (seed.toLong() and 0x7fffffffL).coerceAtLeast(1L)
+
+    fun nextDouble(): Double {
+        state = (state * 1103515245L + 12345L) and 0x7fffffffL
+        return state.toDouble() / 0x7fffffffL.toDouble()
+    }
+}
