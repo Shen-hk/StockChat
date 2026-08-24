@@ -26,6 +26,7 @@ import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
@@ -137,10 +138,30 @@ internal class StockDetailPage : BasePager() {
                         }
                     }
                 }
-                CardShell(
-                    StockChartCardModel(page.quote, page.chartMode, page.chartPeriod),
-                    CardContext(page.theme, CardDensity.FULL, { }),
-                )
+                vif({ page.chartMode == StockChartMode.TIMELINE }) {
+                    CardShell(
+                        StockChartCardModel(page.quote, StockChartMode.TIMELINE, StockChartPeriod.DAY),
+                        CardContext(page.theme, CardDensity.FULL, { }),
+                    )
+                }
+                vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
+                    CardShell(
+                        StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY),
+                        CardContext(page.theme, CardDensity.FULL, { }),
+                    )
+                }
+                vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK }) {
+                    CardShell(
+                        StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK),
+                        CardContext(page.theme, CardDensity.FULL, { }),
+                    )
+                }
+                vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH }) {
+                    CardShell(
+                        StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH),
+                        CardContext(page.theme, CardDensity.FULL, { }),
+                    )
+                }
                 View {
                     attr { marginTop(10f); padding(14f); backgroundColor(page.theme.surface); borderRadius(page.theme.cardRadius) }
                     Text { attr { text("关键指标"); fontSize(16f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
