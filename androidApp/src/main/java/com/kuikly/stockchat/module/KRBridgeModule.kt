@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.util.Log
+import android.view.HapticFeedbackConstants
 import android.widget.Toast
 import com.tencent.kuikly.core.render.android.export.KuiklyRenderBaseModule
 import com.tencent.kuikly.core.render.android.export.KuiklyRenderCallback
@@ -40,6 +41,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "toast" -> {
                 toast(params)
+            }
+
+            "hapticImpact" -> {
+                hapticImpact()
             }
 
             "log" -> {
@@ -104,6 +109,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             paramJSON.optString("content"),
             Toast.LENGTH_SHORT
         ).show()
+    }
+
+    private fun hapticImpact() {
+        activity?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
     }
 
     private fun copyToPasteboard(params: String?) {

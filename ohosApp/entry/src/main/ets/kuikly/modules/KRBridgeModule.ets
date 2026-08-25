@@ -14,6 +14,7 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   static readonly OPEN_PAGE = "openPage";
   static readonly COPY_TO_PASTE_BOARD = "copyToPasteboard";
   static readonly TOAST = "toast";
+  static readonly HAPTIC_IMPACT = "hapticImpact";
   static readonly LOG = "log";
   static readonly REPORT_DT = "reportDT";
   static readonly REPORT_REAL_TIME = "reportRealtime";
@@ -46,6 +47,10 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
       }
       case KRBridgeModule.TOAST: {
         this.toast();
+        break;
+      }
+      case KRBridgeModule.HAPTIC_IMPACT: {
+        this.hapticImpact();
         break;
       }
       case KRBridgeModule.LOG: {
@@ -97,6 +102,9 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
 
   // TODO open toast
   private toast() {
+  }
+
+  private hapticImpact() {
   }
 
   private log(params: KRAny) {

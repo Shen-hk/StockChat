@@ -28,4 +28,10 @@
     NSLog(@"KuiklyRender:%@", content);
 }
 
+- (void)hapticImpact:(NSDictionary *)args {
+    UIImpactFeedbackGenerator *generator = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [generator prepare];
+    [generator impactOccurred];
+}
+
 @end
