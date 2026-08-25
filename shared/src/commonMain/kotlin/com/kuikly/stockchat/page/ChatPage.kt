@@ -1,14 +1,19 @@
 package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.base.BasePager
+import com.kuikly.stockchat.base.BridgeModule
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.CardAssembler
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
+import com.kuikly.stockchat.cards.core.CardEvent
+import com.kuikly.stockchat.cards.core.CardModel
+import com.kuikly.stockchat.cards.core.InsightCardModel
 import com.kuikly.stockchat.cards.core.SkeletonCardModel
 import com.kuikly.stockchat.cards.core.StockChartCardModel
 import com.kuikly.stockchat.cards.core.StockChartMode
+import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -39,9 +44,12 @@ import com.kuikly.stockchat.richtext.EntitySpan
 import com.kuikly.stockchat.richtext.EntityType
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
+import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.attr.CaptureRule
+import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
@@ -51,6 +59,7 @@ import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.InputView
 import com.tencent.kuikly.core.views.Scroller
+import com.tencent.kuikly.core.views.ScrollerView
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
@@ -58,12 +67,25 @@ import com.tencent.kuikly.core.views.View
 internal class ChatPage : BasePager() {
     private val viewModel by lazy { ChatViewModel(pagerId) }
     private lateinit var inputRef: ViewRef<InputView>
+    private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
+    private var chatContentHeight = 0f
+    private var keepChatAtBottomVersion = 0
     private var peekSymbol: String by observable("")
     private var peekVisible: Boolean by observable(false)
     private var ambiguousSymbols: ObservableList<String> by observableList()
     private var ambiguousEntityText: String by observable("")
     private var ambiguousAction: EntityAction by observable(EntityAction.PREVIEW)
     private var keyboardHeight: Float by observable(0f)
+    private var expandedCardKey: String by observable("")
+    private var focusedCardKey: String by observable("")
+    private var compareCandidateKey: String by observable("")
+    private var compareCandidateSymbol: String by observable("")
+    private var compareCard: StockCompareCardModel? by observable(null)
+    private var sheetCard: CardModel? by observable(null)
+    private var sheetLevel: SheetLevel by observable(SheetLevel.HALF)
+    private var sheetPanStartY = 0f
+    private var drilledKeys: ObservableList<String> by observableList()
+    private var subThreads: ObservableList<SubThreadState> by observableList()
     private var suppressNextStockClickSymbol = ""
     private var peekVersion = 0
     private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
@@ -118,12 +140,20 @@ internal class ChatPage : BasePager() {
                     }
                 }
             }
+            RegressionQuestionRow(page.theme) { question -> page.viewModel.send(question) }
             Scroller {
+                ref { page.chatScrollerRef = it }
                 attr {
                     flex(1f)
                     paddingLeft(14f)
                     paddingRight(14f)
                     paddingBottom(18f)
+                }
+                event {
+                    contentSizeChanged { _, height ->
+                        page.chatContentHeight = height
+                        if (page.shouldKeepChatAtBottom()) page.scheduleScrollChatToBottom()
+                    }
                 }
                 vfor({ page.viewModel.messages }) { message ->
                     ChatMessageView(
@@ -139,6 +169,21 @@ internal class ChatPage : BasePager() {
                         onRetry = { page.viewModel.retryLast() },
                         onQuoteNeeded = { page.requestQuote(it) },
                         quoteFor = { page.quoteFor(it) },
+                        expandedCardKey = page.expandedCardKey,
+                        onToggleCardExpanded = { page.toggleCardExpanded(it) },
+                        onOpenCardSheet = { page.openCardSheet(it) },
+                        drilledKeys = page.drilledKeys.toSet(),
+                        onToggleDrill = { page.toggleDrill(it) },
+                        subThreads = page.subThreads.toList(),
+                        onStartSubThread = { page.startSubThread(it) },
+                        onToggleSubThread = { page.toggleSubThread(it) },
+                        onUpdateSubThreadInput = { id, input -> page.updateSubThreadInput(id, input) },
+                        onSendSubThread = { page.sendSubThread(it) },
+                        focusedCardKey = page.focusedCardKey,
+                        onFocusChanged = { key, focused -> page.setFocusedCard(key, focused) },
+                        compareCandidateSymbol = page.compareCandidateSymbol,
+                        onCompareCandidate = { key, symbol -> page.handleCompareCandidate(key, symbol) },
+                        onCardEvent = { key, event -> page.handleCardEvent(key, event) },
                     )
                 }
             }
@@ -217,6 +262,11 @@ internal class ChatPage : BasePager() {
                     }
                 }
             }
+            vif({ page.compareCard != null }) {
+                page.compareCard?.let { compareModel ->
+                    ActiveComparePanel(compareModel, page.theme, { page.openStockDetail(it) }) { page.clearCompare() }
+                }
+            }
             View {
                 attr {
                     padding(12f)
@@ -247,7 +297,10 @@ internal class ChatPage : BasePager() {
                         }
                         event {
                             textDidChange { page.viewModel.inputText = it.text }
-                            keyboardHeightChange { page.keyboardHeight = it.height }
+                            keyboardHeightChange {
+                                page.keyboardHeight = it.height
+                                page.scheduleScrollChatToBottom()
+                            }
                             inputReturn {
                                 page.submitInput()
                             }
@@ -278,13 +331,49 @@ internal class ChatPage : BasePager() {
                     }
                 }
             }
+            vif({ page.sheetCard != null }) {
+                page.sheetCard?.let { model ->
+                    CardSheetHost(
+                        model = model,
+                        level = page.sheetLevel,
+                        theme = page.theme,
+                        viewportHeight = page.pagerData.pageViewHeight,
+                        bottomInset = page.pagerData.safeAreaInsets.bottom,
+                        onLower = { page.lowerCardSheet() },
+                        onRaise = { page.raiseCardSheet() },
+                        onPan = { state, y -> page.handleSheetPan(state, y) },
+                        onOpenStock = { page.openStockDetail(it) },
+                        onTerm = { page.viewModel.send("$it 是什么意思") },
+                    )
+                }
+            }
         }
     }
 
     private fun submitInput() {
         val value = viewModel.inputText
         viewModel.send(value)
-        if (value.isNotBlank()) inputRef.view?.setText("")
+        if (value.isNotBlank()) {
+            inputRef.view?.setText("")
+            keepChatAtBottomTemporarily()
+        }
+    }
+
+    private fun shouldKeepChatAtBottom(): Boolean =
+        keepChatAtBottomVersion > 0 || viewModel.streamState == StreamState.STREAMING
+
+    private fun keepChatAtBottomTemporarily() {
+        val version = ++keepChatAtBottomVersion
+        scheduleScrollChatToBottom()
+        setTimeout(1200) {
+            if (keepChatAtBottomVersion == version) keepChatAtBottomVersion = 0
+        }
+    }
+
+    private fun scheduleScrollChatToBottom(animated: Boolean = true) {
+        setTimeout(16) {
+            chatScrollerRef?.view?.setContentOffset(0f, chatContentHeight, animated)
+        }
     }
 
     private fun showQuote(symbol: String) {
@@ -372,6 +461,138 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    private fun toggleCardExpanded(cardKey: String) {
+        expandedCardKey = if (expandedCardKey == cardKey) "" else cardKey
+    }
+
+    private fun setFocusedCard(cardKey: String, focused: Boolean) {
+        focusedCardKey = if (focused) cardKey else ""
+    }
+
+    private fun handleCompareCandidate(cardKey: String, symbol: String) {
+        requestQuote(symbol)
+        if (compareCandidateSymbol.isEmpty() || compareCandidateSymbol == symbol) {
+            compareCandidateKey = cardKey
+            compareCandidateSymbol = symbol
+            compareCard = null
+            return
+        }
+        val left = quoteFor(compareCandidateSymbol)
+        val right = quoteFor(symbol)
+        if (left != null && right != null) {
+            compareCard = StockCompareCardModel(listOf(left, right), "active-compare:${left.symbol}:${right.symbol}")
+            compareCandidateKey = ""
+            compareCandidateSymbol = ""
+            focusedCardKey = ""
+        } else {
+            requestQuote(compareCandidateSymbol)
+            requestQuote(symbol)
+        }
+    }
+
+    private fun handleCardEvent(cardKey: String, event: CardEvent) {
+        when (event) {
+            is CardEvent.Collapse -> if (expandedCardKey == cardKey) expandedCardKey = ""
+            is CardEvent.FocusStart -> acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+            is CardEvent.FocusEnd -> if (focusedCardKey == cardKey) focusedCardKey = ""
+            else -> Unit
+        }
+    }
+
+    private fun clearCompare() {
+        compareCard = null
+        compareCandidateKey = ""
+        compareCandidateSymbol = ""
+    }
+
+    private fun openCardSheet(model: CardModel) {
+        sheetCard = model
+        sheetLevel = SheetLevel.HALF
+    }
+
+    private fun dismissCardSheet() {
+        sheetCard = null
+    }
+
+    private fun raiseCardSheet() {
+        sheetLevel = when (sheetLevel) {
+            SheetLevel.PEEK -> SheetLevel.HALF
+            SheetLevel.HALF -> SheetLevel.FULL
+            SheetLevel.FULL -> SheetLevel.FULL
+        }
+    }
+
+    private fun lowerCardSheet() {
+        when (sheetLevel) {
+            SheetLevel.FULL -> sheetLevel = SheetLevel.HALF
+            SheetLevel.HALF -> sheetLevel = SheetLevel.PEEK
+            SheetLevel.PEEK -> dismissCardSheet()
+        }
+    }
+
+    private fun handleSheetPan(state: String, y: Float) {
+        when (state) {
+            "start" -> sheetPanStartY = y
+            "end" -> when {
+                y - sheetPanStartY <= -28f -> raiseCardSheet()
+                y - sheetPanStartY >= 28f -> lowerCardSheet()
+            }
+        }
+    }
+
+    private fun toggleDrill(drillKey: String) {
+        val index = drilledKeys.indexOf(drillKey)
+        if (index >= 0) drilledKeys.removeAt(index) else drilledKeys.add(drillKey)
+    }
+
+    private fun startSubThread(model: CardModel) {
+        val insight = model as? InsightCardModel ?: return
+        val existing = subThreads.indexOfFirst { it.cardId == insight.cardId }
+        if (existing >= 0) {
+            subThreads[existing] = subThreads[existing].copy(collapsed = false)
+            return
+        }
+        val state = SubThreadState(insight.cardId, "分支：AI 解读深挖", "", "正在生成深入解读…", streaming = true)
+        subThreads.add(state)
+        requestSubThread(insight.cardId, "请围绕以下解读继续深入说明：${insight.summary}")
+    }
+
+    private fun toggleSubThread(cardId: String) {
+        val index = subThreads.indexOfFirst { it.cardId == cardId }
+        if (index >= 0) subThreads[index] = subThreads[index].copy(collapsed = !subThreads[index].collapsed)
+    }
+
+    private fun updateSubThreadInput(cardId: String, input: String) {
+        val index = subThreads.indexOfFirst { it.cardId == cardId }
+        if (index >= 0) subThreads[index] = subThreads[index].copy(input = input)
+    }
+
+    private fun sendSubThread(cardId: String) {
+        val state = subThreads.firstOrNull { it.cardId == cardId } ?: return
+        if (state.streaming || state.input.isBlank()) return
+        val index = subThreads.indexOfFirst { it.cardId == cardId }
+        subThreads[index] = state.copy(response = "正在生成深入解读…", input = "", streaming = true, collapsed = false)
+        requestSubThread(cardId, state.input)
+    }
+
+    private fun requestSubThread(cardId: String, prompt: String) {
+        var response = ""
+        viewModel.askSubThread(
+            prompt = prompt,
+            onDelta = { delta ->
+                response += delta
+                updateSubThread(cardId) { it.copy(response = response, streaming = true) }
+            },
+            onDone = { updateSubThread(cardId) { it.copy(response = response.ifBlank { "暂未生成内容" }, streaming = false) } },
+            onError = { error -> updateSubThread(cardId) { it.copy(response = error, streaming = false) } },
+        )
+    }
+
+    private fun updateSubThread(cardId: String, update: (SubThreadState) -> SubThreadState) {
+        val index = subThreads.indexOfFirst { it.cardId == cardId }
+        if (index >= 0) subThreads[index] = update(subThreads[index])
+    }
+
     private fun quoteFor(symbol: String): Quote? =
         quoteStates.firstOrNull { it.symbol == symbol }?.quote ?: quoteRepository.cachedOrOffline(symbol)
 
@@ -379,10 +600,25 @@ internal class ChatPage : BasePager() {
 
 private enum class EntityAction { DETAIL, PREVIEW }
 
+internal enum class SheetLevel(val ratio: Float, val density: CardDensity) {
+    PEEK(0.25f, CardDensity.MINI),
+    HALF(0.50f, CardDensity.COMPACT),
+    FULL(0.90f, CardDensity.FULL),
+}
+
 private data class ChatQuoteState(
     val symbol: String,
     val quote: Quote?,
     val mode: DataMode,
+)
+
+private data class SubThreadState(
+    val cardId: String,
+    val title: String,
+    val input: String,
+    val response: String,
+    val streaming: Boolean = false,
+    val collapsed: Boolean = false,
 )
 
 private fun ViewContainer<*, *>.ChatMessageView(
@@ -398,6 +634,21 @@ private fun ViewContainer<*, *>.ChatMessageView(
     onRetry: () -> Unit,
     onQuoteNeeded: (String) -> Unit,
     quoteFor: (String) -> Quote?,
+    expandedCardKey: String,
+    onToggleCardExpanded: (String) -> Unit,
+    onOpenCardSheet: (CardModel) -> Unit,
+    drilledKeys: Set<String>,
+    onToggleDrill: (String) -> Unit,
+    subThreads: List<SubThreadState>,
+    onStartSubThread: (CardModel) -> Unit,
+    onToggleSubThread: (String) -> Unit,
+    onUpdateSubThreadInput: (String, String) -> Unit,
+    onSendSubThread: (String) -> Unit,
+    focusedCardKey: String,
+    onFocusChanged: (String, Boolean) -> Unit,
+    compareCandidateSymbol: String,
+    onCompareCandidate: (String, String) -> Unit,
+    onCardEvent: (String, CardEvent) -> Unit,
 ) {
     val user = message.role == MessageRole.USER
     View {
@@ -431,7 +682,7 @@ private fun ViewContainer<*, *>.ChatMessageView(
                 vif({ !message.streaming }) {
                     View {
                         try {
-                            AssistantContent(message, theme, contextSymbols, suggestionsActive, onEntityStock, onEntityStockLongPress, onCardStock, onTerm, onSuggestion, onRetry, onQuoteNeeded, quoteFor)
+                            AssistantContent(message, theme, contextSymbols, suggestionsActive, onEntityStock, onEntityStockLongPress, onCardStock, onTerm, onSuggestion, onRetry, onQuoteNeeded, quoteFor, expandedCardKey, onToggleCardExpanded, onOpenCardSheet, drilledKeys, onToggleDrill, subThreads, onStartSubThread, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
                         } catch (error: Throwable) {
                             Text {
                                 attr {
@@ -462,6 +713,21 @@ private fun ViewContainer<*, *>.AssistantContent(
     onRetry: () -> Unit,
     onQuoteNeeded: (String) -> Unit,
     quoteFor: (String) -> Quote?,
+    expandedCardKey: String,
+    onToggleCardExpanded: (String) -> Unit,
+    onOpenCardSheet: (CardModel) -> Unit,
+    drilledKeys: Set<String>,
+    onToggleDrill: (String) -> Unit,
+    subThreads: List<SubThreadState>,
+    onStartSubThread: (CardModel) -> Unit,
+    onToggleSubThread: (String) -> Unit,
+    onUpdateSubThreadInput: (String, String) -> Unit,
+    onSendSubThread: (String) -> Unit,
+    focusedCardKey: String,
+    onFocusChanged: (String, Boolean) -> Unit,
+    compareCandidateSymbol: String,
+    onCompareCandidate: (String, String) -> Unit,
+    onCardEvent: (String, CardEvent) -> Unit,
 ) {
     val blocks = AiResponseLexer.lex(message.content, finished = !message.streaming)
     blocks.forEach { block ->
@@ -473,21 +739,47 @@ private fun ViewContainer<*, *>.AssistantContent(
                 }
             }
             is CardBlock -> {
+                val cardKey = "${message.id}:${block.id}"
+                val expanded = expandedCardKey == cardKey
                 val intent = CardPayloadParser.parse(block.type, block.payload)
-                if (intent is SuggestionsIntent && suggestionsActive) SuggestionRow(intent, theme, onSuggestion)
-                else {
+                if (intent is SuggestionsIntent) {
+                    if (suggestionsActive) SuggestionRow(intent, theme, onSuggestion)
+                } else {
                     when (intent) {
                         is SymbolCardIntent -> onQuoteNeeded(intent.symbol)
                         is AttributionIntent -> onQuoteNeeded(intent.symbol)
                         else -> Unit
                     }
                     if (intent is SymbolCardIntent && intent.type == "stock-chart") {
-                        ChatStockChartCard(block, intent, theme, onCardStock, onTerm, quoteFor)
+                        ChatStockChartCard(block, intent, theme, onCardStock, onTerm, quoteFor, expanded, onToggleCardExpanded, onOpenCardSheet, cardKey, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
                     } else {
+                        val model = CardAssembler.assemble(block, quoteFor)
                         CardShell(
-                            CardAssembler.assemble(block, quoteFor),
-                            CardContext(theme, CardDensity.COMPACT, onCardStock, onTerm),
+                            model,
+                            CardContext(
+                                theme = theme,
+                                density = CardDensity.COMPACT,
+                                onOpenStock = onCardStock,
+                                onExplainTerm = onTerm,
+                                expanded = expanded,
+                                onToggleExpanded = { onToggleCardExpanded(cardKey) },
+                                onOpenSheet = onOpenCardSheet,
+                                drilledKeys = drilledKeys,
+                                onToggleDrill = onToggleDrill,
+                                onStartSubThread = onStartSubThread,
+                                cardKey = cardKey,
+                                focusedCardKey = focusedCardKey,
+                                onFocusChanged = onFocusChanged,
+                                compareCandidateSymbol = compareCandidateSymbol,
+                                onCompareCandidate = onCompareCandidate,
+                                onCardEvent = onCardEvent,
+                            ),
                         )
+                        if (model is InsightCardModel) {
+                            subThreads.firstOrNull { it.cardId == model.cardId }?.let { thread ->
+                                NestedConversation(thread, theme, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread)
+                            }
+                        }
                     }
                 }
             }
@@ -536,8 +828,31 @@ private fun ViewContainer<*, *>.ChatStockChartCard(
     onCardStock: (String) -> Unit,
     onTerm: (String) -> Unit,
     quoteFor: (String) -> Quote?,
+    expanded: Boolean,
+    onToggleCardExpanded: (String) -> Unit,
+    onOpenCardSheet: (CardModel) -> Unit,
+    cardKey: String,
+    focusedCardKey: String,
+    onFocusChanged: (String, Boolean) -> Unit,
+    compareCandidateSymbol: String,
+    onCompareCandidate: (String, String) -> Unit,
+    onCardEvent: (String, CardEvent) -> Unit,
 ) {
-    val context = CardContext(theme, CardDensity.COMPACT, onCardStock, onTerm)
+    val context = CardContext(
+        theme = theme,
+        density = CardDensity.COMPACT,
+        onOpenStock = onCardStock,
+        onExplainTerm = onTerm,
+        expanded = expanded,
+        onToggleExpanded = { onToggleCardExpanded(cardKey) },
+        onOpenSheet = onOpenCardSheet,
+        cardKey = cardKey,
+        focusedCardKey = focusedCardKey,
+        onFocusChanged = onFocusChanged,
+        compareCandidateSymbol = compareCandidateSymbol,
+        onCompareCandidate = onCompareCandidate,
+        onCardEvent = onCardEvent,
+    )
     vif({ quoteFor(intent.symbol)?.timeline?.isNotEmpty() == true }) {
         quoteFor(intent.symbol)?.let { quote ->
             CardShell(StockChartCardModel(quote, cardId = block.id), context)
@@ -583,6 +898,218 @@ private fun ViewContainer<*, *>.SuggestionRow(
                     }
                 }
                 event { click { onSuggestion(suggestion.text) } }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.RegressionQuestionRow(
+    theme: StockChatTheme,
+    onQuestion: (String) -> Unit,
+) {
+    val cases = listOf(
+        "手风琴" to "回归：手风琴 贵州茅台最近怎么样",
+        "资讯 Sheet" to "回归：资讯 Sheet 看贵州茅台资讯",
+        "归因下钻" to "回归：归因下钻 为什么跌",
+        "分支追问" to "回归：分支追问 贵州茅台最近怎么样",
+        "焦点放大" to "回归：焦点放大 贵州茅台最近怎么样",
+        "对比卡" to "回归：对比卡 贵州茅台和五粮液比较",
+    )
+    Scroller {
+        attr {
+            height(42f)
+            paddingLeft(14f)
+            paddingRight(14f)
+            paddingBottom(6f)
+            flexDirectionRow()
+        }
+        cases.forEach { item ->
+            View {
+                attr {
+                    height(32f)
+                    marginRight(7f)
+                    paddingLeft(10f)
+                    paddingRight(10f)
+                    justifyContentCenter()
+                    borderRadius(10f)
+                    backgroundColor(theme.surfaceMuted)
+                }
+                Text {
+                    attr {
+                        text(item.first)
+                        fontSize(11f)
+                        fontWeightMedium()
+                        color(theme.textSecondary)
+                    }
+                }
+                event { click { onQuestion(item.second) } }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.NestedConversation(
+    state: SubThreadState,
+    theme: StockChatTheme,
+    onToggle: (String) -> Unit,
+    onInput: (String, String) -> Unit,
+    onSend: (String) -> Unit,
+) {
+    View {
+        attr {
+            marginTop(8f)
+            marginLeft(16f)
+            padding(10f)
+            backgroundColor(theme.brandSoft)
+            borderRadius(8f)
+        }
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            View { attr { width(2f); height(18f); marginRight(7f); backgroundColor(theme.brand); borderRadius(1f) } }
+            Text { attr { text(state.title); fontSize(11f); fontWeightMedium(); color(theme.brand); flex(1f) } }
+            Text { attr { text(if (state.collapsed) "展开" else "收起"); fontSize(11f); color(theme.brand) } }
+            event { click { onToggle(state.cardId) } }
+        }
+        if (!state.collapsed) {
+            Text { attr { text(state.response); marginTop(8f); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
+            View {
+                attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
+                View {
+                    attr { flex(1f); height(34f); paddingLeft(9f); paddingRight(9f); backgroundColor(theme.surface); borderRadius(8f); justifyContentCenter() }
+                    Input {
+                        attr { height(32f); fontSize(12f); color(theme.textPrimary); placeholder("继续追问"); placeholderColor(theme.textTertiary) }
+                        event { textDidChange { onInput(state.cardId, it.text) } }
+                    }
+                }
+                View {
+                    attr { marginLeft(6f); height(34f); paddingLeft(10f); paddingRight(10f); allCenter(); backgroundColor(theme.brand); borderRadius(8f) }
+                    Text { attr { text(if (state.streaming) "…" else "发送"); fontSize(11f); color(theme.onBrand) } }
+                    if (!state.streaming) event { click { onSend(state.cardId) } }
+                }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.ActiveComparePanel(
+    model: StockCompareCardModel,
+    theme: StockChatTheme,
+    onOpenStock: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    View {
+        attr {
+            marginLeft(12f)
+            marginRight(12f)
+            marginBottom(8f)
+            padding(10f)
+            backgroundColor(theme.surface)
+            borderRadius(theme.cardRadius)
+        }
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            Text {
+                attr {
+                    text("对比视图")
+                    fontSize(12f)
+                    fontWeightSemiBold()
+                    color(theme.textPrimary)
+                    flex(1f)
+                }
+            }
+            Text { attr { text("退出"); fontSize(11f); color(theme.textSecondary) } }
+            event { click { onClose() } }
+        }
+        CardShell(
+            model,
+            CardContext(
+                theme = theme,
+                density = CardDensity.FULL,
+                onOpenStock = onOpenStock,
+            ),
+        )
+    }
+}
+
+internal fun ViewContainer<*, *>.CardSheetHost(
+    model: CardModel,
+    level: SheetLevel,
+    theme: StockChatTheme,
+    viewportHeight: Float,
+    bottomInset: Float,
+    onLower: () -> Unit,
+    onRaise: () -> Unit,
+    onPan: (String, Float) -> Unit,
+    onOpenStock: (String) -> Unit,
+    onTerm: (String) -> Unit,
+) {
+    val availableHeight = (viewportHeight - bottomInset).coerceAtLeast(520f)
+    val sheetHeight = (availableHeight * level.ratio).coerceAtLeast(180f)
+    View {
+        attr {
+            absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+            backgroundColor(Color(0x4D000000))
+        }
+        event { click { onLower() } }
+    }
+    View {
+        attr {
+            absolutePosition(left = 0f, right = 0f, bottom = 0f)
+            height(sheetHeight + bottomInset)
+            paddingLeft(16f)
+            paddingRight(16f)
+            paddingBottom(12f + bottomInset)
+            backgroundColor(theme.surface)
+            borderRadius(16f)
+            animate(Animation.easeOut(0.25f), level)
+        }
+        View {
+            attr {
+                width(56f)
+                height(36f)
+                alignSelfCenter()
+                allCenter()
+                capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
+            }
+            View {
+                attr {
+                    width(36f)
+                    height(4f)
+                    backgroundColor(theme.divider)
+                    borderRadius(2f)
+                }
+            }
+            event { pan { onPan(it.state, it.y) } }
+        }
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            Text { attr { text("完整内容"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary); flex(1f) } }
+            Text { attr { text("收起"); fontSize(12f); color(theme.textSecondary) } }
+            event { click { onLower() } }
+        }
+        Scroller {
+            attr { height((sheetHeight - 82f).coerceAtLeast(96f)); marginTop(6f) }
+            CardShell(
+                model,
+                CardContext(
+                    theme = theme,
+                    density = level.density,
+                    onOpenStock = onOpenStock,
+                    onExplainTerm = onTerm,
+                ),
+            )
+        }
+        if (level != SheetLevel.FULL) {
+            View {
+                attr {
+                    absolutePosition(left = 16f, right = 16f, bottom = 12f + bottomInset)
+                    height(38f)
+                    allCenter()
+                    backgroundColor(theme.brandSoft)
+                    borderRadius(10f)
+                }
+                Text { attr { text("展开更多"); fontSize(12f); fontWeightMedium(); color(theme.brand) } }
+                event { click { onRaise() } }
             }
         }
     }

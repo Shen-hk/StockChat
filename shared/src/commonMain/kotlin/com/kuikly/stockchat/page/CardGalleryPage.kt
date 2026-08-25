@@ -5,6 +5,7 @@ import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
+import com.kuikly.stockchat.cards.core.CardModel
 import com.kuikly.stockchat.cards.core.DefinitionCardModel
 import com.kuikly.stockchat.cards.core.InsightCardModel
 import com.kuikly.stockchat.cards.core.NewsCardModel
@@ -22,12 +23,25 @@ import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vif
+import com.tencent.kuikly.core.reactive.collection.ObservableList
+import com.tencent.kuikly.core.reactive.handler.observable
+import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
+import com.tencent.kuikly.core.views.View
 
 @Page(Routes.CARD_GALLERY, supportInLocal = true)
 internal class CardGalleryPage : BasePager() {
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private var expandedCardKey: String by observable("")
+    private var sheetCard: CardModel? by observable(null)
+    private var sheetLevel: SheetLevel by observable(SheetLevel.HALF)
+    private var sheetPanStartY = 0f
+    private var drilledKeys: ObservableList<String> by observableList()
+    private var subThreadCardKey: String by observable("")
+    private var subThreadCollapsed: Boolean by observable(false)
 
     override fun created() {
         super.created()
@@ -71,9 +85,187 @@ internal class CardGalleryPage : BasePager() {
                     }
                 }
                 models.forEach { model ->
-                    CardShell(model, CardContext(page.theme, CardDensity.COMPACT, { }))
+                    GalleryCard(
+                        model = model,
+                        theme = page.theme,
+                        expandedCardKey = { page.expandedCardKey },
+                        drilledKeys = page.drilledKeys.toSet(),
+                        subThreadCardKey = page.subThreadCardKey,
+                        subThreadCollapsed = page.subThreadCollapsed,
+                        onToggleExpanded = { page.expandedCardKey = if (page.expandedCardKey == it) "" else it },
+                        onOpenSheet = { page.openSheet(it) },
+                        onToggleDrill = { page.toggleDrill(it) },
+                        onStartSubThread = { page.openSubThread(it.cardId) },
+                        onToggleSubThread = { page.subThreadCollapsed = !page.subThreadCollapsed },
+                    )
                 }
             }
+            vif({ page.sheetCard != null }) {
+                page.sheetCard?.let { model ->
+                    CardSheetHost(
+                        model = model,
+                        level = page.sheetLevel,
+                        theme = page.theme,
+                        viewportHeight = page.pagerData.pageViewHeight,
+                        bottomInset = page.pagerData.safeAreaInsets.bottom,
+                        onLower = { page.lowerSheet() },
+                        onRaise = { page.raiseSheet() },
+                        onPan = { state, y -> page.handleSheetPan(state, y) },
+                        onOpenStock = {},
+                        onTerm = {},
+                    )
+                }
+            }
+        }
+    }
+
+    private fun openSheet(model: CardModel) {
+        sheetCard = model
+        sheetLevel = SheetLevel.HALF
+    }
+
+    private fun raiseSheet() {
+        sheetLevel = when (sheetLevel) {
+            SheetLevel.PEEK -> SheetLevel.HALF
+            SheetLevel.HALF -> SheetLevel.FULL
+            SheetLevel.FULL -> SheetLevel.FULL
+        }
+    }
+
+    private fun lowerSheet() {
+        when (sheetLevel) {
+            SheetLevel.FULL -> sheetLevel = SheetLevel.HALF
+            SheetLevel.HALF -> sheetLevel = SheetLevel.PEEK
+            SheetLevel.PEEK -> sheetCard = null
+        }
+    }
+
+    private fun handleSheetPan(state: String, y: Float) {
+        when (state) {
+            "start" -> sheetPanStartY = y
+            "end" -> when {
+                y - sheetPanStartY <= -28f -> raiseSheet()
+                y - sheetPanStartY >= 28f -> lowerSheet()
+            }
+        }
+    }
+
+    private fun toggleDrill(key: String) {
+        val index = drilledKeys.indexOf(key)
+        if (index >= 0) drilledKeys.removeAt(index) else drilledKeys.add(key)
+    }
+
+    private fun openSubThread(cardId: String) {
+        subThreadCardKey = cardId
+        subThreadCollapsed = false
+    }
+}
+
+private fun ViewContainer<*, *>.GalleryCard(
+    model: CardModel,
+    theme: StockChatTheme,
+    expandedCardKey: () -> String,
+    drilledKeys: Set<String>,
+    subThreadCardKey: String,
+    subThreadCollapsed: Boolean,
+    onToggleExpanded: (String) -> Unit,
+    onOpenSheet: (CardModel) -> Unit,
+    onToggleDrill: (String) -> Unit,
+    onStartSubThread: (CardModel) -> Unit,
+    onToggleSubThread: () -> Unit,
+) {
+    Text {
+        attr {
+            text(model.cardType)
+            marginTop(18f)
+            fontSize(13f)
+            fontWeightSemiBold()
+            color(theme.textSecondary)
+        }
+    }
+    listOf(CardDensity.FULL, CardDensity.COMPACT, CardDensity.MINI).forEach { density ->
+        val cardKey = "${model.cardId}:${density.name}"
+        Text {
+            attr {
+                text(density.name)
+                marginTop(8f)
+                fontSize(9f)
+                color(theme.textTertiary)
+            }
+        }
+        if (density == CardDensity.MINI) {
+            View {
+                attr {
+                    marginTop(4f)
+                    padding(10f)
+                    backgroundColor(theme.surface)
+                    borderRadius(theme.cardRadius)
+                }
+                GalleryCardShell(model, theme, density, cardKey, expandedCardKey, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread)
+            }
+        } else {
+            GalleryCardShell(model, theme, density, cardKey, expandedCardKey, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread)
+        }
+        if (model is InsightCardModel && density == CardDensity.COMPACT && subThreadCardKey == model.cardId) {
+            GallerySubThread(theme, subThreadCollapsed, onToggleSubThread)
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.GalleryCardShell(
+    model: CardModel,
+    theme: StockChatTheme,
+    density: CardDensity,
+    cardKey: String,
+    expandedCardKey: () -> String,
+    drilledKeys: Set<String>,
+    onToggleExpanded: (String) -> Unit,
+    onOpenSheet: (CardModel) -> Unit,
+    onToggleDrill: (String) -> Unit,
+    onStartSubThread: (CardModel) -> Unit,
+) {
+    vif({ expandedCardKey() == cardKey }) {
+        CardShell(model, GalleryCardContext(model, theme, density, cardKey, true, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread))
+    }
+    vif({ expandedCardKey() != cardKey }) {
+        CardShell(model, GalleryCardContext(model, theme, density, cardKey, false, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread))
+    }
+}
+
+private fun GalleryCardContext(
+    model: CardModel,
+    theme: StockChatTheme,
+    density: CardDensity,
+    cardKey: String,
+    expanded: Boolean,
+    drilledKeys: Set<String>,
+    onToggleExpanded: (String) -> Unit,
+    onOpenSheet: (CardModel) -> Unit,
+    onToggleDrill: (String) -> Unit,
+    onStartSubThread: (CardModel) -> Unit,
+) = CardContext(
+    theme = theme,
+    density = density,
+    onOpenStock = {},
+    expanded = expanded,
+    onToggleExpanded = { onToggleExpanded(cardKey) },
+    onOpenSheet = onOpenSheet,
+    drilledKeys = drilledKeys,
+    onToggleDrill = onToggleDrill,
+    onStartSubThread = onStartSubThread,
+)
+
+private fun ViewContainer<*, *>.GallerySubThread(theme: StockChatTheme, collapsed: Boolean, onToggle: () -> Unit) {
+    View {
+        attr { marginTop(8f); marginLeft(16f); padding(10f); backgroundColor(theme.brandSoft); borderRadius(8f) }
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            Text { attr { text("分支：AI 解读深挖"); fontSize(11f); fontWeightMedium(); color(theme.brand); flex(1f) } }
+            Text { attr { text(if (collapsed) "展开" else "收起"); fontSize(11f); color(theme.brand) } }
+            event { click { onToggle() } }
+        }
+        if (!collapsed) {
+            Text { attr { text("这里承接该卡片的独立追问；聊天页会调用 AI 流式补全回答。") ; marginTop(7f); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
         }
     }
 }

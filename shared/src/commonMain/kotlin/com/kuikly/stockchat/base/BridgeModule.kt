@@ -71,6 +71,12 @@ internal class BridgeModule : Module() {
         callNativeMethod("toast", methodArgs, null)
     }
 
+    fun hapticImpact(style: String = "light") {
+        val methodArgs = JSONObject()
+        methodArgs.put("style", style)
+        callNativeMethod("hapticImpact", methodArgs, null)
+    }
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,

@@ -147,7 +147,7 @@ class DeepSeekAiProvider(
             ```card:stock-quote
             {"symbol":"600519.SH"}
             ```
-            可用类型：stock-quote、stock-chart、attribution、insight、definition、suggestions。
+            可用类型：stock-quote、stock-chart、attribution、insight、definition、news、stock-compare、suggestions。
             suggestions 的 JSON 格式是 {"chips":[{"text":"继续追问","type":"drill"}]}。不要在 JSON 中编造实时价格，行情由客户端数据层填充。
         """.trimIndent()
     }
@@ -180,6 +180,7 @@ class MockAiProvider(override val pagerId: String) : AiProvider, PagerScope {
         return when {
             "pe" in normalized || "市盈率" in question || "macd" in normalized -> definitionAnswer(question)
             "五粮液" in question || "对比" in question || "比较" in question -> compareAnswer()
+            "资讯" in question || "新闻" in question || "公告" in question -> newsAnswer()
             "为什么" in question || "原因" in question || "跌" in question || "涨" in question -> attributionAnswer()
             "走势" in question || "k线" in normalized || "分时" in question -> chartAnswer()
             else -> overviewAnswer()
@@ -223,6 +224,18 @@ class MockAiProvider(override val pagerId: String) : AiProvider, PagerScope {
 
         ```card:suggestions
         {"chips":[{"text":"为什么跌","type":"drill"},{"text":"看关键指标","type":"diverge"}]}
+        ```
+    """.trimIndent()
+
+    private fun newsAnswer() = """
+        资讯更适合放在不占聊天流的位置阅读。这里用底部 Sheet 承接完整列表，关闭后聊天位置保持不变。
+
+        ```card:news
+        {"symbol":"600519.SH"}
+        ```
+
+        ```card:suggestions
+        {"chips":[{"text":"为什么跌","type":"drill"},{"text":"和五粮液比较","type":"diverge"}]}
         ```
     """.trimIndent()
 
