@@ -1,6 +1,14 @@
 package com.kuikly.stockchat
 
 import com.kuikly.stockchat.chart.model.KLineCalculator
+import com.kuikly.stockchat.cards.core.AttributionCardModel
+import com.kuikly.stockchat.cards.core.CompareCalculator
+import com.kuikly.stockchat.cards.core.DefinitionCardModel
+import com.kuikly.stockchat.cards.core.ExpandMode
+import com.kuikly.stockchat.cards.core.InsightCardModel
+import com.kuikly.stockchat.cards.core.NewsCardModel
+import com.kuikly.stockchat.cards.core.StockCompareCardModel
+import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.data.mock.MockDataBank
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.CardBlock
@@ -13,6 +21,29 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class CoreAlgorithmsTest {
+    @Test
+    fun cardModelsDeclareInteractionModesByInformationShape() {
+        val quote = MockDataBank.quote("600519.SH")!!
+
+        assertEquals(ExpandMode.ACCORDION, StockQuoteCardModel(quote).expandMode)
+        assertEquals(ExpandMode.ACCORDION, DefinitionCardModel("PE", "市盈率", "示例").expandMode)
+        assertEquals(ExpandMode.BOTTOM_SHEET, NewsCardModel(quote, emptyList()).expandMode)
+        assertEquals(ExpandMode.DRILL_DOWN, AttributionCardModel(quote, "上涨", emptyList()).expandMode)
+        assertEquals(ExpandMode.NESTED_CONVERSATION, InsightCardModel(quote, "摘要").expandMode)
+        assertEquals(ExpandMode.SIDE_BY_SIDE, StockCompareCardModel(listOf(quote)).expandMode)
+    }
+
+    @Test
+    fun comparisonDeltaIsSignedAndNormalized() {
+        val left = MockDataBank.quote("600519.SH")!!
+        val right = MockDataBank.quote("000858.SZ")!!
+        val delta = CompareCalculator.delta(left, right)
+
+        assertEquals(left.price - right.price, delta.priceDifference)
+        assertEquals(left.changePercent - right.changePercent, delta.changePercentDifference)
+        assertTrue(delta.normalizedGap in 0.0..1.0)
+    }
+
     @Test
     fun mockDataIsDeterministic() {
         val first = MockDataBank.quote("600519.SH")

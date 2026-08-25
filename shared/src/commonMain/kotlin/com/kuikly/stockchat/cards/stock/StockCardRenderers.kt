@@ -1,13 +1,17 @@
 package com.kuikly.stockchat.cards.stock
 
+import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
+import com.kuikly.stockchat.cards.core.CardDensity
+import com.kuikly.stockchat.cards.core.CompareCalculator
 import com.kuikly.stockchat.cards.core.CardRegistry
 import com.kuikly.stockchat.cards.core.CardRenderer
 import com.kuikly.stockchat.cards.core.CardModel
 import com.kuikly.stockchat.cards.core.DefinitionCardModel
 import com.kuikly.stockchat.cards.core.InsightCardModel
 import com.kuikly.stockchat.cards.core.NewsCardModel
+import com.kuikly.stockchat.cards.core.NewsItem
 import com.kuikly.stockchat.cards.core.StockChartCardModel
 import com.kuikly.stockchat.cards.core.StockChartMode
 import com.kuikly.stockchat.cards.core.StockChartPeriod
@@ -44,7 +48,7 @@ object StockQuoteCardRenderer : CardRenderer {
         model as? StockQuoteCardModel ?: return
         val quote = model.quote
         val theme = context.theme
-        if (context.density == com.kuikly.stockchat.cards.core.CardDensity.MINI) {
+        if (context.density == CardDensity.MINI) {
             container.View {
                 attr { flexDirectionRow(); alignItemsCenter() }
                 View {
@@ -98,7 +102,7 @@ object StockQuoteCardRenderer : CardRenderer {
                 color(theme.textTertiary)
             }
         }
-        MiniTimeline(container, model, context, height = if (context.density == com.kuikly.stockchat.cards.core.CardDensity.COMPACT) 112f else 72f)
+        MiniTimeline(container, model, context, height = if (context.density == CardDensity.COMPACT) 112f else 72f)
         container.View {
             attr { flexDirectionRow(); marginTop(10f) }
             Metric("今开", Format.price(quote.open), theme, this)
@@ -115,7 +119,13 @@ object StockQuoteCardRenderer : CardRenderer {
             }
         }
         container.event {
-            click { context.onOpenStock(quote.symbol) }
+            click {
+                if (context.compareCandidateSymbol.isNotEmpty() && context.compareCandidateSymbol != quote.symbol) {
+                    context.onCompareCandidate?.invoke(context.cardKey, quote.symbol)
+                } else {
+                    context.onOpenStock(quote.symbol)
+                }
+            }
         }
     }
 }
@@ -126,10 +136,24 @@ object StockChartCardRenderer : CardRenderer {
     override fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext) {
         model as? StockChartCardModel ?: return
         val theme = context.theme
+        if (context.density == CardDensity.MINI) {
+            container.View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                View {
+                    attr { flex(1f) }
+                    Text { attr { text(model.quote.name); fontSize(13f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                    Text { attr { text(if (model.mode == StockChartMode.TIMELINE) "分时走势" else model.period.label); marginTop(1f); fontSize(9f); color(theme.textTertiary) } }
+                }
+                Text { attr { text(Format.percent(model.quote.changePercent)); fontSize(12f); color(if (model.quote.rising) theme.rise else theme.fall) } }
+            }
+            if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = 34f)
+            container.event { click { context.onOpenStock(model.quote.symbol) } }
+            return
+        }
         container.Text {
             attr { text("${model.quote.name} ${if (model.mode == StockChartMode.TIMELINE) "分时走势" else "${model.period.label}走势"}"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) }
         }
-        if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = 132f)
+        if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = if (context.density == CardDensity.COMPACT) 112f else 132f)
         else KLineChart(container, model, context)
         container.Text {
             attr { text(if (model.mode == StockChartMode.TIMELINE) "虚线为昨收基准" else "显示 MA5 / MA10 / MA20；日线数据可能存在延迟"); marginTop(6f); fontSize(10f); color(theme.textTertiary) }
@@ -201,10 +225,26 @@ object AttributionCardRenderer : CardRenderer {
     override fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext) {
         model as? AttributionCardModel ?: return
         val theme = context.theme
+        if (context.density == CardDensity.MINI) {
+            val top = model.factors.maxByOrNull { it.weight }
+            container.View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                View {
+                    attr { flex(1f) }
+                    Text { attr { text("归因：${top?.name ?: "暂无"}"); fontSize(13f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                    Text { attr { text(top?.description ?: "等待更多数据确认"); marginTop(2f); fontSize(10f); color(theme.textTertiary) } }
+                }
+                Text { attr { text(top?.let { "${Format.decimal(it.weight * 100, 0)}%" } ?: "--"); fontSize(12f); color(theme.brand) } }
+            }
+            return
+        }
         container.Text {
             attr { text("为什么${if (model.quote.rising) "涨" else "跌"}"); fontSize(16f); fontWeightSemiBold(); color(theme.textPrimary) }
         }
-        model.factors.forEach { factor ->
+        val factors = if (context.density == CardDensity.COMPACT) model.factors.take(2) else model.factors
+        factors.forEach { factor ->
+            val drillKey = "${model.cardId}:${factor.name}"
+            val drilled = drillKey in context.drilledKeys
             container.View {
                 attr { marginTop(12f) }
                 View {
@@ -213,18 +253,86 @@ object AttributionCardRenderer : CardRenderer {
                     Text { attr { text("${Format.decimal(factor.weight * 100, 0)}%"); fontSize(12f); color(theme.textSecondary) } }
                 }
                 View {
-                    attr { marginTop(6f); height(3f); backgroundColor(theme.surfaceMuted); borderRadius(2f) }
+                    attr { marginTop(6f); height(3f); flexDirectionRow(); backgroundColor(theme.surfaceMuted); borderRadius(2f) }
+                    val weight = factor.weight.coerceIn(0.0, 1.0).toFloat()
                     View {
                         attr {
                             height(3f)
-                            width((factor.weight.coerceIn(0.0, 1.0) * 260).toFloat())
+                            flex(weight.coerceAtLeast(0.01f))
                             backgroundColor(theme.brand)
                             borderRadius(2f)
                         }
                     }
+                    View { attr { height(3f); flex((1f - weight).coerceAtLeast(0.01f)) } }
                 }
                 Text { attr { text(factor.description); marginTop(5f); fontSize(11f); lineHeight(16f); color(theme.textSecondary) } }
                 Text { attr { text("来源：${factor.source}"); marginTop(2f); fontSize(10f); color(theme.textTertiary) } }
+                if (context.onToggleDrill != null) {
+                    event {
+                        click {
+                            context.onCardEvent?.invoke(context.cardKey, com.kuikly.stockchat.cards.core.CardEvent.DrillInto(drillKey))
+                            context.onToggleDrill.invoke(drillKey)
+                        }
+                    }
+                }
+            }
+            if (drilled) {
+                val sourceKey = "$drillKey:source"
+                val sourceOpen = sourceKey in context.drilledKeys
+                container.View {
+                    attr {
+                        marginTop(6f)
+                        marginLeft(12f)
+                        padding(10f)
+                        backgroundColor(theme.surfaceMuted)
+                        borderRadius(8f)
+                    }
+                    View { attr { height(2f); backgroundColor(theme.brand); borderRadius(1f) } }
+                    Text { attr { text("${factor.name} 详情"); marginTop(8f); fontSize(12f); fontWeightMedium(); color(theme.textPrimary) } }
+                    Text { attr { text("该因素当前权重为 ${Format.decimal(factor.weight * 100, 0)}%，可结合下方信源继续核对。 "); marginTop(4f); fontSize(11f); lineHeight(16f); color(theme.textSecondary) } }
+                    CardShell(
+                        NewsCardModel(model.quote, listOf(NewsItem("${factor.source}：${factor.description}", factor.source, "当前"))),
+                        context.copy(density = CardDensity.MINI, onOpenSheet = null),
+                    )
+                    View {
+                        attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
+                        Text {
+                            attr {
+                                text(if (sourceOpen) "收起信源 ▲" else "查看信源 ▼")
+                                fontSize(10f)
+                                color(theme.brand)
+                                flex(1f)
+                            }
+                        }
+                        event { click { context.onToggleDrill?.invoke(sourceKey) } }
+                    }
+                    if (sourceOpen) {
+                        View {
+                            attr {
+                                marginTop(8f)
+                                marginLeft(12f)
+                                padding(8f)
+                                backgroundColor(theme.surface)
+                                borderRadius(8f)
+                            }
+                            Text { attr { text("信源核对"); fontSize(11f); fontWeightMedium(); color(theme.textPrimary) } }
+                            Text {
+                                attr {
+                                    text("${factor.source} 提供了“${factor.description}”这一条解释依据，可信度为 ${factor.confidence}。")
+                                    marginTop(4f)
+                                    fontSize(10f)
+                                    lineHeight(15f)
+                                    color(theme.textSecondary)
+                                }
+                            }
+                        }
+                    }
+                    View {
+                        attr { alignSelfFlexStart(); marginTop(6f); paddingTop(4f); paddingBottom(4f) }
+                        Text { attr { text("收起详情"); fontSize(10f); color(theme.brand) } }
+                        event { click { context.onToggleDrill?.invoke(drillKey) } }
+                    }
+                }
             }
         }
     }
@@ -236,11 +344,21 @@ object DefinitionCardRenderer : CardRenderer {
     override fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext) {
         model as? DefinitionCardModel ?: return
         val theme = context.theme
-        container.Text { attr { text(model.term); fontSize(18f); fontWeightBold(); color(theme.brand) } }
-        container.Text { attr { text(model.plainText); marginTop(8f); fontSize(14f); lineHeight(21f); color(theme.textPrimary) } }
-        container.View {
-            attr { marginTop(10f); padding(10f); backgroundColor(theme.surfaceMuted); borderRadius(10f) }
-            Text { attr { text(model.example); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
+        if (context.density == CardDensity.MINI) {
+            container.View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text { attr { text(model.term); fontSize(13f); fontWeightSemiBold(); color(theme.brand); width(84f) } }
+                Text { attr { text(model.plainText); fontSize(11f); color(theme.textSecondary); flex(1f) } }
+            }
+        } else {
+            container.Text { attr { text(model.term); fontSize(if (context.density == CardDensity.COMPACT) 16f else 18f); fontWeightBold(); color(theme.brand) } }
+            container.Text { attr { text(model.plainText); marginTop(8f); fontSize(14f); lineHeight(21f); color(theme.textPrimary) } }
+            if (context.density == CardDensity.FULL) {
+                container.View {
+                    attr { marginTop(10f); padding(10f); backgroundColor(theme.surfaceMuted); borderRadius(10f) }
+                    Text { attr { text(model.example); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
+                }
+            }
         }
     }
 }
@@ -251,14 +369,22 @@ object InsightCardRenderer : CardRenderer {
     override fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext) {
         model as? InsightCardModel ?: return
         val theme = context.theme
-        container.Text { attr { text("AI 解读"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
-        container.Text { attr { text(model.summary); marginTop(8f); fontSize(14f); lineHeight(21f); color(theme.textSecondary) } }
-        container.Text {
-            attr {
-                text("AI 生成 · 仅供参考，不构成投资建议")
-                marginTop(10f)
-                fontSize(10f)
-                color(theme.textTertiary)
+        if (context.density == CardDensity.MINI) {
+            container.View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text { attr { text("AI"); fontSize(12f); fontWeightBold(); color(theme.brand); width(34f) } }
+                Text { attr { text(model.summary); fontSize(11f); color(theme.textSecondary); flex(1f) } }
+            }
+        } else {
+            container.Text { attr { text("AI 解读"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
+            container.Text { attr { text(model.summary); marginTop(8f); fontSize(14f); lineHeight(21f); color(theme.textSecondary) } }
+            container.Text {
+                attr {
+                    text("AI 生成 · 仅供参考，不构成投资建议")
+                    marginTop(10f)
+                    fontSize(10f)
+                    color(theme.textTertiary)
+                }
             }
         }
     }
@@ -270,26 +396,54 @@ object StockCompareCardRenderer : CardRenderer {
     override fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext) {
         model as? StockCompareCardModel ?: return
         val theme = context.theme
-        container.Text { attr { text("股票对比"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
-        model.quotes.forEach { quote ->
+        if (context.density == CardDensity.MINI) {
             container.View {
-                attr { marginTop(11f); flexDirectionRow(); alignItemsCenter() }
-                View {
-                    attr { flex(1f) }
-                    Text { attr { text(quote.name); fontSize(13f); fontWeightMedium(); color(theme.textPrimary) } }
-                    Text { attr { text(quote.symbol); marginTop(2f); fontSize(9f); color(theme.textTertiary) } }
-                }
-                Text { attr { text(Format.price(quote.price)); fontSize(14f); color(theme.textPrimary) } }
-                Text {
-                    attr {
-                        text(Format.percent(quote.changePercent))
-                        width(72f)
-                        textAlignRight()
-                        fontSize(12f)
-                        color(if (quote.rising) theme.rise else theme.fall)
+                attr { flexDirectionRow(); alignItemsCenter() }
+                model.quotes.take(2).forEach { quote ->
+                    View {
+                        attr { flex(1f); marginRight(8f) }
+                        Text { attr { text(quote.name); fontSize(12f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                        Text { attr { text(Format.percent(quote.changePercent)); marginTop(2f); fontSize(11f); color(if (quote.rising) theme.rise else theme.fall) } }
+                        event { click { context.onOpenStock(quote.symbol) } }
                     }
                 }
-                event { click { context.onOpenStock(quote.symbol) } }
+            }
+            return
+        }
+        container.Text { attr { text("股票对比"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
+        val quotes = model.quotes.take(2)
+        container.View {
+            attr { marginTop(12f); flexDirectionRow(); alignItemsStretch() }
+            quotes.forEachIndexed { index, quote ->
+                if (index > 0) View { attr { width(1f); marginLeft(10f); marginRight(10f); backgroundColor(theme.divider) } }
+                View {
+                    attr { flex(1f) }
+                    Text { attr { text(quote.name); fontSize(13f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                    Text { attr { text(quote.symbol); marginTop(2f); fontSize(9f); color(theme.textTertiary) } }
+                    Text { attr { text(Format.price(quote.price)); marginTop(10f); fontSize(17f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text(Format.percent(quote.changePercent)); marginTop(3f); fontSize(12f); color(if (quote.rising) theme.rise else theme.fall) } }
+                    event { click { context.onOpenStock(quote.symbol) } }
+                }
+            }
+        }
+        if (quotes.size == 2) {
+            val delta = CompareCalculator.delta(quotes[0], quotes[1])
+            val gapColor = if (delta.changePercentDifference >= 0) theme.rise else theme.fall
+            container.View {
+                attr { marginTop(14f) }
+                Text { attr { text("涨跌幅差 ${Format.percent(delta.changePercentDifference)}"); fontSize(10f); color(theme.textSecondary) } }
+                View {
+                    attr {
+                        height(4f)
+                        marginTop(6f)
+                        flexDirectionRow()
+                        backgroundColor(theme.surfaceMuted)
+                        borderRadius(2f)
+                    }
+                    val gap = delta.normalizedGap.toFloat().coerceIn(0f, 1f)
+                    View { attr { height(4f); flex(gap.coerceAtLeast(0.01f)); backgroundColor(gapColor); borderRadius(2f) } }
+                    View { attr { height(4f); flex((1f - gap).coerceAtLeast(0.01f)) } }
+                }
             }
         }
         container.Text {
@@ -304,8 +458,18 @@ object NewsCardRenderer : CardRenderer {
     override fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext) {
         model as? NewsCardModel ?: return
         val theme = context.theme
+        if (context.density == CardDensity.MINI) {
+            val item = model.items.firstOrNull()
+            container.View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text { attr { text("资讯"); fontSize(12f); fontWeightSemiBold(); color(theme.brand); width(42f) } }
+                Text { attr { text(item?.title ?: "${model.quote.name} 暂无新资讯"); fontSize(11f); color(theme.textSecondary); flex(1f) } }
+            }
+            return
+        }
         container.Text { attr { text("${model.quote.name} 相关资讯"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
-        model.items.forEach { item ->
+        val items = if (context.density == CardDensity.COMPACT) model.items.take(2) else model.items
+        items.forEach { item ->
             container.View {
                 attr { marginTop(11f) }
                 Text { attr { text(item.title); fontSize(12f); lineHeight(18f); color(theme.textPrimary) } }
