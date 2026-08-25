@@ -5,9 +5,12 @@ import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.KLinePoint
 import com.kuikly.stockchat.data.provider.KLineInterval
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.QuoteCacheStore
 import com.kuikly.stockchat.data.provider.QuotePoint
 import com.kuikly.stockchat.data.provider.QuoteProvider
 import com.kuikly.stockchat.data.provider.QuoteRepository
+import com.kuikly.stockchat.data.provider.StoredKLines
+import com.kuikly.stockchat.data.provider.StoredQuote
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -17,7 +20,7 @@ class QuoteRepositoryTest {
     fun usesFreshCacheWhenOnlineSnapshotFails() {
         var now = 1_000L
         val online = MutableQuoteProvider(MockDataBank.quote("600519.SH"))
-        val repository = QuoteRepository(online, MutableQuoteProvider(null), { now })
+        val repository = QuoteRepository(online, MutableQuoteProvider(null), nowMillis = { now })
 
         assertEquals(DataMode.ONLINE, repository.loadOnce("600519.SH").mode)
         online.quote = null
@@ -32,7 +35,7 @@ class QuoteRepositoryTest {
         var now = 1_000L
         val online = MutableQuoteProvider(MockDataBank.quote("600519.SH"))
         val offline = MutableQuoteProvider(MockDataBank.quote("000858.SZ"))
-        val repository = QuoteRepository(online, offline, { now })
+        val repository = QuoteRepository(online, offline, nowMillis = { now })
 
         repository.loadOnce("600519.SH")
         online.quote = null
@@ -49,13 +52,65 @@ class QuoteRepositoryTest {
         val expectedTimeline = MockDataBank.quote("600519.SH")!!.timeline.take(3)
         val expectedKLines = MockDataBank.quote("600519.SH")!!.kLines.take(3)
         val online = MutableQuoteProvider(onlineQuote, expectedTimeline, expectedKLines)
-        val repository = QuoteRepository(online, MutableQuoteProvider(null), { 1_000L })
+        val repository = QuoteRepository(online, MutableQuoteProvider(null), nowMillis = { 1_000L })
         val results = mutableListOf<Quote>()
 
         repository.load("600519.SH") { it.quote?.let(results::add) }
 
         assertEquals(expectedTimeline, results.last().timeline)
         assertEquals(expectedKLines, results.last().kLines)
+    }
+
+    @Test
+    fun restoresFreshSnapshotAndSeriesFromCacheStore() {
+        var now = 1_000L
+        val cacheStore = MemoryQuoteCacheStore()
+        val original = MockDataBank.quote("600519.SH")!!
+        val timeline = original.timeline.take(2)
+        val weekKLines = original.weekKLines.take(2)
+        val online = MutableQuoteProvider(original.copy(timeline = emptyList(), weekKLines = emptyList()), timeline, weekKLines)
+        val writer = QuoteRepository(online, MutableQuoteProvider(null), cacheStore, { now })
+
+        writer.load("600519.SH") {}
+        now += 1_000L
+        online.quote = null
+
+        val reader = QuoteRepository(online, MutableQuoteProvider(null), cacheStore, { now })
+        val result = reader.loadOnce("600519.SH")
+
+        assertEquals(DataMode.CACHE, result.mode)
+        assertEquals(timeline, result.quote?.timeline)
+        assertEquals(weekKLines, result.quote?.weekKLines)
+    }
+
+    @Test
+    fun cachedOrOfflineResultReportsOfflineWhenNoFreshCacheExists() {
+        val offline = MockDataBank.quote("000858.SZ")!!
+        val repository = QuoteRepository(
+            online = MutableQuoteProvider(null),
+            offline = MutableQuoteProvider(offline),
+            nowMillis = { 1_000L },
+        )
+
+        val result = repository.cachedOrOfflineResult("600519.SH")
+
+        assertEquals(DataMode.OFFLINE, result.mode)
+        assertEquals("000858.SZ", result.quote?.symbol)
+    }
+
+    @Test
+    fun cachedOrOfflineResultReportsCacheWhenFreshCacheExists() {
+        var now = 1_000L
+        val online = MutableQuoteProvider(MockDataBank.quote("600519.SH"))
+        val repository = QuoteRepository(online, MutableQuoteProvider(null), nowMillis = { now })
+
+        repository.loadOnce("600519.SH")
+        online.quote = null
+        now += 1_000L
+        val result = repository.cachedOrOfflineResult("600519.SH")
+
+        assertEquals(DataMode.CACHE, result.mode)
+        assertTrue(result.quote!!.source.startsWith("缓存行情"))
     }
 
     private fun QuoteRepository.loadOnce(symbol: String) =
@@ -71,5 +126,30 @@ class QuoteRepositoryTest {
         override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) = onResult(quote)
         override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) = onResult(timeline)
         override fun kLines(symbol: String, count: Int, interval: KLineInterval, onResult: (List<KLinePoint>) -> Unit) = onResult(kLines)
+    }
+
+    private class MemoryQuoteCacheStore : QuoteCacheStore {
+        private val snapshots = mutableListOf<StoredQuote<Quote>>()
+        private val timelines = mutableListOf<StoredQuote<List<QuotePoint>>>()
+        private val kLines = mutableListOf<StoredKLines>()
+
+        override fun loadSnapshots(): List<StoredQuote<Quote>> = snapshots
+        override fun loadTimelines(): List<StoredQuote<List<QuotePoint>>> = timelines
+        override fun loadKLines(): List<StoredKLines> = kLines
+
+        override fun saveSnapshot(symbol: String, quote: Quote, savedAtMillis: Long) {
+            snapshots.removeAll { it.symbol == symbol }
+            snapshots.add(StoredQuote(symbol, quote, savedAtMillis))
+        }
+
+        override fun saveTimeline(symbol: String, points: List<QuotePoint>, savedAtMillis: Long) {
+            timelines.removeAll { it.symbol == symbol }
+            timelines.add(StoredQuote(symbol, points, savedAtMillis))
+        }
+
+        override fun saveKLines(symbol: String, interval: KLineInterval, points: List<KLinePoint>, savedAtMillis: Long) {
+            kLines.removeAll { it.symbol == symbol && it.interval == interval }
+            kLines.add(StoredKLines(symbol, interval, points, savedAtMillis))
+        }
     }
 }

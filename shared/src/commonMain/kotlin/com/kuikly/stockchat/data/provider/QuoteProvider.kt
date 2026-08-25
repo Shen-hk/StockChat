@@ -2,6 +2,13 @@ package com.kuikly.stockchat.data.provider
 
 enum class DataMode { AUTO, ONLINE, CACHE, OFFLINE }
 
+fun DataMode.quoteLabel(): String = when (this) {
+    DataMode.AUTO -> "自动数据模式"
+    DataMode.ONLINE -> "实时行情"
+    DataMode.CACHE -> "缓存行情"
+    DataMode.OFFLINE -> "离线演示模式"
+}
+
 /** The provider-native K-line series. WEEK and MONTH are not derived from daily rows. */
 enum class KLineInterval(
     val requestPeriod: String,

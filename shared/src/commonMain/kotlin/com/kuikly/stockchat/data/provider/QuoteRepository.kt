@@ -6,6 +6,7 @@ import com.kuikly.stockchat.data.mock.MockQuoteProvider
 class QuoteRepository(
     private val online: QuoteProvider,
     private val offline: QuoteProvider = MockQuoteProvider(),
+    private val cacheStore: QuoteCacheStore = NoOpQuoteCacheStore,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
 ) {
     companion object {
@@ -20,6 +21,10 @@ class QuoteRepository(
     private data class SeriesKey(val symbol: String, val interval: KLineInterval)
     private val kLines = mutableMapOf<SeriesKey, CacheEntry<List<KLinePoint>>>()
 
+    init {
+        restoreCache()
+    }
+
     /**
      * Returns an immediately usable cached/offline quote, then refreshes all three quote resources.
      * The callback can be invoked more than once as the snapshot, timeline and K-line data arrive.
@@ -32,7 +37,7 @@ class QuoteRepository(
 
             online.timeline(symbol) { points ->
                 if (points.isNotEmpty()) {
-                    timelines[symbol] = CacheEntry(points, nowMillis())
+                    saveTimeline(symbol, points)
                     current = current?.copy(timeline = points)
                     onResult(snapshot.copy(quote = current))
                 }
@@ -40,7 +45,7 @@ class QuoteRepository(
             KLineInterval.entries.forEach { interval ->
                 online.kLines(symbol, interval.defaultCount, interval) { points ->
                 if (points.isNotEmpty()) {
-                    kLines[SeriesKey(symbol, interval)] = CacheEntry(points, nowMillis())
+                    saveKLines(symbol, interval, points)
                     current = current?.withKLines(interval, points)
                     onResult(snapshot.copy(quote = current))
                 }
@@ -51,13 +56,20 @@ class QuoteRepository(
 
     /** Uses a fresh memory value when available, otherwise exposes clearly-labelled offline demo data. */
     fun cachedOrOffline(symbol: String): Quote? =
-        fresh(snapshots[symbol], SNAPSHOT_TTL_MILLIS)?.value?.withCachedSeries(symbol)?.asCached()
-            ?: offlineQuote(symbol)
+        cachedOrOfflineResult(symbol).quote
+
+    fun cachedOrOfflineResult(symbol: String): QuoteLoadResult {
+        val cached = fresh(snapshots[symbol], SNAPSHOT_TTL_MILLIS)
+        if (cached != null) {
+            return QuoteLoadResult(cached.value.withCachedSeries(symbol).asCached(), DataMode.CACHE, cached.savedAtMillis)
+        }
+        return QuoteLoadResult(offlineQuote(symbol), DataMode.OFFLINE, nowMillis())
+    }
 
     private fun snapshot(symbol: String, onResult: (QuoteLoadResult) -> Unit) {
         online.snapshot(symbol) { quote ->
             if (quote != null) {
-                snapshots[symbol] = CacheEntry(quote, nowMillis())
+                saveSnapshot(symbol, quote)
                 onResult(QuoteLoadResult(quote, DataMode.ONLINE, nowMillis()))
                 return@snapshot
             }
@@ -94,6 +106,36 @@ class QuoteRepository(
 
     private fun <T> fresh(entry: CacheEntry<T>?, ttlMillis: Long): CacheEntry<T>? =
         entry?.takeIf { nowMillis() - it.savedAtMillis <= ttlMillis }
+
+    private fun saveSnapshot(symbol: String, quote: Quote) {
+        val savedAtMillis = nowMillis()
+        snapshots[symbol] = CacheEntry(quote, savedAtMillis)
+        cacheStore.saveSnapshot(symbol, quote, savedAtMillis)
+    }
+
+    private fun saveTimeline(symbol: String, points: List<QuotePoint>) {
+        val savedAtMillis = nowMillis()
+        timelines[symbol] = CacheEntry(points, savedAtMillis)
+        cacheStore.saveTimeline(symbol, points, savedAtMillis)
+    }
+
+    private fun saveKLines(symbol: String, interval: KLineInterval, points: List<KLinePoint>) {
+        val savedAtMillis = nowMillis()
+        kLines[SeriesKey(symbol, interval)] = CacheEntry(points, savedAtMillis)
+        cacheStore.saveKLines(symbol, interval, points, savedAtMillis)
+    }
+
+    private fun restoreCache() {
+        cacheStore.loadSnapshots().forEach { entry ->
+            snapshots[entry.symbol] = CacheEntry(entry.value, entry.savedAtMillis)
+        }
+        cacheStore.loadTimelines().forEach { entry ->
+            timelines[entry.symbol] = CacheEntry(entry.value, entry.savedAtMillis)
+        }
+        cacheStore.loadKLines().forEach { entry ->
+            kLines[SeriesKey(entry.symbol, entry.interval)] = CacheEntry(entry.value, entry.savedAtMillis)
+        }
+    }
 }
 
 data class QuoteLoadResult(
@@ -107,6 +149,9 @@ object QuoteRepositoryStore {
     private var shared: QuoteRepository? = null
 
     fun shared(pagerId: String): QuoteRepository {
-        return shared ?: QuoteRepository(TencentQuoteProvider(pagerId)).also { shared = it }
+        return shared ?: QuoteRepository(
+            online = TencentQuoteProvider(pagerId),
+            cacheStore = SharedPreferencesQuoteCacheStore(pagerId),
+        ).also { shared = it }
     }
 }

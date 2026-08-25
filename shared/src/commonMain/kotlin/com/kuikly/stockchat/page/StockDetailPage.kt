@@ -14,9 +14,9 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
-import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
+import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.DataModeBadge
 import com.kuikly.stockchat.protocol.AttributionIntent
@@ -49,12 +49,7 @@ internal class StockDetailPage : BasePager() {
         quote = quoteRepository.cachedOrOffline(symbol) ?: quote
         quoteRepository.load(symbol) { result ->
             result.quote?.let { quote = it }
-            dataModeLabel = when (result.mode) {
-                DataMode.ONLINE -> "实时行情"
-                DataMode.CACHE -> "缓存行情"
-                DataMode.OFFLINE -> "离线演示模式"
-                DataMode.AUTO -> "自动数据模式"
-            }
+            dataModeLabel = result.mode.quoteLabel()
         }
     }
 
