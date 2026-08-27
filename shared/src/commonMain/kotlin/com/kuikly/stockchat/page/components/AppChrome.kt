@@ -35,16 +35,17 @@ fun ViewContainer<*, *>.ChatTopNav(
             absolutePosition(top = 0f, left = 0f, right = 0f)
             height(statusBarHeight + 44f)
             paddingTop(statusBarHeight)
-            // Solid page colour keeps the status bar strip legible; the last
-            // ~3dp fades to transparent so content scrolling underneath
-            // feathers in softly instead of hitting a hard edge.
+            // Solid page colour is kept only behind the system status bar.
+            // The nav row sits on a transparent backdrop so its glass islands
+            // float over page content; the ~3dp feather softens the edge.
             val chromeHeight = statusBarHeight + 44f
-            val featherStart = ((chromeHeight - 3f) / chromeHeight).coerceIn(0f, 1f)
+            val solidStop = (statusBarHeight / chromeHeight).coerceIn(0f, 1f)
+            val featherStop = ((statusBarHeight + 3f) / chromeHeight).coerceIn(0f, 1f)
             backgroundLinearGradient(
                 Direction.TO_BOTTOM,
                 ColorStop(theme.page, 0f),
-                ColorStop(theme.page, featherStart),
-                ColorStop(theme.page.opacity(0f), 1f),
+                ColorStop(theme.page, solidStop),
+                ColorStop(theme.page.opacity(0f), featherStop),
             )
         }
         View {

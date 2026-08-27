@@ -329,11 +329,13 @@ internal class ChatPage : BasePager() {
                         )
                     }
                 }
-                // Solid base covering the capsule backdrop and the floating
-                // blank area below it, down to the screen bottom.
+                // Solid base covering only the blank strip below the capsule,
+                // down to the screen bottom. The capsule itself keeps its
+                // glass backdrop.
                 View {
                     attr {
-                        absolutePosition(top = 3f, left = 0f, right = 0f, bottom = 0f)
+                        absolutePosition(bottom = 0f, left = 0f, right = 0f)
+                        height(10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
                         backgroundColor(page.theme.page)
                         touchEnable(false)
                     }
