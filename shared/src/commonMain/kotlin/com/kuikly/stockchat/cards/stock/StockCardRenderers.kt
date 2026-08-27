@@ -79,7 +79,7 @@ object StockQuoteCardRenderer : CardRenderer {
                 Text {
                     attr {
                         text(Format.price(quote.price))
-                        fontSize(23f)
+                        fontSize(28f)
                         fontWeightBold()
                         color(if (quote.rising) theme.rise else theme.fall)
                     }
@@ -93,6 +93,33 @@ object StockQuoteCardRenderer : CardRenderer {
                     }
                 }
             }
+            event {
+                click {
+                    if (context.compareCandidateSymbol.isNotEmpty() && context.compareCandidateSymbol != quote.symbol) {
+                        context.onCompareCandidate?.invoke(context.cardKey, quote.symbol)
+                    } else {
+                        context.onOpenStock(quote.symbol)
+                    }
+                }
+            }
+        }
+        if (context.density == CardDensity.COMPACT) {
+            container.View {
+                attr { flexDirectionRow(); marginTop(10f) }
+                Metric("今开", Format.price(quote.open), theme, this)
+                Metric("最高", Format.price(quote.high), theme, this)
+                Metric("最低", Format.price(quote.low), theme, this)
+                Metric("成交量", Format.compactAmount(quote.volume), theme, this)
+            }
+            container.Text {
+                attr {
+                    text("展开后查看分时走势、最高最低和行情来源")
+                    marginTop(8f)
+                    fontSize(10f)
+                    color(theme.textTertiary)
+                }
+            }
+            return
         }
         container.Text {
             attr {
@@ -102,7 +129,7 @@ object StockQuoteCardRenderer : CardRenderer {
                 color(theme.textTertiary)
             }
         }
-        MiniTimeline(container, model, context, height = if (context.density == CardDensity.COMPACT) 112f else 72f)
+        MiniTimeline(container, model, context, height = 128f)
         container.View {
             attr { flexDirectionRow(); marginTop(10f) }
             Metric("今开", Format.price(quote.open), theme, this)
@@ -116,15 +143,6 @@ object StockQuoteCardRenderer : CardRenderer {
                 marginTop(10f)
                 fontSize(10f)
                 color(theme.textTertiary)
-            }
-        }
-        container.event {
-            click {
-                if (context.compareCandidateSymbol.isNotEmpty() && context.compareCandidateSymbol != quote.symbol) {
-                    context.onCompareCandidate?.invoke(context.cardKey, quote.symbol)
-                } else {
-                    context.onOpenStock(quote.symbol)
-                }
             }
         }
     }
@@ -150,15 +168,31 @@ object StockChartCardRenderer : CardRenderer {
             container.event { click { context.onOpenStock(model.quote.symbol) } }
             return
         }
-        container.Text {
-            attr { text("${model.quote.name} ${if (model.mode == StockChartMode.TIMELINE) "分时走势" else "${model.period.label}走势"}"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) }
+        container.View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            View {
+                attr { flex(1f) }
+                Text {
+                    attr { text("${model.quote.name} ${if (model.mode == StockChartMode.TIMELINE) "分时走势" else "${model.period.label}走势"}"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) }
+                }
+                Text {
+                    attr { text("${Format.price(model.quote.price)} · ${Format.percent(model.quote.changePercent)}"); marginTop(2f); fontSize(10f); color(if (model.quote.rising) theme.rise else theme.fall) }
+                }
+            }
+            event { click { context.onOpenStock(model.quote.symbol) } }
         }
-        if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = if (context.density == CardDensity.COMPACT) 112f else 132f)
+        if (context.density == CardDensity.COMPACT) {
+            if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = 62f)
+            container.Text {
+                attr { text("展开后查看更大图表、基准说明和完整细节"); marginTop(6f); fontSize(10f); color(theme.textTertiary) }
+            }
+            return
+        }
+        if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = 132f)
         else KLineChart(container, model, context)
         container.Text {
             attr { text(if (model.mode == StockChartMode.TIMELINE) "虚线为昨收基准" else "显示 MA5 / MA10 / MA20；日线数据可能存在延迟"); marginTop(6f); fontSize(10f); color(theme.textTertiary) }
         }
-        container.event { click { context.onOpenStock(model.quote.symbol) } }
     }
 }
 

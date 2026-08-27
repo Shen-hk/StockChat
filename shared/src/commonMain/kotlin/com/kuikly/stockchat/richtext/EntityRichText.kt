@@ -28,6 +28,7 @@ fun ViewContainer<*, *>.EntityRichText(
             }
         }
     val spans = EntityRecognizer.recognize(text, contextSymbols)
+    val primaryStock = spans.firstOrNull { it.type == EntityType.STOCK }
     RichText {
         attr {
             fontSize(14f)
@@ -44,17 +45,14 @@ fun ViewContainer<*, *>.EntityRichText(
                 }
             }
             Span {
-                text(entity.text)
+                text(entity.text + if (entity.type == EntityType.TERM) " 📖" else "")
                 fontSize(14f)
                 fontWeightMedium()
-                color(theme.brand)
-                textDecorationUnderLine()
+                color(if (entity.type == EntityType.TERM) theme.term else theme.brand)
+                if (entity.type != EntityType.TERM) textDecorationUnderLine()
                 click {
                     if (entity.type == EntityType.STOCK) onStockClick(entity)
                     else onTermClick(entity.text)
-                }
-                if (entity.type == EntityType.STOCK) {
-                    longPress { params -> onStockLongPress(entity, params.state, params.isCancel) }
                 }
             }
             cursor = entity.endExclusive
@@ -68,6 +66,13 @@ fun ViewContainer<*, *>.EntityRichText(
         }
         if (text.isEmpty()) {
             Span { text("") }
+        }
+        primaryStock?.let { stock ->
+            event {
+                longPress { params ->
+                    onStockLongPress(stock, params.state, params.isCancel)
+                }
+            }
         }
     }
 }
