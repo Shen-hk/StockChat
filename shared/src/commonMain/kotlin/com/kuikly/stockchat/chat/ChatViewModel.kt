@@ -27,17 +27,6 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         restored.forEach { item ->
             messages.add(ChatMessage(pagerId, item.id.ifEmpty { newId() }, item.role, item.content, failed = item.failed, cancelled = item.cancelled))
         }
-        if (messages.isEmpty()) {
-            messages.add(
-                ChatMessage(
-                    pagerId = pagerId,
-                    id = newId(),
-                    role = MessageRole.ASSISTANT,
-                    content = "你好，我是股问。可以问我一只股票为什么涨跌、当前走势，或一个金融术语是什么意思。",
-                ),
-            )
-            persist()
-        }
         nextId = maxOf(nextId, messages.size + 1)
     }
 
@@ -117,7 +106,6 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
     fun clear() {
         stop()
         messages.clear()
-        messages.add(ChatMessage(pagerId, newId(), MessageRole.ASSISTANT, "新会话已开始。想先看哪只股票？"))
         streamState = StreamState.IDLE
         persist()
     }
