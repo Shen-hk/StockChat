@@ -77,6 +77,9 @@ internal class BridgeModule : Module() {
         callNativeMethod("hapticImpact", methodArgs, null)
     }
 
+    /** Returns the current host-selected material quality, if supported by the host. */
+    fun getGlassMode(): String = syncCallNativeMethod("getGlassMode", null, null)
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,

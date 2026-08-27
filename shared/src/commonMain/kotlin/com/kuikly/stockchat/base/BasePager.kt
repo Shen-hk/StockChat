@@ -4,9 +4,16 @@ import com.tencent.kuikly.core.pager.Pager
 import com.tencent.kuikly.core.module.Module
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.*
+import com.kuikly.stockchat.glass.GlassRenderer
 
 internal abstract class BasePager : Pager() {
     private var nightModel: Boolean? by observable(null)
+
+    /** Native hosts select G1/G2/G3 and can refresh it after a sustained frame-rate drop. */
+    private var hostGlassMode: String by observable("simplified")
+
+    protected val hostGlassRenderer: GlassRenderer
+        get() = GlassRenderer.fromHostMode(hostGlassMode)
 
     override fun createExternalModules(): Map<String, Module>? {
         val externalModules = hashMapOf<String, Module>()
@@ -17,6 +24,23 @@ internal abstract class BasePager : Pager() {
     override fun created() {
         super.created()
         isNightMode()
+        hostGlassMode = pageData.params.optString("glassMode")
+        refreshGlassMode()
+    }
+
+    protected open fun hostGlassModeDidChange(renderer: GlassRenderer) = Unit
+
+    private fun refreshGlassMode() {
+        setTimeout(1_000) {
+            val candidate = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).getGlassMode()
+            if (candidate == "realtime" || candidate == "snapshot" || candidate == "simplified") {
+                if (candidate != hostGlassMode) {
+                    hostGlassMode = candidate
+                    hostGlassModeDidChange(hostGlassRenderer)
+                }
+            }
+            refreshGlassMode()
+        }
     }
 
     override fun themeDidChanged(data: JSONObject) {

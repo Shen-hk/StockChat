@@ -2,7 +2,9 @@ package com.kuikly.stockchat
 
 import android.content.Context
 import android.content.Intent
+import android.animation.ValueAnimator
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -29,6 +31,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
     private lateinit var hrContainerView: ViewGroup
     private lateinit var loadingView: View
     private lateinit var errorView: View
+    private var glassMode = "simplified"
 
     private val kuiklyRenderViewDelegator = KuiklyRenderViewBaseDelegator(this)
 
@@ -50,6 +53,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
         hrContainerView = findViewById(R.id.hr_container)
         loadingView = findViewById(R.id.hr_loading)
         errorView = findViewById(R.id.hr_error)
+        glassMode = preferredGlassMode()
         kuiklyRenderViewDelegator.onAttach(hrContainerView, "", pageName, createPageData())
     }
 
@@ -65,6 +69,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
 
     override fun onResume() {
         super.onResume()
+        glassMode = preferredGlassMode()
         kuiklyRenderViewDelegator.onResume()
     }
 
@@ -90,8 +95,19 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
     private fun createPageData(): Map<String, Any> {
         val pageData = argsToMap()
         pageData["appId"] = 1
+        pageData["glassMode"] = glassMode
         return pageData
     }
+
+    private fun preferredGlassMode(): String {
+        // Accessibility takes priority over the visual-priority setting.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled()) {
+            return "simplified"
+        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) "realtime" else "snapshot"
+    }
+
+    fun currentGlassMode(): String = glassMode
 
     private fun argsToMap(): MutableMap<String, Any> {
         val jsonStr = intent.getStringExtra(KEY_PAGE_DATA) ?: return mutableMapOf()

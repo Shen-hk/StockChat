@@ -29,6 +29,9 @@ fun main() {
     }
     // Add web-specific parameters
     params[webSign] = "1"
+    val supportsBackdropFilter = js("typeof CSS !== 'undefined' && (CSS.supports('backdrop-filter', 'blur(1px)') || CSS.supports('-webkit-backdrop-filter', 'blur(1px)'))") as Boolean
+    val reducedEffects = js("window.matchMedia('(prefers-reduced-motion: reduce)').matches || window.matchMedia('(prefers-reduced-transparency: reduce)').matches") as Boolean
+    params["glassMode"] = if (supportsBackdropFilter && !reducedEffects) "realtime" else "simplified"
     // Page parameter Map
     val paramMap = mapOf(
         "statusBarHeight" to 0f,

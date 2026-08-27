@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.cards.core
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.glass.GlassRenderer
 
 enum class CardDensity { FULL, COMPACT, MINI }
 
@@ -21,4 +22,6 @@ data class CardContext(
     val compareCandidateSymbol: String = "",
     val onCompareCandidate: ((String, String) -> Unit)? = null,
     val onCardEvent: ((String, CardEvent) -> Unit)? = null,
+    /** Shared visual-quality decision. Card renderers consume it, never platform APIs directly. */
+    val glass: GlassRenderer = GlassRenderer.Default,
 )

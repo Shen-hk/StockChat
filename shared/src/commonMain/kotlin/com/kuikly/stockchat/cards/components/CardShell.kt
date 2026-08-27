@@ -18,6 +18,7 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
+import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.attr.CaptureRule
 import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
@@ -60,6 +61,10 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
             transform(scale = if (focused) Scale(1.04f, 1.04f) else Scale.DEFAULT)
             animate(Animation.easeOut(0.2f), focused)
             if (focused || compareSelected) border(Border(2f, BorderStyle.SOLID, theme.brand))
+            else if (context.density != CardDensity.MINI) {
+                val edge = context.glass.resolve(theme.glass.cardEdge)
+                border(Border(edge.strokeWidth, BorderStyle.SOLID, Color(0xFFFFFF, edge.strokeAlpha)))
+            }
             if (focusEnabled) capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
         }
         if (focusEnabled) {
@@ -119,17 +124,18 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
         if (canToggleExpanded) {
             View {
                 attr {
-                    alignSelfFlexStart()
+                    alignSelfStretch()
+                    height(36f)
                     marginTop(10f)
-                    paddingTop(3f)
-                    paddingBottom(3f)
-                    paddingLeft(2f)
-                    paddingRight(2f)
+                    allCenter()
+                    backgroundColor(theme.brandSoft)
+                    borderRadius(8f)
                 }
                 Text {
                     attr {
                         text(if (context.expanded) "收起 ▲" else "查看完整内容 ▼")
                         fontSize(11f)
+                        fontWeightMedium()
                         color(theme.brand)
                     }
                 }

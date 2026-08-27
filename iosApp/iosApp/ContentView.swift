@@ -1,10 +1,14 @@
 import SwiftUI
+import UIKit
 import shared
 
 struct ContentView: View {
 
 	var body: some View {
-        KuiklyRenderViewPage(pageName: "router", data: [:]).ignoresSafeArea()
+        KuiklyRenderViewPage(
+            pageName: "ChatPage",
+            data: ["glassMode": (UIAccessibility.isReduceTransparencyEnabled || UIAccessibility.isReduceMotionEnabled) ? "simplified" : "realtime"]
+        ).ignoresSafeArea()
 	}
 }
 

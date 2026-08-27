@@ -47,6 +47,8 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 hapticImpact()
             }
 
+            "getGlassMode" -> (activity as? KuiklyRenderActivity)?.currentGlassMode() ?: "simplified"
+
             "log" -> {
                 log(params)
             }
