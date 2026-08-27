@@ -514,4 +514,47 @@ Couldn't delete shared/build/intermediates/compile_r_class_jar/debug/generateDeb
 | v1.0 | 2026-08-25 | 未提交工作区 | 对比展开：CompareCard 改为双列并排布局，增加涨跌幅差值条与纯函数计算；“对比/比较”类回答在模型缺少卡片协议时自动补齐对比卡 |
 | v1.0 | 2026-08-25 | 未提交工作区 | 嵌套对话展开：InsightCard 可在卡下创建独立的 AI 深挖分支，分支支持收起、恢复与继续追问，主聊天流保持不变 |
 | v1.0 | 2026-08-25 | 未提交工作区 | Sheet 手势：顶部把手接入纵向拖动，上/下拖动可在 peek、half、full 档位之间切换；仍待真机调校手势阈值与滚动协调 |
+
+## 14. 2026-08-26 · 开发交接文档 v1.0 实施补充
+
+本节以 `08-开发交接文档_v1.0.md` 为准，记录本轮真实实现状态。除非同时具备代码与构建/测试证据，均不标记为“完成”。
+
+### 14.1 本轮已实现并已验证
+
+| 交接项 | 实现位置 | 结果 |
+|---|---|---|
+| 暖灰设计令牌与暗色主题 | `cards/theme/StockChatTheme.kt` | 已统一页面、文字、边框、品牌、涨跌与术语色 token |
+| 顶栏与滚动玻璃态 | `page/ChatPage.kt`、`page/components/AppChrome.kt` | 滚动超过 8dp 后切换玻璃材质；抽屉与归因下钻进入同一材质系统 |
+| 玻璃跨端降级 | `glass/` | 支持实时 Blur、快照与 92% 不透明简化三级；目标端无 Blur 时不伪装为玻璃 |
+| 空会话欢迎页 | `ChatViewModel.kt`、`ChatPage.kt` | 空会话显示三条示例，发送首条消息后隐藏 |
+| 消息流与实体样式 | `ChatPage.kt`、`richtext/EntityRichText.kt` | 用户/AI 消息形态、AI 头像、股票与术语实体颜色、长按预览保持可用 |
+| 行情卡密度 | `StockCardRenderers.kt` | COMPACT 主价格 28px、涨跌箭头和四项关键指标 |
+| 输入区 | `ChatPage.kt` | 多行自适应 TextArea（最高 80dp）；`@` 标的候选与 `/` 指令候选可注入输入框 |
+| 实时/模拟数据 | `ChatPage.kt` | 开关会实际切换到 `MockQuoteProvider`，并清理后重载聊天上下文内的行情 |
+| 编译与单测 | Gradle | `compileKotlinJs` 通过；26 项单测失败/错误均为 0 |
+
+### 14.2 代码存在但必须在目标端验收
+
+| 项目 | 现有实现 | 验收条件 |
+|---|---|---|
+| 抽屉/Context Bar 动效 | Kuikly 过渡、位移和透明度能力已接入 | Android、iOS、H5 分别录屏确认时长、可中断性及与滚动手势无冲突 |
+| 玻璃效果 | 使用 Kuikly `Blur`，并有三档降级 | Android RenderEffect、iOS material、H5 backdrop-filter 分别检查；不支持时核验简化层对比度 |
+| 输入框键盘行为 | 多行输入与平台 send 键已接入 | 验证 Android/iOS 的 Shift+Enter 行为；不同 IME 对该组合键的支持并不一致 |
+| 无障碍朗读 | 普通文本语义与可点击热区已保留 | 需以 TalkBack/VoiceOver 做真实朗读、焦点次序和长按手势测试 |
+
+### 14.3 当前无法仅靠 commonMain 完成的项与处理方式
+
+| 交接项 | 原因 | 当前处理 / 后续接入点 |
+|---|---|---|
+| Esc 关闭抽屉与焦点归还 | Kuikly commonMain 未暴露统一硬件键盘事件和可访问焦点管理 API | H5 在桥接层监听 Escape；Android/iOS 由各自容器桥接 `onBackPressed` / accessibility focus 后调用 `drawerOpen=false` |
+| 全部图标使用内联 SVG | Kuikly 跨端公共 View 层未提供等价、可访问的 SVG stroke 图标组件 | 当前使用统一文字图标占位；后续在 `commonMain/icons` 建立 Canvas/SVG 适配器，再替换导航与抽屉图标 |
+| iOS 与 OHOS 最终验收 | 当前开发机为 Windows，iOS Kotlin/Native 目标已被 Gradle 正常禁用；OHOS 不在本轮运行环境 | 在 macOS/Xcode 和 OHOS SDK 环境执行构建、手势和 VoiceOver/TalkBack 验收后，才可标记跨端完成 |
+| 420ms iOS 弹簧参数逐帧一致 | 公共 Animation API 无法保证三个平台使用相同的原生弹簧曲线 | commonMain 保持状态/时长约束；Android/iOS/H5 容器分别接入原生 spring 后再补视觉基线测试 |
+| 真实多会话历史的跨设备同步 | 现有产品仅声明设备本地会话，不包含账户体系、服务端存储或冲突策略 | 当前抽屉展示本地历史入口；需产品确认账户、保留期限和隐私规则后才能实现真实同步会话仓库 |
+
+### 14.4 交接文档验收结论
+
+- 可在当前工程与开发环境中实现的聊天主页、卡片、输入、数据模式和玻璃降级能力已完成代码接入，并通过 JS 编译与单测。
+- 不能依据当前 Windows/commonMain 环境诚实标记“完成”的项目已在 14.2、14.3 列出；它们不是普通 UI 缺口，而是需要目标端设备或平台桥接的验收/实现工作。
+- 后续接手应先处理 14.3 的桥接项，再进行 Android/iOS/H5 的固定问题集、抽屉、长按、键盘与无障碍录屏验收。
 | v1.0 | 2026-08-25 | 未提交工作区 | 画廊交互验收：卡片画廊接入手风琴、Sheet、归因下钻、嵌套分支等真实交互状态与同一 Sheet 容器；手风琴改为响应式条件渲染并完成真机点验 |
