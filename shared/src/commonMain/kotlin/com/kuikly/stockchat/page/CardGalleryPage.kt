@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.base.BasePager
+import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
@@ -37,11 +38,13 @@ internal class CardGalleryPage : BasePager() {
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
     private var expandedCardKey: String by observable("")
     private var sheetCard: CardModel? by observable(null)
+    private var sheetPresented: Boolean by observable(false)
     private var sheetLevel: SheetLevel by observable(SheetLevel.HALF)
     private var sheetPanStartY = 0f
     private var drilledKeys: ObservableList<String> by observableList()
     private var subThreadCardKey: String by observable("")
     private var subThreadCollapsed: Boolean by observable(false)
+    private var accordionShowcaseExpandedKey: String by observable("")
 
     override fun created() {
         super.created()
@@ -66,19 +69,20 @@ internal class CardGalleryPage : BasePager() {
         )
         return {
             attr { backgroundColor(page.theme.page) }
-            AppTopBar(
-                title = "卡片画廊",
-                subtitle = "独立预览与组件回归",
-                statusBarHeight = page.pagerData.statusBarHeight,
-                theme = page.theme,
-                backLabel = "返回",
-                onBack = { page.closePage() },
-            )
             Scroller {
-                attr { flex(1f); padding(14f); paddingBottom(32f) }
+                attr { flex(1f); padding(14f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(32f) }
+                AccordionShowcase(
+                    quote = quote,
+                    theme = page.theme,
+                    expandedKey = { page.accordionShowcaseExpandedKey },
+                    onToggleExpanded = { key ->
+                        page.accordionShowcaseExpandedKey = if (page.accordionShowcaseExpandedKey == key) "" else key
+                    },
+                )
                 Text {
                     attr {
                         text("同一套模型与渲染器可在聊天、详情和迷你预览中复用。")
+                        marginTop(16f)
                         fontSize(12f)
                         lineHeight(18f)
                         color(page.theme.textSecondary)
@@ -97,17 +101,30 @@ internal class CardGalleryPage : BasePager() {
                         onToggleDrill = { page.toggleDrill(it) },
                         onStartSubThread = { page.openSubThread(it.cardId) },
                         onToggleSubThread = { page.subThreadCollapsed = !page.subThreadCollapsed },
+                        glass = page.hostGlassRenderer,
                     )
                 }
             }
+            AppTopBar(
+                title = "卡片画廊",
+                subtitle = "独立预览与组件回归",
+                statusBarHeight = page.pagerData.statusBarHeight,
+                theme = page.theme,
+                renderer = page.hostGlassRenderer,
+                backLabel = "返回",
+                onBack = { page.closePage() },
+            )
             vif({ page.sheetCard != null }) {
                 page.sheetCard?.let { model ->
                     CardSheetHost(
                         model = model,
                         level = page.sheetLevel,
                         theme = page.theme,
+                        renderer = page.hostGlassRenderer,
+                        presented = page.sheetPresented,
                         viewportHeight = page.pagerData.pageViewHeight,
                         bottomInset = page.pagerData.safeAreaInsets.bottom,
+                        onDismiss = { page.dismissSheet() },
                         onLower = { page.lowerSheet() },
                         onRaise = { page.raiseSheet() },
                         onPan = { state, y -> page.handleSheetPan(state, y) },
@@ -121,7 +138,16 @@ internal class CardGalleryPage : BasePager() {
 
     private fun openSheet(model: CardModel) {
         sheetCard = model
-        sheetLevel = SheetLevel.HALF
+        sheetLevel = if (model.cardType == "stock-chart") SheetLevel.FULL else SheetLevel.HALF
+        sheetPresented = false
+        setTimeout(16) { sheetPresented = true }
+    }
+
+    private fun dismissSheet() {
+        sheetPresented = false
+        setTimeout(420) {
+            if (!sheetPresented) sheetCard = null
+        }
     }
 
     private fun raiseSheet() {
@@ -136,7 +162,7 @@ internal class CardGalleryPage : BasePager() {
         when (sheetLevel) {
             SheetLevel.FULL -> sheetLevel = SheetLevel.HALF
             SheetLevel.HALF -> sheetLevel = SheetLevel.PEEK
-            SheetLevel.PEEK -> sheetCard = null
+            SheetLevel.PEEK -> dismissSheet()
         }
     }
 
@@ -161,6 +187,54 @@ internal class CardGalleryPage : BasePager() {
     }
 }
 
+private fun ViewContainer<*, *>.AccordionShowcase(
+    quote: com.kuikly.stockchat.data.provider.Quote,
+    theme: StockChatTheme,
+    expandedKey: () -> String,
+    onToggleExpanded: (String) -> Unit,
+) {
+    Text {
+        attr {
+            text("手风琴")
+            fontSize(15f)
+            fontWeightSemiBold()
+            color(theme.textPrimary)
+        }
+    }
+    listOf(
+        StockQuoteCardModel(quote, cardId = "accordion-demo:quote"),
+        StockChartCardModel(quote, cardId = "accordion-demo:chart"),
+    ).forEach { model ->
+        val key = "accordion-showcase:${model.cardId}"
+        vif({ expandedKey() == key }) {
+            CardShell(
+                model,
+                CardContext(
+                    theme = theme,
+                    density = CardDensity.COMPACT,
+                    onOpenStock = {},
+                    expanded = true,
+                    onToggleExpanded = { onToggleExpanded(key) },
+                    cardKey = key,
+                ),
+            )
+        }
+        vif({ expandedKey() != key }) {
+            CardShell(
+                model,
+                CardContext(
+                    theme = theme,
+                    density = CardDensity.COMPACT,
+                    onOpenStock = {},
+                    expanded = false,
+                    onToggleExpanded = { onToggleExpanded(key) },
+                    cardKey = key,
+                ),
+            )
+        }
+    }
+}
+
 private fun ViewContainer<*, *>.GalleryCard(
     model: CardModel,
     theme: StockChatTheme,
@@ -173,6 +247,7 @@ private fun ViewContainer<*, *>.GalleryCard(
     onToggleDrill: (String) -> Unit,
     onStartSubThread: (CardModel) -> Unit,
     onToggleSubThread: () -> Unit,
+    glass: com.kuikly.stockchat.glass.GlassRenderer,
 ) {
     Text {
         attr {
@@ -201,10 +276,10 @@ private fun ViewContainer<*, *>.GalleryCard(
                     backgroundColor(theme.surface)
                     borderRadius(theme.cardRadius)
                 }
-                GalleryCardShell(model, theme, density, cardKey, expandedCardKey, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread)
+                GalleryCardShell(model, theme, density, cardKey, expandedCardKey, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread, glass)
             }
         } else {
-            GalleryCardShell(model, theme, density, cardKey, expandedCardKey, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread)
+            GalleryCardShell(model, theme, density, cardKey, expandedCardKey, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread, glass)
         }
         if (model is InsightCardModel && density == CardDensity.COMPACT && subThreadCardKey == model.cardId) {
             GallerySubThread(theme, subThreadCollapsed, onToggleSubThread)
@@ -223,12 +298,13 @@ private fun ViewContainer<*, *>.GalleryCardShell(
     onOpenSheet: (CardModel) -> Unit,
     onToggleDrill: (String) -> Unit,
     onStartSubThread: (CardModel) -> Unit,
+    glass: com.kuikly.stockchat.glass.GlassRenderer,
 ) {
     vif({ expandedCardKey() == cardKey }) {
-        CardShell(model, GalleryCardContext(model, theme, density, cardKey, true, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread))
+        CardShell(model, GalleryCardContext(model, theme, density, cardKey, true, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread, glass))
     }
     vif({ expandedCardKey() != cardKey }) {
-        CardShell(model, GalleryCardContext(model, theme, density, cardKey, false, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread))
+        CardShell(model, GalleryCardContext(model, theme, density, cardKey, false, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread, glass))
     }
 }
 
@@ -243,6 +319,7 @@ private fun GalleryCardContext(
     onOpenSheet: (CardModel) -> Unit,
     onToggleDrill: (String) -> Unit,
     onStartSubThread: (CardModel) -> Unit,
+    glass: com.kuikly.stockchat.glass.GlassRenderer,
 ) = CardContext(
     theme = theme,
     density = density,
@@ -253,6 +330,8 @@ private fun GalleryCardContext(
     drilledKeys = drilledKeys,
     onToggleDrill = onToggleDrill,
     onStartSubThread = onStartSubThread,
+    cardKey = cardKey,
+    glass = glass,
 )
 
 private fun ViewContainer<*, *>.GallerySubThread(theme: StockChatTheme, collapsed: Boolean, onToggle: () -> Unit) {

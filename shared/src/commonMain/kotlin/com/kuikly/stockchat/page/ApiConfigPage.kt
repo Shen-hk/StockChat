@@ -39,18 +39,11 @@ internal class ApiConfigPage : BasePager() {
         val page = this
         return {
             attr { backgroundColor(page.theme.page) }
-            AppTopBar(
-                title = "API 设置",
-                subtitle = "配置仅保存在当前设备",
-                statusBarHeight = page.pagerData.statusBarHeight,
-                theme = page.theme,
-                backLabel = "返回",
-                onBack = { page.closePage() },
-            )
             Scroller {
                 attr {
                     flex(1f)
                     padding(16f)
+                    paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(28f + page.pagerData.safeAreaInsets.bottom)
                 }
                 ConfigSectionTitle("DeepSeek API", "聊天回答将直接调用这里配置的接口。", page.theme)
@@ -187,6 +180,15 @@ internal class ApiConfigPage : BasePager() {
                     event { click { page.clearConfig() } }
                 }
             }
+            AppTopBar(
+                title = "API 设置",
+                subtitle = "配置仅保存在当前设备",
+                statusBarHeight = page.pagerData.statusBarHeight,
+                theme = page.theme,
+                renderer = page.hostGlassRenderer,
+                backLabel = "返回",
+                onBack = { page.closePage() },
+            )
         }
     }
 

@@ -11,6 +11,7 @@ import com.kuikly.stockchat.cards.core.StockChartMode
 import com.kuikly.stockchat.cards.core.StockChartPeriod
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
@@ -58,20 +59,12 @@ internal class StockDetailPage : BasePager() {
         val attribution = CardPayloadParser.parse("attribution", "{\"symbol\":\"${page.quote.symbol}\"}") as AttributionIntent
         return {
             attr { backgroundColor(page.theme.page) }
-            AppTopBar(
-                title = page.quote.name,
-                subtitle = page.quote.symbol,
-                statusBarHeight = page.pagerData.statusBarHeight,
-                theme = page.theme,
-                backLabel = "返回",
-                onBack = { page.closePage() },
-            )
             Scroller {
                 attr {
                     flex(1f)
                     paddingLeft(14f)
                     paddingRight(14f)
-                    paddingTop(14f)
+                    paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(100f)
                 }
                 View {
@@ -97,7 +90,7 @@ internal class StockDetailPage : BasePager() {
                                 }
                             }
                         }
-                        DataModeBadge(page.theme, page.dataModeLabel)
+                        DataModeBadge(page.theme, page.dataModeLabel, page.hostGlassRenderer)
                     }
                     View {
                         attr { marginTop(16f); flexDirectionRow() }
@@ -136,25 +129,25 @@ internal class StockDetailPage : BasePager() {
                 vif({ page.chartMode == StockChartMode.TIMELINE }) {
                     CardShell(
                         StockChartCardModel(page.quote, StockChartMode.TIMELINE, StockChartPeriod.DAY),
-                        CardContext(page.theme, CardDensity.FULL, { }),
+                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
                     )
                 }
                 vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
                     CardShell(
                         StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY),
-                        CardContext(page.theme, CardDensity.FULL, { }),
+                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
                     )
                 }
                 vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK }) {
                     CardShell(
                         StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK),
-                        CardContext(page.theme, CardDensity.FULL, { }),
+                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
                     )
                 }
                 vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH }) {
                     CardShell(
                         StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH),
-                        CardContext(page.theme, CardDensity.FULL, { }),
+                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
                     )
                 }
                 View {
@@ -178,23 +171,31 @@ internal class StockDetailPage : BasePager() {
                 }
                 CardShell(
                     InsightCardModel(page.quote, "短线价格偏弱，资金与板块联动影响较大。中期判断应继续核对现金流、渠道库存和公司公告。"),
-                    CardContext(page.theme, CardDensity.FULL, { }),
+                    CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
                 )
                 CardShell(
                     AttributionCardModel(page.quote, attribution.direction, attribution.factors),
-                    CardContext(page.theme, CardDensity.FULL, { }),
+                    CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
                 )
                 NewsSection(page.theme)
             }
+            AppTopBar(
+                title = page.quote.name,
+                subtitle = page.quote.symbol,
+                statusBarHeight = page.pagerData.statusBarHeight,
+                theme = page.theme,
+                renderer = page.hostGlassRenderer,
+                backLabel = "返回",
+                onBack = { page.closePage() },
+            )
             View {
                 attr {
                     absolutePosition(bottom = 18f + page.pagerData.safeAreaInsets.bottom, left = 72f, right = 72f)
                     height(46f)
                     allCenter()
-                    borderRadius(14f)
-                    backgroundColor(page.theme.brand)
                 }
-                Text { attr { text("回到对话"); fontSize(14f); fontWeightSemiBold(); color(page.theme.onBrand) } }
+                GlassBackdrop(page.theme.glass.peek, page.hostGlassRenderer)
+                Text { attr { text("回到对话"); fontSize(14f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
                 event { click { page.closePage() } }
             }
         }
