@@ -304,13 +304,39 @@ internal class ChatPage : BasePager() {
             }
             View {
                 attr {
-                    // Floating capsule composer: the overlay itself stays
-                    // transparent so the glass material gathers around the
-                    // input controls, mirroring the detached chrome islands.
+                    // Floating capsule composer on a solid page-coloured base:
+                    // the blank area around/below the capsule no longer shows
+                    // scrolled content through.  The extra 3dp top padding
+                    // hosts a feather strip that softens the junction,
+                    // mirroring the top chrome.
                     absolutePosition(bottom = 0f, left = 0f, right = 0f)
+                    paddingTop(3f)
                     paddingLeft(12f)
                     paddingRight(12f)
                     paddingBottom(10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
+                }
+                // 3dp feather at the top junction: content scrolling in from
+                // above fades out instead of hitting a hard edge.
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f)
+                        height(3f)
+                        touchEnable(false)
+                        backgroundLinearGradient(
+                            Direction.TO_BOTTOM,
+                            ColorStop(page.theme.page.opacity(0f), 0f),
+                            ColorStop(page.theme.page, 1f),
+                        )
+                    }
+                }
+                // Solid base covering the capsule backdrop and the floating
+                // blank area below it, down to the screen bottom.
+                View {
+                    attr {
+                        absolutePosition(top = 3f, left = 0f, right = 0f, bottom = 0f)
+                        backgroundColor(page.theme.page)
+                        touchEnable(false)
+                    }
                 }
                 // Two states: a short collapsed bar (＋ / input / 语音 / 拍照, no
                 // send) and the expanded composing bar from the HTML prototype.

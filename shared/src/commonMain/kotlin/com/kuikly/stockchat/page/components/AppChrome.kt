@@ -4,6 +4,8 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.ColorStop
+import com.tencent.kuikly.core.base.Direction
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -33,6 +35,17 @@ fun ViewContainer<*, *>.ChatTopNav(
             absolutePosition(top = 0f, left = 0f, right = 0f)
             height(statusBarHeight + 44f)
             paddingTop(statusBarHeight)
+            // Solid page colour keeps the status bar strip legible; the last
+            // ~3dp fades to transparent so content scrolling underneath
+            // feathers in softly instead of hitting a hard edge.
+            val chromeHeight = statusBarHeight + 44f
+            val featherStart = ((chromeHeight - 3f) / chromeHeight).coerceIn(0f, 1f)
+            backgroundLinearGradient(
+                Direction.TO_BOTTOM,
+                ColorStop(theme.page, 0f),
+                ColorStop(theme.page, featherStart),
+                ColorStop(theme.page.opacity(0f), 1f),
+            )
         }
         View {
             attr {
