@@ -48,7 +48,10 @@ import com.kuikly.stockchat.richtext.EntitySpan
 import com.kuikly.stockchat.richtext.EntityType
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
+import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.ColorStop
+import com.tencent.kuikly.core.base.Direction
 import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
@@ -64,10 +67,13 @@ import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.TextArea
 import com.tencent.kuikly.core.views.TextAreaView
 import com.tencent.kuikly.core.views.Input
+import com.tencent.kuikly.core.views.Canvas
+import com.tencent.kuikly.core.views.CanvasContext
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.ScrollerView
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import kotlin.math.PI
 
 @Page(Routes.CHAT, supportInLocal = true)
 internal class ChatPage : BasePager() {
@@ -90,9 +96,10 @@ internal class ChatPage : BasePager() {
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
-    // The home navigation is an L3 Sheet surface at every scroll position.
-    private var glassNav: Boolean by observable(true)
     private var inputPanel: InputPanel by observable(InputPanel.NONE)
+    private var inputFocused: Boolean by observable(false)
+    // Composer extras: voice input mock state.
+    private var voiceActive: Boolean by observable(false)
     private var expandedCardKey: String by observable("")
     private var focusedCardKey: String by observable("")
     private var compareCandidateKey: String by observable("")
@@ -210,12 +217,10 @@ internal class ChatPage : BasePager() {
                 statusBarHeight = page.pagerData.statusBarHeight,
                 theme = page.theme,
                 drawerOpen = page.drawerOpen,
-                glass = page.glassNav,
                 liveData = page.liveDataMode,
                 renderer = page.glassRenderer,
                 contextTitle = if (page.drilledKeys.isNotEmpty()) "归因链 · 资金面 ›" else null,
                 onMenu = { page.drawerOpen = !page.drawerOpen },
-                onHistory = { page.drawerOpen = true },
                 onNewChat = { page.viewModel.clear(); page.keepChatAtBottomTemporarily() },
             )
             vif({ page.ambiguousSymbols.isNotEmpty() }) {
@@ -299,86 +304,181 @@ internal class ChatPage : BasePager() {
             }
             View {
                 attr {
-                    // The composer is an overlay, not a flex sibling.  This is
-                    // essential for a real backdrop: messages must remain
-                    // behind this material while the conversation scrolls.
+                    // Floating capsule composer: the overlay itself stays
+                    // transparent so the glass material gathers around the
+                    // input controls, mirroring the detached chrome islands.
                     absolutePosition(bottom = 0f, left = 0f, right = 0f)
-                    padding(12f)
-                    paddingBottom(12f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
+                    paddingLeft(12f)
+                    paddingRight(12f)
+                    paddingBottom(10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
                 }
-                GlassBackdrop(page.theme.glass.sheet, page.glassRenderer)
-                RecentSymbolRow(page.theme) { text -> page.injectQuestion(text) }
-                vif({ page.inputPanel != InputPanel.NONE }) {
-                    InputAssistantRow(page.inputPanel, page.theme) { value -> page.injectQuestion(value) }
-                }
+                // Two states: a short collapsed bar (＋ / input / 语音 / 拍照, no
+                // send) and the expanded composing bar from the HTML prototype.
+                // The glass remains transparent. Its gradient rim is painted
+                // above it, rather than used as a coloured background beneath it.
                 View {
                     attr {
-                        flexDirectionRow()
-                        alignItemsFlexEnd()
-                        marginTop(8f)
+                        borderRadius(26f)
+                        paddingTop(9f)
+                        paddingBottom(9f)
+                        paddingLeft(10f)
+                        paddingRight(10f)
                     }
-                    View {
-                        attr {
-                            flex(1f)
-                            minHeight(44f)
-                            paddingLeft(16f)
-                            paddingRight(8f)
-                            backgroundColor(page.theme.surfaceMuted)
-                            borderRadius(page.theme.inputRadius)
-                            justifyContentCenter()
+                    GlassBackdrop(page.theme.glass.sheet, page.glassRenderer)
+                        vif({ page.isComposerExpanded() }) {
+                            RecentSymbolRow(page.theme) { text -> page.injectQuestion(text) }
                         }
-                        TextArea {
-                            ref { page.inputRef = it }
-                            attr {
-                                minHeight(40f)
-                                maxHeight(80f)
-                                fontSize(14f)
-                                lineHeight(21f)
-                                color(page.theme.textPrimary)
-                                placeholder("问一只股票或一个术语")
-                                placeholderColor(page.theme.textTertiary)
-                                returnKeyTypeSend()
-                            }
-                            event {
-                                textDidChange {
-                                    page.viewModel.inputText = it.text
-                                    page.updateInputPanel(it.text)
+                        vif({ page.isComposerExpanded() && page.inputPanel != InputPanel.NONE }) {
+                            InputAssistantRow(page.inputPanel, page.theme) { value -> page.injectQuestion(value) }
+                        }
+                        vif({ !page.isComposerExpanded() }) {
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    marginTop(8f)
                                 }
-                                keyboardHeightChange {
-                                    page.keyboardHeight = it.height
-                                    page.scheduleScrollChatToBottom()
+                                View {
+                                    attr {
+                                        size(32f, 32f)
+                                        marginRight(7f)
+                                        allCenter()
+                                        borderRadius(16f)
+                                        backgroundColor(page.theme.surfaceMuted)
+                                    }
+                                    Text { attr { text("＋"); fontSize(15f); color(page.theme.textSecondary) } }
                                 }
-                                inputReturn {
-                                    page.submitInput()
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        height(44f)
+                                        paddingLeft(12f)
+                                        paddingRight(12f)
+                                        justifyContentCenter()
+                                        borderRadius(16f)
+                                        backgroundColor(Color(0xFFFFFFFF, 0f))
+                                    }
+                                    page.renderComposerTextArea(this)
+                                    event { click { page.expandComposer(requestFocus = true) } }
+                                }
+                                View {
+                                    attr {
+                                        size(32f, 32f)
+                                        marginLeft(7f)
+                                        allCenter()
+                                        borderRadius(16f)
+                                        backgroundColor(if (page.voiceActive) page.theme.rise else page.theme.surfaceMuted)
+                                    }
+                                    Text {
+                                        attr {
+                                            text(if (page.voiceActive) "●" else "🎙")
+                                            fontSize(if (page.voiceActive) 11f else 13f)
+                                            color(if (page.voiceActive) Color(0xFFFFFFFF) else page.theme.textSecondary)
+                                        }
+                                    }
+                                    event { click { page.voiceActive = !page.voiceActive } }
+                                }
+                                View {
+                                    attr {
+                                        size(32f, 32f)
+                                        marginLeft(7f)
+                                        allCenter()
+                                        borderRadius(16f)
+                                        backgroundColor(page.theme.surfaceMuted)
+                                    }
+                                    Text { attr { text("📷"); fontSize(14f); color(page.theme.textSecondary) } }
                                 }
                             }
                         }
-                    }
-                    View {
-                        attr {
-                            marginLeft(8f)
-                            size(36f, 36f)
-                            allCenter()
-                            borderRadius(18f)
-                            backgroundColor(if (page.viewModel.inputText.isBlank() && page.viewModel.streamState != StreamState.STREAMING) page.theme.divider else page.theme.brand)
-                        }
-                        Text {
-                            attr {
-                                text(if (page.viewModel.streamState == StreamState.STREAMING) "■" else "↑")
-                                fontSize(17f)
-                                fontWeightSemiBold()
-                                color(page.theme.onBrand)
+                        vif({ page.isComposerExpanded() }) {
+                            View {
+                                attr {
+                                    minHeight(44f)
+                                    paddingLeft(12f)
+                                    paddingRight(12f)
+                                    justifyContentCenter()
+                                    borderRadius(16f)
+                                    backgroundColor(Color(0xFFFFFFFF, 0f))
+                                }
+                                page.renderComposerTextArea(this)
+                                event { click { page.expandComposer(requestFocus = true) } }
+                            }
+                            View {
+                                attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
+                                View {
+                                    attr {
+                                        size(40f, 40f)
+                                        allCenter()
+                                        borderRadius(20f)
+                                        backgroundColor(page.theme.brandSoft)
+                                    }
+                                    Text { attr { text("@"); fontSize(16f); fontWeightSemiBold(); color(page.theme.brand) } }
+                                }
+                                View {
+                                    attr {
+                                        size(40f, 40f)
+                                        marginLeft(8f)
+                                        allCenter()
+                                        borderRadius(20f)
+                                        backgroundColor(page.theme.brandSoft)
+                                    }
+                                    Text { attr { text("/"); fontSize(16f); fontWeightSemiBold(); color(page.theme.brand) } }
+                                }
+                                View { attr { flex(1f) } }
+                                View {
+                                    attr {
+                                        size(40f, 40f)
+                                        marginRight(6f)
+                                        allCenter()
+                                        borderRadius(20f)
+                                        backgroundColor(if (page.voiceActive) page.theme.rise else page.theme.surfaceMuted)
+                                    }
+                                    Text {
+                                        attr {
+                                            text(if (page.voiceActive) "●" else "🎙")
+                                            fontSize(if (page.voiceActive) 11f else 13f)
+                                            color(if (page.voiceActive) Color(0xFFFFFFFF) else page.theme.textSecondary)
+                                        }
+                                    }
+                                    event { click { page.voiceActive = !page.voiceActive } }
+                                }
+                                View {
+                                    attr {
+                                        size(40f, 40f)
+                                        marginRight(4f)
+                                        allCenter()
+                                        borderRadius(20f)
+                                        backgroundColor(page.theme.surfaceMuted)
+                                    }
+                                    Text { attr { text("📷"); fontSize(14f); color(page.theme.textSecondary) } }
+                                }
+                                View {
+                                    attr {
+                                        size(44f, 44f)
+                                        allCenter()
+                                        borderRadius(22f)
+                                        backgroundColor(if (page.viewModel.streamState == StreamState.STREAMING) page.theme.divider else page.theme.brand)
+                                        boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
+                                    }
+                                    Text {
+                                        attr {
+                                            text(if (page.viewModel.streamState == StreamState.STREAMING) "■" else "↑")
+                                            fontSize(18f)
+                                            fontWeightSemiBold()
+                                            color(page.theme.onBrand)
+                                        }
+                                    }
+                                    event {
+                                        click {
+                                            if (page.viewModel.streamState == StreamState.STREAMING) page.viewModel.stop()
+                                            else page.submitInput()
+                                        }
+                                    }
+                                }
                             }
                         }
-                        event {
-                            click {
-                                if (page.viewModel.streamState == StreamState.STREAMING) page.viewModel.stop()
-                                else page.submitInput()
-                            }
-                        }
-                    }
+                    page.renderComposerGradientRim(this)
                 }
-                Text { attr { text("@ 标的联想 · / 指令面板 · 回车发送 · Shift+回车换行"); marginTop(7f); fontSize(10f); color(page.theme.textTertiary) } }
             }
             vif({ page.sheetCard != null }) {
                 page.sheetCard?.let { model ->
@@ -421,7 +521,111 @@ internal class ChatPage : BasePager() {
         viewModel.send(value)
         if (value.isNotBlank()) {
             inputRef.view?.setText("")
+            inputFocused = false
             keepChatAtBottomTemporarily()
+        }
+    }
+
+    private fun expandComposer(requestFocus: Boolean = false) {
+        inputFocused = true
+        voiceActive = false
+        if (requestFocus) inputRef.view?.focus()
+    }
+
+    /** Reads observable state inside each vif predicate so Kuikly can re-render it. */
+    private fun isComposerExpanded(): Boolean =
+        inputFocused || viewModel.inputText.isNotBlank() || keyboardHeight > 0f
+
+    private fun renderComposerGradientRim(container: ViewContainer<*, *>) {
+        container.Canvas(
+            init = {
+                attr {
+                    absolutePositionAllZero()
+                    touchEnable(false)
+                    zIndex(10, useOutline = false)
+                }
+            },
+            draw = { context, width, height ->
+                val gradient = context.createLinearGradient(0f, 0f, width, 0f)
+                gradient.addColorStop(0f, Color(0xFF2563EB, 0.72f))
+                gradient.addColorStop(0.45f, Color(0xFF7C3AED, 0.50f))
+                gradient.addColorStop(1f, Color(0xFF2DD4BF, 0.68f))
+
+                // Fill only the difference between two concentric rounded
+                // rectangles. A single clipped ring gives straight edges and
+                // corners exactly the same 1dp thickness.
+                context.save()
+                drawComposerRoundedRect(context, width, height, inset = 0f, cornerRadius = 26f)
+                context.clipPathIntersect()
+                drawComposerRoundedRect(context, width, height, inset = 1f, cornerRadius = 25f)
+                context.clipPathDifference()
+                drawComposerRoundedRect(context, width, height, inset = 0f, cornerRadius = 26f)
+                context.fillStyle(gradient)
+                context.fill()
+                context.restore()
+            },
+        )
+    }
+
+    private fun drawComposerRoundedRect(
+        context: CanvasContext,
+        width: Float,
+        height: Float,
+        inset: Float,
+        cornerRadius: Float,
+    ) {
+        val radius = minOf(cornerRadius, (width / 2f - inset).coerceAtLeast(0f), (height / 2f - inset).coerceAtLeast(0f))
+        context.beginPath()
+        context.moveTo(inset + radius, inset)
+        context.lineTo(width - inset - radius, inset)
+        context.arc(width - inset - radius, inset + radius, radius, (-PI / 2).toFloat(), 0f, false)
+        context.lineTo(width - inset, height - inset - radius)
+        context.arc(width - inset - radius, height - inset - radius, radius, 0f, (PI / 2).toFloat(), false)
+        context.lineTo(inset + radius, height - inset)
+        context.arc(inset + radius, height - inset - radius, radius, (PI / 2).toFloat(), PI.toFloat(), false)
+        context.lineTo(inset, inset + radius)
+        context.arc(inset + radius, inset + radius, radius, PI.toFloat(), (PI * 1.5f).toFloat(), false)
+        context.closePath()
+    }
+
+    private fun renderComposerTextArea(container: ViewContainer<*, *>) {
+        container.TextArea {
+            ref { this@ChatPage.inputRef = it }
+            attr {
+                minHeight(40f)
+                maxHeight(80f)
+                fontSize(14f)
+                lineHeight(21f)
+                color(this@ChatPage.theme.textPrimary)
+                backgroundColor(Color(0xFFFFFFFF, 0f))
+                text(this@ChatPage.viewModel.inputText)
+                placeholder("问一只股票或一个术语")
+                placeholderColor(this@ChatPage.theme.textTertiary)
+                returnKeyTypeSend()
+                autofocus(this@ChatPage.inputFocused || this@ChatPage.keyboardHeight > 0f)
+            }
+            event {
+                inputFocus {
+                    this@ChatPage.expandComposer()
+                }
+                inputBlur {
+                    // Do not collapse on blur alone: switching from the
+                    // collapsed input to the expanded input remounts TextArea
+                    // and may emit a transient blur before the keyboard event.
+                }
+                textDidChange {
+                    this@ChatPage.viewModel.inputText = it.text
+                    this@ChatPage.updateInputPanel(it.text)
+                }
+                keyboardHeightChange {
+                    this@ChatPage.keyboardHeight = it.height
+                    this@ChatPage.inputFocused = it.height > 0f
+                    this@ChatPage.scheduleScrollChatToBottom()
+                }
+                inputReturn {
+                    this@ChatPage.submitInput()
+                }
+            }
         }
     }
 
@@ -881,50 +1085,55 @@ private fun ViewContainer<*, *>.ChatMessageView(
     View {
         attr {
             marginTop(20f)
-            if (user) alignItemsFlexEnd() else alignItemsFlexStart()
+            if (user) alignItemsFlexEnd()
         }
         View {
             attr {
-                if (user) marginLeft(58f) else marginRight(4f)
-                if (!user) flexDirectionRow()
-                if (user) { paddingTop(10f); paddingBottom(10f); paddingLeft(16f); paddingRight(16f); backgroundColor(theme.brand); borderRadius(20f) }
+                if (user) {
+                    marginLeft(58f)
+                    marginRight(2f)
+                    paddingTop(10f)
+                    paddingBottom(10f)
+                    paddingLeft(16f)
+                    paddingRight(16f)
+                    backgroundColor(theme.brand)
+                    borderRadius(20f)
+                } else {
+                    // No avatar: the AI message spans the row with symmetric
+                    // margins so the left and right insets always match.
+                    marginLeft(6f)
+                    marginRight(6f)
+                }
             }
             if (user) {
                 Text { attr { text(message.content); fontSize(14f); lineHeight(21f); color(theme.onBrand) } }
             } else {
-                View {
-                    attr { size(36f, 36f); marginRight(10f); allCenter(); backgroundColor(theme.brand); borderRadius(10f) }
-                    Text { attr { text("AI"); fontSize(12f); fontWeightBold(); color(theme.onBrand) } }
+                vif({ message.streaming }) {
+                    View {
+                    Text {
+                        attr {
+                            text(message.content)
+                            fontSize(14f)
+                            lineHeight(21f)
+                            color(theme.textSecondary)
+                        }
+                    }
+                    }
                 }
-                View {
-                    attr { flex(1f) }
-                    vif({ message.streaming }) {
-                        View {
+                vif({ !message.streaming }) {
+                    View {
+                    try {
+                        AssistantContent(message, theme, contextSymbols, suggestionsActive, onEntityStock, onEntityStockLongPress, onCardStock, onTerm, onSuggestion, onRetry, onQuoteNeeded, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, drilledKeys, onToggleDrill, subThreads, onStartSubThread, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
+                    } catch (error: Throwable) {
                         Text {
                             attr {
-                                text(message.content)
-                                fontSize(14f)
-                                lineHeight(21f)
+                                text("结构化内容暂时无法展示：${error.message.orEmpty()}")
+                                fontSize(12f)
+                                lineHeight(18f)
                                 color(theme.textSecondary)
                             }
                         }
-                        }
                     }
-                    vif({ !message.streaming }) {
-                        View {
-                        try {
-                            AssistantContent(message, theme, contextSymbols, suggestionsActive, onEntityStock, onEntityStockLongPress, onCardStock, onTerm, onSuggestion, onRetry, onQuoteNeeded, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, drilledKeys, onToggleDrill, subThreads, onStartSubThread, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
-                        } catch (error: Throwable) {
-                            Text {
-                                attr {
-                                    text("结构化内容暂时无法展示：${error.message.orEmpty()}")
-                                    fontSize(12f)
-                                    lineHeight(18f)
-                                    color(theme.textSecondary)
-                                }
-                            }
-                        }
-                        }
                     }
                 }
             }

@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chat 输入栏预览 - 不展开态 / 展开态</title>
+<style>
+  :root {
+    --grad-1: #2563EB;
+    --grad-2: #7C3AED;
+    --grad-3: #2DD4BF;
+    --brand: #2563EB;
+    --brand-soft: #EFF6FF;
+    --surface-muted: #F1F1EF;
+    --text-1: #1D1D1F;
+    --text-2: #6E6E73;
+    --text-3: #AEAEB2;
+    --t-fast: 180ms;
+    --t-base: 280ms;
+    --ease: cubic-bezier(.22,.61,.36,1);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+    background: #111114; color: #fff;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 28px 12px 48px;
+  }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: #8E8E93; margin-bottom: 18px; }
+  .toggles { display: flex; gap: 8px; margin-bottom: 22px; }
+  .toggles button {
+    border: 1px solid #363638; background: #1D1D1F; color: #C7C7CC;
+    font-size: 13px; padding: 8px 16px; border-radius: 999px; cursor: pointer;
+    transition: all .25s ease;
+  }
+  .toggles button.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+
+  .phone {
+    width: 360px; max-width: 92vw; height: 680px;
+    background: linear-gradient(160deg, #20222b, #15161a);
+    border-radius: 40px; padding: 14px; border: 1px solid #2a2a30;
+    box-shadow: 0 30px 80px rgba(0,0,0,.5); position: relative; overflow: hidden;
+  }
+  .statusbar {
+    height: 30px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 18px; font-size: 12px; color: #C7C7CC;
+  }
+  .chat {
+    position: absolute; left: 14px; right: 14px; top: 50px; bottom: 14px;
+    display: flex; flex-direction: column; justify-content: flex-end;
+  }
+  .bubble {
+    max-width: 78%; background: #fff; color: var(--text-1);
+    padding: 10px 14px; border-radius: 18px 18px 18px 4px;
+    font-size: 13px; line-height: 1.5; margin-bottom: 12px; align-self: flex-start;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+  }
+
+  /* ===== Composer（masked 渐变环，内里不串色） ===== */
+  .composer-wrap {
+    position: absolute; left: 14px; right: 14px; bottom: 14px; padding: 10px;
+  }
+  .composer {
+    position: relative; border-radius: 28px; padding: 1.5px; background: transparent;
+  }
+  .composer::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px;
+    background: linear-gradient(90deg, var(--grad-1), var(--grad-2), var(--grad-3));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* 毛玻璃胶囊：内部用 flex-wrap 实现「不展开一行 / 展开两行」 */
+  .bar {
+    position: relative; border-radius: 26.5px;
+    background: rgba(255,255,255,0.60);
+    backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    padding: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    overflow: hidden; transition: padding var(--t-base) var(--ease);
+  }
+
+  /* 最近标的（仅展开态，整行显示） */
+  .recent {
+    display: none; order: 0; flex: 0 0 100%; gap: 7px; overflow: hidden;
+  }
+  .recent .chip {
+    flex: 0 0 auto; height: 26px; display: flex; align-items: center;
+    padding: 0 10px; border-radius: 13px; background: var(--surface-muted);
+    font-size: 11px; color: var(--text-2);
+  }
+  body.expanded .recent { display: flex; margin-bottom: 8px; }
+
+  /* 输入框：不展开=随行填充；展开=flex-basis 100% 独占一行（加宽观感） */
+  .input-wrap {
+    order: 2; flex: 1 1 0%; min-width: 0;
+    display: flex; align-items: center;
+    background: rgba(255,255,255,0.85);
+    border-radius: 16px; padding: 0 12px; height: 44px;
+    transition: flex-basis var(--t-base) var(--ease), background var(--t-base) var(--ease);
+  }
+  body.expanded .input-wrap { flex-basis: 100%; }
+  .input {
+    flex: 1; border: none; outline: none; background: transparent;
+    font-size: 14px; color: var(--text-1); padding: 0; min-width: 0;
+  }
+  .input::placeholder { color: var(--text-3); }
+
+  /* 圆形按钮基线（＋ / 语音 / 拍照） */
+  .circle {
+    width: 40px; height: 40px; flex: 0 0 auto; border-radius: 20px;
+    background: var(--surface-muted); display: flex; align-items: center; justify-content: center;
+    font-size: 15px; color: var(--text-2); border: none; cursor: pointer;
+    transition: transform var(--t-fast) ease, background var(--t-fast) ease,
+                opacity var(--t-fast) ease, width var(--t-base) var(--ease);
+  }
+  .circle:active { transform: scale(.92); }
+
+  /* 工具药丸（@ /） */
+  .tool {
+    width: 40px; height: 40px; flex: 0 0 auto; border-radius: 20px;
+    background: var(--brand-soft); color: var(--brand);
+    font-size: 16px; font-weight: 600; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transform: translateX(-8px) scale(.7); width: 0; pointer-events: none;
+    transition: opacity var(--t-fast) ease, transform var(--t-base) var(--ease),
+                width var(--t-base) var(--ease);
+  }
+  .tool:active { transform: scale(.94); }
+
+  /* 发送：从右滑入 */
+  .send {
+    width: 44px; height: 44px; flex: 0 0 auto; border-radius: 22px;
+    background: var(--brand); color: #fff; font-size: 18px; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 3px 8px rgba(37,99,235,.35);
+    opacity: 0; transform: translateX(20px) scale(.6); width: 0; pointer-events: none;
+    transition: opacity var(--t-fast) ease, transform var(--t-base) var(--ease),
+                width var(--t-base) var(--ease), box-shadow var(--t-fast) ease;
+  }
+  .send:active { transform: scale(.94); }
+
+  /* 占位弹簧：仅展开态把右侧按钮顶到最右 */
+  .spacer { order: 5; flex: 0 0 0; width: 0; }
+
+  /* ===== 排序 ===== */
+  .plus  { order: 1; }
+  .at    { order: 3; }
+  .slash { order: 4; }
+  .voice { order: 6; }
+  .camera{ order: 7; }
+  .send  { order: 8; }
+
+  /* ===== 状态机 ===== */
+  /* 不展开态：＋ / 语音 / 拍照 可见；@ / 发送 收起（width:0） */
+  .at, .slash, .send { opacity: 0; transform: translateX(-8px) scale(.7); width: 0; pointer-events: none; }
+  .send { transform: translateX(20px) scale(.6); }
+  .voice, .camera { opacity: 1; width: 40px; transform: none; pointer-events: auto; }
+
+  /* 展开态：＋ 收起；@ / 出现；语音/拍照左移；发送滑入 */
+  body.expanded .plus  { opacity: 0; transform: scale(.6); width: 0; pointer-events: none; }
+  body.expanded .at,
+  body.expanded .slash { opacity: 1; transform: none; width: 40px; pointer-events: auto; }
+  body.expanded .spacer { flex: 1 1 0; }
+  body.expanded .voice,
+  body.expanded .camera { transform: translateX(-6px); }
+  body.expanded .send  { opacity: 1; transform: none; width: 44px; pointer-events: auto; }
+
+  .note { margin-top: 22px; font-size: 12px; color: #8E8E93; max-width: 360px; line-height: 1.6; }
+  .note b { color: #C7C7CC; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition-duration: 0ms !important; } }
+</style>
+</head>
+<body class="collapsed">
+  <h1>Chat 输入栏 · 液态玻璃（修正版 v2）</h1>
+  <div class="sub">不展开态（单行 / 按钮内嵌）· 展开态（输入独占一行 + 底部工具栏）</div>
+
+  <div class="toggles">
+    <button id="b-collapse" class="active" onclick="setState('collapsed')">不展开态</button>
+    <button id="b-expand" onclick="setState('expanded')">展开态</button>
+  </div>
+
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span><span>📶 🔋</span></div>
+    <div class="chat">
+      <div class="bubble">你好，我是你的选股助手，问一只股票或术语试试 👇</div>
+    </div>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="bar">
+
+          <!-- 最近标的（仅展开态） -->
+          <div class="recent">
+            <div class="chip">📍 贵州茅台</div>
+            <div class="chip">五粮液</div>
+            <div class="chip">上证指数</div>
+            <div class="chip">+ 添加关注</div>
+          </div>
+
+          <!-- ＋（不展开态左侧） -->
+          <button class="circle plus" aria-label="添加">＋</button>
+
+          <!-- 输入框 -->
+          <div class="input-wrap">
+            <input class="input" id="ta" placeholder="问一只股票或一个术语" />
+          </div>
+
+          <!-- @ /（展开态左下） -->
+          <button class="tool at" aria-label="提及标的">@</button>
+          <button class="tool slash" aria-label="指令面板">/</button>
+
+          <!-- 弹簧占位（展开态顶右） -->
+          <div class="spacer"></div>
+
+          <!-- 语音 / 拍照 / 发送（右侧簇） -->
+          <button class="circle voice" id="voice" aria-label="语音输入">🎙</button>
+          <button class="circle camera" id="cam" aria-label="拍照">📷</button>
+          <button class="send" id="send" aria-label="发送">↑</button>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note">
+    <b>不展开态（单行）：</b>一个胶囊内 <b>＋</b> | 输入框 | <b>🎙 语音</b> | <b>📷 拍照</b>，按钮内嵌在输入栏里，无 @ / 、无发送。<br/>
+    <b>展开态：</b>出现最近标的行；输入框 <b>独占一行（加宽）</b>；底部工具栏左下 <b>@</b> + <b>/</b>、右下 <b>🎙 语音</b> + <b>📷 拍照</b> + <b>↑ 发送</b>（发送从右滑入、语音/拍照左移让位）。已移除模型选择。<br/>
+    <b>渐变边框：</b>masked ring，内里不再串色。
+  </div>
+
+<script>
+  function setState(s) {
+    document.body.classList.remove('collapsed', 'expanded');
+    document.body.classList.add(s);
+    document.getElementById('b-collapse').classList.toggle('active', s === 'collapsed');
+    document.getElementById('b-expand').classList.toggle('active', s === 'expanded');
+    const ta = document.getElementById('ta');
+    if (s === 'expanded') { ta.value = '贵州茅台最近怎么看'; ta.placeholder = ''; }
+    else { ta.value = ''; ta.placeholder = '问一只股票或一个术语'; }
+  }
+</script>
+</body>
+</html>

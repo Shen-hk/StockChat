@@ -8,17 +8,21 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
-/** The compact, conversation-first chrome used by ChatHome. */
+/**
+ * The compact, conversation-first chrome used by ChatHome.
+ *
+ * The liquid glass is detached: instead of one full-width bar, each live
+ * control carries its own floating glass island so the material gathers
+ * around the controls themselves.
+ */
 fun ViewContainer<*, *>.ChatTopNav(
     statusBarHeight: Float,
     theme: StockChatTheme,
     drawerOpen: Boolean,
-    glass: Boolean,
     liveData: Boolean,
     renderer: GlassRenderer = GlassRenderer.Default,
     contextTitle: String? = null,
     onMenu: () -> Unit,
-    onHistory: () -> Unit,
     onNewChat: () -> Unit,
 ) {
     View {
@@ -29,48 +33,54 @@ fun ViewContainer<*, *>.ChatTopNav(
             absolutePosition(top = 0f, left = 0f, right = 0f)
             height(statusBarHeight + 44f)
             paddingTop(statusBarHeight)
-            if (!(glass || drawerOpen || contextTitle != null)) backgroundColor(theme.page)
         }
-        if (glass || drawerOpen || contextTitle != null) GlassBackdrop(theme.glass.sheet, renderer)
         View {
             attr {
                 height(44f)
-                paddingLeft(8f)
-                paddingRight(8f)
+                paddingLeft(10f)
+                paddingRight(10f)
                 flexDirectionRow()
                 alignItemsCenter()
             }
             View {
-                attr { size(40f, 40f); allCenter(); borderRadius(12f); backgroundColor(if (drawerOpen) theme.surfaceMuted else theme.page) }
+                attr { size(40f, 40f); allCenter(); borderRadius(20f) }
+                GlassBackdrop(theme.glass.peek, renderer)
                 Text { attr { text(if (drawerOpen) "×" else "☰"); fontSize(22f); color(theme.textPrimary) } }
                 event { click { onMenu() } }
             }
             View {
-                attr { flex(1f); flexDirectionRow(); alignItemsCenter() }
-                Text {
-                    attr {
-                        text(contextTitle ?: "StockChat.")
-                        fontSize(if (contextTitle == null) 17f else 15f)
-                        fontWeightBold()
-                        color(if (contextTitle == null) theme.textPrimary else theme.textSecondary)
-                    }
-                }
+                attr { flex(1f); flexDirectionRow(); justifyContentCenter() }
                 View {
                     attr {
-                        size(5f, 5f)
-                        marginLeft(7f)
-                        borderRadius(3f)
-                        backgroundColor(if (liveData) Color(0xFF34C759) else theme.textTertiary)
+                        height(36f)
+                        paddingLeft(14f)
+                        paddingRight(14f)
+                        flexDirectionRow()
+                        alignItemsCenter()
+                        borderRadius(18f)
+                    }
+                    GlassBackdrop(theme.glass.peek, renderer)
+                    Text {
+                        attr {
+                            text(contextTitle ?: "StockChat.")
+                            fontSize(if (contextTitle == null) 15f else 13f)
+                            fontWeightBold()
+                            color(if (contextTitle == null) theme.textPrimary else theme.textSecondary)
+                        }
+                    }
+                    View {
+                        attr {
+                            size(5f, 5f)
+                            marginLeft(7f)
+                            borderRadius(3f)
+                            backgroundColor(if (liveData) Color(0xFF34C759) else theme.textTertiary)
+                        }
                     }
                 }
             }
             View {
-                attr { size(40f, 40f); allCenter(); borderRadius(12f) }
-                Text { attr { text("◷"); fontSize(21f); color(theme.textSecondary) } }
-                event { click { onHistory() } }
-            }
-            View {
-                attr { size(40f, 40f); allCenter(); borderRadius(12f) }
+                attr { size(40f, 40f); allCenter(); borderRadius(20f) }
+                GlassBackdrop(theme.glass.peek, renderer)
                 Text { attr { text("＋"); fontSize(23f); color(theme.brand) } }
                 event { click { onNewChat() } }
             }
