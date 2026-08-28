@@ -13,6 +13,7 @@ import com.tencent.kuikly.core.reactive.handler.observableList
 
 class ChatViewModel(override val pagerId: String) : PagerScope {
     var messages: ObservableList<ChatMessage> by observableList()
+    var sessionSummaries: ObservableList<ChatSessionSummary> by observableList()
     var inputText: String by observable("")
     var streamState: StreamState by observable(StreamState.IDLE)
     var apiConfigured: Boolean by observable(false)
@@ -22,15 +23,15 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
     private var aiProvider: AiProvider? = null
     private var subThreadProvider: AiProvider? = null
     private var cardRepairProvider: AiProvider? = null
+    var activeSessionId: String by observable("")
+        private set
     private var nextId = 1
 
     init {
         refreshConfigStatus()
-        val restored = sessionStore.load()
-        restored.forEach { item ->
-            messages.add(ChatMessage(pagerId, item.id.ifEmpty { newId() }, item.role, item.content, failed = item.failed, cancelled = item.cancelled))
-        }
-        nextId = maxOf(nextId, messages.size + 1)
+        activeSessionId = sessionStore.activeSessionId()
+        restoreMessages(sessionStore.load(activeSessionId))
+        refreshSessionSummaries()
     }
 
     fun send(question: String = inputText) {
@@ -114,6 +115,29 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         persist()
     }
 
+    fun startNewChat() {
+        stop()
+        if (messages.isNotEmpty()) {
+            activeSessionId = sessionStore.startSession()
+        }
+        messages.clear()
+        inputText = ""
+        streamState = StreamState.IDLE
+        nextId = 1
+        refreshSessionSummaries()
+    }
+
+    fun openSession(sessionId: String) {
+        if (sessionId.isBlank() || sessionId == activeSessionId) return
+        stop()
+        activeSessionId = sessionId
+        messages.clear()
+        restoreMessages(sessionStore.load(sessionId))
+        inputText = ""
+        streamState = StreamState.IDLE
+        refreshSessionSummaries()
+    }
+
     fun refreshConfigStatus() {
         apiConfigured = configStore.load().validationError() == null
     }
@@ -189,7 +213,22 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         )
     }
 
-    private fun persist() = sessionStore.save(messages)
+    private fun persist() {
+        sessionStore.save(activeSessionId, messages)
+        refreshSessionSummaries()
+    }
+
+    private fun refreshSessionSummaries() {
+        sessionSummaries.clear()
+        sessionSummaries.addAll(sessionStore.listSummaries())
+    }
+
+    private fun restoreMessages(restored: List<StoredChatMessage>) {
+        restored.forEach { item ->
+            messages.add(ChatMessage(pagerId, item.id.ifEmpty { newId() }, item.role, item.content, failed = item.failed, cancelled = item.cancelled))
+        }
+        nextId = nextMessageId(messages)
+    }
 
     private fun buildCardRetryPrompt(messageIndex: Int, cardType: String, rawCard: String): String {
         val question = previousUserQuestion(messageIndex)
@@ -232,5 +271,8 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         messages.take(messageIndex).lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
 
     private fun newId(): String = "m${nextId++}"
+
+    private fun nextMessageId(messages: List<ChatMessage>): Int =
+        (messages.mapNotNull { it.id.removePrefix("m").toIntOrNull() }.maxOrNull() ?: 0) + 1
 
 }

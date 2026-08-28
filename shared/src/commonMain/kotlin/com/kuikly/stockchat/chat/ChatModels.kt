@@ -21,3 +21,11 @@ class ChatMessage(
 }
 
 enum class StreamState { IDLE, STREAMING, STOPPED, ERROR }
+
+data class ChatSessionSummary(
+    val id: String,
+    val title: String,
+    val preview: String,
+    val updatedAtMillis: Long,
+    val groupTitle: String,
+)

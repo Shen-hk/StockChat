@@ -236,7 +236,7 @@ internal class ChatPage : BasePager() {
                 renderer = page.glassRenderer,
                 contextTitle = if (page.drilledKeys.isNotEmpty()) "归因链 · 资金面 ›" else null,
                 onMenu = { page.drawerOpen = !page.drawerOpen },
-                onNewChat = { page.viewModel.clear(); page.keepChatAtBottomTemporarily() },
+                onNewChat = { page.startNewChat() },
             )
             vif({ page.ambiguousSymbols.isNotEmpty() }) {
                 View {
@@ -550,13 +550,33 @@ internal class ChatPage : BasePager() {
                     liveData = page.liveDataMode,
                     renderer = page.glassRenderer,
                     visualLabel = page.glassRenderer.statusLabel(),
+                    sessions = page.viewModel.sessionSummaries.toList(),
+                    activeSessionId = page.viewModel.activeSessionId,
                     onClose = { page.drawerOpen = false },
                     onToggleDataMode = { page.toggleDataMode() },
                     onCycleVisualMode = { page.cycleGlassMode() },
+                    onNewChat = { page.startNewChat() },
+                    onOpenSession = { page.openHistorySession(it) },
+                    onOpenGallery = { page.openPage(Routes.CARD_GALLERY) },
                     onSettings = { page.drawerOpen = false; page.openPage(Routes.API_CONFIG) },
                 )
             }
         }
+    }
+
+    private fun startNewChat() {
+        viewModel.startNewChat()
+        resetSessionUiState()
+        inputRef.view?.setText("")
+        keepChatAtBottomTemporarily()
+    }
+
+    private fun openHistorySession(sessionId: String) {
+        viewModel.openSession(sessionId)
+        resetSessionUiState()
+        reloadQuotesForCurrentSession()
+        inputRef.view?.setText("")
+        keepChatAtBottomTemporarily()
     }
 
     private fun submitInput() {
@@ -567,6 +587,44 @@ internal class ChatPage : BasePager() {
             inputFocused = false
             keepChatAtBottomTemporarily()
         }
+    }
+
+    private fun resetSessionUiState() {
+        ambiguousSymbols.clear()
+        ambiguousEntityText = ""
+        pendingEntitySheetSymbol = ""
+        pendingLongPressSymbol = ""
+        peekSymbol = ""
+        peekVisible = false
+        sheetCard = null
+        sheetMounted = false
+        sheetPresented = false
+        sheetLevel = SheetLevel.HALF
+        sheetInteractive = false
+        sheetPresentationVersion++
+        expandedCardKey = ""
+        focusedCardKey = ""
+        repairingCardKey = ""
+        compareCandidateKey = ""
+        compareCandidateSymbol = ""
+        compareCard = null
+        drilledKeys.clear()
+        subThreads.clear()
+        suppressNextStockClickSymbol = ""
+        requestedSymbols.clear()
+        quoteStates.clear()
+        inputFocused = false
+        voiceActive = false
+        inputPanel = InputPanel.NONE
+    }
+
+    private fun reloadQuotesForCurrentSession() {
+        viewModel.messages
+            .flatMap { EntityRecognizer.recognize(it.content) }
+            .filter { it.type == EntityType.STOCK }
+            .map { it.target }
+            .distinct()
+            .forEach(::requestQuote)
     }
 
     private fun expandComposer(requestFocus: Boolean = false) {

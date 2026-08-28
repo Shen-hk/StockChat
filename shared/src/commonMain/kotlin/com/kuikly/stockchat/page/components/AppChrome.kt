@@ -1,12 +1,14 @@
 package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.chat.ChatSessionSummary
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
@@ -109,9 +111,14 @@ fun ViewContainer<*, *>.ChatDrawer(
     liveData: Boolean,
     renderer: GlassRenderer = GlassRenderer.Default,
     visualLabel: String = renderer.statusLabel(),
+    sessions: List<ChatSessionSummary> = emptyList(),
+    activeSessionId: String = "",
     onClose: () -> Unit,
     onToggleDataMode: () -> Unit,
     onCycleVisualMode: () -> Unit = {},
+    onNewChat: () -> Unit = {},
+    onOpenSession: (String) -> Unit = {},
+    onOpenGallery: () -> Unit = {},
     onSettings: () -> Unit,
 ) {
     View {
@@ -124,71 +131,253 @@ fun ViewContainer<*, *>.ChatDrawer(
     View {
         attr {
             absolutePosition(top = 0f, left = 0f, bottom = 0f)
-            width(280f)
-            paddingTop(statusBarHeight + 12f)
-            paddingLeft(12f)
-            paddingRight(12f)
-            paddingBottom(bottomInset + 12f)
+            width(292f)
+            paddingTop(statusBarHeight + 16f)
+            paddingLeft(16f)
+            paddingRight(16f)
+            paddingBottom(bottomInset + 14f)
         }
         GlassBackdrop(theme.glass.sheet, renderer)
+
+        // Brand header: gradient logo mark, wordmark and close button.
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
             View {
-                attr { flex(1f); padding(12f); flexDirectionRow(); alignItemsCenter(); backgroundColor(theme.surface); borderRadius(14f) }
-            View { attr { size(8f, 8f); borderRadius(4f); backgroundColor(if (liveData) Color(0xFF34C759) else theme.textTertiary); marginRight(8f) } }
-            View {
-                attr { flex(1f) }
-                Text { attr { text(if (liveData) "实时数据" else "模拟数据"); fontSize(14f); fontWeightSemiBold(); color(theme.textPrimary) } }
-                Text { attr { text(if (liveData) "行情与信息均为真实数据" else "使用本地演示数据"); marginTop(2f); fontSize(10f); color(theme.textTertiary) } }
+                attr {
+                    size(38f, 38f)
+                    borderRadius(12f)
+                    allCenter()
+                    backgroundLinearGradient(
+                        Direction.TO_RIGHT,
+                        ColorStop(theme.brand, 0f),
+                        ColorStop(theme.term, 1f),
+                    )
+                }
+                Text { attr { text("S"); fontSize(18f); fontWeightBold(); color(Color(0xFFFFFFFF)) } }
             }
             View {
-                attr { width(40f); height(24f); borderRadius(12f); padding(3f); backgroundColor(if (liveData) theme.brand else theme.surfaceMuted) }
-                Text { attr { text(if (liveData) "●" else "○"); fontSize(16f); color(theme.surface) } }
-                event { click { onToggleDataMode() } }
-            }
+                attr { flex(1f); marginLeft(10f) }
+                Text { attr { text("StockChat"); fontSize(17f); fontWeightBold(); color(theme.textPrimary) } }
+                Text { attr { text("AI 投资助手"); marginTop(1f); fontSize(10f); color(theme.textTertiary) } }
             }
             View {
-                attr { size(34f, 34f); marginLeft(8f); allCenter(); borderRadius(10f); backgroundColor(theme.surfaceMuted) }
-                Text { attr { text("×"); fontSize(20f); color(theme.textSecondary) } }
+                attr { size(30f, 30f); allCenter(); borderRadius(15f); backgroundColor(theme.surfaceMuted) }
+                Text { attr { text("×"); fontSize(17f); color(theme.textSecondary) } }
                 event { click { onClose() } }
             }
         }
+
+        // Primary action: start a new conversation.
         View {
             attr {
-                marginTop(8f)
-                paddingLeft(12f)
-                paddingRight(8f)
+                marginTop(16f)
+                height(44f)
+                borderRadius(14f)
+                flexDirectionRow()
+                allCenter()
+                backgroundLinearGradient(
+                    Direction.TO_RIGHT,
+                    ColorStop(theme.brand, 0f),
+                    ColorStop(theme.term, 1f),
+                )
+            }
+            Text { attr { text("＋"); fontSize(20f); fontWeightSemiBold(); color(Color(0xFFFFFFFF)) } }
+            Text { attr { text("新会话"); marginLeft(6f); fontSize(15f); fontWeightSemiBold(); color(Color(0xFFFFFFFF)) } }
+            event { click { onClose(); onNewChat() } }
+        }
+
+        // Session search affordance, backed by the same local history as the list below.
+        View {
+            attr {
+                marginTop(12f)
                 height(34f)
+                paddingLeft(11f)
                 flexDirectionRow()
                 alignItemsCenter()
-                backgroundColor(theme.surface)
                 borderRadius(10f)
+                backgroundColor(theme.surfaceMuted)
             }
-            Text { attr { text(visualLabel); fontSize(12f); color(theme.textSecondary); flex(1f) } }
-            Text { attr { text("切换"); fontSize(11f); fontWeightMedium(); color(theme.brand) } }
-            event { click { onCycleVisualMode() } }
+            Text { attr { text("⌕"); fontSize(15f); color(theme.textTertiary) } }
+            Text {
+                attr {
+                    text(if (sessions.isEmpty()) "暂无历史会话" else "历史会话 · ${sessions.size}")
+                    marginLeft(6f)
+                    fontSize(12f)
+                    color(theme.textTertiary)
+                }
+            }
         }
-        DrawerGroupTitle("会话历史", theme)
-        DrawerItem("贵州茅台为何大跌", "今天", theme, active = true)
-        DrawerItem("和五粮液对比", "今天", theme)
-        DrawerItem("半导体板块后市", "昨天", theme)
-        View { attr { height(1f); marginTop(10f); marginBottom(10f); marginLeft(2f); marginRight(2f); backgroundColor(theme.divider) } }
-        DrawerItem("☆  自选股", "", theme)
-        DrawerItem("⌘  术语表", "", theme)
-        View { attr { height(1f); marginTop(10f); marginBottom(10f); marginLeft(2f); marginRight(2f); backgroundColor(theme.divider) } }
-        DrawerItem("⚙  设置", "", theme, onClick = onSettings)
+
+        // Conversation history, grouped by recency. It owns the remaining
+        // height so the footer cards stay pinned to the bottom.
+        Scroller {
+            attr { flex(1f); marginTop(4f) }
+            if (sessions.isEmpty()) {
+                DrawerEmptyHistory(theme)
+            } else {
+                var lastGroup = ""
+                sessions.forEach { session ->
+                    if (session.groupTitle != lastGroup) {
+                        DrawerGroupTitle(session.groupTitle, theme)
+                        lastGroup = session.groupTitle
+                    }
+                    DrawerSessionItem(
+                        title = session.title,
+                        preview = session.preview,
+                        theme = theme,
+                        active = session.id == activeSessionId,
+                    ) {
+                        onClose()
+                        onOpenSession(session.id)
+                    }
+                }
+            }
+        }
+
+        // Quick entries with tinted icon tiles.
+        View { attr { height(1f); marginTop(8f); marginBottom(6f); backgroundColor(theme.divider) } }
+        DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme)
+        DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme)
+        DrawerMenuItem("▦", theme.textSecondary, theme.surfaceMuted, "卡片图鉴", theme) { onClose(); onOpenGallery() }
+        DrawerMenuItem("⚙", theme.textSecondary, theme.surfaceMuted, "设置", theme, onClick = onSettings)
+
+        // Data source & rendering preferences card.
+        View {
+            attr {
+                marginTop(10f)
+                paddingLeft(12f)
+                paddingRight(12f)
+                paddingTop(11f)
+                paddingBottom(4f)
+                borderRadius(14f)
+                backgroundColor(theme.surface)
+            }
+            View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                View { attr { size(8f, 8f); borderRadius(4f); backgroundColor(if (liveData) Color(0xFF34C759) else theme.textTertiary) } }
+                View {
+                    attr { flex(1f); marginLeft(8f) }
+                    Text { attr { text(if (liveData) "实时数据" else "模拟数据"); fontSize(13f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                    Text { attr { text(if (liveData) "行情与信息均为真实数据" else "使用本地演示数据"); marginTop(1f); fontSize(10f); color(theme.textTertiary) } }
+                }
+                DrawerSwitch(liveData, theme, onToggleDataMode)
+            }
+            View { attr { height(1f); marginTop(11f); backgroundColor(theme.divider) } }
+            View {
+                attr { height(38f); flexDirectionRow(); alignItemsCenter() }
+                Text { attr { text("渲染模式"); fontSize(12f); color(theme.textSecondary); flex(1f) } }
+                Text { attr { text(visualLabel); fontSize(11f); color(theme.textTertiary) } }
+                Text { attr { text("切换"); marginLeft(8f); fontSize(11f); fontWeightMedium(); color(theme.brand) } }
+                event { click { onCycleVisualMode() } }
+            }
+        }
+        Text {
+            attr {
+                text("StockChat v1.0 · 数据仅供参考")
+                marginTop(10f)
+                fontSize(9f)
+                color(theme.textTertiary)
+                textAlignCenter()
+            }
+        }
     }
 }
 
 private fun ViewContainer<*, *>.DrawerGroupTitle(text: String, theme: StockChatTheme) {
-    Text { attr { text(text); marginTop(22f); marginBottom(8f); fontSize(11f); fontWeightSemiBold(); color(theme.textTertiary) } }
+    Text { attr { text(text); marginTop(14f); marginBottom(4f); marginLeft(4f); fontSize(10f); fontWeightSemiBold(); color(theme.textTertiary) } }
 }
 
-private fun ViewContainer<*, *>.DrawerItem(label: String, time: String, theme: StockChatTheme, active: Boolean = false, onClick: () -> Unit = {}) {
+private fun ViewContainer<*, *>.DrawerSessionItem(
+    title: String,
+    preview: String,
+    theme: StockChatTheme,
+    active: Boolean = false,
+    onClick: () -> Unit = {},
+) {
     View {
-        attr { height(42f); paddingLeft(10f); paddingRight(10f); flexDirectionRow(); alignItemsCenter(); borderRadius(10f); backgroundColor(if (active) theme.brandSoft else theme.page) }
-        Text { attr { text(label); fontSize(14f); color(if (active) theme.brand else theme.textPrimary); flex(1f) } }
-        if (time.isNotEmpty()) Text { attr { text(time); fontSize(11f); color(theme.textTertiary) } }
+        attr {
+            height(52f)
+            marginTop(2f)
+            flexDirectionRow()
+            alignItemsCenter()
+            borderRadius(10f)
+            if (active) backgroundColor(theme.brandSoft)
+        }
+        if (active) {
+            View { attr { width(3f); height(14f); marginLeft(6f); borderRadius(2f); backgroundColor(theme.brand) } }
+        }
+        View {
+            attr { flex(1f); marginLeft(if (active) 8f else 12f); marginRight(10f) }
+            Text {
+                attr {
+                    text(title)
+                    fontSize(13f)
+                    if (active) fontWeightMedium()
+                    color(if (active) theme.brand else theme.textPrimary)
+                }
+            }
+            Text {
+                attr {
+                    text(preview)
+                    marginTop(3f)
+                    fontSize(10f)
+                    color(theme.textTertiary)
+                }
+            }
+        }
+        event { click { onClick() } }
+    }
+}
+
+private fun ViewContainer<*, *>.DrawerEmptyHistory(theme: StockChatTheme) {
+    View {
+        attr {
+            marginTop(18f)
+            paddingLeft(12f)
+            paddingRight(12f)
+            paddingTop(14f)
+            paddingBottom(14f)
+            borderRadius(12f)
+            backgroundColor(theme.surfaceMuted)
+        }
+        Text { attr { text("还没有历史记录"); fontSize(13f); fontWeightMedium(); color(theme.textSecondary); textAlignCenter() } }
+        Text { attr { text("开始提问后会自动保存"); marginTop(5f); fontSize(10f); color(theme.textTertiary); textAlignCenter() } }
+    }
+}
+
+private fun ViewContainer<*, *>.DrawerMenuItem(glyph: String, glyphColor: Color, glyphBg: Color, label: String, theme: StockChatTheme, onClick: () -> Unit = {}) {
+    View {
+        attr { height(42f); marginTop(2f); flexDirectionRow(); alignItemsCenter(); borderRadius(10f) }
+        View {
+            attr { size(28f, 28f); marginLeft(6f); allCenter(); borderRadius(8f); backgroundColor(glyphBg) }
+            Text { attr { text(glyph); fontSize(14f); color(glyphColor) } }
+        }
+        Text { attr { text(label); marginLeft(10f); fontSize(13f); color(theme.textPrimary); flex(1f) } }
+        Text { attr { text("›"); marginRight(10f); fontSize(15f); color(theme.textTertiary) } }
+        event { click { onClick() } }
+    }
+}
+
+private fun ViewContainer<*, *>.DrawerSwitch(on: Boolean, theme: StockChatTheme, onClick: () -> Unit) {
+    View {
+        attr {
+            width(42f)
+            height(25f)
+            borderRadius(13f)
+            backgroundColor(if (on) theme.brand else theme.surfaceMuted)
+        }
+        View {
+            attr {
+                size(19f, 19f)
+                borderRadius(10f)
+                backgroundColor(Color(0xFFFFFFFF))
+                if (on) {
+                    absolutePosition(top = 3f, right = 3f)
+                } else {
+                    absolutePosition(top = 3f, left = 3f)
+                }
+            }
+        }
         event { click { onClick() } }
     }
 }
