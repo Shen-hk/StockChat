@@ -77,6 +77,12 @@ internal class BridgeModule : Module() {
         callNativeMethod("hapticImpact", methodArgs, null)
     }
 
+    fun openComposerMediaSource(source: String, callbackFn: CallbackFn? = null) {
+        val methodArgs = JSONObject()
+        methodArgs.put("source", source)
+        callNativeMethod("openComposerMediaSource", methodArgs, callbackFn)
+    }
+
     /** Returns the current host-selected material quality, if supported by the host. */
     fun getGlassMode(): String = syncCallNativeMethod("getGlassMode", null, null)
 

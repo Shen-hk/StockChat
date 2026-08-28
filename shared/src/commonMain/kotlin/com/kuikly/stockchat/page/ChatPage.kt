@@ -34,6 +34,13 @@ import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
 import com.kuikly.stockchat.page.components.ChatTopNav
+import com.kuikly.stockchat.page.components.LineIconPlus
+import com.kuikly.stockchat.page.components.LineIconMic
+import com.kuikly.stockchat.page.components.LineIconCamera
+import com.kuikly.stockchat.page.components.LineIconPhoto
+import com.kuikly.stockchat.page.components.LineIconSend
+import com.kuikly.stockchat.page.components.LineIconStop
+import com.kuikly.stockchat.page.components.LineIconRecordingDot
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.BrokenCardBlock
 import com.kuikly.stockchat.protocol.CardBlock
@@ -371,8 +378,11 @@ internal class ChatPage : BasePager() {
                         vif({ page.isComposerExpanded() }) {
                             RecentSymbolRow(page.theme) { text -> page.injectQuestion(text) }
                         }
-                        vif({ page.isComposerExpanded() && page.inputPanel != InputPanel.NONE }) {
+                        vif({ page.isComposerExpanded() && (page.inputPanel == InputPanel.SYMBOL || page.inputPanel == InputPanel.COMMAND) }) {
                             InputAssistantRow(page.inputPanel, page.theme) { value -> page.injectQuestion(value) }
+                        }
+                        vif({ page.isComposerExpanded() && page.inputPanel == InputPanel.MEDIA }) {
+                            MediaInputRow(page.theme) { action -> page.handleMediaAction(action) }
                         }
                         vif({ !page.isComposerExpanded() }) {
                             View {
@@ -389,7 +399,7 @@ internal class ChatPage : BasePager() {
                                         borderRadius(16f)
                                         backgroundColor(page.theme.surfaceMuted)
                                     }
-                                    Text { attr { text("＋"); fontSize(15f); color(page.theme.textSecondary) } }
+                                    LineIconPlus(color = page.theme.textSecondary, size = 16f)
                                 }
                                 View {
                                     attr {
@@ -412,12 +422,11 @@ internal class ChatPage : BasePager() {
                                         borderRadius(16f)
                                         backgroundColor(if (page.voiceActive) page.theme.rise else page.theme.surfaceMuted)
                                     }
-                                    Text {
-                                        attr {
-                                            text(if (page.voiceActive) "●" else "🎙")
-                                            fontSize(if (page.voiceActive) 11f else 13f)
-                                            color(if (page.voiceActive) Color(0xFFFFFFFF) else page.theme.textSecondary)
-                                        }
+                                    vif({ page.voiceActive }) {
+                                        LineIconRecordingDot(color = Color(0xFFFFFFFF), size = 11f)
+                                    }
+                                    vif({ !page.voiceActive }) {
+                                        LineIconMic(color = page.theme.textSecondary, size = 17f)
                                     }
                                     event { click { page.voiceActive = !page.voiceActive } }
                                 }
@@ -427,9 +436,13 @@ internal class ChatPage : BasePager() {
                                         marginLeft(7f)
                                         allCenter()
                                         borderRadius(16f)
-                                        backgroundColor(page.theme.surfaceMuted)
+                                        backgroundColor(if (page.inputPanel == InputPanel.MEDIA) page.theme.brandSoft else page.theme.surfaceMuted)
                                     }
-                                    Text { attr { text("📷"); fontSize(14f); color(page.theme.textSecondary) } }
+                                    LineIconCamera(
+                                        color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
+                                        size = 17f,
+                                    )
+                                    event { click { page.toggleMediaPanel() } }
                                 }
                             }
                         }
@@ -476,12 +489,11 @@ internal class ChatPage : BasePager() {
                                         borderRadius(20f)
                                         backgroundColor(if (page.voiceActive) page.theme.rise else page.theme.surfaceMuted)
                                     }
-                                    Text {
-                                        attr {
-                                            text(if (page.voiceActive) "●" else "🎙")
-                                            fontSize(if (page.voiceActive) 11f else 13f)
-                                            color(if (page.voiceActive) Color(0xFFFFFFFF) else page.theme.textSecondary)
-                                        }
+                                    vif({ page.voiceActive }) {
+                                        LineIconRecordingDot(color = Color(0xFFFFFFFF), size = 12f)
+                                    }
+                                    vif({ !page.voiceActive }) {
+                                        LineIconMic(color = page.theme.textSecondary, size = 19f)
                                     }
                                     event { click { page.voiceActive = !page.voiceActive } }
                                 }
@@ -491,9 +503,13 @@ internal class ChatPage : BasePager() {
                                         marginRight(4f)
                                         allCenter()
                                         borderRadius(20f)
-                                        backgroundColor(page.theme.surfaceMuted)
+                                        backgroundColor(if (page.inputPanel == InputPanel.MEDIA) page.theme.brandSoft else page.theme.surfaceMuted)
                                     }
-                                    Text { attr { text("📷"); fontSize(14f); color(page.theme.textSecondary) } }
+                                    LineIconCamera(
+                                        color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
+                                        size = 19f,
+                                    )
+                                    event { click { page.toggleMediaPanel() } }
                                 }
                                 View {
                                     attr {
@@ -503,13 +519,11 @@ internal class ChatPage : BasePager() {
                                         backgroundColor(if (page.viewModel.streamState == StreamState.STREAMING) page.theme.divider else page.theme.brand)
                                         boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
                                     }
-                                    Text {
-                                        attr {
-                                            text(if (page.viewModel.streamState == StreamState.STREAMING) "■" else "↑")
-                                            fontSize(18f)
-                                            fontWeightSemiBold()
-                                            color(page.theme.onBrand)
-                                        }
+                                    vif({ page.viewModel.streamState == StreamState.STREAMING }) {
+                                        LineIconStop(color = page.theme.onBrand, size = 18f)
+                                    }
+                                    vif({ page.viewModel.streamState != StreamState.STREAMING }) {
+                                        LineIconSend(color = page.theme.onBrand, size = 22f)
                                     }
                                     event {
                                         click {
@@ -589,6 +603,23 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    private fun toggleMediaPanel() {
+        val willShow = inputPanel != InputPanel.MEDIA
+        voiceActive = false
+        inputFocused = false
+        if (willShow) inputRef.view?.blur()
+        inputPanel = if (willShow) InputPanel.MEDIA else InputPanel.NONE
+    }
+
+    private fun handleMediaAction(action: ComposerMediaAction) {
+        inputPanel = InputPanel.NONE
+        inputFocused = false
+        inputRef.view?.blur()
+        val bridge = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
+        bridge.hapticImpact()
+        bridge.openComposerMediaSource(action.source)
+    }
+
     private fun resetSessionUiState() {
         ambiguousSymbols.clear()
         ambiguousEntityText = ""
@@ -630,12 +661,13 @@ internal class ChatPage : BasePager() {
     private fun expandComposer(requestFocus: Boolean = false) {
         inputFocused = true
         voiceActive = false
+        if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
         if (requestFocus) inputRef.view?.focus()
     }
 
     /** Reads observable state inside each vif predicate so Kuikly can re-render it. */
     private fun isComposerExpanded(): Boolean =
-        inputFocused || viewModel.inputText.isNotBlank() || keyboardHeight > 0f
+        inputFocused || inputPanel != InputPanel.NONE || viewModel.inputText.isNotBlank() || keyboardHeight > 0f
 
     private fun renderComposerGradientRim(container: ViewContainer<*, *>) {
         container.Canvas(
@@ -703,7 +735,10 @@ internal class ChatPage : BasePager() {
                 placeholder("问一只股票或一个术语")
                 placeholderColor(this@ChatPage.theme.textTertiary)
                 returnKeyTypeSend()
-                autofocus(this@ChatPage.inputFocused || this@ChatPage.keyboardHeight > 0f)
+                autofocus(
+                    this@ChatPage.inputPanel != InputPanel.MEDIA &&
+                        (this@ChatPage.inputFocused || this@ChatPage.keyboardHeight > 0f)
+                )
             }
             event {
                 inputFocus {
@@ -1182,12 +1217,18 @@ private fun ViewContainer<*, *>.RecentSymbolRow(theme: StockChatTheme, onSelect:
     }
 }
 
-private enum class InputPanel { NONE, SYMBOL, COMMAND }
+private enum class InputPanel { NONE, SYMBOL, COMMAND, MEDIA }
+
+private enum class ComposerMediaAction(val source: String, val label: String) {
+    PHOTO_LIBRARY("library", "选照片"),
+    CAMERA("camera", "拍照"),
+}
 
 private fun ViewContainer<*, *>.InputAssistantRow(panel: InputPanel, theme: StockChatTheme, onSelect: (String) -> Unit) {
     val items = when (panel) {
         InputPanel.SYMBOL -> listOf("@贵州茅台", "@五粮液", "@上证指数")
         InputPanel.COMMAND -> listOf("/复盘", "/对比", "/解读")
+        InputPanel.MEDIA -> emptyList()
         InputPanel.NONE -> emptyList()
     }
     View {
@@ -1197,6 +1238,43 @@ private fun ViewContainer<*, *>.InputAssistantRow(panel: InputPanel, theme: Stoc
                 attr { height(30f); marginRight(6f); paddingLeft(9f); paddingRight(9f); allCenter(); backgroundColor(theme.brandSoft); borderRadius(8f) }
                 Text { attr { text(item); fontSize(11f); color(theme.brand) } }
                 event { click { onSelect(item) } }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.MediaInputRow(theme: StockChatTheme, onSelect: (ComposerMediaAction) -> Unit) {
+    View {
+        attr { marginTop(8f); padding(8f); flexDirectionRow(); backgroundColor(theme.surface); borderRadius(12f) }
+        listOf(ComposerMediaAction.PHOTO_LIBRARY, ComposerMediaAction.CAMERA).forEachIndexed { index, action ->
+            View {
+                attr {
+                    flex(1f)
+                    height(42f)
+                    if (index == 0) marginRight(8f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    paddingLeft(12f)
+                    paddingRight(12f)
+                    backgroundColor(theme.brandSoft)
+                    borderRadius(10f)
+                }
+                View {
+                    attr {
+                        size(26f, 26f)
+                        marginRight(8f)
+                        allCenter()
+                        backgroundColor(theme.surface)
+                        borderRadius(13f)
+                    }
+                    if (action == ComposerMediaAction.PHOTO_LIBRARY) {
+                        LineIconPhoto(color = theme.brand, size = 15f)
+                    } else {
+                        LineIconCamera(color = theme.brand, size = 15f)
+                    }
+                }
+                Text { attr { text(action.label); fontSize(13f); fontWeightMedium(); color(theme.brand) } }
+                event { click { onSelect(action) } }
             }
         }
     }

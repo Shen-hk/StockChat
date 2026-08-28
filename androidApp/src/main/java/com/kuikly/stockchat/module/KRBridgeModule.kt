@@ -3,6 +3,8 @@ package com.kuikly.stockchat.module
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.provider.MediaStore
 import android.util.Log
 import android.view.HapticFeedbackConstants
 import android.widget.Toast
@@ -45,6 +47,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "hapticImpact" -> {
                 hapticImpact()
+            }
+
+            "openComposerMediaSource" -> {
+                openComposerMediaSource(params, callback)
             }
 
             "getGlassMode" -> (activity as? KuiklyRenderActivity)?.currentGlassMode() ?: "simplified"
@@ -115,6 +121,34 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
     private fun hapticImpact() {
         activity?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+    }
+
+    private fun openComposerMediaSource(params: String?, callback: KuiklyRenderCallback?) {
+        val source = JSONObject(params ?: "{}").optString("source")
+        val intent = when (source) {
+            "camera" -> Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            else -> Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+                type = "image/*"
+            }
+        }
+        val currentActivity = activity
+        if (currentActivity == null) {
+            callback?.invoke(mapOf("code" to -1, "message" to "页面不可用"))
+            return
+        }
+        if (intent.resolveActivity(currentActivity.packageManager) == null) {
+            val label = if (source == "camera") "相机" else "相册"
+            Toast.makeText(KRApplication.application, "未找到可用$label", Toast.LENGTH_SHORT).show()
+            callback?.invoke(mapOf("code" to -1, "message" to "未找到可用$label"))
+            return
+        }
+        try {
+            currentActivity.startActivity(intent)
+            callback?.invoke(mapOf("code" to 0, "source" to source))
+        } catch (error: Exception) {
+            Toast.makeText(KRApplication.application, "打开失败，请稍后重试", Toast.LENGTH_SHORT).show()
+            callback?.invoke(mapOf("code" to -1, "message" to error.message.orEmpty()))
+        }
     }
 
     private fun copyToPasteboard(params: String?) {
