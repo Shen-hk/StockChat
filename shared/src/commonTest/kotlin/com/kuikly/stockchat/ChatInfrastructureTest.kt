@@ -5,6 +5,9 @@ import com.kuikly.stockchat.chat.ChatMessage
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.CardResponseFallback
 import com.kuikly.stockchat.data.provider.SseEventParser
+import com.kuikly.stockchat.protocol.AiResponseLexer
+import com.kuikly.stockchat.protocol.BrokenCardBlock
+import com.kuikly.stockchat.richtext.EntityMarkdownAdapter
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -24,9 +27,40 @@ class ChatInfrastructureTest {
     }
 
     @Test
+    fun incompleteFinalCardBlocksBecomeRetryableBrokenBlocks() {
+        val blocks = AiResponseLexer.lex("正文\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}", finished = true)
+        assertEquals(2, blocks.size)
+        assertTrue(blocks.last() is BrokenCardBlock)
+        assertEquals("stock-quote", (blocks.last() as BrokenCardBlock).type)
+    }
+
+    @Test
+    fun incompleteCardResponseIsNotChangedByFallback() {
+        val response = "正文\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}"
+        val fixed = CardResponseFallback.appendMissingCard("贵州茅台怎么样", response)
+        assertEquals(response, fixed)
+    }
+
+    @Test
+    fun cardBlockCanBeReplacedInPlace() {
+        val original = "正文\n```card:stock-quote\n{\"symbol\":\"BAD\"}"
+        val broken = AiResponseLexer.lex(original, finished = true).last() as BrokenCardBlock
+        val replacement = "```card:stock-quote\n{\"symbol\":\"600519.SH\"}\n```"
+        assertEquals("正文\n$replacement", AiResponseLexer.replaceCardBlock(original, broken.id, replacement))
+    }
+
+    @Test
     fun sseParserReadsDeltaAndDoneEvents() {
         assertEquals("你好", SseEventParser.delta("data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}"))
         assertEquals("", SseEventParser.delta("data: [DONE]"))
+    }
+
+    @Test
+    fun entityMarkdownAdapterKeepsMarkdownAndAddsInternalEntityLinks() {
+        val adapted = EntityMarkdownAdapter.withEntityLinks("## 结论\n\n- **贵州茅台**的 PE 偏高")
+
+        assertEquals("## 结论\n\n- **[贵州茅台](stockchat-entity://0)**的 [PE](stockchat-entity://1) 偏高", adapted.content)
+        assertEquals(listOf("贵州茅台", "PE"), adapted.entities.map { it.text })
     }
 
     @Test

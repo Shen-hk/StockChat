@@ -4,6 +4,8 @@ import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.config.AiConfigStore
 import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
 import com.kuikly.stockchat.data.provider.MockAiProvider
+import com.kuikly.stockchat.protocol.AiResponseLexer
+import com.kuikly.stockchat.protocol.CardBlock
 import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
@@ -19,6 +21,7 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
     private val sessionStore = ChatSessionStore(pagerId)
     private var aiProvider: AiProvider? = null
     private var subThreadProvider: AiProvider? = null
+    private var cardRepairProvider: AiProvider? = null
     private var nextId = 1
 
     init {
@@ -94,6 +97,7 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
 
     fun stop() {
         aiProvider?.stop()
+        cardRepairProvider?.stop()
         streamState = StreamState.STOPPED
         val index = messages.lastIndex
         if (index >= 0 && messages[index].streaming) {
@@ -122,6 +126,52 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         if (question.isNotBlank()) send(question)
     }
 
+    fun retryCard(
+        messageId: String,
+        blockId: String,
+        cardType: String,
+        rawCard: String,
+        onDone: () -> Unit,
+        onError: (String) -> Unit,
+    ) {
+        val messageIndex = messages.indexOfFirst { it.id == messageId }
+        if (messageIndex < 0) {
+            onError("原消息不存在")
+            return
+        }
+        val question = previousUserQuestion(messageIndex)
+        val provider = if (question.startsWith("回归：")) {
+            MockAiProvider(pagerId)
+        } else {
+            val config = configStore.load()
+            val configError = config.validationError()
+            if (configError != null) {
+                onError(configError)
+                return
+            }
+            DeepSeekAiProvider(pagerId, config)
+        }
+        cardRepairProvider = provider
+        var response = ""
+        provider.ask(
+            messages = listOf(AiChatMessage("user", buildCardRetryPrompt(messageIndex, cardType, rawCard))),
+            onDelta = { response += it },
+            onDone = {
+                val replacement = normalizeRepairedCard(cardType, response)
+                if (replacement == null) {
+                    onError("模型未返回可用卡片")
+                    return@ask
+                }
+                messages.getOrNull(messageIndex)?.let { message ->
+                    message.content = AiResponseLexer.replaceCardBlock(message.content, blockId, replacement)
+                    persist()
+                }
+                onDone()
+            },
+            onError = onError,
+        )
+    }
+
     fun askSubThread(prompt: String, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) {
         val config = configStore.load()
         val configError = config.validationError()
@@ -140,6 +190,46 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
     }
 
     private fun persist() = sessionStore.save(messages)
+
+    private fun buildCardRetryPrompt(messageIndex: Int, cardType: String, rawCard: String): String {
+        val question = previousUserQuestion(messageIndex)
+        return """
+            上一轮用户问题：
+            $question
+
+            下面这张结构化卡片加载失败，请只重新生成这一张卡片。
+            卡片类型必须是：$cardType
+            原始卡片内容：
+            $rawCard
+
+            只输出一个完整卡片块，不要解释，不要输出正文：
+            ```card:$cardType
+            ${cardRetryPayloadExample(cardType)}
+            ```
+            JSON 只描述卡片意图，不要编造实时价格；实时行情由客户端填充。
+        """.trimIndent()
+    }
+
+    private fun cardRetryPayloadExample(cardType: String): String = when (cardType) {
+        "definition" -> "{\"term\":\"市盈率 PE\",\"plainText\":\"用一句话解释概念\",\"example\":\"给出一个简短例子\"}"
+        "attribution" -> "{\"symbol\":\"600519.SH\",\"direction\":\"fall\",\"factors\":[{\"name\":\"资金面\",\"weight\":0.4,\"confidence\":\"medium\",\"desc\":\"简短说明\",\"source\":\"行情数据推断\"}]}"
+        "suggestions" -> "{\"chips\":[{\"text\":\"继续追问\",\"type\":\"drill\"}]}"
+        else -> "{\"symbol\":\"600519.SH\"}"
+    }
+
+    private fun normalizeRepairedCard(cardType: String, response: String): String? {
+        val trimmed = response.trim()
+        val card = AiResponseLexer.lex(trimmed, finished = true)
+            .firstOrNull { it is CardBlock && (cardType.isBlank() || it.type == cardType) } as? CardBlock
+        if (card != null) return "```card:${card.type}\n${card.payload}\n```"
+        if (trimmed.startsWith("{") && trimmed.endsWith("}") && cardType.isNotBlank()) {
+            return "```card:$cardType\n$trimmed\n```"
+        }
+        return null
+    }
+
+    private fun previousUserQuestion(messageIndex: Int): String =
+        messages.take(messageIndex).lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
 
     private fun newId(): String = "m${nextId++}"
 

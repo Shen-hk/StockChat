@@ -35,6 +35,7 @@ import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
 import com.kuikly.stockchat.page.components.ChatTopNav
 import com.kuikly.stockchat.protocol.AiResponseLexer
+import com.kuikly.stockchat.protocol.BrokenCardBlock
 import com.kuikly.stockchat.protocol.CardBlock
 import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.kuikly.stockchat.protocol.SkeletonBlock
@@ -43,6 +44,7 @@ import com.kuikly.stockchat.protocol.SymbolCardIntent
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.TextBlock
 import com.kuikly.stockchat.richtext.EntityRichText
+import com.kuikly.stockchat.richtext.EntityStreamingMarkdown
 import com.kuikly.stockchat.richtext.EntityRecognizer
 import com.kuikly.stockchat.richtext.EntitySpan
 import com.kuikly.stockchat.richtext.EntityType
@@ -102,6 +104,7 @@ internal class ChatPage : BasePager() {
     private var voiceActive: Boolean by observable(false)
     private var expandedCardKey: String by observable("")
     private var focusedCardKey: String by observable("")
+    private var repairingCardKey: String by observable("")
     private var compareCandidateKey: String by observable("")
     private var compareCandidateSymbol: String by observable("")
     private var compareCard: StockCompareCardModel? by observable(null)
@@ -191,6 +194,8 @@ internal class ChatPage : BasePager() {
                         onTerm = { page.viewModel.send("$it 是什么意思") },
                         onSuggestion = { page.viewModel.send(it) },
                         onRetry = { page.viewModel.retryLast() },
+                        repairingCardKey = page.repairingCardKey,
+                        onRetryCard = { messageId, blockId, cardType, rawCard -> page.retryCard(messageId, blockId, cardType, rawCard) },
                         onQuoteNeeded = { page.requestQuote(it) },
                         quoteFor = { page.quoteFor(it) },
                         isCardExpanded = { page.expandedCardKey == it },
@@ -960,6 +965,26 @@ internal class ChatPage : BasePager() {
         requestSubThread(cardId, state.input)
     }
 
+    private fun retryCard(messageId: String, blockId: String, cardType: String, rawCard: String) {
+        val key = "$messageId:$blockId"
+        if (repairingCardKey.isNotEmpty()) return
+        repairingCardKey = key
+        viewModel.retryCard(
+            messageId = messageId,
+            blockId = blockId,
+            cardType = cardType.ifBlank { "stock-quote" },
+            rawCard = rawCard,
+            onDone = {
+                repairingCardKey = ""
+                keepChatAtBottomTemporarily()
+            },
+            onError = { error ->
+                repairingCardKey = ""
+                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(error)
+            },
+        )
+    }
+
     private fun requestSubThread(cardId: String, prompt: String) {
         var response = ""
         viewModel.askSubThread(
@@ -1091,6 +1116,8 @@ private fun ViewContainer<*, *>.ChatMessageView(
     onTerm: (String) -> Unit,
     onSuggestion: (String) -> Unit,
     onRetry: () -> Unit,
+    repairingCardKey: String,
+    onRetryCard: (String, String, String, String) -> Unit,
     onQuoteNeeded: (String) -> Unit,
     quoteFor: (String) -> Quote?,
     isCardExpanded: (String) -> Boolean,
@@ -1138,20 +1165,13 @@ private fun ViewContainer<*, *>.ChatMessageView(
             } else {
                 vif({ message.streaming }) {
                     View {
-                    Text {
-                        attr {
-                            text(message.content)
-                            fontSize(14f)
-                            lineHeight(21f)
-                            color(theme.textSecondary)
-                        }
-                    }
+                        EntityStreamingMarkdown(message.content, theme, contextSymbols, onEntityStock, onEntityStockLongPress, onTerm)
                     }
                 }
                 vif({ !message.streaming }) {
                     View {
                     try {
-                        AssistantContent(message, theme, contextSymbols, suggestionsActive, onEntityStock, onEntityStockLongPress, onCardStock, onTerm, onSuggestion, onRetry, onQuoteNeeded, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, drilledKeys, onToggleDrill, subThreads, onStartSubThread, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
+                        AssistantContent(message, theme, contextSymbols, suggestionsActive, onEntityStock, onEntityStockLongPress, onCardStock, onTerm, onSuggestion, onRetry, repairingCardKey, onRetryCard, onQuoteNeeded, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, drilledKeys, onToggleDrill, subThreads, onStartSubThread, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
                     } catch (error: Throwable) {
                         Text {
                             attr {
@@ -1180,6 +1200,8 @@ private fun ViewContainer<*, *>.AssistantContent(
     onTerm: (String) -> Unit,
     onSuggestion: (String) -> Unit,
     onRetry: () -> Unit,
+    repairingCardKey: String,
+    onRetryCard: (String, String, String, String) -> Unit,
     onQuoteNeeded: (String) -> Unit,
     quoteFor: (String) -> Quote?,
     isCardExpanded: (String) -> Boolean,
@@ -1208,50 +1230,70 @@ private fun ViewContainer<*, *>.AssistantContent(
                 }
             }
             is CardBlock -> {
-                val cardKey = "${message.id}:${block.id}"
-                val intent = CardPayloadParser.parse(block.type, block.payload)
-                if (intent is SuggestionsIntent) {
-                    if (suggestionsActive) SuggestionRow(intent, theme, onSuggestion)
-                } else {
-                    when (intent) {
-                        is SymbolCardIntent -> onQuoteNeeded(intent.symbol)
-                        is AttributionIntent -> onQuoteNeeded(intent.symbol)
-                        else -> Unit
-                    }
-                    if (intent is SymbolCardIntent && intent.type == "stock-chart") {
-                        ChatStockChartCard(block, intent, theme, onCardStock, onTerm, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, cardKey, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
+                try {
+                    val cardKey = "${message.id}:${block.id}"
+                    val intent = CardPayloadParser.parse(block.type, block.payload)
+                    if (intent is SuggestionsIntent) {
+                        if (suggestionsActive) SuggestionRow(intent, theme, onSuggestion)
                     } else {
-                        val model = CardAssembler.assemble(block, quoteFor)
-                        ReactiveCardShell(
-                            model,
-                            CardContext(
-                                theme = theme,
-                                density = CardDensity.COMPACT,
-                                onOpenStock = onCardStock,
-                                onExplainTerm = onTerm,
-                                expanded = false,
-                                onToggleExpanded = { onToggleCardExpanded(cardKey) },
-                                onOpenSheet = onOpenCardSheet,
-                                drilledKeys = drilledKeys,
-                                onToggleDrill = onToggleDrill,
-                                onStartSubThread = onStartSubThread,
-                                cardKey = cardKey,
-                                focusedCardKey = focusedCardKey,
-                                onFocusChanged = onFocusChanged,
-                                compareCandidateSymbol = compareCandidateSymbol,
-                                onCompareCandidate = onCompareCandidate,
-                                onCardEvent = onCardEvent,
-                            ),
-                            cardKey,
-                            isCardExpanded,
-                        )
-                        if (model is InsightCardModel) {
-                            subThreads.firstOrNull { it.cardId == model.cardId }?.let { thread ->
-                                NestedConversation(thread, theme, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread)
+                        when (intent) {
+                            is SymbolCardIntent -> onQuoteNeeded(intent.symbol)
+                            is AttributionIntent -> onQuoteNeeded(intent.symbol)
+                            else -> Unit
+                        }
+                        if (intent is SymbolCardIntent && intent.type == "stock-chart") {
+                            ChatStockChartCard(block, intent, theme, onCardStock, onTerm, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, cardKey, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
+                        } else {
+                            val model = CardAssembler.assemble(block, quoteFor)
+                            ReactiveCardShell(
+                                model,
+                                CardContext(
+                                    theme = theme,
+                                    density = CardDensity.COMPACT,
+                                    onOpenStock = onCardStock,
+                                    onExplainTerm = onTerm,
+                                    expanded = false,
+                                    onToggleExpanded = { onToggleCardExpanded(cardKey) },
+                                    onOpenSheet = onOpenCardSheet,
+                                    drilledKeys = drilledKeys,
+                                    onToggleDrill = onToggleDrill,
+                                    onStartSubThread = onStartSubThread,
+                                    cardKey = cardKey,
+                                    focusedCardKey = focusedCardKey,
+                                    onFocusChanged = onFocusChanged,
+                                    compareCandidateSymbol = compareCandidateSymbol,
+                                    onCompareCandidate = onCompareCandidate,
+                                    onCardEvent = onCardEvent,
+                                ),
+                                cardKey,
+                                isCardExpanded,
+                            )
+                            if (model is InsightCardModel) {
+                                subThreads.firstOrNull { it.cardId == model.cardId }?.let { thread ->
+                                    NestedConversation(thread, theme, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread)
+                                }
                             }
                         }
                     }
+                } catch (_: Throwable) {
+                    val rawCard = "```card:${block.type}\n${block.payload}\n```"
+                    val cardKey = "${message.id}:${block.id}"
+                    StructuredContentUnavailable(
+                        type = block.type,
+                        theme = theme,
+                        retrying = repairingCardKey == cardKey,
+                        onRetry = { onRetryCard(message.id, block.id, block.type, rawCard) },
+                    )
                 }
+            }
+            is BrokenCardBlock -> {
+                val cardKey = "${message.id}:${block.id}"
+                StructuredContentUnavailable(
+                    type = block.type,
+                    theme = theme,
+                    retrying = repairingCardKey == cardKey,
+                    onRetry = { onRetryCard(message.id, block.id, block.type, block.raw) },
+                )
             }
             is SkeletonBlock -> CardShell(
                 CardAssembler.assemble(block),
@@ -1287,6 +1329,81 @@ private fun ViewContainer<*, *>.AssistantContent(
                 color(if (message.failed) theme.brand else theme.textTertiary)
             }
             if (message.failed) event { click { onRetry() } }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.StructuredContentUnavailable(
+    type: String,
+    theme: StockChatTheme,
+    retrying: Boolean,
+    onRetry: () -> Unit,
+) {
+    View {
+        attr {
+            alignSelfStretch()
+            marginTop(10f)
+            padding(12f)
+            backgroundColor(theme.surface)
+            borderRadius(theme.cardRadius)
+            flexDirectionRow()
+            alignItemsCenter()
+        }
+        View {
+            attr {
+                width(52f)
+                height(52f)
+                marginRight(12f)
+                allCenter()
+                backgroundColor(theme.surfaceMuted)
+                borderRadius(8f)
+            }
+            Text {
+                attr {
+                    text("CARD")
+                    fontSize(10f)
+                    fontWeightMedium()
+                    color(theme.textTertiary)
+                }
+            }
+        }
+        View {
+            attr { flex(1f) }
+            Text {
+                attr {
+                    text("${type.ifEmpty { "结构化内容" }} 加载失败")
+                    fontSize(13f)
+                    fontWeightMedium()
+                    color(theme.textSecondary)
+                }
+            }
+            Text {
+                attr {
+                    text("可单独重试这张卡片")
+                    marginTop(3f)
+                    fontSize(10f)
+                    color(theme.textTertiary)
+                }
+            }
+        }
+        View {
+            attr {
+                height(30f)
+                paddingLeft(12f)
+                paddingRight(12f)
+                allCenter()
+                backgroundColor(if (retrying) theme.surfaceMuted else theme.brandSoft)
+                borderRadius(8f)
+            }
+            Text {
+                attr {
+                    text(if (retrying) "重试中" else "重试")
+                    fontSize(11f)
+                    fontWeightMedium()
+                    color(if (retrying) theme.textTertiary else theme.brand)
+                }
+            }
+            if (!retrying) event { click { onRetry() } }
         }
     }
 }
