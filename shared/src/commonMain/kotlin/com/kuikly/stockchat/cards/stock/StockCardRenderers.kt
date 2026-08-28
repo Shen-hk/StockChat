@@ -196,7 +196,7 @@ object StockChartCardRenderer : CardRenderer {
     }
 }
 
-private fun KLineChart(container: ViewContainer<*, *>, model: StockChartCardModel, context: CardContext) {
+internal fun KLineChart(container: ViewContainer<*, *>, model: StockChartCardModel, context: CardContext) {
     val sourceLines = when (model.period) {
         StockChartPeriod.DAY -> model.quote.kLines
         StockChartPeriod.WEEK -> model.quote.weekKLines.ifEmpty { KLineCalculator.aggregate(model.quote.kLines, model.period.grouping) }
@@ -514,7 +514,7 @@ object NewsCardRenderer : CardRenderer {
     }
 }
 
-private fun MiniTimeline(
+internal fun MiniTimeline(
     container: ViewContainer<*, *>,
     model: StockQuoteCardModel,
     context: CardContext,

@@ -1,14 +1,15 @@
 package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.base.BasePager
-import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
-import com.kuikly.stockchat.cards.core.InsightCardModel
 import com.kuikly.stockchat.cards.core.StockChartCardModel
 import com.kuikly.stockchat.cards.core.StockChartMode
 import com.kuikly.stockchat.cards.core.StockChartPeriod
+import com.kuikly.stockchat.cards.core.StockQuoteCardModel
+import com.kuikly.stockchat.cards.stock.KLineChart
+import com.kuikly.stockchat.cards.stock.MiniTimeline
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.glass.GlassBackdrop
@@ -18,10 +19,10 @@ import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.data.provider.quoteLabel
-import com.kuikly.stockchat.page.components.AppTopBar
-import com.kuikly.stockchat.page.components.DataModeBadge
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
+import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.DataModeBadge
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -57,6 +58,8 @@ internal class StockDetailPage : BasePager() {
     override fun body(): ViewBuilder {
         val page = this
         val attribution = CardPayloadParser.parse("attribution", "{\"symbol\":\"${page.quote.symbol}\"}") as AttributionIntent
+        val ctx = CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer)
+        val aiSummary = "短线价格偏弱，资金与板块联动影响较大。中期判断应继续核对现金流、渠道库存和公司公告。"
         return {
             attr { backgroundColor(page.theme.page) }
             Scroller {
@@ -67,118 +70,132 @@ internal class StockDetailPage : BasePager() {
                     paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(100f)
                 }
+
+                // ---- Hero 行情（去卡片，直接铺底） ----
                 View {
-                    attr { padding(16f); backgroundColor(page.theme.surface); borderRadius(page.theme.cardRadius) }
+                    attr { marginTop(page.theme.spacing.xl) }
                     View {
-                        attr { flexDirectionRow(); alignItemsFlexStart() }
+                        attr { flexDirectionRow(); alignItemsCenter() }
                         View {
-                            attr { flex(1f) }
+                            attr { flex(1f); flexDirectionRow(); alignItemsCenter(); flexWrapWrap() }
                             Text {
                                 attr {
                                     text(Format.price(page.quote.price))
-                                    fontSize(32f)
+                                    fontSize(page.theme.type.display)
                                     fontWeightBold()
                                     color(if (page.quote.rising) page.theme.rise else page.theme.fall)
                                 }
                             }
-                            Text {
+                            View {
                                 attr {
-                                    text("${Format.signed(page.quote.change)}  ${Format.percent(page.quote.changePercent)}")
-                                    marginTop(3f)
-                                    fontSize(14f)
-                                    color(if (page.quote.rising) page.theme.rise else page.theme.fall)
+                                    marginLeft(page.theme.spacing.sm)
+                                    paddingTop(3f); paddingBottom(3f); paddingLeft(10f); paddingRight(10f)
+                                    backgroundColor(if (page.quote.rising) page.theme.riseSoft else page.theme.fallSoft)
+                                    borderRadius(page.theme.inputRadius)
+                                    alignItemsCenter(); justifyContentCenter()
+                                }
+                                Text {
+                                    attr {
+                                        text(Format.percent(page.quote.changePercent))
+                                        fontSize(page.theme.type.sm)
+                                        fontWeightSemiBold()
+                                        color(if (page.quote.rising) page.theme.rise else page.theme.fall)
+                                    }
                                 }
                             }
                         }
                         DataModeBadge(page.theme, page.dataModeLabel, page.hostGlassRenderer)
                     }
-                    View {
-                        attr { marginTop(16f); flexDirectionRow() }
-                        DetailMetric("今开", Format.price(page.quote.open), page.theme, this)
-                        DetailMetric("最高", Format.price(page.quote.high), page.theme, this)
-                        DetailMetric("最低", Format.price(page.quote.low), page.theme, this)
-                        DetailMetric("昨收", Format.price(page.quote.previousClose), page.theme, this)
-                    }
-                    View {
-                        attr { marginTop(14f); flexDirectionRow() }
-                        DetailMetric("成交量", Format.compactAmount(page.quote.volume), page.theme, this)
-                        DetailMetric("成交额", Format.compactAmount(page.quote.amount), page.theme, this)
-                        DetailMetric("换手率", "${Format.decimal(page.quote.turnoverRate, 2)}%", page.theme, this)
-                        DetailMetric("总市值", Format.compactAmount(page.quote.marketCap), page.theme, this)
+                    Text {
+                        attr {
+                            text("${Format.signed(page.quote.change)}  ${Format.percent(page.quote.changePercent)}")
+                            marginTop(4f)
+                            fontSize(page.theme.type.body)
+                            color(if (page.quote.rising) page.theme.rise else page.theme.fall)
+                        }
                     }
                     Text {
                         attr {
                             text("数据源：${page.quote.source} · 更新于 ${page.quote.timestamp}")
-                            marginTop(14f)
-                            fontSize(10f)
+                            marginTop(page.theme.spacing.sm)
+                            fontSize(page.theme.type.meta)
                             color(page.theme.textTertiary)
                         }
                     }
                 }
+
+                // ---- 行情指标：细分隔线网格（替代白卡） ----
+                SectionLabel("行情数据", page.theme)
                 View {
-                    attr { marginTop(10f); flexDirectionRow() }
-                    listOf(StockChartMode.TIMELINE to "分时", StockChartMode.K_LINE to "日 K", StockChartMode.K_LINE to "周 K", StockChartMode.K_LINE to "月 K").forEachIndexed { index, (mode, label) ->
-                        View {
-                            val period = when (index) { 2 -> StockChartPeriod.WEEK; 3 -> StockChartPeriod.MONTH; else -> StockChartPeriod.DAY }
-                            attr { marginRight(6f); paddingLeft(10f); paddingRight(10f); height(32f); justifyContentCenter(); borderRadius(9f); backgroundColor(if (page.chartMode == mode && (mode == StockChartMode.TIMELINE || page.chartPeriod == period)) page.theme.brandSoft else page.theme.surfaceMuted) }
-                            Text { attr { text(label); fontSize(12f); color(if (page.chartMode == mode && (mode == StockChartMode.TIMELINE || page.chartPeriod == period)) page.theme.brand else page.theme.textSecondary) } }
-                            event { click { page.chartMode = mode; page.chartPeriod = period } }
-                        }
+                    attr {
+                        marginTop(page.theme.spacing.lg)
+                        backgroundColor(page.theme.surfaceMuted)
+                        borderRadius(page.theme.cardRadius)
                     }
-                }
-                vif({ page.chartMode == StockChartMode.TIMELINE }) {
-                    CardShell(
-                        StockChartCardModel(page.quote, StockChartMode.TIMELINE, StockChartPeriod.DAY),
-                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
+                    MetricGrid(
+                        listOf(
+                            "今开" to Format.price(page.quote.open),
+                            "最高" to Format.price(page.quote.high),
+                            "最低" to Format.price(page.quote.low),
+                            "昨收" to Format.price(page.quote.previousClose),
+                            "成交量" to Format.compactAmount(page.quote.volume),
+                            "成交额" to Format.compactAmount(page.quote.amount),
+                            "换手率" to "${Format.decimal(page.quote.turnoverRate, 2)}%",
+                            "总市值" to Format.compactAmount(page.quote.marketCap),
+                        ),
+                        page.theme,
                     )
                 }
-                vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
-                    CardShell(
-                        StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY),
-                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
-                    )
+
+                // ---- 走势：去卡片，满宽绘制 + 分段控件 ----
+                SectionLabel("走势", page.theme)
+                ChartSegment(page.theme, page.chartMode, page.chartPeriod) { m, p ->
+                    page.chartMode = m
+                    page.chartPeriod = p
                 }
-                vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK }) {
-                    CardShell(
-                        StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK),
-                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
-                    )
-                }
-                vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH }) {
-                    CardShell(
-                        StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH),
-                        CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
-                    )
-                }
+                DetailChart(page.theme, page.chartMode, page.chartPeriod, page.quote, ctx)
+
+                // ---- 关键指标：细分隔线网格 ----
+                SectionLabel("关键指标", page.theme)
                 View {
-                    attr { marginTop(10f); padding(14f); backgroundColor(page.theme.surface); borderRadius(page.theme.cardRadius) }
-                    Text { attr { text("关键指标"); fontSize(16f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
-                    View {
-                        attr { marginTop(12f); flexDirectionRow() }
-                        DetailMetric("PE(TTM)", Format.decimal(page.quote.peTtm, 2), page.theme, this)
-                        DetailMetric("PB", Format.decimal(page.quote.pb, 2), page.theme, this)
-                        DetailMetric("振幅", Format.decimal((page.quote.high - page.quote.low) / page.quote.previousClose * 100, 2) + "%", page.theme, this)
+                    attr {
+                        marginTop(page.theme.spacing.lg)
+                        backgroundColor(page.theme.surfaceMuted)
+                        borderRadius(page.theme.cardRadius)
                     }
-                    Text {
-                        attr {
-                            text("指标要结合行业、增长与盈利质量一起看，单个数值不构成结论。")
-                            marginTop(12f)
-                            fontSize(11f)
-                            lineHeight(17f)
-                            color(page.theme.textTertiary)
-                        }
+                    MetricGrid(
+                        listOf(
+                            "PE(TTM)" to Format.decimal(page.quote.peTtm, 2),
+                            "PB" to Format.decimal(page.quote.pb, 2),
+                            "振幅" to Format.decimal((page.quote.high - page.quote.low) / page.quote.previousClose * 100, 2) + "%",
+                        ),
+                        page.theme,
+                    )
+                }
+                Text {
+                    attr {
+                        text("指标要结合行业、增长与盈利质量一起看，单个数值不构成结论。")
+                        marginTop(page.theme.spacing.md)
+                        fontSize(page.theme.type.label)
+                        lineHeight(17f)
+                        color(page.theme.textTertiary)
                     }
                 }
-                CardShell(
-                    InsightCardModel(page.quote, "短线价格偏弱，资金与板块联动影响较大。中期判断应继续核对现金流、渠道库存和公司公告。"),
-                    CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
-                )
-                CardShell(
+
+                // ---- AI 解读：要点卡片（方案 C） ----
+                SectionLabel("AI 解读", page.theme)
+                AiInsightBlock(aiSummary, page.theme)
+
+                // ---- 涨跌归因：列表 + 分隔线 ----
+                AttributionBlock(
                     AttributionCardModel(page.quote, attribution.direction, attribution.factors),
-                    CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer),
+                    page.theme,
                 )
+
+                // ---- 相关资讯：去卡列表 ----
                 NewsSection(page.theme)
             }
+
             AppTopBar(
                 title = page.quote.name,
                 subtitle = page.quote.symbol,
@@ -202,16 +219,224 @@ internal class StockDetailPage : BasePager() {
     }
 }
 
-private fun DetailMetric(
-    label: String,
-    value: String,
+private fun ViewContainer<*, *>.SectionLabel(text: String, theme: StockChatTheme) {
+    Text {
+        attr {
+            marginTop(theme.spacing.x3)
+            text(text)
+            fontSize(theme.type.label)
+            fontWeightSemiBold()
+            color(theme.textTertiary)
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.MetricGrid(items: List<Pair<String, String>>, theme: StockChatTheme) {
+    val rows = items.chunked(4)
+    rows.forEachIndexed { r, row ->
+        View {
+            attr { flexDirectionRow() }
+            row.forEachIndexed { c, (label, value) ->
+                View {
+                    attr {
+                        flex(1f)
+                        paddingTop(theme.spacing.lg); paddingBottom(theme.spacing.lg)
+                        paddingLeft(theme.spacing.md); paddingRight(theme.spacing.md)
+                        if (c < row.lastIndex) borderRight(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                        if (r < rows.lastIndex) borderBottom(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                    }
+                    Text { attr { text(label); fontSize(theme.type.label); color(theme.textTertiary) } }
+                    Text { attr { text(value); marginTop(5f); fontSize(theme.type.body); fontWeightMedium(); color(theme.textPrimary) } }
+                }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.ChartSegment(
     theme: StockChatTheme,
-    container: ViewContainer<*, *>,
+    chartMode: StockChartMode,
+    chartPeriod: StockChartPeriod,
+    onSelect: (StockChartMode, StockChartPeriod) -> Unit,
 ) {
-    container.View {
-        attr { flex(1f) }
-        Text { attr { text(label); fontSize(10f); color(theme.textTertiary) } }
-        Text { attr { text(value); marginTop(4f); fontSize(12f); fontWeightMedium(); color(theme.textPrimary) } }
+    val tabs = listOf(
+        StockChartMode.TIMELINE to "分时",
+        StockChartMode.K_LINE to "日K",
+        StockChartMode.K_LINE to "周K",
+        StockChartMode.K_LINE to "月K",
+    )
+    View {
+        attr { marginTop(theme.spacing.lg) }
+        View {
+            attr {
+                flexDirectionRow(); padding(3f)
+                backgroundColor(theme.surfaceMuted); borderRadius(theme.inputRadius)
+            }
+            tabs.forEachIndexed { index, (mode, label) ->
+                val period = when (index) {
+                    2 -> StockChartPeriod.WEEK
+                    3 -> StockChartPeriod.MONTH
+                    else -> StockChartPeriod.DAY
+                }
+                val active = chartMode == mode && (mode == StockChartMode.TIMELINE || chartPeriod == period)
+                View {
+                    attr {
+                        paddingLeft(14f); paddingRight(14f); height(32f)
+                        justifyContentCenter(); borderRadius(theme.inputRadius)
+                        backgroundColor(if (active) theme.brandSoft else theme.surfaceMuted)
+                    }
+                    Text {
+                        attr {
+                            text(label)
+                            fontSize(theme.type.label)
+                            fontWeightSemiBold()
+                            color(if (active) theme.brand else theme.textSecondary)
+                        }
+                    }
+                    event { click { onSelect(mode, period) } }
+                }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.DetailChart(
+    theme: StockChatTheme,
+    chartMode: StockChartMode,
+    chartPeriod: StockChartPeriod,
+    quote: Quote,
+    ctx: CardContext,
+) {
+    vif({ chartMode == StockChartMode.TIMELINE }) {
+        MiniTimeline(this, StockQuoteCardModel(quote), ctx, height = 132f)
+        Text {
+            attr {
+                text("虚线为昨收基准")
+                marginTop(6f); fontSize(theme.type.meta); color(theme.textTertiary)
+            }
+        }
+    }
+    vif({ chartMode == StockChartMode.K_LINE && chartPeriod == StockChartPeriod.DAY }) {
+        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx)
+    }
+    vif({ chartMode == StockChartMode.K_LINE && chartPeriod == StockChartPeriod.WEEK }) {
+        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx)
+    }
+    vif({ chartMode == StockChartMode.K_LINE && chartPeriod == StockChartPeriod.MONTH }) {
+        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx)
+    }
+}
+
+private fun ViewContainer<*, *>.AiInsightBlock(summary: String, theme: StockChatTheme) {
+    val sentences = summary.split(Regex("[。，]")).map { it.trim() }.filter { it.isNotEmpty() }
+    View {
+        attr {
+            marginTop(theme.spacing.lg)
+            backgroundColor(theme.surfaceMuted)
+            borderRadius(theme.cardRadius)
+        }
+        View { attr { height(4f); backgroundColor(theme.brand) } }
+        View {
+            attr { padding(theme.spacing.lg) }
+            Text {
+                attr {
+                    text("AI 解读")
+                    fontSize(theme.type.label)
+                    fontWeightSemiBold()
+                    color(theme.brand)
+                }
+            }
+            if (sentences.isNotEmpty()) {
+                Text {
+                    attr {
+                        text(sentences.first() + "。")
+                        marginTop(theme.spacing.sm)
+                        fontSize(theme.type.body)
+                        fontWeightSemiBold()
+                        color(theme.textPrimary)
+                        lineHeight(21f)
+                    }
+                }
+            }
+            sentences.drop(1).forEach { s ->
+                View {
+                    attr { flexDirectionRow(); marginTop(theme.spacing.sm); alignItemsFlexStart() }
+                    View {
+                        attr {
+                            width(6f); height(6f); borderRadius(3f)
+                            backgroundColor(theme.brand)
+                            marginTop(6f); marginRight(theme.spacing.sm)
+                        }
+                    }
+                    Text {
+                        attr {
+                            flex(1f)
+                            text(s + "。")
+                            fontSize(theme.type.sm)
+                            lineHeight(19f)
+                            color(theme.textSecondary)
+                        }
+                    }
+                }
+            }
+            Text {
+                attr {
+                    text("AI 生成 · 仅供参考，不构成投资建议")
+                    marginTop(theme.spacing.md)
+                    fontSize(theme.type.meta)
+                    color(theme.textTertiary)
+                }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.AttributionBlock(model: AttributionCardModel, theme: StockChatTheme) {
+    val factors = model.factors
+    Text {
+        attr {
+            marginTop(theme.spacing.x3)
+            text("为什么${if (model.quote.rising) "涨" else "跌"}")
+            fontSize(theme.type.title)
+            fontWeightSemiBold()
+            color(theme.textPrimary)
+        }
+    }
+    factors.forEachIndexed { index, factor ->
+        View {
+            attr {
+                marginTop(theme.spacing.md); paddingTop(theme.spacing.md)
+                if (index > 0) borderTop(Border(0.5f, BorderStyle.SOLID, theme.divider))
+            }
+            View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text {
+                    attr {
+                        text(factor.name)
+                        flex(1f)
+                        fontSize(theme.type.sm)
+                        fontWeightMedium()
+                        color(theme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        text("${Format.decimal(factor.weight * 100, 0)}%")
+                        fontSize(theme.type.label)
+                        color(theme.textSecondary)
+                    }
+                }
+            }
+            Text {
+                attr {
+                    text(factor.description)
+                    marginTop(4f)
+                    fontSize(theme.type.label)
+                    lineHeight(16f)
+                    color(theme.textSecondary)
+                }
+            }
+        }
     }
 }
 
@@ -221,18 +446,36 @@ private fun ViewContainer<*, *>.NewsSection(theme: StockChatTheme) {
         Triple("白酒板块盘中震荡，龙头股表现分化", "证券时报", "3 小时前"),
         Triple("机构关注消费复苏节奏与渠道库存", "公开研报摘要", "昨天"),
     )
-    View {
-        attr { marginTop(10f); padding(14f); backgroundColor(theme.surface); borderRadius(theme.cardRadius) }
-        Text { attr { text("相关资讯"); fontSize(16f); fontWeightSemiBold(); color(theme.textPrimary) } }
-        items.forEachIndexed { index, item ->
-            View {
+    Text {
+        attr {
+            marginTop(theme.spacing.x3)
+            text("相关资讯")
+            fontSize(theme.type.label)
+            fontWeightSemiBold()
+            color(theme.textTertiary)
+        }
+    }
+    items.forEachIndexed { index, item ->
+        View {
+            attr {
+                marginTop(theme.spacing.md); paddingTop(theme.spacing.md)
+                if (index > 0) borderTop(Border(0.5f, BorderStyle.SOLID, theme.divider))
+            }
+            Text {
                 attr {
-                    paddingTop(12f)
-                    paddingBottom(12f)
-                    if (index > 0) borderTop(Border(1f, BorderStyle.SOLID, theme.divider))
+                    text(item.first)
+                    fontSize(theme.type.sm)
+                    lineHeight(19f)
+                    color(theme.textPrimary)
                 }
-                Text { attr { text(item.first); fontSize(13f); lineHeight(19f); color(theme.textPrimary) } }
-                Text { attr { text("${item.second}  ${item.third}"); marginTop(5f); fontSize(10f); color(theme.textTertiary) } }
+            }
+            Text {
+                attr {
+                    text("${item.second}  ${item.third}")
+                    marginTop(5f)
+                    fontSize(theme.type.meta)
+                    color(theme.textTertiary)
+                }
             }
         }
     }
