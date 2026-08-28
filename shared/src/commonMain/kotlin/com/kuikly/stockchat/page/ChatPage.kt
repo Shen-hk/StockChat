@@ -111,6 +111,9 @@ internal class ChatPage : BasePager() {
     private var keyboardHeight: Float by observable(0f)
     private var drawerOpen: Boolean by observable(false)
     private var liveDataMode: Boolean by observable(true)
+    // Dynamic island: the top title capsule morphs into a live quote card.
+    private var islandExpanded: Boolean by observable(false)
+    private val islandSymbol = "600519.SH"
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
@@ -169,6 +172,8 @@ internal class ChatPage : BasePager() {
     override fun pageDidAppear() {
         super.pageDidAppear()
         viewModel.refreshConfigStatus()
+        // Preload the island quote so the morph opens with data in place.
+        requestQuote(islandSymbol)
     }
 
     override fun body(): ViewBuilder {
@@ -246,9 +251,14 @@ internal class ChatPage : BasePager() {
                 statusBarHeight = page.pagerData.statusBarHeight,
                 theme = page.theme,
                 drawerOpen = page.drawerOpen,
-                liveData = page.liveDataMode,
+                liveData = { page.liveDataMode },
                 renderer = page.glassRenderer,
                 contextTitle = if (page.drilledKeys.isNotEmpty()) "归因链 · 资金面 ›" else null,
+                pageWidth = page.pagerData.pageViewWidth,
+                islandExpanded = { page.islandExpanded },
+                islandQuote = { page.quoteFor(page.islandSymbol) },
+                onToggleIsland = { page.toggleIsland() },
+                onOpenIslandDetail = { symbol -> page.islandExpanded = false; page.openStockDetail(symbol) },
                 onMenu = { page.drawerOpen = !page.drawerOpen },
                 onNewChat = { page.startNewChat() },
             )
@@ -580,6 +590,7 @@ internal class ChatPage : BasePager() {
                     onNewChat = { page.startNewChat() },
                     onOpenSession = { page.openHistorySession(it) },
                     onOpenGallery = { page.openPage(Routes.CARD_GALLERY) },
+                    onToggleIsland = { page.toggleIsland() },
                     onSettings = { page.drawerOpen = false; page.openPage(Routes.API_CONFIG) },
                 )
             }
@@ -966,6 +977,17 @@ internal class ChatPage : BasePager() {
 
     private fun toggleCardExpanded(cardKey: String) {
         expandedCardKey = if (expandedCardKey == cardKey) "" else cardKey
+    }
+
+    private var islandAnimating = false
+    private fun toggleIsland() {
+        // A tap can be re-delivered to stacked layers while the morph
+        // re-layouts; ignore toggles until the animation settles.
+        if (islandAnimating) return
+        islandAnimating = true
+        islandExpanded = !islandExpanded
+        if (islandExpanded) requestQuote(islandSymbol)
+        setTimeout(400) { islandAnimating = false }
     }
 
     private fun toggleDataMode() {

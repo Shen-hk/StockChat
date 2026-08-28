@@ -2,11 +2,15 @@ package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.ChatSessionSummary
+import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
+import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
+import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
@@ -23,9 +27,16 @@ fun ViewContainer<*, *>.ChatTopNav(
     statusBarHeight: Float,
     theme: StockChatTheme,
     drawerOpen: Boolean,
-    liveData: Boolean,
+    liveData: () -> Boolean,
     renderer: GlassRenderer = GlassRenderer.Default,
     contextTitle: String? = null,
+    pageWidth: Float = 0f,
+    // Kuikly only re-runs attr/vif closures that read observables directly,
+    // so reactive island inputs are accessors rather than frozen values.
+    islandExpanded: () -> Boolean = { false },
+    islandQuote: () -> Quote? = { null },
+    onToggleIsland: () -> Unit = {},
+    onOpenIslandDetail: (String) -> Unit = {},
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
 ) {
@@ -64,41 +75,199 @@ fun ViewContainer<*, *>.ChatTopNav(
                 Text { attr { text(if (drawerOpen) "×" else "☰"); fontSize(22f); color(theme.textPrimary) } }
                 event { click { onMenu() } }
             }
-            View {
-                attr { flex(1f); flexDirectionRow(); justifyContentCenter() }
-                View {
-                    attr {
-                        height(36f)
-                        paddingLeft(14f)
-                        paddingRight(14f)
-                        flexDirectionRow()
-                        alignItemsCenter()
-                        borderRadius(18f)
-                    }
-                    GlassBackdrop(theme.glass.peek, renderer)
-                    Text {
-                        attr {
-                            text(contextTitle ?: "StockChat.")
-                            fontSize(if (contextTitle == null) 15f else 13f)
-                            fontWeightBold()
-                            color(if (contextTitle == null) theme.textPrimary else theme.textSecondary)
-                        }
-                    }
-                    View {
-                        attr {
-                            size(5f, 5f)
-                            marginLeft(7f)
-                            borderRadius(3f)
-                            backgroundColor(if (liveData) Color(0xFF34C759) else theme.textTertiary)
-                        }
-                    }
-                }
-            }
+            // The middle slot stays empty: the floating title island below is
+            // rendered as a sibling overlay so it can overflow this 44dp row
+            // when it morphs into the quote card.
+            View { attr { flex(1f) } }
             View {
                 attr { size(40f, 40f); allCenter(); borderRadius(20f) }
                 GlassBackdrop(theme.glass.peek, renderer)
                 Text { attr { text("＋"); fontSize(23f); color(theme.brand) } }
                 event { click { onNewChat() } }
+            }
+        }
+    }
+    StockIsland(
+        statusBarHeight = statusBarHeight,
+        pageWidth = pageWidth,
+        expanded = islandExpanded,
+        quote = islandQuote,
+        liveData = liveData,
+        title = contextTitle,
+        theme = theme,
+        renderer = renderer,
+        onToggle = onToggleIsland,
+        onOpenDetail = onOpenIslandDetail,
+    )
+}
+/**
+ * Dynamic-island style interaction hub: the liquid-glass title capsule.
+ *
+ * Collapsed it is the familiar "StockChat." pill; a tap morphs it in place
+ * (width / height / radius all animate together) into a live quote card,
+ * and the identity layer cross-fades into the card layer.
+ *
+ * Kuikly only re-runs attr/vif closures that read observables *directly*,
+ * so every reactive input arrives as an accessor and is invoked inside the
+ * attr closures — never hoisted into builder-scope vals.
+ */
+private fun ViewContainer<*, *>.StockIsland(
+    statusBarHeight: Float,
+    pageWidth: Float,
+    expanded: () -> Boolean,
+    quote: () -> Quote?,
+    liveData: () -> Boolean,
+    title: String?,
+    theme: StockChatTheme,
+    renderer: GlassRenderer,
+    onToggle: () -> Unit,
+    onOpenDetail: (String) -> Unit,
+) {
+    val collapsedWidth = if (title == null) 128f else 200f
+    val expandedWidth = (pageWidth - 28f).coerceAtLeast(collapsedWidth)
+    // Full-width transparent strip centres the island via flex.  It has no
+    // event handler, so taps outside the island fall through to the nav
+    // buttons and the scroller underneath; only the morphing child below
+    // consumes touches.  Animating width/height/radius on the child (instead
+    // of absolute left) keeps layout and touch bounds in sync.
+    View {
+        attr {
+            absolutePosition(top = statusBarHeight + 4f, left = 0f, right = 0f)
+            flexDirectionRow()
+            justifyContentCenter()
+        }
+        View {
+            attr {
+                val e = expanded()
+                width(if (e) expandedWidth else collapsedWidth)
+                height(if (e) 132f else 36f)
+                borderRadius(if (e) 24f else 18f)
+                animate(Animation.easeOut(0.34f), e)
+            }
+            GlassBackdrop(theme.glass.peek, renderer)
+
+            // Collapsed identity layer: title + live dot.  It owns taps only
+            // while visible so the card beneath never swallows the toggle.
+            View {
+                attr {
+                    val e = expanded()
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    justifyContentCenter()
+                    opacity(if (e) 0f else 1f)
+                    touchEnable(!e)
+                    animate(Animation.easeOut(0.18f), e)
+                }
+                Text {
+                    attr {
+                        text(title ?: "StockChat.")
+                        fontSize(if (title == null) 15f else 13f)
+                        fontWeightBold()
+                        color(if (title == null) theme.textPrimary else theme.textSecondary)
+                    }
+                }
+                View {
+                    attr {
+                        size(5f, 5f)
+                        marginLeft(7f)
+                        borderRadius(3f)
+                        backgroundColor(if (liveData()) Color(0xFF34C759) else theme.textTertiary)
+                    }
+                }
+                event { click { if (!expanded()) onToggle() } }
+            }
+
+            // Expanded quote-card layer.
+            View {
+                attr {
+                    val e = expanded()
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    paddingLeft(16f)
+                    paddingRight(16f)
+                    paddingTop(12f)
+                    paddingBottom(11f)
+                    opacity(if (e) 1f else 0f)
+                    transform(Translate(0f, if (e) 0f else 0.10f))
+                    touchEnable(e)
+                    animate(Animation.easeOut(0.26f), e)
+                }
+                View {
+                    attr { flexDirectionRow(); alignItemsCenter() }
+                    Text { attr { text(quote()?.name ?: "贵州茅台"); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text(quote()?.symbol ?: "600519.SH"); marginLeft(6f); fontSize(10f); color(theme.textTertiary) } }
+                    View { attr { flex(1f) } }
+                    View { attr { size(5f, 5f); borderRadius(3f); backgroundColor(if (liveData()) Color(0xFF34C759) else theme.textTertiary) } }
+                    Text { attr { text(if (liveData()) "实时" else "模拟"); marginLeft(4f); fontSize(9f); color(theme.textTertiary) } }
+                    View {
+                        attr { size(24f, 24f); marginLeft(10f); allCenter(); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
+                        Text { attr { text("×"); fontSize(13f); color(theme.textSecondary) } }
+                        event { click { onToggle() } }
+                    }
+                }
+                View {
+                    // Loading hint occupies the same slot as the stats block;
+                    // both stay mounted and trade visibility so the island
+                    // never needs a structural rebuild when the quote lands.
+                    attr {
+                        flex(1f)
+                        allCenter()
+                        opacity(if (quote() == null) 1f else 0f)
+                        touchEnable(false)
+                    }
+                    Text { attr { text("行情加载中…"); fontSize(12f); color(theme.textTertiary) } }
+                }
+                View {
+                    attr {
+                        absolutePosition(top = 44f, left = 16f, right = 16f, bottom = 11f)
+                        opacity(if (quote() == null) 0f else 1f)
+                        touchEnable(quote() != null)
+                    }
+                    View {
+                        attr { flexDirectionRow(); alignItemsFlexEnd() }
+                        Text {
+                            attr {
+                                text(quote()?.let { Format.price(it.price) } ?: "--")
+                                fontSize(26f)
+                                fontWeightBold()
+                                color(quote()?.let { if (it.rising) theme.rise else theme.fall } ?: theme.textPrimary)
+                            }
+                        }
+                        View {
+                            attr {
+                                marginLeft(10f)
+                                marginBottom(3f)
+                                paddingLeft(7f)
+                                paddingRight(7f)
+                                paddingTop(2f)
+                                paddingBottom(2f)
+                                borderRadius(7f)
+                                backgroundColor(quote()?.let { if (it.rising) theme.riseSoft else theme.fallSoft } ?: theme.surfaceMuted)
+                            }
+                            Text {
+                                attr {
+                                    text(quote()?.let { "${if (it.rising) "▲" else "▼"} ${Format.signed(it.change)}  ${Format.percent(it.changePercent)}" } ?: "--")
+                                    fontSize(11f)
+                                    fontWeightMedium()
+                                    color(quote()?.let { if (it.rising) theme.rise else theme.fall } ?: theme.textTertiary)
+                                }
+                            }
+                        }
+                    }
+                    View {
+                        attr { marginTop(9f); flexDirectionRow(); alignItemsCenter() }
+                        Text { attr { text(quote()?.let { "高 ${Format.price(it.high)}" } ?: "高 --"); fontSize(10f); color(theme.textSecondary) } }
+                        Text { attr { text(quote()?.let { "低 ${Format.price(it.low)}" } ?: "低 --"); marginLeft(10f); fontSize(10f); color(theme.textSecondary) } }
+                        Text { attr { text(quote()?.let { "额 ${Format.compactAmount(it.amount)}" } ?: "额 --"); marginLeft(10f); fontSize(10f); color(theme.textSecondary) } }
+                        View { attr { flex(1f) } }
+                        Text { attr { text("查看详情 ›"); fontSize(11f); fontWeightMedium(); color(theme.brand) } }
+                        event {
+                            click {
+                                if (expanded()) quote()?.let { onOpenDetail(it.symbol) }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -119,6 +288,7 @@ fun ViewContainer<*, *>.ChatDrawer(
     onNewChat: () -> Unit = {},
     onOpenSession: (String) -> Unit = {},
     onOpenGallery: () -> Unit = {},
+    onToggleIsland: () -> Unit = {},
     onSettings: () -> Unit,
 ) {
     View {
@@ -236,6 +406,7 @@ fun ViewContainer<*, *>.ChatDrawer(
 
         // Quick entries with tinted icon tiles.
         View { attr { height(1f); marginTop(8f); marginBottom(6f); backgroundColor(theme.divider) } }
+        DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛演示（茅台）", theme) { onClose(); onToggleIsland() }
         DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme)
         DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme)
         DrawerMenuItem("▦", theme.textSecondary, theme.surfaceMuted, "卡片图鉴", theme) { onClose(); onOpenGallery() }
