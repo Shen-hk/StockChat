@@ -156,11 +156,15 @@ private fun stockMarkdownConfig(
             blockQuoteTextVertical = 8f,
         ),
         onLinkClick = { url, _ ->
+            println("[STOCKCHAT_DBG] onLinkClick url=$url")
             entityFromUrl(url, entities)?.let { entity ->
                 if (entity.type == EntityType.STOCK) onStockClick(entity) else onTermClick(entity.text)
             }
         },
         onLinkLongPress = { url, params ->
+            if (params.state != "move" || params.isCancel) {
+                println("[STOCKCHAT_DBG] onLinkLongPress url=$url state=${params.state} isCancel=${params.isCancel}")
+            }
             entityFromUrl(url, entities)?.let { entity ->
                 if (entity.type == EntityType.STOCK) onStockLongPress(entity, params.state, params.isCancel)
             }

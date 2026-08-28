@@ -96,9 +96,8 @@ internal class ChatPage : BasePager() {
     // A long-pressed stock opens its quote in the global glass sheet.  Keep the
     // symbol while a live quote is loading so the interaction never gets lost.
     private var pendingEntitySheetSymbol: String by observable("")
-    // Symbol whose long press was recognised but whose gesture has not ended
-    // yet. The sheet is only presented on "end" so the finger-up never lands
-    // on the card that is about to mount.
+    // Symbol whose long press was recognised but whose gesture has not ended.
+    // The sheet can render immediately, but stays non-interactive until release.
     private var pendingLongPressSymbol: String = ""
     // The long-press gesture's terminal touch can bleed through into the freshly
     // mounted sheet and trigger its onOpenStock (jumping to the detail page).
@@ -205,8 +204,16 @@ internal class ChatPage : BasePager() {
                         theme = page.theme,
                         contextSymbols = page.contextSymbolsBefore(message.id),
                         suggestionsActive = page.suggestionsAreActive(message),
-                        onEntityStock = { page.handleStockEntityClick(it) },
-                        onEntityStockLongPress = { entity, state, cancelled -> page.handleStockEntityLongPress(entity, state, cancelled) },
+                        onEntityStock = { entity ->
+                            println("[STOCKCHAT_DBG] onEntityStock click target=${entity.target}")
+                            page.handleStockEntityClick(entity)
+                        },
+                        onEntityStockLongPress = { entity, state, cancelled ->
+                            if (state != "move" || cancelled) {
+                                println("[STOCKCHAT_DBG] onEntityStockLongPress target=${entity.target} state=$state cancelled=$cancelled")
+                            }
+                            page.handleStockEntityLongPress(entity, state, cancelled)
+                        },
                         onCardStock = { page.openStockDetail(it) },
                         onTerm = { page.viewModel.send("$it 是什么意思") },
                         onSuggestion = { page.viewModel.send(it) },
@@ -545,6 +552,7 @@ internal class ChatPage : BasePager() {
                         theme = page.theme,
                         renderer = page.glassRenderer,
                         presented = page.sheetPresented,
+                        interactive = page.sheetInteractive,
                         viewportHeight = page.pagerData.pageViewHeight,
                         bottomInset = page.pagerData.safeAreaInsets.bottom,
                         onDismiss = { page.dismissCardSheet() },
@@ -818,46 +826,63 @@ internal class ChatPage : BasePager() {
     }
 
     private fun handleStockEntityLongPress(entity: EntitySpan, state: String, cancelled: Boolean) {
-        // A cancelled gesture must never open the sheet.
-        if (cancelled) {
-            if (pendingLongPressSymbol == entity.target) pendingLongPressSymbol = ""
-            return
+        if (state != "move" || cancelled) {
+            println("[STOCKCHAT_DBG] handleStockEntityLongPress target=${entity.target} state=$state cancelled=$cancelled pending=${pendingEntitySheetSymbol}")
         }
-        // The long-press gesture bridge reports recognition through different
-        // states across platforms: "start" (finger-down recognition) and/or
-        // "end" (finger-up). "move" must be ignored. Never re-open an entity
-        // that already has a pending sheet; this also guards against duplicate
-        // events while the quote is loading.
-        if (state == "move") return
-        if (pendingEntitySheetSymbol == entity.target) return
-        if (sheetCard?.cardId == "entity-sheet:${entity.target}") {
+        // Once "start" has fired, the long press is already recognised. Some
+        // Android bridges mark the terminal event cancelled when the parent
+        // scroller wins the final touch arbitration, so cancellation must not
+        // discard a gesture that has already started.
+        if (state == "move") {
+            if (cancelled && pendingLongPressSymbol == entity.target) {
+                pendingLongPressSymbol = ""
+                finishStockLongPress(entity.target)
+            }
             return
         }
 
-        // "start" fires while the finger is still down. Presenting the sheet
-        // there means the eventual finger-up lands on the freshly mounted card
-        // and bleeds through into its stock header, jumping straight to the
-        // detail page. Always wait for the gesture to actually finish.
         if (state == "start") {
+            if (cancelled || pendingLongPressSymbol == entity.target) return
             pendingLongPressSymbol = entity.target
+            suppressNextStockClickSymbol = entity.target
+            println("[STOCKCHAT_DBG] handleStockEntityLongPress recognised(start) -> dispatch SHEET")
+            handleStockEntity(entity, EntityAction.SHEET)
             return
         }
-        if (state != "end") return
-        pendingLongPressSymbol = ""
-        openSheetOnGestureEnd(entity)
+
+        if (state == "end" || cancelled) {
+            if (pendingLongPressSymbol == entity.target) {
+                pendingLongPressSymbol = ""
+                finishStockLongPress(entity.target)
+            }
+            return
+        }
+
+        println("[STOCKCHAT_DBG] handleStockEntityLongPress ignored(state=$state)")
     }
 
-    private fun openSheetOnGestureEnd(entity: EntitySpan) {
-        suppressNextStockClickSymbol = entity.target
-        handleStockEntity(entity, EntityAction.SHEET)
-        setTimeout(250) {
-            if (suppressNextStockClickSymbol == entity.target) {
+    private fun finishStockLongPress(symbol: String) {
+        println("[STOCKCHAT_DBG] finishStockLongPress symbol=$symbol mounted=${sheetCard?.cardId}")
+        // Mount after the terminal touch callback returns. Kuikly's vif block
+        // captures presentation values when it mounts, so mounting hidden and
+        // toggling the flag later leaves the native view permanently invisible.
+        setTimeout(16) {
+            if (sheetCard?.cardId == "entity-sheet:$symbol") {
+                sheetPresented = true
+                sheetInteractive = true
+                sheetMounted = true
+                println("[STOCKCHAT_DBG] entity sheet mounted after gesture end")
+            }
+        }
+        setTimeout(400) {
+            if (suppressNextStockClickSymbol == symbol) {
                 suppressNextStockClickSymbol = ""
             }
         }
     }
 
     private fun handleStockEntity(entity: EntitySpan, action: EntityAction) {
+        println("[STOCKCHAT_DBG] handleStockEntity target=${entity.target} candidates=${entity.candidates.size} action=$action")
         if (entity.candidates.size == 1) performEntityAction(entity.target, action)
         else {
             ambiguousEntityText = entity.text
@@ -878,6 +903,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun openEntityQuoteSheet(symbol: String) {
+        println("[STOCKCHAT_DBG] openEntityQuoteSheet symbol=$symbol pendingBefore=${pendingEntitySheetSymbol} quoteForCached=${quoteFor(symbol) != null}")
         pendingEntitySheetSymbol = symbol
         requestQuote(symbol)
         val cached = quoteFor(symbol)
@@ -889,13 +915,18 @@ internal class ChatPage : BasePager() {
     }
 
     private fun presentPendingEntitySheet(symbol: String, quote: Quote?) {
+        println("[STOCKCHAT_DBG] presentPendingEntitySheet symbol=$symbol pending=${pendingEntitySheetSymbol} quoteNull=${quote == null}")
         if (pendingEntitySheetSymbol != symbol) return
         if (quote == null) {
             pendingEntitySheetSymbol = ""
             return
         }
         pendingEntitySheetSymbol = ""
-        openCardSheet(StockQuoteCardModel(quote, "entity-sheet:$symbol"))
+        println("[STOCKCHAT_DBG] -> openCardSheet for $symbol")
+        openCardSheet(
+            StockQuoteCardModel(quote, "entity-sheet:$symbol"),
+            deferInteraction = pendingLongPressSymbol == symbol,
+        )
     }
 
     private fun contextSymbolsBefore(messageId: String): List<String> =
@@ -911,9 +942,12 @@ internal class ChatPage : BasePager() {
     }
 
     private fun requestQuote(symbol: String) {
-        if (!requestedSymbols.add(symbol)) return
+        val firstRequest = requestedSymbols.add(symbol)
+        println("[STOCKCHAT_DBG] requestQuote symbol=$symbol firstRequest=$firstRequest")
+        if (!firstRequest) { println("[STOCKCHAT_DBG] requestQuote early-return(dup) symbol=$symbol"); return }
         if (!liveDataMode) {
             mockQuoteProvider.snapshot(symbol) { quote ->
+                println("[STOCKCHAT_DBG] requestQuote mock callback symbol=$symbol quoteNull=${quote == null}")
                 val updated = ChatQuoteState(symbol, quote, DataMode.OFFLINE)
                 val index = quoteStates.indexOfFirst { it.symbol == symbol }
                 if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
@@ -922,6 +956,7 @@ internal class ChatPage : BasePager() {
             return
         }
         quoteRepository.load(symbol) { result ->
+            println("[STOCKCHAT_DBG] requestQuote live callback symbol=$symbol quoteNull=${result.quote == null}")
             val updated = ChatQuoteState(symbol, result.quote, result.mode)
             val index = quoteStates.indexOfFirst { it.symbol == symbol }
             if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
@@ -1007,20 +1042,18 @@ internal class ChatPage : BasePager() {
         compareCandidateSymbol = ""
     }
 
-    private fun openCardSheet(model: CardModel) {
+    private fun openCardSheet(model: CardModel, deferInteraction: Boolean = false) {
         val version = ++sheetPresentationVersion
+        sheetMounted = false
         sheetCard = model
-        sheetMounted = true
         sheetLevel = if (model.cardType == "stock-chart") SheetLevel.FULL else SheetLevel.HALF
-        sheetPresented = false
-        sheetInteractive = false
-        setTimeout(16) {
-            if (sheetPresentationVersion == version) sheetPresented = true
-        }
-        // Re-enable interaction only after the long-press gesture has fully ended.
-        setTimeout(250) {
-            if (sheetPresentationVersion != version || sheetCard?.cardId != model.cardId) return@setTimeout
-            sheetInteractive = true
+        sheetPresented = !deferInteraction
+        sheetInteractive = !deferInteraction
+        println("[STOCKCHAT_DBG] openCardSheet model=${model.cardType} deferInteraction=$deferInteraction")
+        if (!deferInteraction) {
+            setTimeout(0) {
+                if (sheetPresentationVersion == version) sheetMounted = true
+            }
         }
     }
 
@@ -1135,8 +1168,11 @@ internal class ChatPage : BasePager() {
         if (index >= 0) subThreads[index] = update(subThreads[index])
     }
 
-    private fun quoteFor(symbol: String): Quote? =
-        quoteStates.firstOrNull { it.symbol == symbol }?.quote ?: quoteRepository.cachedOrOffline(symbol)
+    private fun quoteFor(symbol: String): Quote? {
+        val q = quoteStates.firstOrNull { it.symbol == symbol }?.quote ?: quoteRepository.cachedOrOffline(symbol)
+        println("[STOCKCHAT_DBG] quoteFor symbol=$symbol found=${q != null}")
+        return q
+    }
 
 }
 
@@ -1813,6 +1849,7 @@ internal fun ViewContainer<*, *>.CardSheetHost(
     theme: StockChatTheme,
     renderer: GlassRenderer = GlassRenderer.Default,
     presented: Boolean = true,
+    interactive: Boolean = presented,
     viewportHeight: Float,
     bottomInset: Float,
     onDismiss: () -> Unit,
@@ -1822,6 +1859,7 @@ internal fun ViewContainer<*, *>.CardSheetHost(
     onOpenStock: (String) -> Unit,
     onTerm: (String) -> Unit,
 ) {
+    println("[STOCKCHAT_DBG] CardSheetHost render model=${model.cardType} level=$level presented=$presented interactive=$interactive")
     val availableHeight = (viewportHeight - bottomInset).coerceAtLeast(520f)
     val sheetHeight = (availableHeight * level.ratio).coerceAtLeast(180f)
     val footerHeight = if (level == SheetLevel.FULL) 0f else 52f
@@ -1835,10 +1873,10 @@ internal fun ViewContainer<*, *>.CardSheetHost(
             // While hidden the scrim must not swallow touches, otherwise the
             // page underneath (including the fresh sheet's own content) is
             // left unresponsive for the whole presentation window.
-            touchEnable(presented)
+            touchEnable(interactive)
             animate(Animation.easeOut(0.20f), presented)
         }
-        event { click { if (presented) onDismiss() } }
+        event { click { if (interactive) onDismiss() } }
     }
     View {
         attr {
@@ -1849,7 +1887,7 @@ internal fun ViewContainer<*, *>.CardSheetHost(
             paddingBottom(12f + bottomInset)
             opacity(if (presented) 1f else 0f)
             transform(scale = if (presented) Scale.DEFAULT else Scale(0.98f, 0.98f))
-            touchEnable(presented)
+            touchEnable(interactive)
             animate(Animation.easeOut(if (renderer.mode == GlassRenderingMode.SIMPLIFIED) 0.20f else 0.40f), presented)
             animate(Animation.easeOut(0.26f), level)
         }

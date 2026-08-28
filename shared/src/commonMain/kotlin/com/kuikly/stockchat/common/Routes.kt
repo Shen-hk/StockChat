@@ -13,6 +13,8 @@ object Routes {
 }
 
 fun PagerScope.openStockDetail(symbol: String, from: String = Routes.CHAT) {
+    val trace = Throwable().stackTrace.take(6).joinToString(" <- ") { "${it.className}.${it.methodName}(${it.lineNumber})" }
+    println("[STOCKCHAT_DBG] openStockDetail symbol=$symbol from=$from trace=$trace")
     getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
         Routes.STOCK_DETAIL,
         JSONObject().apply {
