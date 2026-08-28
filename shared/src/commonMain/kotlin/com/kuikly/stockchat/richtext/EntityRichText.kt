@@ -2,6 +2,7 @@ package com.kuikly.stockchat.richtext
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.attr.CaptureRule
 import com.tencent.kuiklybase.KuiklyMarkdown
 import com.tencent.kuiklybase.KuiklyStreamingMarkdown
 import com.tencent.kuiklybase.config.FontWeight
@@ -12,6 +13,7 @@ import com.tencent.kuiklybase.config.MarkdownPadding
 import com.tencent.kuiklybase.config.MarkdownTypography
 import com.tencent.kuiklybase.config.TextStyleConfig
 import com.tencent.kuiklybase.streaming.MarkdownStreamingState
+import com.tencent.kuikly.core.views.View
 
 private const val ENTITY_URL_PREFIX = "stockchat-entity://"
 
@@ -24,16 +26,22 @@ fun ViewContainer<*, *>.EntityRichText(
     onTermClick: (String) -> Unit,
 ) {
     val adapted = EntityMarkdownAdapter.withEntityLinks(rawText, contextSymbols)
-    KuiklyMarkdown(
-        content = adapted.content,
-        config = stockMarkdownConfig(
-            theme = theme,
-            entities = adapted.entities,
-            onStockClick = onStockClick,
-            onStockLongPress = onStockLongPress,
-            onTermClick = onTermClick,
-        ),
-    )
+    View {
+        attr {
+            alignSelfStretch()
+            capture(CaptureRule.longPress())
+        }
+        KuiklyMarkdown(
+            content = adapted.content,
+            config = stockMarkdownConfig(
+                theme = theme,
+                entities = adapted.entities,
+                onStockClick = onStockClick,
+                onStockLongPress = onStockLongPress,
+                onTermClick = onTermClick,
+            ),
+        )
+    }
 }
 
 fun ViewContainer<*, *>.EntityStreamingMarkdown(
@@ -54,8 +62,14 @@ fun ViewContainer<*, *>.EntityStreamingMarkdown(
         onStockLongPress = onStockLongPress,
         onTermClick = onTermClick,
     )
-    blocks.forEach { block ->
-        KuiklyStreamingMarkdown(state = state, block = block, config = config)
+    View {
+        attr {
+            alignSelfStretch()
+            capture(CaptureRule.longPress())
+        }
+        blocks.forEach { block ->
+            KuiklyStreamingMarkdown(state = state, block = block, config = config)
+        }
     }
 }
 
