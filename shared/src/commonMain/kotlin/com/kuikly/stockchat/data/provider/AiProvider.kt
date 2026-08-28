@@ -149,6 +149,7 @@ class DeepSeekAiProvider(
             ```
             可用类型：stock-quote、stock-chart、attribution、insight、definition、news、stock-compare、suggestions。
             suggestions 的 JSON 格式是 {"chips":[{"text":"继续追问","type":"drill"}]}。不要在 JSON 中编造实时价格，行情由客户端数据层填充。
+            正文请使用自然短段落，必要时使用简短要点；不要输出 Markdown 分隔线（---、——）或过多空行，只有确实需要横向对比时才使用表格。
         """.trimIndent()
     }
 }
