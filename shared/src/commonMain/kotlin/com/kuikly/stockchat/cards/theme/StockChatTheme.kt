@@ -21,6 +21,8 @@ data class StockChatTheme(
     val glass: GlassPalette = GlassPalette.Light,
     val cardRadius: Float = 14f,
     val inputRadius: Float = 20f,
+    val spacing: SpacingTokens = SpacingTokens(),
+    val type: TypeTokens = TypeTokens(),
 ) {
     companion object {
         val Light = StockChatTheme(
@@ -62,3 +64,24 @@ data class StockChatTheme(
         )
     }
 }
+
+data class SpacingTokens(
+    val xs: Float = 4f,
+    val sm: Float = 8f,
+    val md: Float = 12f,
+    val lg: Float = 16f,
+    val xl: Float = 20f,
+    val x2: Float = 24f,
+    val x3: Float = 28f,
+    val x4: Float = 32f,
+)
+
+data class TypeTokens(
+    val display: Float = 38f,
+    val h1: Float = 20f,
+    val title: Float = 16f,
+    val body: Float = 14f,
+    val sm: Float = 13f,
+    val label: Float = 11f,
+    val meta: Float = 10f,
+)
