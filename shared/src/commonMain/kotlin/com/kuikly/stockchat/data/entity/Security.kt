@@ -26,4 +26,30 @@ object Securities {
                 security.aliases.any { it.uppercase() == normalized || it in query }
         }
     }
+
+    fun search(query: String, limit: Int = 20): List<Security> {
+        val q = query.trim()
+        if (q.isEmpty()) return all.take(limit)
+        val qUpper = q.uppercase()
+        return all.mapNotNull { security ->
+            val symbol = security.symbol.uppercase()
+            val aliases = security.aliases.map { it.uppercase() }
+            val score = when {
+                symbol == qUpper -> 100
+                security.name == q -> 95
+                aliases.any { it == qUpper } -> 90
+                symbol.startsWith(qUpper) -> 80
+                security.name.startsWith(q) -> 75
+                aliases.any { it.startsWith(qUpper) } -> 70
+                security.name.contains(q) -> 60
+                symbol.contains(qUpper) -> 50
+                aliases.any { it.contains(qUpper) } -> 45
+                else -> return@mapNotNull null
+            }
+            score to security
+        }
+            .sortedWith(compareByDescending<Pair<Int, Security>> { it.first }.thenBy { it.second.symbol })
+            .map { it.second }
+            .take(limit)
+    }
 }

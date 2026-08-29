@@ -74,6 +74,17 @@ data class SendPayload(
                 "${m.symbol} ${m.name}（${labelOf(m.type)}）"
             }
             parts += "用户在本次提问中通过 @ 明确提及：$list。请优先围绕这些标的回答。"
+            val boards = mentions.filter { it.type == MentionType.BOARD }
+            if (boards.isNotEmpty()) {
+                val boardContext = boards.mapNotNull { board ->
+                    val constituents = ComposerCatalog.boardConstituents(board.symbol)
+                    if (constituents.isEmpty()) null
+                    else "${board.name}板块代表成分：${constituents.joinToString("、") { "${it.symbol} ${it.name}" }}"
+                }
+                if (boardContext.isNotEmpty()) {
+                    parts += boardContext.joinToString("；") + "。"
+                }
+            }
         }
         if (command != null) {
             parts += "用户调用了指令「/${command.commandName}」，参数：${command.args}。请按指令意图作答。"

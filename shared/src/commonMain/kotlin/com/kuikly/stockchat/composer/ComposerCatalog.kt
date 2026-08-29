@@ -78,10 +78,21 @@ object ComposerCatalog {
         "茅茅" to "600519.SH",
     )
 
+    private val boardConstituents = mapOf(
+        "BK0477" to listOf("600519.SH", "000858.SZ"),
+        "BK0475" to listOf("600036.SH", "601318.SH", "000001.SZ"),
+        "BK0901" to listOf("300750.SZ", "002594.SZ", "01211.HK"),
+        "BK0490" to listOf("NVDA.US", "002415.SZ"),
+        "BK0428" to listOf("600900.SH"),
+    )
+
     val all: List<CatalogEntry> = stocks + indices
 
     fun aliasTarget(alias: String): CatalogEntry? =
         aliases[alias]?.let { a -> all.firstOrNull { it.symbol == a } }
 
     fun find(symbol: String): CatalogEntry? = all.firstOrNull { it.symbol == symbol }
+
+    fun boardConstituents(symbol: String, limit: Int = 10): List<CatalogEntry> =
+        boardConstituents[symbol].orEmpty().mapNotNull(::find).take(limit)
 }

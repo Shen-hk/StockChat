@@ -73,7 +73,7 @@ object CommandRegistry {
                 CommandParam("target", "标的", ParamType.SECURITY, required = true, placeholder = "输入代码或名称"),
                 CommandParam("cond", "条件", ParamType.TEXT, required = true, placeholder = "如：跌破20日线"),
             ),
-            execution = CommandExecution.PROMPT_TEMPLATE,
+            execution = CommandExecution.LOCAL_ACTION,
         ),
         SlashCommand(
             id = "plan", name = "预案", icon = "◎",

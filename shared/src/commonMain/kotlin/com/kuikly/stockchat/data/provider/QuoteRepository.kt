@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.data.provider
 
+import com.kuikly.stockchat.data.entity.Securities
+import com.kuikly.stockchat.data.entity.Security
 import com.kuikly.stockchat.data.mock.MockQuoteProvider
 
 /** A page-independent source of truth for quotes, their short-lived cache, and offline fallback. */
@@ -57,6 +59,9 @@ class QuoteRepository(
     /** Uses a fresh memory value when available, otherwise exposes clearly-labelled offline demo data. */
     fun cachedOrOffline(symbol: String): Quote? =
         cachedOrOfflineResult(symbol).quote
+
+    fun search(query: String, limit: Int = 20): List<Security> =
+        Securities.search(query, limit)
 
     fun cachedOrOfflineResult(symbol: String): QuoteLoadResult {
         val cached = fresh(snapshots[symbol], SNAPSHOT_TTL_MILLIS)
