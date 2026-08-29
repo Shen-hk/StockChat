@@ -10,6 +10,7 @@ import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
+import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Scroller
@@ -70,7 +71,25 @@ fun ViewContainer<*, *>.ChatTopNav(
                 alignItemsCenter()
             }
             View {
-                attr { size(40f, 40f); allCenter(); borderRadius(20f) }
+                attr {
+                    size(40f, 40f); allCenter(); borderRadius(20f)
+                    // While the island morphs into the quote card, both side
+                    // controls retreat outward and fade so the card owns the
+                    // header.  Exit is short and accelerating (easeIn 0.21s)
+                    // so the button always stays ahead of the expanding
+                    // island edge — a longer fade would read as the button
+                    // being swallowed by the card.  The return is slower and
+                    // slightly delayed (easeOut 0.30s + 0.06s) so the card
+                    // settles before the controls come back.
+                    val e = islandExpanded()
+                    opacity(if (e) 0f else 1f)
+                    transform(
+                        scale = Scale(if (e) 0.84f else 1f, if (e) 0.84f else 1f),
+                        translate = Translate(0f, 0f, offsetX = if (e) -32f else 0f),
+                    )
+                    touchEnable(!e)
+                    animate(if (e) Animation.easeIn(0.21f) else Animation.easeOut(0.30f).delay(0.06f), e)
+                }
                 GlassBackdrop(theme.glass.peek, renderer)
                 Text { attr { text(if (drawerOpen) "×" else "☰"); fontSize(22f); color(theme.textPrimary) } }
                 event { click { onMenu() } }
@@ -80,7 +99,19 @@ fun ViewContainer<*, *>.ChatTopNav(
             // when it morphs into the quote card.
             View { attr { flex(1f) } }
             View {
-                attr { size(40f, 40f); allCenter(); borderRadius(20f) }
+                attr {
+                    size(40f, 40f); allCenter(); borderRadius(20f)
+                    // Mirror of the menu button above: same retreat motion,
+                    // pushed to the right instead of the left.
+                    val e = islandExpanded()
+                    opacity(if (e) 0f else 1f)
+                    transform(
+                        scale = Scale(if (e) 0.84f else 1f, if (e) 0.84f else 1f),
+                        translate = Translate(0f, 0f, offsetX = if (e) 32f else 0f),
+                    )
+                    touchEnable(!e)
+                    animate(if (e) Animation.easeIn(0.21f) else Animation.easeOut(0.30f).delay(0.06f), e)
+                }
                 GlassBackdrop(theme.glass.peek, renderer)
                 Text { attr { text("＋"); fontSize(23f); color(theme.brand) } }
                 event { click { onNewChat() } }
