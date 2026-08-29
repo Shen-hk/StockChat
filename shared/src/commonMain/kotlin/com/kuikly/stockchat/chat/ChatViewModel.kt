@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.chat
 
+import com.kuikly.stockchat.composer.SendPayload
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.config.AiConfigStore
 import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
@@ -35,14 +36,29 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
     }
 
     fun send(question: String = inputText) {
-        val value = question.trim()
+        send(
+            SendPayload(
+                text = question,
+                mentions = emptyList(),
+                command = null,
+                renderedPrompt = null,
+            )
+        )
+    }
+
+    /**
+     * 结构化发送（规范 10 §4.8）：输入期固化的 mentions / command 随消息一起进入管线。
+     * 用户气泡显示 displayText（人话形式），模型侧收到 renderedPrompt + system 注记。
+     */
+    fun send(payload: SendPayload) {
+        val value = payload.displayText
         if (value.isEmpty() || streamState == StreamState.STREAMING) return
         inputText = ""
         messages.add(ChatMessage(pagerId, newId(), MessageRole.USER, value))
         persist()
         val assistantId = newId()
-        if (value.startsWith("回归：")) {
-            streamWithProvider(MockAiProvider(pagerId), assistantId, value)
+        if (payload.text.startsWith("回归：")) {
+            streamWithProvider(MockAiProvider(pagerId), assistantId, payload)
             return
         }
         val config = configStore.load()
@@ -65,23 +81,24 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         apiConfigured = true
         val provider = DeepSeekAiProvider(pagerId, config)
         aiProvider = provider
-        streamWithProvider(provider, assistantId, value)
+        streamWithProvider(provider, assistantId, payload)
     }
 
-    private fun streamWithProvider(provider: AiProvider, assistantId: String, question: String) {
+    private fun streamWithProvider(provider: AiProvider, assistantId: String, payload: SendPayload) {
         aiProvider = provider
         val assistantMessage = ChatMessage(pagerId, assistantId, MessageRole.ASSISTANT, "正在组织回答…", streaming = true)
         messages.add(assistantMessage)
         streamState = StreamState.STREAMING
         var content = ""
         provider.ask(
-            messages = ChatContext.build(messages),
+            messages = ChatContext.build(messages, payload.systemNote()),
             onDelta = { delta ->
                 content += delta
                 assistantMessage.content = content.substringBefore("```card").trim().ifEmpty { "正在整理结构化信息…" }
             },
             onDone = {
                 streamState = StreamState.IDLE
+                val question = payload.renderedPrompt ?: payload.text
                 assistantMessage.content = CardResponseFallback.appendMissingCard(question, content)
                 assistantMessage.streaming = false
                 persist()

@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>@ 提及与 / 指令交互预览 - 规范 10 配套原型</title>
+<style>
+  :root {
+    --grad-1: #2563EB; --grad-2: #7C3AED; --grad-3: #2DD4BF;
+    --brand: #2563EB; --brand-soft: #EFF6FF;
+    --cmd: #7C3AED; --cmd-soft: #F3EEFF;
+    --up: #E5484D; --down: #2E9E5B;
+    --surface-muted: #F1F1EF;
+    --text-1: #1D1D1F; --text-2: #6E6E73; --text-3: #AEAEB2;
+    --t-fast: 180ms; --t-base: 280ms; --ease: cubic-bezier(.22,.61,.36,1);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; font-family: -apple-system, "PingFang SC", "Segoe UI", Roboto, sans-serif;
+    background: #111114; color: #fff;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100vh; padding: 28px 12px 48px;
+  }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: #8E8E93; margin-bottom: 14px; text-align: center; }
+  .scenarios { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-bottom: 16px; max-width: 760px; }
+  .scenarios button {
+    border: 1px solid #363638; background: #1D1D1F; color: #C7C7CC;
+    font-size: 12px; padding: 7px 13px; border-radius: 999px; cursor: pointer; transition: all .25s ease;
+  }
+  .scenarios button:hover { border-color: #4a4a52; color: #fff; }
+  .scenarios button.active { background: #2563EB; color: #fff; border-color: #2563EB; }
+  .scenarios button.cmd.active { background: #7C3AED; border-color: #7C3AED; }
+
+  .stage { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; justify-content: center; }
+
+  .phone {
+    width: 360px; max-width: 92vw; height: 660px;
+    background: linear-gradient(160deg, #20222b, #15161a);
+    border-radius: 40px; padding: 14px; border: 1px solid #2a2a30;
+    box-shadow: 0 30px 80px rgba(0,0,0,.5); position: relative; overflow: hidden;
+  }
+  .statusbar { height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 18px; font-size: 12px; color: #C7C7CC; }
+  .chat {
+    position: absolute; left: 14px; right: 14px; top: 50px; bottom: 14px;
+    display: flex; flex-direction: column; justify-content: flex-end; pointer-events: none;
+  }
+  .bubble {
+    max-width: 78%; background: #fff; color: var(--text-1);
+    padding: 10px 14px; border-radius: 18px 18px 18px 4px;
+    font-size: 13px; line-height: 1.5; margin-bottom: 10px; align-self: flex-start;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+  }
+  .bubble .tk { color: var(--brand); font-weight: 600; }
+  .bubble.user { align-self: flex-end; border-radius: 18px 18px 4px 18px; background: var(--brand); color: #fff; }
+  .bubble.user .tk { color: #BFD4FF; }
+
+  /* ===== 状态徽章 + 提示 ===== */
+  .statebar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .state-badge {
+    font-size: 10px; letter-spacing: .5px; padding: 3px 9px; border-radius: 999px;
+    background: rgba(255,255,255,.14); color: #C7C7CC; font-weight: 600; font-family: ui-monospace, Menlo, monospace;
+    transition: background var(--t-fast) ease;
+  }
+  .state-badge.on { background: var(--brand); color: #fff; }
+  .state-badge.solid { background: var(--down); color: #fff; }
+  .state-badge.param { background: var(--cmd); color: #fff; }
+  .hint { font-size: 11px; color: #8E8E93; flex: 1; text-align: right; }
+
+  /* ===== 触发面板 ===== */
+  .panel {
+    margin-bottom: 8px; background: rgba(255,255,255,.97); border-radius: 16px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); overflow: hidden;
+    transform: translateY(8px); opacity: 0; pointer-events: none; height: 0;
+    transition: transform var(--t-base) var(--ease), opacity var(--t-fast) ease;
+  }
+  .panel.open { transform: translateY(0); opacity: 1; pointer-events: auto; height: auto; }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid #F0F0EE;
+    font-size: 11px; color: var(--text-3); font-weight: 600;
+  }
+  .panel-head .close { border: none; background: none; color: var(--text-3); cursor: pointer; font-size: 13px; padding: 2px 6px; border-radius: 6px; }
+  .panel-head .close:hover { background: var(--surface-muted); color: var(--text-1); }
+  /* 最大高度 + 内部滚动：候选少时贴合内容（不留空白框），
+     超过 164px 后截断滚动，输入栏也不会被无限顶高。与 Kuikly 侧 ASSISTANT_PANEL_MAX_HEIGHT 对齐。 */
+  .panel-body {
+    max-height: 164px; overflow-y: auto; overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .panel-body::-webkit-scrollbar { width: 3px; }
+  .panel-body::-webkit-scrollbar-thumb { background: #D8D8D4; border-radius: 2px; }
+  .panel-body::-webkit-scrollbar-track { background: transparent; }
+  .cand {
+    display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: pointer;
+    border-left: 3px solid transparent; transition: background .12s ease;
+  }
+  .cand:hover, .cand.hl { background: var(--brand-soft); border-left-color: var(--brand); }
+  .cand .nm { font-size: 14px; color: var(--text-1); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cand .nm b { font-weight: 700; }
+  .cand .cd { font-size: 11px; color: var(--text-3); font-family: ui-monospace, Menlo, monospace; }
+  .cand .mk { font-size: 10px; color: var(--text-2); background: var(--surface-muted); padding: 1px 6px; border-radius: 4px; }
+  .cand .chg { font-size: 12px; font-weight: 600; min-width: 44px; text-align: right; }
+  .chg.up { color: var(--up); } .chg.down { color: var(--down); } .chg.flat { color: var(--text-3); }
+  .cand.board .nm { color: var(--brand); font-weight: 600; }
+  .cand.board .bdg { font-size: 10px; color: var(--brand); background: var(--brand-soft); padding: 1px 6px; border-radius: 4px; }
+  .cand .src { font-size: 10px; color: var(--text-3); }
+  /* 空态：面板改为 max-height 后不再有大片留白，回到简洁的贴合样式 */
+  .panel-empty { padding: 16px 14px; text-align: center; font-size: 12px; color: var(--text-3); line-height: 1.6; }
+  .panel-empty .sugg { color: var(--brand); cursor: pointer; }
+  .composing-strip {
+    display: none; padding: 5px 12px; font-size: 11px; color: var(--text-3);
+    border-top: 1px dashed #E8E8E4; background: #FAFAF8;
+  }
+  .panel.composing .composing-strip { display: block; }
+  .panel-foot { padding: 4px 12px 6px; font-size: 10px; color: var(--text-3); border-top: 1px solid #F0F0EE; }
+
+  /* ===== 命令面板行 ===== */
+  .cmdrow { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; border-left: 3px solid transparent; transition: background .12s ease; }
+  .cmdrow:hover, .cmdrow.hl { background: var(--cmd-soft); border-left-color: var(--cmd); }
+  .cmdrow .ic { width: 30px; height: 30px; border-radius: 9px; background: var(--cmd-soft); color: var(--cmd); display: flex; align-items: center; justify-content: center; font-size: 15px; flex: 0 0 auto; }
+  .cmdrow .nm { font-size: 14px; font-weight: 600; color: var(--text-1); }
+  .cmdrow .nm b { color: var(--cmd); }
+  .cmdrow .ds { font-size: 11px; color: var(--text-2); margin-top: 1px; }
+  .cmdrow .req { font-size: 10px; color: var(--cmd); background: var(--cmd-soft); padding: 1px 6px; border-radius: 4px; margin-left: auto; }
+
+  /* ===== 参数槽位条 ===== */
+  .params {
+    margin-bottom: 8px; background: rgba(255,255,255,.97); border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.35); padding: 8px 10px; display: none;
+    flex-wrap: wrap; gap: 6px; align-items: center;
+  }
+  .params.open { display: flex; }
+  .slot { height: 28px; display: flex; align-items: center; padding: 0 10px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+  .slot.done { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .slot.cur { box-shadow: 0 0 0 1.5px var(--cmd); color: var(--text-1); background: #fff; }
+  .slot.cur::after { content: "▏"; animation: blink 1s steps(1) infinite; color: var(--cmd); }
+  @keyframes blink { 50% { opacity: 0; } }
+  .slot.todo { border: 1px dashed #D8D8D4; color: var(--text-3); }
+  .slot .lb { font-size: 10px; color: var(--text-3); margin-right: 4px; }
+  .slot.skip { border: none; background: none; color: var(--text-3); font-size: 11px; text-decoration: underline dotted; height: 22px; }
+
+  /* ===== Composer ===== */
+  .composer-wrap { position: relative; }
+  .composer { position: relative; border-radius: 26.5px; padding: 1.5px; }
+  .composer::before {
+    content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.5px;
+    background: linear-gradient(90deg, var(--grad-1), var(--grad-2), var(--grad-3));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none;
+  }
+  .bar {
+    position: relative; border-radius: 25px;
+    background: rgba(255,255,255,0.60); backdrop-filter: blur(18px) saturate(150%);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    padding: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  }
+  .input-wrap {
+    flex: 1 1 100%; display: flex; align-items: center;
+    background: rgba(255,255,255,0.85); border-radius: 16px; padding: 0 12px; min-height: 44px;
+  }
+  .input {
+    flex: 1; outline: none; background: transparent; font-size: 14px; color: var(--text-1);
+    padding: 10px 0; min-width: 0; line-height: 22px; word-break: break-all; empty-cells: show;
+  }
+  .input:empty::before { content: attr(data-ph); color: var(--text-3); pointer-events: none; }
+  .input:focus { outline: none; }
+  .token {
+    display: inline-block; padding: 1px 7px; border-radius: 7px; margin: 0 1px;
+    font-weight: 600; font-size: 13px; line-height: 18px; vertical-align: baseline;
+  }
+  .token-stock { color: var(--brand); background: var(--brand-soft); }
+  .token-board { color: #0E7490; background: #ECFEFF; }
+  .token-cmd { color: var(--cmd); background: var(--cmd-soft); }
+  .tools { display: flex; gap: 8px; width: 100%; align-items: center; }
+  .tool {
+    width: 38px; height: 38px; border-radius: 19px; background: var(--brand-soft); color: var(--brand);
+    font-size: 16px; font-weight: 700; border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: transform var(--t-fast) ease;
+  }
+  .tool.slash { background: var(--cmd-soft); color: var(--cmd); }
+  .tool:active { transform: scale(.92); }
+  .spacer { flex: 1; }
+  .send {
+    height: 38px; border-radius: 19px; background: var(--brand); color: #fff; font-size: 13px; font-weight: 600;
+    border: none; cursor: pointer; padding: 0 16px; display: flex; align-items: center;
+    box-shadow: 0 3px 8px rgba(37,99,235,.35); transition: opacity .2s ease, transform var(--t-fast) ease;
+  }
+  .send:active { transform: scale(.95); }
+  .send[disabled] { opacity: .4; box-shadow: none; cursor: not-allowed; }
+  .send.shake { animation: shake .12s linear 2; }
+  @keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+
+  /* ===== 右侧：事件日志 + 发送协议 ===== */
+  .side { width: 340px; max-width: 92vw; display: flex; flex-direction: column; gap: 14px; }
+  .card { background: #1D1D1F; border: 1px solid #2E2E33; border-radius: 16px; padding: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 13px; font-weight: 600; color: #C7C7CC; display: flex; align-items: center; gap: 8px; }
+  .card h2 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--grad-3); }
+  #log { display: flex; flex-direction: column; gap: 5px; max-height: 220px; overflow-y: auto; font-size: 11px; }
+  #log .e { font-family: ui-monospace, Menlo, monospace; color: #9A9AA0; line-height: 1.5; }
+  #log .e .t { color: #5B5B60; margin-right: 6px; }
+  #log .e.at { color: #6EA8FF; } #log .e.slash { color: #C4A2FF; } #log .e.sys { color: #2DD4BF; }
+  #payload {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: #9A9AA0;
+    background: #141416; border-radius: 10px; padding: 10px; white-space: pre-wrap; line-height: 1.6;
+    max-height: 260px; overflow-y: auto;
+  }
+  #payload .k { color: #C7C7CC; } #payload .s { color: #6EA8FF; } #payload .n { color: #2DD4BF; }
+  .tips { font-size: 11px; color: #8E8E93; line-height: 1.8; }
+  .tips b { color: #C7C7CC; }
+  kbd { background: #2A2A30; border: 1px solid #3A3A40; border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #C7C7CC; font-family: inherit; }
+</style>
+</head>
+<body>
+
+<h1>@ 提及与 / 指令 · 可交互原型</h1>
+<div class="sub">规范 10《输入栏@提及与斜杠指令交互规范》配套演示 · 光标词法判定 / 候选排序 / token 固化 / 参数槽位 / 结构化发送</div>
+
+<div class="scenarios" id="scenarios">
+  <button data-s="at-trigger">@ 触发（空 query 推荐序列）</button>
+  <button data-s="at-filter">句中 @ + 过滤/拼音</button>
+  <button data-s="at-board">板块聚合消歧</button>
+  <button data-s="token-solid">token 固化 + 退格删除</button>
+  <button data-s="multi-mention">多提及 + 结构化发送</button>
+  <button data-s="slash" class="cmd">/ 指令面板</button>
+  <button data-s="param" class="cmd">/对比 参数槽位态</button>
+  <button data-s="unknown" class="cmd">未知命令降级</button>
+  <button data-s="btn-at">点 @ 按钮触发</button>
+  <button data-s="btn-slash" class="cmd">点 / 按钮触发</button>
+</div>
+
+<div class="stage">
+  <div class="phone">
+    <div class="statusbar"><span>21:44</span><span>股问 StockChat</span><span>▮▮▮</span></div>
+    <div class="chat" id="chat">
+      <div class="bubble">今天<b class="tk">@贵州茅台</b>走得怎么样？帮我看看资金面。</div>
+      <div class="bubble user">顺便对比一下 <b class="tk">@五粮液</b></div>
+    </div>
+
+    <div style="position:absolute; left:14px; right:14px; bottom:14px;">
+      <div class="statebar">
+        <span class="state-badge" id="stateBadge">IDLE</span>
+        <span class="hint" id="hint">试试在输入框敲 @ 或 /</span>
+      </div>
+
+      <!-- @ 候选面板 -->
+      <div class="panel" id="atPanel">
+        <div class="panel-head">
+          <span id="atPanelTitle">@ 标的</span>
+          <button class="close" data-close="at">✕</button>
+        </div>
+        <div class="panel-body" id="atPanelBody"></div>
+        <div class="composing-strip">拼音输入中… 面板已冻结（组合态）</div>
+        <div class="panel-foot">↑↓ 选择 · Enter 确认 · Esc 取消 · 空格中止不自动选中</div>
+      </div>
+
+      <!-- / 命令面板 -->
+      <div class="panel" id="slashPanel">
+        <div class="panel-head">
+          <span>/ 指令</span>
+          <button class="close" data-close="slash">✕</button>
+        </div>
+        <div class="panel-body" id="slashPanelBody"></div>
+        <div class="panel-foot">↑↓ 选择 · Enter 执行 · Esc 取消</div>
+      </div>
+
+      <!-- 参数槽位条 -->
+      <div class="params" id="paramsBar"></div>
+
+      <div class="composer-wrap">
+        <div class="composer">
+          <div class="bar">
+            <div class="input-wrap">
+              <div class="input" id="input" contenteditable="true" data-ph="问一只股票或一个术语，@ 提及标的，/ 调用指令"></div>
+            </div>
+            <div class="tools">
+              <button class="tool" data-insert="@" title="提及标的">@</button>
+              <button class="tool slash" data-insert="/" title="指令">/</button>
+              <span class="spacer"></span>
+              <button class="send" id="sendBtn">发送</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h2><span class="dot"></span>状态机事件日志</h2>
+      <div id="log"></div>
+    </div>
+    <div class="card">
+      <h2><span class="dot" style="background:#7C3AED"></span>SendPayload（发送协议）</h2>
+      <div id="payload">// 发送后这里展示结构化载荷</div>
+    </div>
+    <div class="card">
+      <h2><span class="dot" style="background:#E5484D"></span>操作提示</h2>
+      <div class="tips">
+        · <b>词法触发</b>：句中打 <kbd>@</kbd>（前面有空格）才触发；<kbd>abc@163.com</kbd> 不触发<br>
+        · <b>拼音</b>：输入 <kbd>@maotai</kbd> / <kbd>@mt</kbd> 试试全拼与首字母<br>
+        · <b>固化</b>：选中候选后 token 变原子单元，退格一次删整只<br>
+        · <b>空格</b>：中止会话（不自动选中），面板收起<br>
+        · <b>键盘</b>：<kbd>↑</kbd><kbd>↓</kbd> 高亮、<kbd>Enter</kbd> 确认、<kbd>Esc</kbd> 中止
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================= 数据 ================= */
+const SECURITIES = [
+  {symbol:'600519.SH', name:'贵州茅台', market:'沪A', chg:+2.1, py:'guizhoumaotai', abbr:'gzmt', hot:1.0, watch:true},
+  {symbol:'000858.SZ', name:'五粮液', market:'深A', chg:-0.3, py:'wuliangye', abbr:'wly', hot:0.9, watch:true},
+  {symbol:'000333.SZ', name:'美的集团', market:'深A', chg:+0.8, py:'meidejituan', abbr:'mdjt', hot:0.85, watch:true},
+  {symbol:'300750.SZ', name:'宁德时代', market:'创业板', chg:-1.2, py:'ningdeshidai', abbr:'ndsd', hot:0.95},
+  {symbol:'002594.SZ', name:'比亚迪', market:'深A', chg:+1.6, py:'biyadi', abbr:'byd', hot:0.92},
+  {symbol:'01211.HK', name:'比亚迪股份', market:'港股', chg:+0.9, py:'biyadigufen', abbr:'bydgf', hot:0.7},
+  {symbol:'601318.SH', name:'中国平安', market:'沪A', chg:+0.2, py:'zhongguopingan', abbr:'zgpa', hot:0.8},
+  {symbol:'600036.SH', name:'招商银行', market:'沪A', chg:-0.5, py:'zhaoshangyinhang', abbr:'zsyh', hot:0.82},
+  {symbol:'600519B.SH', name:'贵州茅台B', market:'沪B', chg:0.0, py:'guizhoumaotaib', abbr:'gzmtb', hot:0.2},
+  {symbol:'000651.SZ', name:'格力电器', market:'深A', chg:+1.1, py:'gelidianqi', abbr:'gldq', hot:0.78, watch:true},
+  {symbol:'600900.SH', name:'长江电力', market:'沪A', chg:+0.4, py:'changjiangdianli', abbr:'cjdl', hot:0.7},
+  {symbol:'601899.SH', name:'紫金矿业', market:'沪A', chg:+2.8, py:'zijinkuangye', abbr:'zjky', hot:0.88},
+];
+const INDICES = [
+  {symbol:'000001.SH', name:'上证指数', market:'指数', chg:+0.6, py:'shangzhizhishu', abbr:'szzs', hot:1.0, kind:'index'},
+  {symbol:'399001.SZ', name:'深证成指', market:'指数', chg:+0.4, py:'shenzhengchengzhi', abbr:'szcz', hot:0.9, kind:'index'},
+  {symbol:'399006.SZ', name:'创业板指', market:'指数', chg:-0.7, py:'chuangyebanzhi', abbr:'cybz', hot:0.86, kind:'index'},
+  {symbol:'HSI.HK', name:'恒生指数', market:'港股', chg:+1.0, py:'hengshengzhishu', abbr:'hszs', hot:0.8, kind:'index'},
+  {symbol:'NDX.US', name:'纳斯达克', market:'美股', chg:+1.3, py:'nasidake', abbr:'nsdk', hot:0.85, kind:'index'},
+  {symbol:'SPX.US', name:'标普500', market:'美股', chg:+0.5, py:'biaopu500', abbr:'bp500', hot:0.8, kind:'index'},
+];
+const BOARDS = [
+  {symbol:'BK0477', name:'白酒', count:68, py:'baijiu', abbr:'bj', hot:0.9, kind:'board'},
+  {symbol:'BK0475', name:'银行', count:42, py:'yinhang', abbr:'yh', hot:0.85, kind:'board'},
+  {symbol:'BK0901', name:'新能源汽车', count:88, py:'xinnengyuanqiche', abbr:'xnyqc', hot:0.93, kind:'board'},
+  {symbol:'BK0733', name:'CRO概念', count:25, py:'crogainian', abbr:'crogn', hot:0.6, kind:'board'},
+];
+const ALL = [...SECURITIES, ...INDICES];
+const ALIAS = [ {name:'宁王', to:'宁德时代'}, {name:'大毛', to:'贵州茅台'} ];
+
+const COMMANDS = [
+  {id:'fupan', name:'复盘', icon:'◔', desc:'盘后速览当日/当周行情与资金', aliases:['review','fupan','fp'],
+   params:[{key:'target',label:'标的',type:'SECURITY',required:false},{key:'period',label:'周期',type:'ENUM',options:['日','周','月'],required:false}]},
+  {id:'compare', name:'对比', icon:'⇄', desc:'两只标的多维度对比表', aliases:['vs','duibi','db'],
+   params:[{key:'left',label:'标的A',type:'SECURITY',required:true},{key:'right',label:'标的B',type:'SECURITY',required:true},{key:'dim',label:'维度',type:'ENUM',options:['估值','成长','动量'],required:false}]},
+  {id:'explain', name:'解读', icon:'◎', desc:'深度解读一只标的的基本面', aliases:['jiedu','jd'],
+   params:[{key:'target',label:'标的',type:'SECURITY',required:true}]},
+  {id:'monitor', name:'盯盘', icon:'◎', desc:'建立条件监控，触发即提醒', aliases:['dingpan','dp'],
+   params:[{key:'target',label:'标的',type:'SECURITY',required:true},{key:'cond',label:'条件',type:'TEXT',placeholder:'如：跌破20日线',required:true}]},
+  {id:'plan', name:'预案', icon:'◎', desc:'生成操作预案（仓位/止损位）', aliases:['yuan','ya'],
+   params:[{key:'target',label:'标的',type:'SECURITY',required:true}]},
+  {id:'term', name:'术语', icon:'◎', desc:'解释一个金融术语', aliases:['shuyu','sy'],
+   params:[{key:'word',label:'词条',type:'TEXT',placeholder:'如：夏普比率',required:true}]},
+  {id:'deep', name:'深水区', icon:'◎', desc:'切换回答深度模式（上下文标记）', aliases:['shenshui','ssq'], params:[], contextOnly:true},
+  {id:'clear', name:'清屏', icon:'◎', desc:'清空当前会话消息（本地动作）', aliases:['qingping','qp'], params:[], localAction:true},
+];
+
+/* ================= 全局状态 ================= */
+const S = {
+  state: 'IDLE',            // IDLE | TRIGGER_AT | TRIGGER_SLASH | TOKEN_SOLID | PARAM
+  session: null,            // {type, triggerStart, queryStart, cursor, query}
+  composing: false,
+  candidates: [], hl: -1,
+  paramCmd: null, paramVals: {}, paramIdx: 0,
+  recent: [],               // 最近提及（S1）
+  lastQuery: '',
+};
+const $ = id => document.getElementById(id);
+const input = $('input');
+
+/* ================= 工具 ================= */
+function log(type, msg) {
+  const t = new Date().toTimeString().slice(3, 8);
+  const div = document.createElement('div');
+  div.className = 'e ' + type;
+  div.innerHTML = `<span class="t">${t}</span>${msg}`;
+  $('log').prepend(div);
+  while ($('log').children.length > 40) $('log').lastChild.remove();
+}
+function setState(st) {
+  S.state = st;
+  const b = $('stateBadge');
+  b.textContent = st;
+  b.className = 'state-badge' + (st==='TRIGGER_AT'?' on':st==='TRIGGER_SLASH'?' on':st.startsWith('TOKEN')?' solid':st==='PARAM'?' param':'');
+  const hints = {
+    IDLE: '试试在输入框敲 @ 或 /',
+    TRIGGER_AT: '触发会话进行中 · 空格/删除/移出光标会中止',
+    TRIGGER_SLASH: '命令名匹配中 · 空格定型',
+    TOKEN_SOLID: 'token 已固化 · 退格一次删整只；可在其后继续 @',
+    TOKEN_SOFT: 'token 软化（光标进入内部）· 发送时将对账',
+    PARAM: '参数槽位态 · 缺必选槽时发送键置灰',
+  };
+  $('hint').textContent = hints[st] || '';
+}
+
+/* ================= 词法判定（规范 §3.2） ================= */
+function detectTrigger(text, cursor) {
+  if (S.composing) return S.session;           // 组合态：冻结
+  if (cursor === 0) return null;
+  let i = cursor - 1;
+  while (i >= 0) {
+    const c = text[i];
+    if (c === '@' || c === '/') {
+      const prev = i === 0 ? ' ' : text[i - 1];
+      if (/\s/.test(prev)) return { type: c, triggerStart: i, queryStart: i + 1, cursor, query: text.slice(i + 1, cursor) };
+      return null;                              // abc@163.com：不触发
+    }
+    if (/\s/.test(c)) return null;              // 越过空白：无会话
+    i--;
+  }
+  return null;
+}
+
+/* ================= 候选排序（规范 §4.2） ================= */
+function matchLevel(q, it) {
+  const ql = q.toLowerCase();
+  if (!q) return 0;
+  if (it.symbol.toLowerCase() === ql) return 1.00;
+  if (it.name.startsWith(q)) return 0.95;
+  if (it.name.includes(q)) return 0.90;
+  if ((it.py||'').startsWith(ql)) return 0.80;
+  if ((it.abbr||'').startsWith(ql)) return 0.70;
+  const al = ALIAS.find(a => a.name === q && a.to === it.name);
+  if (al) return 0.40;
+  return 0;
+}
+function boardMatch(q) {
+  if (!q) return [];
+  const ql = q.toLowerCase();
+  return BOARDS.filter(b => b.name.includes(q) || b.py.startsWith(ql) || b.abbr.startsWith(ql))
+               .map(b => ({...b, lvl: b.name.includes(q) ? 0.60 : 0.55}));
+}
+function rankCandidates(q) {
+  if (!q) {
+    // 空 query：推荐序列 = recent + watchlist + 指数，去重截断
+    const rec = S.recent.map(s => ({...s, src: '最近'}));
+    const wch = ALL.filter(s => s.watch && !S.recent.find(r => r.symbol === s.symbol)).map(s => ({...s, src: '自选'}));
+    const idx = INDICES.filter(s => !S.recent.find(r => r.symbol === s.symbol) && !s.watch).map(s => ({...s, src: '指数'}));
+    return [...rec, ...wch, ...idx].slice(0, 12);
+  }
+  const hits = [];
+  for (const it of ALL) {
+    const lvl = matchLevel(q, it);
+    if (lvl > 0) {
+      let score = 60 * lvl + 15 * (it.hot || 0.5)
+        + 10 * (S.recent.find(r => r.symbol === it.symbol) ? 1 : 0)
+        + 10 * (it.watch ? 1 : 0);
+      hits.push({...it, lvl, score, src: S.recent.find(r => r.symbol===it.symbol) ? '最近' : (it.watch ? '自选' : '搜索')});
+    }
+  }
+  const boards = boardMatch(q).map(b => ({...b, score: 60*b.lvl + 15*b.hot, src: '板块'}));
+  hits.push(...boards);
+  hits.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol));
+  return hits.slice(0, 12);
+}
+
+/* ================= 渲染 ================= */
+function fmtChg(c) {
+  if (c === undefined || c === null) return '';
+  if (c === 0) return `<span class="chg flat">0.0%</span>`;
+  return `<span class="chg ${c>0?'up':'down'}">${c>0?'+':''}${c.toFixed(1)}%</span>`;
+}
+function hlName(name, q) {
+  if (!q) return name;
+  const i = name.indexOf(q);
+  if (i >= 0) return name.slice(0, i) + '<b>' + q + '</b>' + name.slice(i + q.length);
+  return name;
+}
+function renderAtPanel() {
+  const q = S.session ? S.session.query : (S.state === 'PARAM' ? input.textContent.trim() : '');
+  const cands = S.candidates;
+  const body = $('atPanelBody');
+  $('atPanelTitle').textContent = q ? `@ 标的 · “${q}”` : '@ 标的';
+  if (!cands.length) {
+    body.innerHTML = `<div class="panel-empty">没有找到“${q}”<br>换个关键词，或直接发送（@ 将作为普通文本）</div>`;
+  } else {
+    body.innerHTML = cands.map((c, i) => {
+      if (c.kind === 'board') {
+        return `<div class="cand board ${i===S.hl?'hl':''}" data-i="${i}">
+          <span class="nm">◧ ${hlName(c.name, q)} · 板块</span>
+          <span class="cd">共 ${c.count} 只</span><span class="bdg">板块</span><span class="src">${c.src}</span></div>`;
+      }
+      return `<div class="cand ${i===S.hl?'hl':''}" data-i="${i}">
+        <span class="nm">${hlName(c.name, q)}</span>
+        <span class="cd">${c.symbol}</span><span class="mk">${c.market}</span>
+        ${fmtChg(c.chg)}<span class="src">${c.src}</span></div>`;
+    }).join('');
+  }
+  $('atPanel').classList.add('open');
+  $('atPanel').classList.toggle('composing', S.composing);
+}
+function closePanels() {
+  $('atPanel').classList.remove('open', 'composing');
+  $('slashPanel').classList.remove('open');
+}
+function renderSlashPanel() {
+  const q = S.session ? S.session.query : '';
+  let cmds = COMMANDS;
+  if (q) {
+    const ql = q.toLowerCase();
+    cmds = COMMANDS.filter(c => c.name.includes(q) || c.aliases.some(a => a.startsWith(ql)) || c.py === undefined);
+    if (q === 'fp') cmds = COMMANDS.filter(c => c.id === 'fupan');
+  }
+  const body = $('slashPanelBody');
+  if (!cmds.length) {
+    // 编辑距离 ≤2 的建议（简化：包含任意字符）
+    const sugg = COMMANDS.filter(c => [...c.name].some(ch => q.includes(ch))).slice(0, 2);
+    body.innerHTML = `<div class="panel-empty">没有找到 <b>/${q}</b><br>
+      ${sugg.length ? '你是不是想用：' + sugg.map(c => `<span class="sugg" data-cmd="${c.id}">/${c.name}</span>`).join('　') : ''}
+      <br>直接发送将降级为普通文本</div>`;
+  } else {
+    body.innerHTML = cmds.map((c, i) => `<div class="cmdrow ${i===S.hl?'hl':''}" data-i="${i}">
+      <span class="ic">${c.icon}</span>
+      <span><div class="nm">/${hlName(c.name, q)}</div><div class="ds">${c.desc}</div></span>
+      ${c.params.some(p => p.required) ? '<span class="req">需参数</span>' : ''}</div>`).join('');
+    S.slashCands = cmds;
+  }
+  $('slashPanel').classList.add('open');
+}
+
+/* ================= 光标 / DOM 辅助 ================= */
+function textBeforeCaret() {
+  const sel = window.getSelection();
+  if (!sel.rangeCount || !input.contains(sel.anchorNode)) return { text: input.textContent, cursor: input.textContent.length };
+  const r = document.createRange();
+  r.selectNodeContents(input);
+  r.setEnd(sel.getRangeAt(0).endContainer, sel.getRangeAt(0).endOffset);
+  const t = r.toString();
+  return { text: t, cursor: t.length };
+}
+function locate(el, offset) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  let rem = offset, n;
+  while ((n = walker.nextNode())) {
+    if (rem <= n.nodeValue.length) return { node: n, offset: rem };
+    rem -= n.nodeValue.length;
+  }
+  return null;
+}
+function makeRange(a, b) {
+  const s = locate(input, a), e = locate(input, b);
+  if (!s) return null;
+  const r = document.createRange();
+  r.setStart(s.node, s.offset);
+  if (e) r.setEnd(e.node, e.offset); else r.setEndAfter(input.lastChild || input);
+  return r;
+}
+function caretToEnd() {
+  const r = document.createRange();
+  r.selectNodeContents(input); r.collapse(false);
+  const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+}
+function plainText(t) { input.textContent = t; caretToEnd(); }
+
+/* ================= 会话驱动 ================= */
+function refresh(fromEvent) {
+  if (S.state === 'PARAM') { paramRefresh(); return; }
+  const { text, cursor } = textBeforeCaret();
+  const sess = detectTrigger(text, cursor);
+  const hadSession = !!S.session;
+  if (sess) {
+    if (!hadSession || sess.triggerStart !== S.session.triggerStart || sess.query !== S.session.query) {
+      log(sess.type === '@' ? 'at' : 'slash', `TRIGGER ${sess.type} start=${sess.triggerStart} query=“${sess.query}”`);
+    }
+    S.session = sess;
+    S.hl = 0;
+    if (sess.type === '@') {
+      S.candidates = rankCandidates(sess.query);
+      renderAtPanel();
+      setState('TRIGGER_AT');
+    } else {
+      renderSlashPanel();
+      setState('TRIGGER_SLASH');
+    }
+  } else {
+    if (hadSession) { log('sys', '会话终结（terminator）→ 面板收起'); }
+    S.session = null; S.candidates = []; S.hl = -1;
+    closePanels();
+    const solid = input.querySelector('.token');
+    setState(solid ? 'TOKEN_SOLID' : 'IDLE');
+  }
+}
+
+/* ================= 固化（规范 §4.6） ================= */
+function makeChip(cls, text, data) {
+  const chip = document.createElement('span');
+  chip.className = 'token ' + cls;
+  chip.contentEditable = 'false';
+  Object.entries(data).forEach(([k, v]) => chip.dataset[k] = v);
+  chip.textContent = text;
+  return chip;
+}
+function solidifyMention(cand) {
+  const sess = S.session;
+  const r = makeRange(sess.triggerStart, sess.cursor);
+  if (r) {
+    r.deleteContents();
+    const cls = cand.kind === 'board' ? 'token-board' : 'token-stock';
+    const text = '@' + cand.name + (cand.kind === 'board' ? '(板块)' : '');
+    const chip = makeChip(cls, text, { symbol: cand.symbol, name: cand.name, type: cand.kind === 'board' ? 'BOARD' : (cand.kind === 'index' ? 'INDEX' : 'STOCK') });
+    r.insertNode(chip);
+    const sp = document.createTextNode('\u00A0');
+    chip.after(sp);
+    const cr = document.createRange();
+    cr.setStart(sp, 1); cr.collapse(true);
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(cr);
+  }
+  if (!S.recent.find(x => x.symbol === cand.symbol)) S.recent.unshift(cand) && S.recent.length > 5 && S.recent.pop();
+  log('at', `SOLIDIFY → ${cand.symbol} ${cand.name}（原子 token，退格整删）`);
+  S.session = null; closePanels();
+  setState('TOKEN_SOLID');
+  updateSendBtn();
+}
+function solidifyCommand(cmd) {
+  const sess = S.session;
+  if (sess) {
+    const r = makeRange(sess.triggerStart, sess.cursor);
+    if (r) {
+      r.deleteContents();
+      const chip = makeChip('token-cmd', '/' + cmd.name, { cmd: cmd.id, name: cmd.name });
+      r.insertNode(chip);
+      const sp = document.createTextNode('\u00A0');
+      chip.after(sp);
+      const cr = document.createRange(); cr.setStart(sp, 1); cr.collapse(true);
+      const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(cr);
+    }
+  }
+  S.session = null; closePanels();
+  log('slash', `SELECT /${cmd.name} · params=[${cmd.params.map(p => p.key + (p.required ? '*' : '')).join(', ') || '无'}]`);
+  if (!cmd.params.length) {
+    execCommand(cmd, {});
+    plainText('');
+    setState('IDLE'); updateSendBtn();
+  } else {
+    S.paramCmd = cmd; S.paramVals = {}; S.paramIdx = cmd.params.findIndex(p => p.required);
+    if (S.paramIdx < 0) S.paramIdx = 0;
+    plainText('');
+    renderParams(); paramRefresh();
+    setState('PARAM'); updateSendBtn();
+  }
+}
+function execCommand(cmd, vals) {
+  if (cmd.localAction) {
+    log('slash', `LOCAL_ACTION /${cmd.name} 执行（不产生消息）`);
+    addBubble('user', `/` + cmd.name);
+    addBubble('sys', `（本地动作已执行，未发送消息）`);
+    return;
+  }
+  if (cmd.contextOnly) {
+    log('slash', `CONTEXT_ONLY /${cmd.name} · 上下文标记已挂载，继续输入正文`);
+    setState('IDLE');
+    addBubble('user', '/' + cmd.name);
+    return;
+  }
+  log('slash', `PROMPT_TEMPLATE /${cmd.name} · args=${JSON.stringify(vals)}`);
+}
+
+/* ================= 参数槽位（规范 §5.4） ================= */
+function renderParams() {
+  const bar = $('paramsBar');
+  const cmd = S.paramCmd;
+  bar.innerHTML = cmd.params.map((p, i) => {
+    const v = S.paramVals[p.key];
+    const cls = v !== undefined ? 'done' : (i === S.paramIdx ? 'cur' : 'todo');
+    const inner = v !== undefined ? v : `<span class="lb">${p.label}${p.required ? '*' : ''}</span>${p.type==='TEXT' ? (p.placeholder||'输入') : p.placeholder || '输入代码或名称'}`;
+    return `<span class="slot ${cls}" data-slot="${i}">${inner}</span>`;
+  }).join('') + `<span class="slot skip" data-skip>跳过可选</span>`;
+  bar.classList.add('open');
+}
+function paramRefresh() {
+  const cmd = S.paramCmd;
+  const p = cmd.params[S.paramIdx];
+  if (!p) { return; }
+  const q = input.textContent.trim();
+  if (p.type === 'SECURITY') {
+    S.candidates = rankCandidates(q);
+    S.hl = 0;
+    renderAtPanel();
+    $('atPanelTitle').textContent = `参数「${p.label}」 · 复用 @ 候选管线`;
+  } else if (p.type === 'ENUM') {
+    S.candidates = p.options.map(o => ({ name: o, symbol: '', market: p.key }));
+    S.hl = 0;
+    const body = $('atPanelBody');
+    body.innerHTML = S.candidates.map((c, i) =>
+      `<div class="cand ${i===S.hl?'hl':''}" data-i="${i}"><span class="nm">${c.name}</span></div>`).join('');
+    $('atPanel').classList.add('open');
+    $('atPanelTitle').textContent = `参数「${p.label}」 · 选项`;
+  } else {
+    closePanels();
+  }
+  updateSendBtn();
+}
+function fillParam(val, cand) {
+  const cmd = S.paramCmd;
+  const p = cmd.params[S.paramIdx];
+  S.paramVals[p.key] = val;
+  if (cand && p.type === 'SECURITY' && !S.recent.find(x => x.symbol === cand.symbol)) S.recent.unshift(cand);
+  log('slash', `PARAM fill ${p.key} = ${val}`);
+  plainText('');
+  const next = cmd.params.findIndex((pp, i) => i > S.paramIdx && pp.required && S.paramVals[pp.key] === undefined);
+  const nextAny = cmd.params.findIndex((pp, i) => i > S.paramIdx && S.paramVals[pp.key] === undefined);
+  S.paramIdx = next >= 0 ? next : (nextAny >= 0 ? nextAny : -1);
+  if (S.paramIdx < 0) { closePanels(); }
+  renderParams(); updateSendBtn();
+}
+function missingRequired() {
+  if (S.state !== 'PARAM') return false;
+  return S.paramCmd.params.some(p => p.required && S.paramVals[p.key] === undefined);
+}
+function updateSendBtn() {
+  $('sendBtn').disabled = missingRequired();
+}
+
+/* ================= 发送协议（规范 §4.8） ================= */
+function collectPayload() {
+  const mentions = [];
+  input.querySelectorAll('.token[data-symbol]').forEach(chip => {
+    mentions.push({ symbol: chip.dataset.symbol, name: chip.dataset.name, type: chip.dataset.type });
+  });
+  const cmdChip = input.querySelector('.token[data-cmd]');
+  const command = cmdChip ? {
+    id: cmdChip.dataset.cmd,
+    args: S.state === 'PARAM' ? S.paramVals : {},
+  } : null;
+  return { text: input.textContent.trim(), mentions, command };
+}
+function send() {
+  if (missingRequired()) {
+    const b = $('sendBtn'); b.classList.add('shake');
+    setTimeout(() => b.classList.remove('shake'), 300);
+    log('slash', 'SEND BLOCKED · 必选参数未填满（缺槽抖动）');
+    return;
+  }
+  const payload = collectPayload();
+  if (!payload.text && !payload.mentions.length && !payload.command) { return; }
+  // 渲染用户气泡（token 高亮）
+  let html = '';
+  input.childNodes.forEach(n => {
+    if (n.nodeType === 3) html += escapeHtml(n.nodeValue);
+    else if (n.classList && n.classList.contains('token')) html += `<b class="tk">${escapeHtml(n.textContent)}</b>`;
+  });
+  if (S.state === 'PARAM' && Object.keys(S.paramVals).length) {
+    html += ' <span style="opacity:.75">' + Object.entries(S.paramVals).map(([k,v]) => v).join(' · ') + '</span>';
+  }
+  addBubble('user', html);
+  if (payload.command) execCommand(S.paramCmd || COMMANDS.find(c => c.id === payload.command.id), payload.command.args);
+  else log('sys', `SEND · mentions=${payload.mentions.length}`);
+  showPayload(payload);
+  plainText('');
+  S.session = null; S.paramCmd = null; closePanels(); $('paramsBar').classList.remove('open');
+  setState('IDLE'); updateSendBtn();
+}
+function escapeHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function showPayload(p) {
+  const j = JSON.stringify(p, null, 2)
+    .replace(/"([^"]+)":/g, '"<span class="k">$1</span>":')
+    .replace(/: "([^"]*)"/g, ': "<span class="s">$1</span>"');
+  $('payload').innerHTML = j;
+}
+function addBubble(cls, html) {
+  const d = document.createElement('div');
+  d.className = 'bubble ' + cls;
+  d.innerHTML = html;
+  $('chat').appendChild(d);
+}
+
+/* ================= 事件绑定 ================= */
+input.addEventListener('input', () => refresh());
+input.addEventListener('keyup', (e) => { if (['ArrowLeft','ArrowRight','Home','End'].includes(e.key)) refresh(); });
+input.addEventListener('click', () => refresh());
+input.addEventListener('compositionstart', () => { S.composing = true; $('atPanel').classList.add('composing'); });
+input.addEventListener('compositionend', () => { S.composing = false; $('atPanel').classList.remove('composing'); setTimeout(refresh, 0); });
+input.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    if (!$('atPanel').classList.contains('open') && !$('slashPanel').classList.contains('open')) return;
+    e.preventDefault();
+    const n = S.candidates.length || (S.slashCands || []).length;
+    if (!n) return;
+    S.hl = e.key === 'ArrowDown' ? (S.hl + 1) % n : (S.hl - 1 + n) % n;
+    if (S.state === 'TRIGGER_SLASH') renderSlashPanel(); else renderAtPanel();
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (S.state === 'TRIGGER_SLASH') {
+      const c = (S.slashCands || [])[S.hl];
+      if (c) solidifyCommand(c);
+      return;
+    }
+    if (S.state === 'PARAM') {
+      const cmd = S.paramCmd, p = cmd.params[S.paramIdx];
+      if (!p) { send(); return; }
+      if (p.type === 'SECURITY') { const c = S.candidates[S.hl]; if (c) fillParam(c.symbol + ' ' + c.name, c); }
+      else if (p.type === 'ENUM') { const c = S.candidates[S.hl]; if (c) fillParam(c.name); }
+      else if (input.textContent.trim()) fillParam(input.textContent.trim());
+      return;
+    }
+    if ($('atPanel').classList.contains('open') && S.session) {
+      const c = S.candidates[S.hl];
+      if (c) { solidifyMention(c); return; }
+    }
+    send();
+  } else if (e.key === 'Escape') {
+    if (S.session) { log('sys', 'ESC 中止会话（文本保留）'); S.session = null; closePanels(); setState(input.querySelector('.token') ? 'TOKEN_SOLID' : 'IDLE'); }
+    else if (S.state === 'PARAM') { log('slash', 'ESC 退出参数态'); S.paramCmd = null; closePanels(); $('paramsBar').classList.remove('open'); setState('TOKEN_SOLID'); updateSendBtn(); }
+  } else if (e.key === ' ' && S.state === 'TRIGGER_AT' && !S.composing) {
+    // 空格中止：延迟到 input 事件统一判定（refresh 会发现光标越过空白）
+    setTimeout(() => log('sys', 'SPACE terminator · 不自动选中候选'), 0);
+  }
+});
+// 面板点选
+$('atPanelBody').addEventListener('click', (e) => {
+  const row = e.target.closest('.cand'); if (!row) return;
+  const i = +row.dataset.i, c = S.candidates[i];
+  if (S.state === 'PARAM') {
+    const p = S.paramCmd.params[S.paramIdx];
+    if (p.type === 'SECURITY') fillParam(c.symbol + ' ' + c.name, c);
+    else fillParam(c.name);
+  } else if (S.state === 'TRIGGER_SLASH' || $('slashPanel').classList.contains('open')) {
+    // 空态推荐不会出现在 slash 面板
+  } else if (c) solidifyMention(c);
+});
+$('slashPanelBody').addEventListener('click', (e) => {
+  const sugg = e.target.closest('.sugg');
+  if (sugg) {
+    const cmd = COMMANDS.find(c => c.id === sugg.dataset.cmd);
+    plainText('/' + cmd.name); S.session = null; solidifyCommand(cmd); return;
+  }
+  const row = e.target.closest('.cmdrow'); if (!row) return;
+  const c = (S.slashCands || [])[+row.dataset.i];
+  if (c) solidifyCommand(c);
+});
+document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => {
+  if (S.session) { log('sys', '✕ 中止会话（文本保留）'); S.session = null; }
+  closePanels(); setState(input.querySelector('.token') ? 'TOKEN_SOLID' : 'IDLE');
+}));
+document.querySelectorAll('.tool[data-insert]').forEach(b => b.addEventListener('click', () => {
+  input.focus();
+  const { text, cursor } = textBeforeCaret();
+  const prev = cursor === 0 ? ' ' : text[cursor - 1];
+  const insert = /\s/.test(prev) || text.length === 0 ? b.dataset.insert : ' ' + b.dataset.insert;
+  document.execCommand('insertText', false, insert);
+  refresh();
+}));
+$('paramsBar').addEventListener('click', (e) => {
+  if (e.target.closest('[data-skip]')) {
+    const cmd = S.paramCmd;
+    const opt = cmd.params.find((p, i) => i > S.paramIdx && S.paramVals[p.key] === undefined && !p.required);
+    if (S.paramIdx >= 0 && !cmd.params[S.paramIdx].required) {
+      log('slash', `PARAM skip ${cmd.params[S.paramIdx].key}`);
+      const next = cmd.params.findIndex((p, i) => i > S.paramIdx && S.paramVals[p.key] === undefined);
+      S.paramIdx = next;
+      renderParams(); paramRefresh();
+    }
+    return;
+  }
+  const slot = e.target.closest('[data-slot]'); if (!slot) return;
+  S.paramIdx = +slot.dataset.slot; renderParams(); paramRefresh();
+});
+$('sendBtn').addEventListener('click', send);
+
+/* ================= 场景 ================= */
+const SCEN = {
+  'at-trigger'() {
+    plainText(''); S.recent = []; refresh();
+    input.focus(); document.execCommand('insertText', false, '@');
+    refresh();
+    log('sys', '场景：空 query → 推荐序列（最近 + 自选 + 指数）');
+  },
+  'at-filter'() {
+    plainText(''); refresh(); input.focus();
+    document.execCommand('insertText', false, '帮我看看 ');
+    document.execCommand('insertText', false, '@mao');
+    refresh();
+    log('sys', '场景：句中 @（前驱是空白才触发）+ 拼音全拼过滤');
+  },
+  'at-board'() {
+    plainText(''); refresh(); input.focus();
+    document.execCommand('insertText', false, '@白酒');
+    refresh();
+    log('sys', '场景：概念词命中 → 板块聚合项（共 N 只）');
+  },
+  'token-solid'() {
+    plainText('茅台现在怎么样 '); refresh(); input.focus();
+    document.execCommand('insertText', false, '@');
+    refresh();
+    log('sys', '场景：已固化 token，光标紧贴右侧 —— 按一次退格试试（整只删除）');
+  },
+  'multi-mention'() {
+    plainText(''); refresh();
+    S.session = { type: '@', triggerStart: 0, queryStart: 1, cursor: 1, query: '' };
+    solidifyMention(SECURITIES[0]);
+    input.focus();
+    document.execCommand('insertText', false, '和 ');
+    document.execCommand('insertText', false, '@五粮液');
+    refresh();
+    log('sys', '场景：多提及并存 —— 点发送看 SendPayload（去重/对账）');
+  },
+  'slash'() {
+    plainText(''); refresh(); input.focus();
+    document.execCommand('insertText', false, '/');
+    refresh();
+    log('sys', '场景：/ 空面板 = 全部命令（含需参数标记）；试试 /vs 或 /db');
+  },
+  'param'() {
+    plainText(''); refresh(); input.focus();
+    document.execCommand('insertText', false, '/对比');
+    S.session = { type: '/', triggerStart: 0, queryStart: 1, cursor: 3, query: '对比' };
+    refresh();
+    solidifyCommand(COMMANDS.find(c => c.id === 'compare'));
+    log('sys', '场景：参数槽位态 —— 输入“茅台”选候选填槽A，再填槽B；缺必选时发送置灰');
+  },
+  'unknown'() {
+    plainText(''); refresh(); input.focus();
+    document.execCommand('insertText', false, '/foo');
+    refresh();
+    log('sys', '场景：未知命令 → 建议近似命令；直接发送则降级普通文本');
+  },
+  'btn-at'() {
+    plainText('帮我看看'); refresh(); input.focus(); caretToEnd();
+    // 等价点左下角 @ 按钮：前驱非空白自动补空格，插入 @ 并把光标带到触发词之后
+    document.execCommand('insertText', false, ' @');
+    refresh();
+    log('sys', '场景：点左下角 @ 按钮 —— 自动补空格满足词法判定；面板为定高框，候选超出可滚动');
+  },
+  'btn-slash'() {
+    plainText('帮我看看'); refresh(); input.focus(); caretToEnd();
+    document.execCommand('insertText', false, ' /');
+    refresh();
+    log('sys', '场景：点左下角 / 按钮 —— 唤起指令面板；再点一次同按钮即收起（toggle）');
+  },
+};
+document.querySelectorAll('#scenarios button').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#scenarios button').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    SCEN[b.dataset.s]();
+  });
+});
+
+setState('IDLE');
+log('sys', '原型就绪 · 规范 10《输入栏@提及与斜杠指令交互规范》');
+</script>
+</body>
+</html>
