@@ -1,5 +1,11 @@
 *.iml
 .gradle
+.kotlin
+.workbuddy/
+del_native.log
+del_native.py
+rename_native.log
+rename_native.py
 /local.properties
 .idea
 .DS_Store
