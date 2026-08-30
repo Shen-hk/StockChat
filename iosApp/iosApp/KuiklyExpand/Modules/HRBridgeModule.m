@@ -34,4 +34,17 @@
     [generator impactOccurred];
 }
 
+- (void)startVoiceRecording:(NSDictionary *)args {
+    // iOS native recording is intentionally not wired until the Kuikly callback
+    // contract is added here; commonMain converts the missing callback into
+    // VoiceError.UNAVAILABLE after a short timeout.
+}
+
+- (NSString *)stopVoiceRecording:(NSDictionary *)args {
+    return @"{\"path\":\"\"}";
+}
+
+- (void)cancelVoiceRecording:(NSDictionary *)args {
+}
+
 @end

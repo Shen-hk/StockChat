@@ -22,6 +22,9 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   static readonly CURRENT_TIME_STAMP = "currentTimestamp";
   static readonly DATE_FORMATTER = "dateFormatter";
   static readonly READ_ASSET_FILE = "readAssetFile";
+  static readonly START_VOICE_RECORDING = "startVoiceRecording";
+  static readonly STOP_VOICE_RECORDING = "stopVoiceRecording";
+  static readonly CANCEL_VOICE_RECORDING = "cancelVoiceRecording";
 
   syncMode(): boolean {
     return false;
@@ -79,6 +82,17 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
         this.readAssetFile(params, callback);
         break;
       }
+      case KRBridgeModule.START_VOICE_RECORDING: {
+        this.startVoiceRecording(callback);
+        break;
+      }
+      case KRBridgeModule.STOP_VOICE_RECORDING: {
+        return this.stopVoiceRecording();
+      }
+      case KRBridgeModule.CANCEL_VOICE_RECORDING: {
+        this.cancelVoiceRecording();
+        break;
+      }
       default:
         break;
     }
@@ -105,6 +119,21 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   }
 
   private hapticImpact() {
+  }
+
+  private startVoiceRecording(callback: KuiklyRenderCallback) {
+    callback({
+      "type": "error",
+      "error": "UNAVAILABLE",
+      "message": "当前鸿蒙端暂未接入真实录音"
+    });
+  }
+
+  private stopVoiceRecording(): string {
+    return JSON.stringify({ "path": "" });
+  }
+
+  private cancelVoiceRecording() {
   }
 
   private log(params: KRAny) {

@@ -54,6 +54,9 @@ data class DefinitionCardModel(
     val plainText: String,
     val example: String,
     override val cardId: String = "definition:$term",
+    /** 进阶解释，仅在展开态（FULL）展示，服务有经验的用户。 */
+    val advanced: String = "",
+    val category: String = "",
 ) : CardModel {
     override val cardType: String = "definition"
     override val expandMode: ExpandMode = ExpandMode.ACCORDION

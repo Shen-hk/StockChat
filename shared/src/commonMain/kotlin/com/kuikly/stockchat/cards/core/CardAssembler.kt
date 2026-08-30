@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.cards.core
 
+import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardBlock
@@ -38,7 +39,21 @@ object CardAssembler {
                     else -> UnknownCardModel(intent.type, block.payload, block.id)
                 }
             }
-            is DefinitionIntent -> DefinitionCardModel(intent.term, intent.plainText, intent.example, block.id)
+            is DefinitionIntent -> {
+                val entry = glossaryEntryFor(intent.term)
+                if (entry != null) {
+                    DefinitionCardModel(
+                        term = entry.term,
+                        plainText = entry.plain,
+                        example = entry.example,
+                        cardId = block.id,
+                        advanced = entry.advanced,
+                        category = entry.category.label,
+                    )
+                } else {
+                    DefinitionCardModel(intent.term, intent.plainText, intent.example, block.id)
+                }
+            }
             is AttributionIntent -> {
                 quoteFor(intent.symbol)?.let { AttributionCardModel(it, intent.direction, intent.factors, block.id) }
                     ?: UnknownCardModel(intent.type, block.payload, block.id)
@@ -49,4 +64,10 @@ object CardAssembler {
     }
 
     fun assemble(block: SkeletonBlock): CardModel = SkeletonCardModel(block.type, block.id)
+
+    private fun glossaryEntryFor(term: String) =
+        Glossary.search(term, limit = 1).firstOrNull()
+            ?: Glossary.all.firstOrNull { entry ->
+                entry.matchTokens().any { token -> term.contains(token, ignoreCase = true) }
+            }
 }

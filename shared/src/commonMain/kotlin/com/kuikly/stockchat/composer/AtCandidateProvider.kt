@@ -26,21 +26,28 @@ object AtCandidateProvider {
      * 候选排序主入口。
      * @param query 触发词（上屏文本；组合态期间由调用方冻结）
      * @param recentMentions 最近提及过的标的 symbol（S1，最多 5 条，新的在前）
+     * @param watchlistSymbols 本地自选 symbol（S2，动态持久化数据）
      */
-    fun rank(query: String, recentMentions: List<String> = emptyList()): List<AtCandidate> {
-        if (query.isEmpty()) return recommend(recentMentions)
+    fun rank(
+        query: String,
+        recentMentions: List<String> = emptyList(),
+        watchlistSymbols: List<String> = emptyList(),
+    ): List<AtCandidate> {
+        if (query.isEmpty()) return recommend(recentMentions, watchlistSymbols)
         val ql = query.lowercase()
         val hits = mutableListOf<AtCandidate>()
+        val watchlist = watchlistSymbols.toSet()
 
         for (entry in ComposerCatalog.all) {
             val level = matchLevel(ql, entry)
             if (level <= 0f) continue
             val isRecent = entry.symbol in recentMentions
+            val isWatchlist = entry.symbol in watchlist || entry.watchlist
             val score = 60f * level +
                 15f * entry.hot +
                 10f * (if (isRecent) 1f else 0f) +
-                10f * (if (entry.watchlist) 1f else 0f)
-            hits += AtCandidate(entry, level, score, sourceOf(entry, isRecent))
+                10f * (if (isWatchlist) 1f else 0f)
+            hits += AtCandidate(entry, level, score, sourceOf(entry, isRecent, isWatchlist))
         }
 
         // 概念/板块聚合项（命中等级 0.60）
@@ -59,12 +66,17 @@ object AtCandidateProvider {
     }
 
     /** 空 query 推荐序列：S1 最近提及 + S2 自选 + S3 指数，去重截断。 */
-    private fun recommend(recentMentions: List<String>): List<AtCandidate> {
+    private fun recommend(recentMentions: List<String>, watchlistSymbols: List<String>): List<AtCandidate> {
         val seen = mutableSetOf<String>()
         val out = mutableListOf<AtCandidate>()
         recentMentions.take(5).forEach { symbol ->
             ComposerCatalog.find(symbol)?.let { entry ->
                 if (seen.add(entry.symbol)) out += AtCandidate(entry, 0f, 0f, "最近")
+            }
+        }
+        watchlistSymbols.forEach { symbol ->
+            ComposerCatalog.find(symbol)?.let { entry ->
+                if (seen.add(entry.symbol)) out += AtCandidate(entry, 0f, 0f, "自选")
             }
         }
         ComposerCatalog.stocks.filter { it.watchlist }.forEach { entry ->
@@ -76,9 +88,9 @@ object AtCandidateProvider {
         return out.take(MAX_ROWS)
     }
 
-    private fun sourceOf(entry: CatalogEntry, isRecent: Boolean): String = when {
+    private fun sourceOf(entry: CatalogEntry, isRecent: Boolean, isWatchlist: Boolean): String = when {
         isRecent -> "最近"
-        entry.watchlist -> "自选"
+        isWatchlist -> "自选"
         entry.kind == MentionType.INDEX -> "指数"
         else -> "搜索"
     }

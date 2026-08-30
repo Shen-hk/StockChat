@@ -64,6 +64,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
 
     override fun onPause() {
         super.onPause()
+        KRBridgeModule.cancelActiveVoiceRecording()
         kuiklyRenderViewDelegator.onPause()
     }
 

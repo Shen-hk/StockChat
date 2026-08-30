@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.richtext
 
+import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.Securities
 
 enum class EntityType { STOCK, TERM }
@@ -15,17 +16,6 @@ data class EntitySpan(
 )
 
 object EntityRecognizer {
-    private val terms = mapOf(
-        "MACD" to "MACD",
-        "市盈率" to "PE",
-        "PE" to "PE",
-        "PB" to "PB",
-        "换手率" to "TURNOVER",
-        "北向资金" to "NORTHBOUND",
-        "量比" to "VOLUME_RATIO",
-        "前复权" to "QFQ",
-    )
-
     private data class Entry(val type: EntityType, val target: String)
 
     private class TrieNode {
@@ -41,7 +31,7 @@ object EntityRecognizer {
                     .distinct()
                     .forEach { insert(root, it, Entry(EntityType.STOCK, security.symbol)) }
             }
-            terms.forEach { (term, target) -> insert(root, term, Entry(EntityType.TERM, target)) }
+            Glossary.matchTokens().forEach { (token, key) -> insert(root, token, Entry(EntityType.TERM, key)) }
         }
     }
 
@@ -67,7 +57,7 @@ object EntityRecognizer {
                     endExclusive = cursor
                 }
             }
-            if (longestEntries == null) {
+            if (longestEntries == null || !isAcceptableMatch(text, start, endExclusive)) {
                 start += 1
                 continue
             }
@@ -88,6 +78,18 @@ object EntityRecognizer {
         token.forEach { char -> node = node.children.getOrPut(normalized(char)) { TrieNode() } }
         if (entry !in node.entries) node.entries += entry
     }
+
+    /**
+     * 英文缩写（PE / MA / RSI）必须作为独立词出现，否则 "Market"、"People" 这类
+     * 普通英文单词会被截出 PE、MA 造成误标——术语误标比漏标更伤信任。
+     */
+    private fun isAcceptableMatch(text: String, start: Int, endExclusive: Int): Boolean {
+        if (text.substring(start, endExclusive).any { it.code >= 128 }) return true
+        return !isAsciiWordChar(text.getOrNull(start - 1)) && !isAsciiWordChar(text.getOrNull(endExclusive))
+    }
+
+    private fun isAsciiWordChar(char: Char?): Boolean =
+        char != null && char.code < 128 && (char.isLetterOrDigit() || char == '_')
 
     private fun normalized(char: Char): Char = if (char.code < 128) char.lowercaseChar() else char
 }

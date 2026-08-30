@@ -4,6 +4,7 @@ import com.kuikly.stockchat.chat.ChatContext
 import com.kuikly.stockchat.chat.ChatMessage
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.CardResponseFallback
+import com.kuikly.stockchat.chat.WatchlistIntent
 import com.kuikly.stockchat.data.provider.SseEventParser
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.BrokenCardBlock
@@ -24,6 +25,21 @@ class ChatInfrastructureTest {
     fun modelCardResponseIsNotChangedByFallback() {
         val response = "正文\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}\n```"
         assertEquals(response, CardResponseFallback.appendMissingCard("贵州茅台怎么样", response))
+    }
+
+    @Test
+    fun watchlistIntentMatchesPortfolioQuestionsOnly() {
+        listOf(
+            "我的自选今天怎么样",
+            "我持有的股票最近表现如何",
+            "我的票涨跌情况",
+            "关注的股票复盘一下",
+            "自选股还好吗",
+        ).forEach { question ->
+            assertTrue(WatchlistIntent.matches(question), "应命中自选问句：$question")
+        }
+        assertTrue(!WatchlistIntent.matches("打开自选股"))
+        assertTrue(!WatchlistIntent.matches("贵州茅台今天怎么样"))
     }
 
     @Test

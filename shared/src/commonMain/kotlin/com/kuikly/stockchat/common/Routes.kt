@@ -8,6 +8,8 @@ object Routes {
     const val CHAT = "ChatPage"
     const val STOCK_DETAIL = "StockDetailPage"
     const val CARD_GALLERY = "CardGallery"
+    const val GLOSSARY = "GlossaryPage"
+    const val WATCHLIST = "WatchlistPage"
     const val API_CONFIG = "ApiConfigPage"
     const val LEGACY_ROUTER = "router"
 }

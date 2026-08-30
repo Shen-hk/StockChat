@@ -385,13 +385,22 @@ object DefinitionCardRenderer : CardRenderer {
                 Text { attr { text(model.plainText); fontSize(11f); color(theme.textSecondary); flex(1f) } }
             }
         } else {
-            container.Text { attr { text(model.term); fontSize(if (context.density == CardDensity.COMPACT) 16f else 18f); fontWeightBold(); color(theme.brand) } }
+            if (model.category.isNotBlank()) {
+                container.Text { attr { text(model.category); fontSize(10f); color(theme.textTertiary) } }
+            }
+            container.Text { attr { text(model.term); marginTop(if (model.category.isBlank()) 0f else 2f); fontSize(if (context.density == CardDensity.COMPACT) 16f else 18f); fontWeightBold(); color(theme.brand) } }
             container.Text { attr { text(model.plainText); marginTop(8f); fontSize(14f); lineHeight(21f); color(theme.textPrimary) } }
             if (context.density == CardDensity.FULL) {
                 container.View {
                     attr { marginTop(10f); padding(10f); backgroundColor(theme.surfaceMuted); borderRadius(10f) }
                     Text { attr { text(model.example); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
                 }
+                if (model.advanced.isNotBlank()) {
+                    container.Text { attr { text("进阶解释"); marginTop(12f); fontSize(11f); fontWeightSemiBold(); color(theme.textTertiary) } }
+                    container.Text { attr { text(model.advanced); marginTop(4f); fontSize(12f); lineHeight(19f); color(theme.textSecondary) } }
+                }
+            } else if (model.advanced.isNotBlank()) {
+                container.Text { attr { text("展开后查看例子与进阶解释"); marginTop(8f); fontSize(10f); color(theme.textTertiary) } }
             }
         }
     }

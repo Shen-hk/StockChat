@@ -1,10 +1,13 @@
 package com.kuikly.stockchat.chat
 
 import com.kuikly.stockchat.composer.SendPayload
+import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.config.AiConfigStore
 import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
 import com.kuikly.stockchat.data.provider.MockAiProvider
+import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.CardBlock
 import com.tencent.kuikly.core.base.PagerScope
@@ -15,12 +18,17 @@ import com.tencent.kuikly.core.reactive.handler.observableList
 class ChatViewModel(override val pagerId: String) : PagerScope {
     var messages: ObservableList<ChatMessage> by observableList()
     var sessionSummaries: ObservableList<ChatSessionSummary> by observableList()
+    // Composer draft mirror. ChatPage is the only writer so a native TextArea update and
+    // this observable can be committed together; sending/session operations must not
+    // mutate it behind the editor's back.
     var inputText: String by observable("")
     var streamState: StreamState by observable(StreamState.IDLE)
     var apiConfigured: Boolean by observable(false)
         private set
     private val configStore = AiConfigStore(pagerId)
     private val sessionStore = ChatSessionStore(pagerId)
+    private val watchlistStore = WatchlistStore(pagerId)
+    private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
     private var aiProvider: AiProvider? = null
     private var subThreadProvider: AiProvider? = null
     private var cardRepairProvider: AiProvider? = null
@@ -53,10 +61,13 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
     fun send(payload: SendPayload) {
         val value = payload.displayText
         if (value.isEmpty() || streamState == StreamState.STREAMING) return
-        inputText = ""
         messages.add(ChatMessage(pagerId, newId(), MessageRole.USER, value))
         persist()
         val assistantId = newId()
+        if (WatchlistIntent.matches(value)) {
+            replyWithWatchlistSummary(assistantId)
+            return
+        }
         if (payload.text.startsWith("回归：")) {
             streamWithProvider(MockAiProvider(pagerId), assistantId, payload)
             return
@@ -113,6 +124,53 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         )
     }
 
+    private fun replyWithWatchlistSummary(assistantId: String) {
+        val items = watchlistStore.list()
+        if (items.isEmpty()) {
+            messages.add(
+                ChatMessage(
+                    pagerId,
+                    assistantId,
+                    MessageRole.ASSISTANT,
+                    "你还没有添加自选股。可以在抽屉进入「自选股」搜索添加，也可以在聊天里长按股票名或从详情页加入。",
+                ),
+            )
+            streamState = StreamState.IDLE
+            persist()
+            return
+        }
+
+        val quotes = items.mapNotNull { quoteRepository.cachedOrOffline(it.symbol) }
+        val rising = quotes.count { it.change > 0.0 }
+        val falling = quotes.count { it.change < 0.0 }
+        val flat = quotes.size - rising - falling
+        val lead = when {
+            rising > falling -> "你的自选今天整体偏强，${rising} 只上涨、${falling} 只下跌。"
+            falling > rising -> "你的自选今天整体偏弱，${falling} 只下跌、${rising} 只上涨。"
+            else -> "你的自选今天分化不大，上涨和下跌家数接近。"
+        }
+        val detail = if (quotes.isEmpty()) {
+            "行情暂不可用，下面先列出自选标的，卡片会继续按统一行情链路加载。"
+        } else {
+            val leaders = quotes.sortedByDescending { it.changePercent }.take(3)
+                .joinToString("、") { "${it.name} ${Format.percent(it.changePercent)}" }
+            "当前统计：涨 $rising / 跌 $falling / 平 $flat。表现靠前：$leaders。"
+        }
+        val cards = items.joinToString("\n\n") { item ->
+            "```card:stock-quote\n{\"symbol\":\"${item.symbol}\"}\n```"
+        }
+        messages.add(
+            ChatMessage(
+                pagerId,
+                assistantId,
+                MessageRole.ASSISTANT,
+                "$lead\n\n$detail\n\n$cards",
+            ),
+        )
+        streamState = StreamState.IDLE
+        persist()
+    }
+
     fun stop() {
         aiProvider?.stop()
         cardRepairProvider?.stop()
@@ -138,7 +196,6 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
             activeSessionId = sessionStore.startSession()
         }
         messages.clear()
-        inputText = ""
         streamState = StreamState.IDLE
         nextId = 1
         refreshSessionSummaries()
@@ -150,7 +207,6 @@ class ChatViewModel(override val pagerId: String) : PagerScope {
         activeSessionId = sessionId
         messages.clear()
         restoreMessages(sessionStore.load(sessionId))
-        inputText = ""
         streamState = StreamState.IDLE
         refreshSessionSummaries()
     }

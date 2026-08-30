@@ -88,6 +88,71 @@ fun ViewContainer<*, *>.LineIconMic(color: Color, size: Float) {
     }
 }
 
+/**
+ * Microphone with in-tube volume fill（WorkBuddy 真身，规范 §5.1 ①）：
+ * 话筒管作为 clip 区域，一块矩形随音量从管底向上充填。
+ * [fill01] 在 Canvas draw 闭包内被读取——传 lambda 读 observable 即可驱动 60ms 重绘
+ * （CanvasView.draw 被 ReactiveObserver 包裹，读到的 observable 变化自动重画）。
+ */
+fun ViewContainer<*, *>.LineIconMicWithFill(
+    color: Color,
+    fillColor: Color,
+    size: Float,
+    fill01: () -> Float,
+) {
+    Canvas({
+        attr { width(size); height(size) }
+    }) { ctx, w, _ ->
+        val k = w / GRID
+        ctx.batchDraw = true
+        ctx.scale(k, k)
+        ctx.lineWidth(STROKE)
+        ctx.lineCapRound()
+
+        // 管内充填：管形（描边内缩 1）做 clip，管底 y=13 向上充填，高度 1.5→9。
+        val f = fill01().coerceIn(0f, 1f)
+        if (f > 0.01f) {
+            ctx.save()
+            ctx.beginPath()
+            ctx.moveTo(10f, 6f)
+            ctx.arc(12f, 6f, 2f, PI.toFloat(), (2 * PI).toFloat(), false)
+            ctx.lineTo(14f, 11f)
+            ctx.arc(12f, 11f, 2f, 0f, PI.toFloat(), false)
+            ctx.closePath()
+            ctx.clip(true)
+            val h = 1.5f + f * 7.5f
+            ctx.fillStyle(fillColor)
+            ctx.beginPath()
+            ctx.moveTo(9f, 13f - h)
+            ctx.lineTo(15f, 13f - h)
+            ctx.lineTo(15f, 14f)
+            ctx.lineTo(9f, 14f)
+            ctx.closePath()
+            ctx.fill()
+            ctx.restore()
+        }
+
+        // 描边（与 LineIconMic 同形）。
+        ctx.strokeStyle(color)
+        ctx.beginPath()
+        ctx.moveTo(9f, 6f)
+        ctx.arc(12f, 6f, 3f, PI.toFloat(), (2 * PI).toFloat(), false)
+        ctx.lineTo(15f, 11f)
+        ctx.arc(12f, 11f, 3f, 0f, PI.toFloat(), false)
+        ctx.closePath()
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.arc(12f, 11.5f, 6f, PI.toFloat(), 0f, true)
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(12f, 17.5f)
+        ctx.lineTo(12f, 21f)
+        ctx.moveTo(8.5f, 21f)
+        ctx.lineTo(15.5f, 21f)
+        ctx.stroke()
+    }
+}
+
 /** Camera: shoot a photo for the composer. */
 fun ViewContainer<*, *>.LineIconCamera(color: Color, size: Float) {
     lineIcon(color, size) {

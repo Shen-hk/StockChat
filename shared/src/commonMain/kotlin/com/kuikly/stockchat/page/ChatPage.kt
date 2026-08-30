@@ -9,7 +9,9 @@ import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.CardEvent
 import com.kuikly.stockchat.cards.core.CardModel
+import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.InsightCardModel
+import com.kuikly.stockchat.cards.core.NewsCardModel
 import com.kuikly.stockchat.cards.core.SkeletonCardModel
 import com.kuikly.stockchat.cards.core.StockChartCardModel
 import com.kuikly.stockchat.cards.core.StockChartMode
@@ -27,6 +29,8 @@ import com.kuikly.stockchat.chat.StreamState
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
+import com.kuikly.stockchat.data.WatchlistAddResult
+import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.data.provider.DataMode
@@ -35,12 +39,16 @@ import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
 import com.kuikly.stockchat.page.components.ChatTopNav
 import com.kuikly.stockchat.page.components.LineIconPlus
-import com.kuikly.stockchat.page.components.LineIconMic
+import com.kuikly.stockchat.page.components.LineIconMicWithFill
 import com.kuikly.stockchat.page.components.LineIconCamera
 import com.kuikly.stockchat.page.components.LineIconPhoto
 import com.kuikly.stockchat.page.components.LineIconSend
 import com.kuikly.stockchat.page.components.LineIconStop
-import com.kuikly.stockchat.page.components.LineIconRecordingDot
+import com.kuikly.stockchat.page.components.VoiceBar
+import com.kuikly.stockchat.voice.NativeBridgeVoiceRecorder
+import com.kuikly.stockchat.voice.VoiceError
+import com.kuikly.stockchat.voice.VoiceRecorder
+import com.kuikly.stockchat.voice.VoiceState
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.BrokenCardBlock
 import com.kuikly.stockchat.protocol.CardBlock
@@ -60,6 +68,7 @@ import com.kuikly.stockchat.composer.AtCandidateProvider
 import com.kuikly.stockchat.composer.CommandExecution
 import com.kuikly.stockchat.composer.CommandInvocation
 import com.kuikly.stockchat.composer.CommandRegistry
+import com.kuikly.stockchat.composer.ComposerEditingReducer
 import com.kuikly.stockchat.composer.MentionEntity
 import com.kuikly.stockchat.composer.MentionType
 import com.kuikly.stockchat.composer.ParamType
@@ -83,6 +92,7 @@ import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
+import com.tencent.kuikly.core.log.KLog
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
@@ -97,12 +107,21 @@ import com.tencent.kuikly.core.views.ScrollerView
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
+import com.tencent.kuikly.core.timer.Timer
 import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.pow
 
 @Page(Routes.CHAT, supportInLocal = true)
 internal class ChatPage : BasePager() {
+    // 输入栏诊断日志统一 tag。logcat 过滤：adb logcat -s KLog 或搜 "Composer"。
+    private companion object {
+        const val COMPOSER_LOG_TAG = "Composer"
+    }
     private val viewModel by lazy { ChatViewModel(pagerId) }
-    private lateinit var inputRef: ViewRef<TextAreaView>
+    // 全页唯一、持久挂载的 TextArea。ref 只在首次 body 挂载前为空。
+    private var inputRef: ViewRef<TextAreaView>? = null
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
     private var chatContentHeight = 0f
     private var keepChatAtBottomVersion = 0
@@ -138,13 +157,9 @@ internal class ChatPage : BasePager() {
     private var assistantPanel: AssistantPanel by observable(AssistantPanel.NONE)
     // 活动触发会话；同一时刻最多一个（规范 §3.1）。
     private var triggerSession: TriggerSession? = null
-    // 最近一次观测到的光标偏移。点左下角 @ / / 按钮时在光标处插入触发字符；
-    // -1 表示还没有观测到（此时退化为追加到末尾）。
-    private var composerCursor: Int = -1
-    private var composerSelectionStart: Int = 0
-    private var composerSelectionEnd: Int = 0
-    private var composerCompositionStart: Int = TextInputState.NO_COMPOSITION
-    private var composerCompositionEnd: Int = TextInputState.NO_COMPOSITION
+    // 文本、选区、组合区必须作为一个原子快照流转，不允许分散字段被
+    // textDidChange / selectionChange 交叉覆盖。
+    private var composerEditingState = TextInputState("")
     // 拼音组合态：面板冻结显示"输入中…"（规范 §3.5）。
     private var triggerComposing: Boolean by observable(false)
     private var atCandidates: ObservableList<AtCandidate> by observableList()
@@ -170,12 +185,26 @@ internal class ChatPage : BasePager() {
     // 默认态 → 输入态由点击/聚焦/开面板触发；输入态是"粘"的：收起键盘不再回退，
     // 只有"键盘已收起时点击非输入栏区域"这一次点击才回到默认态。
     private var composerExpanded: Boolean by observable(false)
+    // Kuikly Android 在输入框首次聚焦所触发的 Composer 展开布局提交期间，会让
+    // RecyclerView 内的 EditText 短暂 clearFocus。恢复请求带版本号：任何用户主动
+    // blur/collapse 都会使旧请求失效，防止延迟回调把焦点从其他区域抢回来。
+    private var composerFocusRequestVersion = 0
     // 键盘当前是否在屏上，由 TextArea 的 keyboardHeightChange 上报。
     private var keyboardVisible: Boolean by observable(false)
-    // 键盘被收起但输入栏仍留在输入态时置位，避免 TextArea 重新挂载时把键盘又拉起来。
-    private var keyboardDismissed = false
-    // Composer extras: voice input mock state.
-    private var voiceActive: Boolean by observable(false)
+    // Voice input is the composer's third state (docs/11): hold to record,
+    // release to transcribe/send, slide up to cancel.
+    private var voiceState: VoiceState by observable(VoiceState.IDLE)
+    private var voiceCancelArmed: Boolean by observable(false)
+    private var voiceElapsedSec: Float by observable(0f)
+    private var voiceAmps: FloatArray by observable(FloatArray(24) { 4f })
+    private var voiceMicFill: Float by observable(0f)
+    private var voiceTouchDownPageY = 0f
+    private var voiceSourceExpanded = false
+    private var voiceClockTimer: Timer? = null
+    private var voiceSessionVersion = 0
+    private val voiceRecorder: VoiceRecorder by lazy {
+        NativeBridgeVoiceRecorder(acquireModule(BridgeModule.MODULE_NAME))
+    }
     private var expandedCardKey: String by observable("")
     private var focusedCardKey: String by observable("")
     private var repairingCardKey: String by observable("")
@@ -194,6 +223,7 @@ internal class ChatPage : BasePager() {
     private var suppressNextStockClickSymbol = ""
     private var peekVersion = 0
     private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
+    private val watchlistStore by lazy { WatchlistStore(pagerId) }
     private val mockQuoteProvider = MockQuoteProvider()
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
@@ -470,13 +500,16 @@ internal class ChatPage : BasePager() {
                         vif({ page.isComposerExpanded() && page.inputPanel == InputPanel.MEDIA }) {
                             MediaInputRow(page.theme) { action -> page.handleMediaAction(action) }
                         }
-                        vif({ !page.isComposerExpanded() }) {
-                            View {
-                                attr {
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                    marginTop(8f)
-                                }
+                        // TextArea 必须永远挂在同一个父节点下。折叠/展开只改布局和
+                        // 周边操作区，不再用 vif 替换输入组件，避免聚焦期间原生
+                        // EditText 被移除或在尚未 attach 时调用 autofocus。
+                        View {
+                            attr {
+                                flexDirectionRow()
+                                alignItemsCenter()
+                                marginTop(if (page.isComposerExpanded()) 0f else 8f)
+                            }
+                            vif({ !page.isComposerExpanded() }) {
                                 View {
                                     attr {
                                         size(32f, 32f)
@@ -484,36 +517,55 @@ internal class ChatPage : BasePager() {
                                         allCenter()
                                         borderRadius(16f)
                                         backgroundColor(page.theme.surfaceMuted)
+                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                        touchEnable(!page.isVoiceBusy())
                                     }
                                     LineIconPlus(color = page.theme.textSecondary, size = 16f)
                                 }
-                                View {
-                                    attr {
-                                        flex(1f)
-                                        height(44f)
-                                        paddingLeft(12f)
-                                        paddingRight(12f)
-                                        justifyContentCenter()
-                                        borderRadius(16f)
-                                        backgroundColor(Color(0xFFFFFFFF, 0f))
-                                    }
-                                    page.renderComposerTextArea(this, compact = true)
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    minHeight(44f)
+                                    paddingLeft(12f)
+                                    paddingRight(12f)
+                                    justifyContentCenter()
+                                    borderRadius(16f)
+                                    backgroundColor(Color(0xFFFFFFFF, 0f))
                                 }
+                                page.renderComposerTextArea(this)
+                                vif({ page.voiceState != VoiceState.IDLE }) {
+                                    VoiceBar(
+                                        theme = page.theme,
+                                        transcribing = { page.voiceState == VoiceState.TRANSCRIBING },
+                                        cancelArmed = { page.voiceCancelArmed },
+                                        elapsedSec = { page.voiceElapsedSec },
+                                        amps = { page.voiceAmps },
+                                    )
+                                }
+                            }
+                            vif({ !page.isComposerExpanded() }) {
                                 View {
                                     attr {
                                         size(32f, 32f)
                                         marginLeft(7f)
                                         allCenter()
                                         borderRadius(16f)
-                                        backgroundColor(if (page.voiceActive) page.theme.rise else page.theme.surfaceMuted)
+                                        backgroundColor(page.theme.surfaceMuted)
+                                        transform(scale = if (page.voiceState == VoiceState.RECORDING) Scale(1.12f, 1.12f) else Scale.DEFAULT)
+                                        animate(Animation.easeOut(0.12f), page.voiceState == VoiceState.RECORDING)
                                     }
-                                    vif({ page.voiceActive }) {
-                                        LineIconRecordingDot(color = Color(0xFFFFFFFF), size = 11f)
+                                    LineIconMicWithFill(
+                                        color = page.theme.textSecondary,
+                                        fillColor = if (page.voiceCancelArmed) page.theme.textTertiary else page.theme.rise,
+                                        size = 17f,
+                                        fill01 = { page.voiceMicFill },
+                                    )
+                                    event {
+                                        touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
+                                        touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
+                                        touchUp { page.handleVoiceTouchUp() }
                                     }
-                                    vif({ !page.voiceActive }) {
-                                        LineIconMic(color = page.theme.textSecondary, size = 17f)
-                                    }
-                                    event { click { page.voiceActive = !page.voiceActive } }
                                 }
                                 View {
                                     attr {
@@ -522,6 +574,8 @@ internal class ChatPage : BasePager() {
                                         allCenter()
                                         borderRadius(16f)
                                         backgroundColor(if (page.inputPanel == InputPanel.MEDIA) page.theme.brandSoft else page.theme.surfaceMuted)
+                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                        touchEnable(!page.isVoiceBusy())
                                     }
                                     LineIconCamera(
                                         color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
@@ -533,19 +587,6 @@ internal class ChatPage : BasePager() {
                         }
                         vif({ page.isComposerExpanded() }) {
                             View {
-                                attr {
-                                    minHeight(44f)
-                                    paddingLeft(12f)
-                                    paddingRight(12f)
-                                    justifyContentCenter()
-                                    borderRadius(16f)
-                                    backgroundColor(Color(0xFFFFFFFF, 0f))
-                                }
-                                // 联想面板打开时把输入框收紧到单行：面板与多行输入框叠起来太高，
-                                // 此时注意力在候选上，草稿内容仍在，只是可视区收窄（内部可滚动）。
-                                page.renderComposerTextArea(this, compact = page.assistantPanel != AssistantPanel.NONE)
-                            }
-                            View {
                                 attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
                                 View {
                                     attr {
@@ -553,6 +594,8 @@ internal class ChatPage : BasePager() {
                                         allCenter()
                                         borderRadius(20f)
                                         backgroundColor(if (page.assistantPanel == AssistantPanel.AT_MENTION) page.theme.brand else page.theme.brandSoft)
+                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                        touchEnable(!page.isVoiceBusy())
                                     }
                                     Text {
                                         attr {
@@ -571,6 +614,8 @@ internal class ChatPage : BasePager() {
                                         allCenter()
                                         borderRadius(20f)
                                         backgroundColor(if (page.assistantPanel == AssistantPanel.SLASH || page.assistantPanel == AssistantPanel.COMMAND_PARAMS) page.theme.brand else page.theme.brandSoft)
+                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                        touchEnable(!page.isVoiceBusy())
                                     }
                                     Text {
                                         attr {
@@ -589,15 +634,21 @@ internal class ChatPage : BasePager() {
                                         marginRight(6f)
                                         allCenter()
                                         borderRadius(20f)
-                                        backgroundColor(if (page.voiceActive) page.theme.rise else page.theme.surfaceMuted)
+                                        backgroundColor(page.theme.surfaceMuted)
+                                        transform(scale = if (page.voiceState == VoiceState.RECORDING) Scale(1.12f, 1.12f) else Scale.DEFAULT)
+                                        animate(Animation.easeOut(0.12f), page.voiceState == VoiceState.RECORDING)
                                     }
-                                    vif({ page.voiceActive }) {
-                                        LineIconRecordingDot(color = Color(0xFFFFFFFF), size = 12f)
+                                    LineIconMicWithFill(
+                                        color = page.theme.textSecondary,
+                                        fillColor = if (page.voiceCancelArmed) page.theme.textTertiary else page.theme.rise,
+                                        size = 19f,
+                                        fill01 = { page.voiceMicFill },
+                                    )
+                                    event {
+                                        touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
+                                        touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
+                                        touchUp { page.handleVoiceTouchUp() }
                                     }
-                                    vif({ !page.voiceActive }) {
-                                        LineIconMic(color = page.theme.textSecondary, size = 19f)
-                                    }
-                                    event { click { page.voiceActive = !page.voiceActive } }
                                 }
                                 View {
                                     attr {
@@ -606,6 +657,8 @@ internal class ChatPage : BasePager() {
                                         allCenter()
                                         borderRadius(20f)
                                         backgroundColor(if (page.inputPanel == InputPanel.MEDIA) page.theme.brandSoft else page.theme.surfaceMuted)
+                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                        touchEnable(!page.isVoiceBusy())
                                     }
                                     LineIconCamera(
                                         color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
@@ -626,6 +679,8 @@ internal class ChatPage : BasePager() {
                                             }
                                         )
                                         boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
+                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                        touchEnable(!page.isVoiceBusy())
                                     }
                                     vif({ page.viewModel.streamState == StreamState.STREAMING }) {
                                         LineIconStop(color = page.theme.onBrand, size = 18f)
@@ -665,6 +720,10 @@ internal class ChatPage : BasePager() {
                         onPan = { state, y -> page.handleSheetPan(state, y) },
                         onOpenStock = { if (page.sheetInteractive) page.openStockDetail(it) },
                         onTerm = { page.viewModel.send("$it 是什么意思") },
+                        primaryActionLabel = (model as? StockQuoteCardModel)?.quote?.symbol?.let { symbol ->
+                            if (page.watchlistStore.contains(symbol)) "已自选" else "加自选"
+                        },
+                        onPrimaryAction = { symbol -> page.addWatchlistFromEntity(symbol) },
                     )
                 }
             }
@@ -684,6 +743,8 @@ internal class ChatPage : BasePager() {
                     onNewChat = { page.startNewChat() },
                     onOpenSession = { page.openHistorySession(it) },
                     onOpenGallery = { page.openPage(Routes.CARD_GALLERY) },
+                    onOpenGlossary = { page.openPage(Routes.GLOSSARY) },
+                    onOpenWatchlist = { page.openPage(Routes.WATCHLIST) },
                     onToggleIsland = { page.toggleIsland() },
                     onSettings = { page.drawerOpen = false; page.openPage(Routes.API_CONFIG) },
                 )
@@ -852,10 +913,9 @@ internal class ChatPage : BasePager() {
 
     private fun toggleMediaPanel() {
         val willShow = inputPanel != InputPanel.MEDIA
-        voiceActive = false
+        cancelVoiceSession()
         if (willShow) {
-            keyboardDismissed = true
-            inputRef.view?.blur()
+            blurComposer()
         }
         inputPanel = if (willShow) InputPanel.MEDIA else InputPanel.NONE
     }
@@ -863,7 +923,7 @@ internal class ChatPage : BasePager() {
     private fun handleMediaAction(action: ComposerMediaAction) {
         // 选完图片/拍照后整条输入栏回到默认态，不留在"半展开"的悬空状态。
         collapseComposer()
-        inputRef.view?.blur()
+        blurComposer()
         val bridge = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
         bridge.hapticImpact()
         bridge.openComposerMediaSource(action.source)
@@ -897,7 +957,7 @@ internal class ChatPage : BasePager() {
         deepContextVersion++
         commandValidationMessage = ""
         collapseComposer()
-        inputRef.view?.blur()
+        blurComposer()
     }
 
     private fun reloadQuotesForCurrentSession() {
@@ -911,23 +971,48 @@ internal class ChatPage : BasePager() {
 
     /** 默认态 → 输入态。requestFocus 为真时同时把键盘拉起来。 */
     private fun expandComposer(requestFocus: Boolean = false) {
-        composerExpanded = true
-        voiceActive = false
+        val wasExpanded = composerExpanded
+        KLog.i(COMPOSER_LOG_TAG, "expandComposer requestFocus=$requestFocus wasExpanded=$wasExpanded ref=${inputRef?.view != null}")
+        // Kuikly observable 的同值赋值仍可能触发一次 render/layout commit；而
+        // EditText 的 focus 回调会再次进入这里。状态转换必须幂等，否则恢复焦点
+        // 后的第二次同值提交仍会把原生焦点清掉。
+        if (!composerExpanded) composerExpanded = true
+        if (voiceState != VoiceState.IDLE) cancelVoiceSession()
         if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
         if (requestFocus) {
-            keyboardDismissed = false
-            inputRef.view?.focus()
+            if (wasExpanded) inputRef?.view?.focus() else scheduleComposerFocusAfterExpansion()
         }
+    }
+
+    /**
+     * Android 首次聚焦会同步触发展开重排；Kuikly 的 RecyclerView 在随后两帧的
+     * layout commit 中会 clearFocus。等提交完成后只恢复这一次焦点，后续编辑期间
+     * 不轮询、不重复 requestFocus，也不会干预 IME 的 composition/selection。
+     */
+    private fun scheduleComposerFocusAfterExpansion() {
+        val requestVersion = ++composerFocusRequestVersion
+        KLog.i(COMPOSER_LOG_TAG, "scheduleFocusRecovery version=$requestVersion")
+        setTimeout(64) {
+            if (requestVersion != composerFocusRequestVersion || !composerExpanded) return@setTimeout
+            KLog.i(COMPOSER_LOG_TAG, "runFocusRecovery version=$requestVersion ref=${inputRef?.view != null}")
+            inputRef?.view?.focus()
+        }
+    }
+
+    private fun blurComposer() {
+        composerFocusRequestVersion++
+        inputRef?.view?.blur()
     }
 
     /** 输入态 → 默认态。草稿会留在输入框里，只是收起辅助区。 */
     private fun collapseComposer() {
+        KLog.i(COMPOSER_LOG_TAG, "collapseComposer draftLen=${viewModel.inputText.length}")
+        composerFocusRequestVersion++
         composerExpanded = false
-        keyboardDismissed = false
         inputPanel = InputPanel.NONE
         clearActiveCommand()
         closeAssistantPanel()
-        voiceActive = false
+        cancelVoiceSession()
     }
 
     /**
@@ -936,18 +1021,180 @@ internal class ChatPage : BasePager() {
      * - 键盘已收起：这一次点击才把输入栏收回默认态。
      */
     private fun handleOutsideTap() {
+        KLog.i(COMPOSER_LOG_TAG, "outsideTap keyboardVisible=$keyboardVisible keyboardHeight=$keyboardHeight")
+        if (voiceState != VoiceState.IDLE) return
         if (keyboardVisible || keyboardHeight > 0f) {
-            keyboardDismissed = true
-            inputRef.view?.blur()
+            blurComposer()
             return
         }
         collapseComposer()
-        inputRef.view?.blur()
+        blurComposer()
     }
 
     /** Reads observable state inside each vif predicate so Kuikly can re-render it. */
     private fun isComposerExpanded(): Boolean =
-        composerExpanded || inputPanel != InputPanel.NONE || keyboardVisible || keyboardHeight > 0f
+        composerExpanded || inputPanel != InputPanel.NONE || keyboardVisible || keyboardHeight > 0f || voiceState != VoiceState.IDLE
+
+    private fun isVoiceBusy(): Boolean = voiceState != VoiceState.IDLE
+
+    private fun handleVoiceTouchDown(pageY: Float) {
+        if (voiceState != VoiceState.IDLE) return
+        voiceSourceExpanded = isComposerExpanded()
+        voiceTouchDownPageY = pageY
+        startVoiceSession()
+    }
+
+    private fun handleVoiceTouchMove(pageY: Float) {
+        if (voiceState != VoiceState.RECORDING) return
+        voiceCancelArmed = (voiceTouchDownPageY - pageY) >= 60f
+    }
+
+    private fun handleVoiceTouchUp() {
+        if (voiceState != VoiceState.RECORDING) return
+        when {
+            voiceCancelArmed -> cancelVoiceSession()
+            voiceElapsedSec < 0.8f -> abortTooShortVoiceSession()
+            else -> finishVoiceSession()
+        }
+    }
+
+    private fun startVoiceSession() {
+        val version = ++voiceSessionVersion
+        blurComposer()
+        composerExpanded = true
+        inputPanel = InputPanel.NONE
+        closeAssistantPanel()
+        commandValidationMessage = ""
+        voiceCancelArmed = false
+        voiceElapsedSec = 0f
+        voiceAmps = FloatArray(24) { 4f }
+        voiceMicFill = 0.02f
+        voiceState = VoiceState.RECORDING
+        startVoiceClock(version)
+        voiceRecorder.start(
+            onAmplitude = { rms ->
+                if (voiceSessionVersion == version && voiceState == VoiceState.RECORDING) {
+                    updateVoiceAmplitude(rms)
+                }
+            },
+            onTranscript = { transcript ->
+                if (voiceSessionVersion == version && voiceState == VoiceState.TRANSCRIBING) {
+                    onTranscriptReady(transcript)
+                }
+            },
+            onError = { error ->
+                if (voiceSessionVersion == version) handleVoiceRecorderError(error)
+            },
+        )
+    }
+
+    private fun startVoiceClock(version: Int) {
+        voiceClockTimer?.cancel()
+        val timer = Timer()
+        voiceClockTimer = timer
+        timer.schedule(100, 100) {
+            if (voiceSessionVersion != version || voiceState != VoiceState.RECORDING) return@schedule
+            val next = (voiceElapsedSec + 0.1f).coerceAtMost(60f)
+            voiceElapsedSec = next
+            if (next >= 60f) finishVoiceSession()
+        }
+    }
+
+    private fun updateVoiceAmplitude(rms: Float) {
+        val amp = (rms.coerceIn(0f, 1f) * 2.5f).coerceIn(0f, 1f)
+        val shaped = amp.toDouble().pow(0.6).toFloat()
+        val prevFill = voiceMicFill
+        val fillRate = if (shaped > prevFill) 0.6f else 0.25f
+        voiceMicFill = prevFill + (shaped - prevFill) * fillRate
+
+        val previous = voiceAmps
+        val next = FloatArray(24)
+        val mid = (next.size - 1) / 2f
+        for (i in next.indices) {
+            val envelope = 0.55f + 0.45f * abs(cos((i - mid) / next.size * PI.toFloat()))
+            val target = 4f + 24f * shaped * envelope
+            val prev = previous.getOrNull(i) ?: 4f
+            val rate = if (target > prev) 0.6f else 0.25f
+            next[i] = (prev + (target - prev) * rate).coerceIn(4f, 28f)
+        }
+        voiceAmps = next
+    }
+
+    private fun finishVoiceSession() {
+        if (voiceState != VoiceState.RECORDING) return
+        voiceClockTimer?.cancel()
+        voiceClockTimer = null
+        voiceCancelArmed = false
+        voiceState = VoiceState.TRANSCRIBING
+        voiceAmps = FloatArray(24) { 4f }
+        voiceMicFill = 0f
+        voiceRecorder.stop()
+    }
+
+    private fun onTranscriptReady(transcript: String) {
+        if (voiceState != VoiceState.TRANSCRIBING) return
+        if (transcript.isBlank()) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("没听清，请再说一次")
+            restoreAfterVoiceSession()
+            return
+        }
+        if (viewModel.streamState == StreamState.STREAMING) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("当前回答未结束，请稍后再试")
+            restoreAfterVoiceSession()
+            return
+        }
+        viewModel.send(transcript)
+        restoreAfterVoiceSession()
+        keepChatAtBottomTemporarily()
+    }
+
+    private fun abortTooShortVoiceSession() {
+        voiceRecorder.cancel()
+        stopVoiceUi()
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("说话时间太短")
+        restoreAfterVoiceSession()
+    }
+
+    private fun cancelVoiceSession() {
+        if (voiceState == VoiceState.IDLE) return
+        voiceRecorder.cancel()
+        stopVoiceUi()
+        restoreAfterVoiceSession()
+    }
+
+    private fun handleVoiceRecorderError(error: VoiceError) {
+        stopVoiceUi()
+        restoreAfterVoiceSession()
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(
+            when (error) {
+                VoiceError.PERMISSION_DENIED -> "需要麦克风权限才能语音提问"
+                VoiceError.MIC_OCCUPIED -> "麦克风被占用，请稍后再试"
+                VoiceError.NO_MATCH -> "没听清，请再说一次"
+                VoiceError.UNAVAILABLE -> "当前平台暂不支持语音提问"
+            },
+        )
+    }
+
+    private fun stopVoiceUi() {
+        voiceSessionVersion++
+        voiceClockTimer?.cancel()
+        voiceClockTimer = null
+        voiceState = VoiceState.IDLE
+        voiceCancelArmed = false
+        voiceElapsedSec = 0f
+        voiceAmps = FloatArray(24) { 4f }
+        voiceMicFill = 0f
+    }
+
+    private fun restoreAfterVoiceSession() {
+        stopVoiceUi()
+        if (!voiceSourceExpanded && viewModel.inputText.isBlank()) {
+            composerExpanded = false
+        } else {
+            composerExpanded = true
+        }
+        voiceSourceExpanded = false
+    }
 
     private fun renderComposerGradientRim(container: ViewContainer<*, *>) {
         container.Canvas(
@@ -1001,59 +1248,94 @@ internal class ChatPage : BasePager() {
         context.closePath()
     }
 
-    private fun renderComposerTextArea(container: ViewContainer<*, *>, compact: Boolean = false) {
+    private fun renderComposerTextArea(container: ViewContainer<*, *>) {
+        // 非受控铁律（光标消失/退格错乱的根因是回声循环）：
+        // 原生上报 textDidChange → 业务把 observable 草稿 + 估算光标 + 清空组合态
+        // 写回 → textInputState 响应式绑定重放 setProp → 原生在 IME 组合态进行中
+        // 被回写打断 → 组合会话被杀 → 光标消失、退格删错。
+        // 且该回声拦不住：textDidChange 注册路径不置 isProcessingNativeEvent，
+        // 业务估算态与原生真实态永远 hasSameEditingState=false。
+        // 因此：text 只作页面首次挂载种子，不绑定任何响应式文本 prop；
+        // 一切回写走命令式 setComposerText → view.setTextInputState（callMethod，
+        // 不经过 Props）。
+        val mountSeed = this.viewModel.inputText
+        composerEditingState = ComposerEditingReducer.programmatic(mountSeed)
+        KLog.i(COMPOSER_LOG_TAG, "render seedLen=${mountSeed.length}")
         container.TextArea {
-            ref { this@ChatPage.inputRef = it }
+            ref {
+                this@ChatPage.inputRef = it
+                KLog.i(COMPOSER_LOG_TAG, "ref nativeRef=${it.nativeRef} view=${it.view?.viewName()}")
+            }
             attr {
                 minHeight(40f)
-                // 默认态那一行是 44dp 定高，草稿文字不能撑破它。
-                maxHeight(if (compact) 44f else 80f)
+                // 折叠态和联想面板展开时收紧到单行。这里只更新尺寸 prop，
+                // 持久 TextArea 本身不移除、不重建。
+                maxHeight(
+                    if (!this@ChatPage.isComposerExpanded() || this@ChatPage.assistantPanel != AssistantPanel.NONE) 44f
+                    else 80f
+                )
                 fontSize(14f)
                 lineHeight(21f)
                 color(this@ChatPage.theme.textPrimary)
                 backgroundColor(Color(0xFFFFFFFF, 0f))
-                textInputState { this@ChatPage.currentComposerTextInputState() }
+                opacity(if (this@ChatPage.voiceState == VoiceState.IDLE) 1f else 0f)
+                touchEnable(this@ChatPage.voiceState == VoiceState.IDLE)
+                text(mountSeed)
                 placeholder("问一只股票或一个术语")
                 placeholderColor(this@ChatPage.theme.textTertiary)
                 tintColor(this@ChatPage.theme.brand)
                 selectionColor(this@ChatPage.theme.brand)
                 returnKeyTypeSend()
                 enablePinyinCallback(true)
-                // 只有"输入态 + 键盘没有被用户主动收起"时才自动聚焦。收键盘后这里
-                // 必须保持 false，否则任何一次 TextArea 重新挂载都会把键盘顶回来。
-                autofocus(
-                    this@ChatPage.inputPanel != InputPanel.MEDIA &&
-                        this@ChatPage.composerExpanded &&
-                        !this@ChatPage.keyboardDismissed
-                )
             }
             event {
                 inputFocus {
                     // 键盘自己弹起（系统输入法回调 / 原生点击）也算进入输入态。
-                    this@ChatPage.keyboardDismissed = false
-                    this@ChatPage.expandComposer()
+                    KLog.i(COMPOSER_LOG_TAG, "EV inputFocus len=${it.text.length}")
+                    // 已展开后的恢复 focus 必须是纯事件：不要再次进入任何布局函数。
+                    // 即使函数内部最终没有改值，Kuikly 的事件/依赖追踪也可能安排
+                    // 一次提交，并在 RecyclerView 中再次 clearFocus。
+                    if (!this@ChatPage.composerExpanded) {
+                        this@ChatPage.expandComposer()
+                        this@ChatPage.scheduleComposerFocusAfterExpansion()
+                    }
                 }
                 inputBlur {
-                    // 失焦本身绝不收起输入栏：默认态与输入态各挂一个 TextArea，
-                    // 切换时会重新挂载并先抛一次 blur，此时键盘事件还没回来。
+                    // 失焦本身绝不收起输入栏：输入态是"粘"的，只有"键盘已收起时点击
+                    // 非输入栏区域"这一次点击才回默认态（见 handleOutsideTap）。
+                    KLog.i(COMPOSER_LOG_TAG, "EV inputBlur len=${it.text.length}")
                 }
                 textDidChange(isSyncEdit = true) {
+                    KLog.d(COMPOSER_LOG_TAG, "EV textDidChange len=${it.text.length}")
                     this@ChatPage.handleComposerTextChanged(it.text)
                 }
                 textInputStateChange { state ->
+                    KLog.d(
+                        COMPOSER_LOG_TAG,
+                        "EV textInputStateChange len=${state.text.length}" +
+                            " sel=${state.selectionStart}..${state.selectionEnd}" +
+                            " comp=${state.compositionStart}..${state.compositionEnd}"
+                    )
                     this@ChatPage.updateComposerEditingState(state)
                     val composing = state.compositionStart != TextInputState.NO_COMPOSITION
                     this@ChatPage.updateTriggerSession(state.text, state.selectionEnd, composing)
                 }
                 selectionChange { state ->
+                    KLog.d(
+                        COMPOSER_LOG_TAG,
+                        "EV selectionChange len=${state.text.length}" +
+                            " sel=${state.selectionStart}..${state.selectionEnd}"
+                    )
                     this@ChatPage.updateComposerSelectionState(state)
                 }
                 keyboardHeightChange {
+                    KLog.i(COMPOSER_LOG_TAG, "EV keyboardHeightChange h=${it.height} dur=${it.duration}")
                     this@ChatPage.keyboardHeight = it.height
                     this@ChatPage.keyboardVisible = it.height > 0f
                     this@ChatPage.scheduleScrollChatToBottom()
                 }
                 inputReturn {
+                    KLog.i(COMPOSER_LOG_TAG, "EV inputReturn len=${it.text.length}")
                     // 面板开着：Enter 优先确认高亮候选；面板关着才走发送。
                     if (!this@ChatPage.confirmHighlightedCandidate()) this@ChatPage.submitInput()
                 }
@@ -1246,6 +1528,18 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    private fun addWatchlistFromEntity(symbol: String) {
+        val quote = quoteFor(symbol)
+        val security = Securities.all.firstOrNull { it.symbol == symbol }
+        val name = quote?.name ?: security?.name ?: symbol
+        val message = when (watchlistStore.add(symbol, name)) {
+            WatchlistAddResult.ADDED -> "已加入自选：$name"
+            WatchlistAddResult.ALREADY_IN -> "$name 已在自选中"
+            WatchlistAddResult.FULL -> "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
+        }
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(message)
+    }
+
     private fun openEntityQuoteSheet(symbol: String) {
         println("[STOCKCHAT_DBG] openEntityQuoteSheet symbol=$symbol pendingBefore=${pendingEntitySheetSymbol} quoteForCached=${quoteFor(symbol) != null}")
         pendingEntitySheetSymbol = symbol
@@ -1349,11 +1643,11 @@ internal class ChatPage : BasePager() {
             // 否则会留下 paramCommand != null 但面板已关的不一致状态。
             if (assistantPanel == AssistantPanel.COMMAND_PARAMS) clearActiveCommand()
             closeAssistantPanel()
-            inputRef.view?.focus()
+            inputRef?.view?.focus()
             return
         }
         var text = viewModel.inputText
-        var cursor = if (composerCursor in 0..text.length) composerCursor else text.length
+        var cursor = composerEditingState.selectionEnd.takeIf { it in 0..text.length } ?: text.length
         if (session != null) {
             val end = cursor.coerceAtLeast(session.triggerStart).coerceAtMost(text.length)
             if (session.triggerStart <= end) {
@@ -1369,56 +1663,34 @@ internal class ChatPage : BasePager() {
         val newCursor = cursor + inserted.length
         // 原子写入「文本 + 光标」，避免 setText 后光标被重置到末尾。
         setComposerText(newText, newCursor)
-        inputRef.view?.focus()
+        inputRef?.view?.focus()
         updateTriggerSession(newText, newCursor, false)
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
     }
 
     private fun setComposerText(text: String, cursor: Int = text.length) {
-        val fixedCursor = cursor.coerceIn(0, text.length)
+        val state = ComposerEditingReducer.programmatic(text, cursor)
+        KLog.i(COMPOSER_LOG_TAG, "setComposerText len=${text.length} cursor=${state.selectionEnd} → 命令式写回原生")
         viewModel.inputText = text
-        composerCursor = fixedCursor
-        composerSelectionStart = fixedCursor
-        composerSelectionEnd = fixedCursor
-        composerCompositionStart = TextInputState.NO_COMPOSITION
-        composerCompositionEnd = TextInputState.NO_COMPOSITION
-        inputRef.view?.setTextInputState(TextInputState(text, fixedCursor, fixedCursor))
-    }
-
-    private fun currentComposerTextInputState(): TextInputState {
-        val text = viewModel.inputText
-        val cursor = composerCursor.takeIf { it in 0..text.length } ?: text.length
-        val hasSelection =
-            composerSelectionStart in 0..text.length &&
-                composerSelectionEnd in 0..text.length &&
-                composerSelectionStart <= composerSelectionEnd
-        val selectionStart = if (hasSelection) composerSelectionStart else cursor
-        val selectionEnd = if (hasSelection) composerSelectionEnd else cursor
-        val hasComposition =
-            composerCompositionStart != TextInputState.NO_COMPOSITION &&
-                composerCompositionEnd != TextInputState.NO_COMPOSITION
-        val compositionStart = if (hasComposition) composerCompositionStart.coerceIn(0, text.length) else TextInputState.NO_COMPOSITION
-        val compositionEnd = if (hasComposition) composerCompositionEnd.coerceIn(0, text.length) else TextInputState.NO_COMPOSITION
-        return TextInputState(
-            text = text,
-            selectionStart = selectionStart,
-            selectionEnd = selectionEnd,
-            compositionStart = compositionStart,
-            compositionEnd = compositionEnd,
-        )
+        composerEditingState = state
+        inputRef?.view?.setTextInputState(state)
     }
 
     private fun updateComposerEditingState(state: TextInputState) {
-        viewModel.inputText = state.text
-        updateComposerSelectionState(state)
-        composerCompositionStart = state.compositionStart
-        composerCompositionEnd = state.compositionEnd
+        val next = ComposerEditingReducer.nativeState(state)
+        KLog.d(COMPOSER_LOG_TAG, "updateEditingState sel=${next.selectionStart}..${next.selectionEnd} comp=${next.compositionStart}..${next.compositionEnd}")
+        composerEditingState = next
+        viewModel.inputText = next.text
     }
 
     private fun updateComposerSelectionState(state: TextInputState) {
-        composerSelectionStart = state.selectionStart.coerceIn(0, state.text.length)
-        composerSelectionEnd = state.selectionEnd.coerceIn(0, state.text.length)
-        composerCursor = composerSelectionEnd
+        if (state.text != composerEditingState.text) {
+            KLog.d(COMPOSER_LOG_TAG, "ignore stale selection eventLen=${state.text.length} currentLen=${composerEditingState.text.length}")
+            return
+        }
+        val next = ComposerEditingReducer.nativeSelection(composerEditingState, state)
+        composerEditingState = next
+        KLog.d(COMPOSER_LOG_TAG, "updateSelection cursor=${next.selectionEnd} sel=${next.selectionStart}..${next.selectionEnd}")
     }
 
     /**
@@ -1426,26 +1698,25 @@ internal class ChatPage : BasePager() {
      *
      * 规范：
      * - 文本增删以 `textDidChange(sync)` 为准，保证 Android 上退格/清空也能同步到状态；
-     * - 光标优先由 `textInputStateChange` 校准；若删除只上报 textDidChange，则按新旧长度推算；
+     * - Android 固定先抛完整编辑态、再抛文本。重复文本事件必须幂等，
+     *   否则会把刚收到的拼音 composition 清空；
+     * - 估算分支只在「无 textInputStateChange 先行」的平台/路径上生效；
      * - selectionChange 只记录光标/选区，不回写文本，避免旧选区状态把刚删除的字符写回来。
      */
     private fun handleComposerTextChanged(text: String) {
         commandValidationMessage = ""
-        val oldText = viewModel.inputText
-        val oldCursor = if (composerCursor in 0..oldText.length) composerCursor else oldText.length
-        val delta = text.length - oldText.length
-        val estimatedCursor = when {
-            delta < 0 -> oldCursor + delta
-            delta > 0 -> oldCursor + delta
-            else -> oldCursor
-        }.coerceIn(0, text.length)
-        viewModel.inputText = text
-        composerSelectionStart = estimatedCursor
-        composerSelectionEnd = estimatedCursor
-        composerCursor = estimatedCursor
-        composerCompositionStart = TextInputState.NO_COMPOSITION
-        composerCompositionEnd = TextInputState.NO_COMPOSITION
-        updateTriggerSession(text, estimatedCursor, triggerComposing)
+        val previous = composerEditingState
+        val next = ComposerEditingReducer.nativeText(previous, text)
+        KLog.d(
+            COMPOSER_LOG_TAG,
+            "handleTextChanged oldLen=${previous.text.length} newLen=${text.length}" +
+                " oldCursor=${previous.selectionEnd} nextCursor=${next.selectionEnd}"
+        )
+        if (next == previous) return
+        composerEditingState = next
+        viewModel.inputText = next.text
+        val composing = next.compositionStart != TextInputState.NO_COMPOSITION
+        updateTriggerSession(next.text, next.selectionEnd, composing)
     }
 
     /**
@@ -1456,8 +1727,6 @@ internal class ChatPage : BasePager() {
      * 显示"输入中…"，避免拼音候选与 @ 候选互相抖动。
      */
     private fun updateTriggerSession(text: String, cursor: Int, composing: Boolean) {
-        // 记住光标，供左下角 @ / / 按钮在光标处插入触发字符。
-        composerCursor = cursor
         triggerComposing = composing
         // 组合态：保留旧 session，仅刷新 composing 标记让面板显示"输入中…"。
         val session = if (composing) triggerSession else TriggerDetector.detect(text, cursor)
@@ -1512,7 +1781,7 @@ internal class ChatPage : BasePager() {
     private fun loadAtCandidates(session: TriggerSession) {
         // 进入 @ 面板时确保 MEDIA 面板关闭（两面板正交，但同屏只展示一个联想区）。
         if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
-        val list = AtCandidateProvider.rank(session.query, recentMentions)
+        val list = AtCandidateProvider.rank(session.query, recentMentions, watchlistStore.symbols())
         atCandidates.clear()
         atCandidates.addAll(list)
         atHighlight = 0
@@ -1823,7 +2092,7 @@ internal class ChatPage : BasePager() {
 
     private fun exactSecurityFragment(fragment: String): Boolean {
         val q = fragment.removePrefix("@")
-        return AtCandidateProvider.rank(q, recentMentions).any { candidate ->
+        return AtCandidateProvider.rank(q, recentMentions, watchlistStore.symbols()).any { candidate ->
             candidate.entry.name == q || candidate.entry.symbol.equals(q, ignoreCase = true)
         }
     }
@@ -2187,7 +2456,7 @@ internal class ChatPage : BasePager() {
             }
             if (currentParam?.type == ParamType.SECURITY) {
                 val query = page.currentParamQuery(command)
-                val candidates = AtCandidateProvider.rank(query, page.recentMentions).take(ASSISTANT_PANEL_MAX_ROWS)
+                val candidates = AtCandidateProvider.rank(query, page.recentMentions, page.watchlistStore.symbols()).take(ASSISTANT_PANEL_MAX_ROWS)
                 Text {
                     attr {
                         text(if (query.isEmpty()) "选择${currentParam.label}" else "匹配「$query」")
@@ -3153,6 +3422,8 @@ internal fun ViewContainer<*, *>.CardSheetHost(
     onPan: (String, Float) -> Unit,
     onOpenStock: (String) -> Unit,
     onTerm: (String) -> Unit,
+    primaryActionLabel: String? = null,
+    onPrimaryAction: (String) -> Unit = {},
 ) {
     println("[STOCKCHAT_DBG] CardSheetHost render model=${model.cardType} level=$level presented=$presented interactive=$interactive")
     val availableHeight = (viewportHeight - bottomInset).coerceAtLeast(520f)
@@ -3213,6 +3484,22 @@ internal fun ViewContainer<*, *>.CardSheetHost(
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
             Text { attr { text("完整内容"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary); flex(1f) } }
+            if (primaryActionLabel != null) {
+                Text {
+                    attr {
+                        text(primaryActionLabel)
+                        marginRight(14f)
+                        fontSize(12f)
+                        fontWeightSemiBold()
+                        color(if (primaryActionLabel == "已自选") theme.textTertiary else theme.brand)
+                    }
+                    event {
+                        click {
+                            if (interactive) cardPrimarySymbol(model)?.let(onPrimaryAction)
+                        }
+                    }
+                }
+            }
             Text { attr { text("收起"); fontSize(12f); color(theme.textSecondary) } }
             event { click { onLower() } }
         }
@@ -3244,4 +3531,14 @@ internal fun ViewContainer<*, *>.CardSheetHost(
             }
         }
     }
+}
+
+private fun cardPrimarySymbol(model: CardModel): String? = when (model) {
+    is StockQuoteCardModel -> model.quote.symbol
+    is StockChartCardModel -> model.quote.symbol
+    is AttributionCardModel -> model.quote.symbol
+    is InsightCardModel -> model.quote.symbol
+    is NewsCardModel -> model.quote.symbol
+    is StockCompareCardModel -> model.quotes.firstOrNull()?.symbol
+    else -> null
 }

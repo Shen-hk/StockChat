@@ -83,6 +83,25 @@ internal class BridgeModule : Module() {
         callNativeMethod("openComposerMediaSource", methodArgs, callbackFn)
     }
 
+    fun startVoiceRecording(callbackFn: CallbackFn) {
+        toNative(
+            true,
+            START_VOICE_RECORDING,
+            JSONObject().toString(),
+            callbackFn,
+            false,
+        )
+    }
+
+    fun stopVoiceRecording(): JSONObject {
+        val raw = syncCallNativeMethod(STOP_VOICE_RECORDING, JSONObject(), null)
+        return runCatching { JSONObject(raw) }.getOrNull() ?: JSONObject()
+    }
+
+    fun cancelVoiceRecording() {
+        callNativeMethod(CANCEL_VOICE_RECORDING, JSONObject(), null)
+    }
+
     /** Returns the current host-selected material quality, if supported by the host. */
     fun getGlassMode(): String = syncCallNativeMethod("getGlassMode", null, null)
 
@@ -367,6 +386,9 @@ internal class BridgeModule : Module() {
         const val URL_DECODE = "urlDecode"
         const val SHOW_PHOTO_BROWSER = "showPhotoBrowser"
         const val HUMAN_VERIFICATION = "humanVerification"
+        const val START_VOICE_RECORDING = "startVoiceRecording"
+        const val STOP_VOICE_RECORDING = "stopVoiceRecording"
+        const val CANCEL_VOICE_RECORDING = "cancelVoiceRecording"
     }
 
 }

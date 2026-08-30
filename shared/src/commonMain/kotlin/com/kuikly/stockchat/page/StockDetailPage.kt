@@ -16,6 +16,8 @@ import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
+import com.kuikly.stockchat.data.WatchlistAddResult
+import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.data.provider.quoteLabel
@@ -41,7 +43,10 @@ internal class StockDetailPage : BasePager() {
     private var dataModeLabel: String by observable("正在连接行情")
     private var chartMode: StockChartMode by observable(StockChartMode.TIMELINE)
     private var chartPeriod: StockChartPeriod by observable(StockChartPeriod.DAY)
+    private var watchlisted: Boolean by observable(false)
+    private var watchlistHint: String by observable("")
     private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
+    private val watchlistStore by lazy { WatchlistStore(pagerId) }
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
 
     override fun created() {
@@ -49,6 +54,7 @@ internal class StockDetailPage : BasePager() {
         StockCardRenderers.ensureRegistered()
         symbol = pagerData.params.optString("symbol").ifEmpty { "600519.SH" }
         quote = quoteRepository.cachedOrOffline(symbol) ?: quote
+        watchlisted = watchlistStore.contains(symbol)
         quoteRepository.load(symbol) { result ->
             result.quote?.let { quote = it }
             dataModeLabel = result.mode.quoteLabel()
@@ -120,6 +126,37 @@ internal class StockDetailPage : BasePager() {
                             marginTop(page.theme.spacing.sm)
                             fontSize(page.theme.type.meta)
                             color(page.theme.textTertiary)
+                        }
+                    }
+                    View {
+                        attr {
+                            marginTop(page.theme.spacing.md)
+                            height(36f)
+                            paddingLeft(14f)
+                            paddingRight(14f)
+                            alignSelfFlexStart()
+                            allCenter()
+                            borderRadius(page.theme.inputRadius)
+                            backgroundColor(if (page.watchlisted) page.theme.surfaceMuted else page.theme.brandSoft)
+                        }
+                        Text {
+                            attr {
+                                text(if (page.watchlisted) "已自选" else "加自选")
+                                fontSize(page.theme.type.label)
+                                fontWeightSemiBold()
+                                color(if (page.watchlisted) page.theme.textSecondary else page.theme.brand)
+                            }
+                        }
+                        event { click { page.toggleWatchlist() } }
+                    }
+                    vif({ page.watchlistHint.isNotEmpty() }) {
+                        Text {
+                            attr {
+                                text(page.watchlistHint)
+                                marginTop(6f)
+                                fontSize(page.theme.type.meta)
+                                color(page.theme.term)
+                            }
                         }
                     }
                 }
@@ -215,6 +252,26 @@ internal class StockDetailPage : BasePager() {
                 Text { attr { text("回到对话"); fontSize(14f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
                 event { click { page.closePage() } }
             }
+        }
+    }
+
+    private fun toggleWatchlist() {
+        if (watchlisted) {
+            watchlistStore.remove(symbol)
+            watchlisted = false
+            watchlistHint = "已从自选移除"
+            return
+        }
+        when (watchlistStore.add(symbol, quote.name)) {
+            WatchlistAddResult.ADDED -> {
+                watchlisted = true
+                watchlistHint = "已加入自选"
+            }
+            WatchlistAddResult.ALREADY_IN -> {
+                watchlisted = true
+                watchlistHint = "已在自选中"
+            }
+            WatchlistAddResult.FULL -> watchlistHint = "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
         }
     }
 }

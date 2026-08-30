@@ -320,6 +320,8 @@ fun ViewContainer<*, *>.ChatDrawer(
     onOpenSession: (String) -> Unit = {},
     onOpenGallery: () -> Unit = {},
     onToggleIsland: () -> Unit = {},
+    onOpenGlossary: () -> Unit = {},
+    onOpenWatchlist: () -> Unit = {},
     onSettings: () -> Unit,
 ) {
     View {
@@ -438,8 +440,8 @@ fun ViewContainer<*, *>.ChatDrawer(
         // Quick entries with tinted icon tiles.
         View { attr { height(1f); marginTop(8f); marginBottom(6f); backgroundColor(theme.divider) } }
         DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛演示（茅台）", theme) { onClose(); onToggleIsland() }
-        DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme)
-        DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme)
+        DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme) { onClose(); onOpenWatchlist() }
+        DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme) { onClose(); onOpenGlossary() }
         DrawerMenuItem("▦", theme.textSecondary, theme.surfaceMuted, "卡片图鉴", theme) { onClose(); onOpenGallery() }
         DrawerMenuItem("⚙", theme.textSecondary, theme.surfaceMuted, "设置", theme, onClick = onSettings)
 
