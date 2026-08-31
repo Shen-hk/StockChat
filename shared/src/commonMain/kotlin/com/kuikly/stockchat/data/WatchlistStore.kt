@@ -1,8 +1,8 @@
 package com.kuikly.stockchat.data
 
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
-import com.tencent.kuikly.core.base.PagerScope
-import com.tencent.kuikly.core.module.SharedPreferencesModule
+import com.kuikly.stockchat.data.storage.KeyValueStorage
+import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -26,11 +26,13 @@ enum class WatchlistAddResult { ADDED, ALREADY_IN, FULL }
  * 因此只在本地持久化、不云端同步，容量上限 50 只。
  */
 class WatchlistStore(
-    override val pagerId: String,
+    private val preferences: KeyValueStorage,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
-) : PagerScope {
-    private val preferences: SharedPreferencesModule
-        get() = getPager().acquireModule(SharedPreferencesModule.MODULE_NAME)
+) {
+    constructor(
+        pagerId: String,
+        nowMillis: () -> Long = ::platformCurrentTimeMillis,
+    ) : this(PagerKeyValueStorage(pagerId), nowMillis)
 
     fun list(): List<WatchlistItem> = readRows()
 

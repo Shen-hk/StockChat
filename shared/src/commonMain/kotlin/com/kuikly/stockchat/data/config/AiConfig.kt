@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.data.config
 
-import com.tencent.kuikly.core.base.PagerScope
-import com.tencent.kuikly.core.module.SharedPreferencesModule
+import com.kuikly.stockchat.data.storage.KeyValueStorage
+import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
 data class AiConfig(
@@ -33,9 +33,10 @@ data class AiConfig(
     }
 }
 
-class AiConfigStore(override val pagerId: String) : PagerScope {
-    private val preferences: SharedPreferencesModule
-        get() = getPager().acquireModule(SharedPreferencesModule.MODULE_NAME)
+class AiConfigStore(
+    private val preferences: KeyValueStorage,
+) {
+    constructor(pagerId: String) : this(PagerKeyValueStorage(pagerId))
 
     fun load(): AiConfig {
         val raw = preferences.getString(STORAGE_KEY)
@@ -54,13 +55,13 @@ class AiConfigStore(override val pagerId: String) : PagerScope {
 
     fun save(config: AiConfig) {
         val value = config.normalized()
-        preferences.setObject(
+        preferences.setString(
             STORAGE_KEY,
             JSONObject().apply {
                 put("endpoint", value.endpoint)
                 put("model", value.model)
                 put("apiKey", value.apiKey)
-            },
+            }.toString(),
         )
     }
 

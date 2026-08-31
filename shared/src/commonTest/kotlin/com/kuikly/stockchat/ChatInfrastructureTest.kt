@@ -5,6 +5,9 @@ import com.kuikly.stockchat.chat.ChatMessage
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.CardResponseFallback
 import com.kuikly.stockchat.chat.WatchlistIntent
+import com.kuikly.stockchat.chat.WatchlistSummaryBuilder
+import com.kuikly.stockchat.data.WatchlistItem
+import com.kuikly.stockchat.data.mock.MockDataBank
 import com.kuikly.stockchat.data.provider.SseEventParser
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.BrokenCardBlock
@@ -40,6 +43,20 @@ class ChatInfrastructureTest {
         }
         assertTrue(!WatchlistIntent.matches("打开自选股"))
         assertTrue(!WatchlistIntent.matches("贵州茅台今天怎么样"))
+    }
+
+    @Test
+    fun watchlistSummaryIsADeterministicDomainResponse() {
+        val items = listOf(
+            WatchlistItem("600519.SH", "贵州茅台"),
+            WatchlistItem("000858.SZ", "五粮液"),
+        )
+        val summary = WatchlistSummaryBuilder.build(items, MockDataBank::quote)
+
+        assertTrue(summary.contains("当前统计"))
+        assertTrue(summary.contains("```card:stock-quote"))
+        assertTrue(summary.contains("600519.SH"))
+        assertTrue(summary.contains("000858.SZ"))
     }
 
     @Test

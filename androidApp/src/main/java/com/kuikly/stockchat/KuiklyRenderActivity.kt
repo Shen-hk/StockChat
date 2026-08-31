@@ -16,6 +16,7 @@ import com.tencent.kuikly.core.render.android.css.ktx.toMap
 import com.tencent.kuikly.core.render.android.expand.KuiklyRenderViewBaseDelegatorDelegate
 import com.tencent.kuikly.core.render.android.expand.KuiklyRenderViewBaseDelegator
 import com.kuikly.stockchat.adapter.KRColorParserAdapter
+import com.kuikly.stockchat.adapter.KRComposerCursorHandler
 import com.kuikly.stockchat.adapter.KRFontAdapter
 import com.kuikly.stockchat.adapter.KRImageAdapter
 import com.kuikly.stockchat.adapter.KRLogAdapter
@@ -89,7 +90,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
     override fun registerExternalRenderView(kuiklyRenderExport: IKuiklyRenderExport) {
         super.registerExternalRenderView(kuiklyRenderExport)
         with(kuiklyRenderExport) {
-
+            viewPropExternalHandlerExport(KRComposerCursorHandler)
         }
     }
 

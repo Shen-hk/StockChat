@@ -13,10 +13,10 @@ import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistItem
 import com.kuikly.stockchat.data.WatchlistStore
+import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.entity.Security
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
@@ -42,8 +42,9 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.WATCHLIST, supportInLocal = true)
 internal class WatchlistPage : BasePager() {
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
-    private val watchlistStore by lazy { WatchlistStore(pagerId) }
-    private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
+    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val watchlistStore get() = dependencies.watchlistStore
+    private val quoteRepository get() = dependencies.quoteRepository
     private var rows: ObservableList<WatchlistRow> by observableList()
     private var candidates: ObservableList<Security> by observableList()
     private var hint: String by observable("")

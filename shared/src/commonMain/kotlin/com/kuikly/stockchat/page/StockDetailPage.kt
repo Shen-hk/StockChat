@@ -18,8 +18,8 @@ import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
+import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
@@ -39,14 +39,15 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.STOCK_DETAIL, supportInLocal = true)
 internal class StockDetailPage : BasePager() {
     private var symbol = "600519.SH"
-    private var quote: Quote by observable(QuoteRepositoryStore.shared(pagerId).cachedOrOffline("600519.SH")!!)
+    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val quoteRepository get() = dependencies.quoteRepository
+    private val watchlistStore get() = dependencies.watchlistStore
+    private var quote: Quote by observable(quoteRepository.cachedOrOffline("600519.SH")!!)
     private var dataModeLabel: String by observable("正在连接行情")
     private var chartMode: StockChartMode by observable(StockChartMode.TIMELINE)
     private var chartPeriod: StockChartPeriod by observable(StockChartPeriod.DAY)
     private var watchlisted: Boolean by observable(false)
     private var watchlistHint: String by observable("")
-    private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
-    private val watchlistStore by lazy { WatchlistStore(pagerId) }
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
 
     override fun created() {

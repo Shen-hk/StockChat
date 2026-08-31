@@ -11,6 +11,7 @@ internal abstract class BasePager : Pager() {
 
     /** Native hosts select G1/G2/G3 and can refresh it after a sustained frame-rate drop. */
     private var hostGlassMode: String by observable("simplified")
+    private var glassRefreshGeneration = 0
 
     protected val hostGlassRenderer: GlassRenderer
         get() = GlassRenderer.fromHostMode(hostGlassMode)
@@ -25,13 +26,29 @@ internal abstract class BasePager : Pager() {
         super.created()
         isNightMode()
         hostGlassMode = pageData.params.optString("glassMode")
-        refreshGlassMode()
+    }
+
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        val generation = ++glassRefreshGeneration
+        refreshGlassMode(generation)
+    }
+
+    override fun pageDidDisappear() {
+        glassRefreshGeneration++
+        super.pageDidDisappear()
+    }
+
+    override fun pageWillDestroy() {
+        glassRefreshGeneration++
+        super.pageWillDestroy()
     }
 
     protected open fun hostGlassModeDidChange(renderer: GlassRenderer) = Unit
 
-    private fun refreshGlassMode() {
+    private fun refreshGlassMode(generation: Int) {
         setTimeout(1_000) {
+            if (generation != glassRefreshGeneration || !isAppeared || isWillDestroy()) return@setTimeout
             val candidate = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).getGlassMode()
             if (candidate == "realtime" || candidate == "snapshot" || candidate == "simplified") {
                 if (candidate != hostGlassMode) {
@@ -39,7 +56,7 @@ internal abstract class BasePager : Pager() {
                     hostGlassModeDidChange(hostGlassRenderer)
                 }
             }
-            refreshGlassMode()
+            refreshGlassMode(generation)
         }
     }
 

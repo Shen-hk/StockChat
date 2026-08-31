@@ -148,15 +148,3 @@ data class QuoteLoadResult(
     val mode: DataMode,
     val updatedAtMillis: Long,
 )
-
-/** Keeps chat, Context Bar and detail pages on the same in-memory quote state for an app session. */
-object QuoteRepositoryStore {
-    private var shared: QuoteRepository? = null
-
-    fun shared(pagerId: String): QuoteRepository {
-        return shared ?: QuoteRepository(
-            online = TencentQuoteProvider(pagerId),
-            cacheStore = SharedPreferencesQuoteCacheStore(pagerId),
-        ).also { shared = it }
-    }
-}

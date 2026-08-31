@@ -23,6 +23,7 @@ import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.kuikly.stockchat.glass.GlassRenderingMode
 import com.kuikly.stockchat.chat.ChatMessage
+import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatViewModel
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.StreamState
@@ -32,11 +33,20 @@ import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.data.provider.QuoteRepositoryStore
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
+import com.kuikly.stockchat.page.components.CardSheetHost
+import com.kuikly.stockchat.page.components.ActiveComparePanel
+import com.kuikly.stockchat.page.components.ChatMessageActions
+import com.kuikly.stockchat.page.components.ChatMessageRenderState
+import com.kuikly.stockchat.page.components.ChatMessageView
+import com.kuikly.stockchat.page.components.DateDivider
+import com.kuikly.stockchat.page.components.RecentSymbolRow
+import com.kuikly.stockchat.page.components.RegressionQuestionRow
+import com.kuikly.stockchat.page.components.SubThreadState
+import com.kuikly.stockchat.page.components.WelcomeSection
 import com.kuikly.stockchat.page.components.ChatTopNav
 import com.kuikly.stockchat.page.components.LineIconPlus
 import com.kuikly.stockchat.page.components.LineIconMicWithFill
@@ -66,9 +76,11 @@ import com.kuikly.stockchat.richtext.EntityType
 import com.kuikly.stockchat.composer.AtCandidate
 import com.kuikly.stockchat.composer.AtCandidateProvider
 import com.kuikly.stockchat.composer.CommandExecution
+import com.kuikly.stockchat.composer.CommandInvocationParser
 import com.kuikly.stockchat.composer.CommandInvocation
 import com.kuikly.stockchat.composer.CommandRegistry
 import com.kuikly.stockchat.composer.ComposerEditingReducer
+import com.kuikly.stockchat.composer.ComposerTextOperations
 import com.kuikly.stockchat.composer.MentionEntity
 import com.kuikly.stockchat.composer.MentionType
 import com.kuikly.stockchat.composer.ParamType
@@ -119,7 +131,8 @@ internal class ChatPage : BasePager() {
     private companion object {
         const val COMPOSER_LOG_TAG = "Composer"
     }
-    private val viewModel by lazy { ChatViewModel(pagerId) }
+    private val dependencies by lazy { ChatDependencies.forPager(pagerId) }
+    private val viewModel by lazy { ChatViewModel(pagerId, dependencies) }
     // 全页唯一、持久挂载的 TextArea。ref 只在首次 body 挂载前为空。
     private var inputRef: ViewRef<TextAreaView>? = null
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
@@ -189,6 +202,12 @@ internal class ChatPage : BasePager() {
     // RecyclerView 内的 EditText 短暂 clearFocus。恢复请求带版本号：任何用户主动
     // blur/collapse 都会使旧请求失效，防止延迟回调把焦点从其他区域抢回来。
     private var composerFocusRequestVersion = 0
+    private var composerKeyboardLayoutVersion = 0
+    private var composerFocusRecoveryPending = false
+    // 用户进入文字输入态后锁住真实原生焦点。只有业务明确调用 blurComposer 才解锁；
+    // RecyclerView/键盘避让布局造成的 inputBlur 都视为意外失焦并自动恢复。
+    private var composerFocusLocked = false
+    private var composerUnexpectedBlurVersion = 0
     // 键盘当前是否在屏上，由 TextArea 的 keyboardHeightChange 上报。
     private var keyboardVisible: Boolean by observable(false)
     // Voice input is the composer's third state (docs/11): hold to record,
@@ -222,8 +241,8 @@ internal class ChatPage : BasePager() {
     private var subThreads: ObservableList<SubThreadState> by observableList()
     private var suppressNextStockClickSymbol = ""
     private var peekVersion = 0
-    private val quoteRepository by lazy { QuoteRepositoryStore.shared(pagerId) }
-    private val watchlistStore by lazy { WatchlistStore(pagerId) }
+    private val quoteRepository get() = dependencies.quoteRepository
+    private val watchlistStore get() = dependencies.watchlistStore
     private val mockQuoteProvider = MockQuoteProvider()
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
@@ -297,39 +316,35 @@ internal class ChatPage : BasePager() {
                         theme = page.theme,
                         contextSymbols = page.contextSymbolsBefore(message.id),
                         suggestionsActive = page.suggestionsAreActive(message),
-                        onEntityStock = { entity ->
-                            println("[STOCKCHAT_DBG] onEntityStock click target=${entity.target}")
-                            page.handleStockEntityClick(entity)
-                        },
-                        onEntityStockLongPress = { entity, state, cancelled ->
-                            if (state != "move" || cancelled) {
-                                println("[STOCKCHAT_DBG] onEntityStockLongPress target=${entity.target} state=$state cancelled=$cancelled")
-                            }
-                            page.handleStockEntityLongPress(entity, state, cancelled)
-                        },
-                        onCardStock = { page.openStockDetail(it) },
-                        onTerm = { page.viewModel.send("$it 是什么意思") },
-                        onSuggestion = { page.viewModel.send(it) },
-                        onRetry = { page.viewModel.retryLast() },
-                        repairingCardKey = page.repairingCardKey,
-                        onRetryCard = { messageId, blockId, cardType, rawCard -> page.retryCard(messageId, blockId, cardType, rawCard) },
-                        onQuoteNeeded = { page.requestQuote(it) },
-                        quoteFor = { page.quoteFor(it) },
-                        isCardExpanded = { page.expandedCardKey == it },
-                        onToggleCardExpanded = { page.toggleCardExpanded(it) },
-                        onOpenCardSheet = { page.openCardSheet(it) },
-                        drilledKeys = page.drilledKeys.toSet(),
-                        onToggleDrill = { page.toggleDrill(it) },
-                        subThreads = page.subThreads.toList(),
-                        onStartSubThread = { page.startSubThread(it) },
-                        onToggleSubThread = { page.toggleSubThread(it) },
-                        onUpdateSubThreadInput = { id, input -> page.updateSubThreadInput(id, input) },
-                        onSendSubThread = { page.sendSubThread(it) },
-                        focusedCardKey = page.focusedCardKey,
-                        onFocusChanged = { key, focused -> page.setFocusedCard(key, focused) },
-                        compareCandidateSymbol = page.compareCandidateSymbol,
-                        onCompareCandidate = { key, symbol -> page.handleCompareCandidate(key, symbol) },
-                        onCardEvent = { key, event -> page.handleCardEvent(key, event) },
+                        state = ChatMessageRenderState(
+                            repairingCardKey = page.repairingCardKey,
+                            drilledKeys = page.drilledKeys.toSet(),
+                            subThreads = page.subThreads.toList(),
+                            focusedCardKey = page.focusedCardKey,
+                            compareCandidateSymbol = page.compareCandidateSymbol,
+                        ),
+                        actions = ChatMessageActions(
+                            onEntityStock = page::handleStockEntityClick,
+                            onEntityStockLongPress = page::handleStockEntityLongPress,
+                            onCardStock = page::openStockDetail,
+                            onTerm = { page.viewModel.send("$it 是什么意思") },
+                            onSuggestion = page.viewModel::send,
+                            onRetry = page.viewModel::retryLast,
+                            onRetryCard = page::retryCard,
+                            onQuoteNeeded = page::requestQuote,
+                            quoteFor = page::quoteFor,
+                            isCardExpanded = { page.expandedCardKey == it },
+                            onToggleCardExpanded = page::toggleCardExpanded,
+                            onOpenCardSheet = page::openCardSheet,
+                            onToggleDrill = page::toggleDrill,
+                            onStartSubThread = page::startSubThread,
+                            onToggleSubThread = page::toggleSubThread,
+                            onUpdateSubThreadInput = page::updateSubThreadInput,
+                            onSendSubThread = page::sendSubThread,
+                            onFocusChanged = page::setFocusedCard,
+                            onCompareCandidate = page::handleCompareCandidate,
+                            onCardEvent = page::handleCardEvent,
+                        ),
                     )
                 }
             }
@@ -813,7 +828,7 @@ internal class ChatPage : BasePager() {
         CommandRegistry.all.firstOrNull { it.id == commandId }
 
     private fun missingRequiredParams(command: SlashCommand, args: Map<String, String>): List<com.kuikly.stockchat.composer.CommandParam> =
-        command.params.filter { it.required && args[it.key].isNullOrBlank() }
+        CommandInvocationParser.missingRequiredParams(command, args)
 
     /**
      * LOCAL_ACTION / CONTEXT_ONLY 不进入模型发送管线。
@@ -825,7 +840,7 @@ internal class ChatPage : BasePager() {
                 when (command.id) {
                     "clear" -> {
                         viewModel.clear()
-                        val rest = commandRemainder(payload.text, command.name)
+                        val rest = CommandInvocationParser.remainder(payload.text, command.name)
                         finishCommandSideEffect(rest)
                         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已清屏")
                     }
@@ -839,7 +854,7 @@ internal class ChatPage : BasePager() {
             }
             CommandExecution.CONTEXT_ONLY -> {
                 toggleContextNote("深水区模式")
-                val rest = commandRemainder(payload.text, command.name)
+                val rest = CommandInvocationParser.remainder(payload.text, command.name)
                 if (rest.isBlank()) {
                     finishCommandSideEffect("")
                     acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(
@@ -875,12 +890,6 @@ internal class ChatPage : BasePager() {
         closeAssistantPanel()
         setComposerText(remainingText.trimStart())
         keepChatAtBottomTemporarily()
-    }
-
-    private fun commandRemainder(text: String, commandName: String): String {
-        val trimmed = text.trimStart()
-        if (!trimmed.startsWith("/$commandName")) return ""
-        return trimmed.removePrefix("/$commandName").trimStart()
     }
 
     private fun toggleContextNote(note: String) {
@@ -980,27 +989,77 @@ internal class ChatPage : BasePager() {
         if (voiceState != VoiceState.IDLE) cancelVoiceSession()
         if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
         if (requestFocus) {
+            composerFocusLocked = true
             if (wasExpanded) inputRef?.view?.focus() else scheduleComposerFocusAfterExpansion()
         }
     }
 
     /**
-     * Android 首次聚焦会同步触发展开重排；Kuikly 的 RecyclerView 在随后两帧的
-     * layout commit 中会 clearFocus。等提交完成后只恢复这一次焦点，后续编辑期间
-     * 不轮询、不重复 requestFocus，也不会干预 IME 的 composition/selection。
+     * Android 首次聚焦会同时触发输入栏展开和键盘避让布局。真正会 clearFocus 的
+     * 是 keyboardHeight 写入后的那次 RecyclerView commit，固定等 64ms 仍可能早于
+     * 键盘动画结束。这里先登记一次性恢复请求；正常路径由 keyboardHeightChange
+     * 在最终布局后执行，500ms 仅作为不回调该事件的平台兜底。
      */
     private fun scheduleComposerFocusAfterExpansion() {
         val requestVersion = ++composerFocusRequestVersion
+        composerFocusRecoveryPending = true
         KLog.i(COMPOSER_LOG_TAG, "scheduleFocusRecovery version=$requestVersion")
-        setTimeout(64) {
-            if (requestVersion != composerFocusRequestVersion || !composerExpanded) return@setTimeout
-            KLog.i(COMPOSER_LOG_TAG, "runFocusRecovery version=$requestVersion ref=${inputRef?.view != null}")
+        setTimeout(500) {
+            recoverComposerFocus(requestVersion, "fallback")
+        }
+    }
+
+    private fun scheduleComposerFocusAfterKeyboardLayout(duration: Float) {
+        if (!composerFocusRecoveryPending || !composerExpanded) return
+        val requestVersion = composerFocusRequestVersion
+        val layoutVersion = ++composerKeyboardLayoutVersion
+        val delayMs = (duration * 1000f).toInt().coerceIn(0, 400) + 48
+        setTimeout(delayMs) {
+            if (layoutVersion != composerKeyboardLayoutVersion) return@setTimeout
+            recoverComposerFocus(requestVersion, "keyboardLayout")
+        }
+    }
+
+    private fun recoverComposerFocus(requestVersion: Int, source: String) {
+        if (
+            requestVersion != composerFocusRequestVersion ||
+            !composerFocusRecoveryPending ||
+            !composerExpanded
+        ) return
+        composerFocusRecoveryPending = false
+        KLog.i(COMPOSER_LOG_TAG, "runFocusRecovery source=$source version=$requestVersion ref=${inputRef?.view != null}")
+        inputRef?.view?.focus()
+    }
+
+    private fun recoverUnexpectedComposerBlur() {
+        if (
+            !composerFocusLocked ||
+            !composerExpanded ||
+            voiceState != VoiceState.IDLE ||
+            inputPanel == InputPanel.MEDIA
+        ) return
+        val blurVersion = ++composerUnexpectedBlurVersion
+        val requestVersion = composerFocusRequestVersion
+        setTimeout(96) {
+            if (
+                blurVersion != composerUnexpectedBlurVersion ||
+                requestVersion != composerFocusRequestVersion ||
+                !composerFocusLocked ||
+                !composerExpanded ||
+                voiceState != VoiceState.IDLE ||
+                inputPanel == InputPanel.MEDIA
+            ) return@setTimeout
+            KLog.i(COMPOSER_LOG_TAG, "recoverUnexpectedBlur version=$blurVersion")
             inputRef?.view?.focus()
         }
     }
 
     private fun blurComposer() {
+        composerFocusLocked = false
+        composerUnexpectedBlurVersion++
         composerFocusRequestVersion++
+        composerKeyboardLayoutVersion++
+        composerFocusRecoveryPending = false
         inputRef?.view?.blur()
     }
 
@@ -1008,6 +1067,10 @@ internal class ChatPage : BasePager() {
     private fun collapseComposer() {
         KLog.i(COMPOSER_LOG_TAG, "collapseComposer draftLen=${viewModel.inputText.length}")
         composerFocusRequestVersion++
+        composerKeyboardLayoutVersion++
+        composerFocusRecoveryPending = false
+        composerFocusLocked = false
+        composerUnexpectedBlurVersion++
         composerExpanded = false
         inputPanel = InputPanel.NONE
         clearActiveCommand()
@@ -1255,9 +1318,11 @@ internal class ChatPage : BasePager() {
         // 被回写打断 → 组合会话被杀 → 光标消失、退格删错。
         // 且该回声拦不住：textDidChange 注册路径不置 isProcessingNativeEvent，
         // 业务估算态与原生真实态永远 hasSameEditingState=false。
-        // 因此：text 只作页面首次挂载种子，不绑定任何响应式文本 prop；
-        // 一切回写走命令式 setComposerText → view.setTextInputState（callMethod，
-        // 不经过 Props）。
+        // 因此：attr 中完全不能出现 text/textInputState。Kuikly 的 attr 是整块
+        // 响应式执行的，高度/主题/语音态任一变化都会把同一块里的 text 再下发；
+        // 即便参数是固定的 mountSeed，也会打断正在进行的拼音组合与退格。
+        // 首次挂载种子在 ref 后命令式写入；后续回写也只走 setComposerText →
+        // view.setTextInputState（callMethod，不经过 Props）。
         val mountSeed = this.viewModel.inputText
         composerEditingState = ComposerEditingReducer.programmatic(mountSeed)
         KLog.i(COMPOSER_LOG_TAG, "render seedLen=${mountSeed.length}")
@@ -1265,33 +1330,49 @@ internal class ChatPage : BasePager() {
             ref {
                 this@ChatPage.inputRef = it
                 KLog.i(COMPOSER_LOG_TAG, "ref nativeRef=${it.nativeRef} view=${it.view?.viewName()}")
+                // ref 回调发生在组件加入 Pager 映射之前，此时 view 可能尚不可用。
+                // 延后一拍只初始化这一个新挂载的原生输入框，绝不参与后续响应式刷新。
+                this@ChatPage.setTimeout(0) {
+                    if (this@ChatPage.inputRef?.nativeRef != it.nativeRef) return@setTimeout
+                    it.view?.setTextInputState(this@ChatPage.composerEditingState)
+                }
             }
+            // 输入法相关配置必须放在无 observable 依赖的静态 attr 中。
+            // returnKeyType 在 Android 会调用 InputMethodManager.restartInput；如果它
+            // 跟 maxHeight 等动态属性一起重放，会在展开布局时重启刚建立的连接，
+            // 形成“键盘有反应、正文无光标”的僵尸 InputConnection。
             attr {
                 minHeight(40f)
+                fontSize(14f)
+                lineHeight(21f)
+                backgroundColor(Color(0xFFFFFFFF, 0f))
+                placeholder("问一只股票或一个术语")
+                returnKeyTypeSend()
+                enablePinyinCallback(true)
+                // Android 端由外部属性处理器把这个标记映射成 EditText 的
+                // isCursorVisible。焦点锁在意外 blur 后恢复，原生光标标记也不会
+                // 因布局刷新被关闭。
+                "stockChatKeepCursorVisible" with 1
+            }
+            attr {
                 // 折叠态和联想面板展开时收紧到单行。这里只更新尺寸 prop，
                 // 持久 TextArea 本身不移除、不重建。
                 maxHeight(
                     if (!this@ChatPage.isComposerExpanded() || this@ChatPage.assistantPanel != AssistantPanel.NONE) 44f
                     else 80f
                 )
-                fontSize(14f)
-                lineHeight(21f)
                 color(this@ChatPage.theme.textPrimary)
-                backgroundColor(Color(0xFFFFFFFF, 0f))
                 opacity(if (this@ChatPage.voiceState == VoiceState.IDLE) 1f else 0f)
                 touchEnable(this@ChatPage.voiceState == VoiceState.IDLE)
-                text(mountSeed)
-                placeholder("问一只股票或一个术语")
                 placeholderColor(this@ChatPage.theme.textTertiary)
                 tintColor(this@ChatPage.theme.brand)
                 selectionColor(this@ChatPage.theme.brand)
-                returnKeyTypeSend()
-                enablePinyinCallback(true)
             }
             event {
                 inputFocus {
                     // 键盘自己弹起（系统输入法回调 / 原生点击）也算进入输入态。
                     KLog.i(COMPOSER_LOG_TAG, "EV inputFocus len=${it.text.length}")
+                    this@ChatPage.composerFocusLocked = true
                     // 已展开后的恢复 focus 必须是纯事件：不要再次进入任何布局函数。
                     // 即使函数内部最终没有改值，Kuikly 的事件/依赖追踪也可能安排
                     // 一次提交，并在 RecyclerView 中再次 clearFocus。
@@ -1304,6 +1385,7 @@ internal class ChatPage : BasePager() {
                     // 失焦本身绝不收起输入栏：输入态是"粘"的，只有"键盘已收起时点击
                     // 非输入栏区域"这一次点击才回默认态（见 handleOutsideTap）。
                     KLog.i(COMPOSER_LOG_TAG, "EV inputBlur len=${it.text.length}")
+                    this@ChatPage.recoverUnexpectedComposerBlur()
                 }
                 textDidChange(isSyncEdit = true) {
                     KLog.d(COMPOSER_LOG_TAG, "EV textDidChange len=${it.text.length}")
@@ -1332,6 +1414,9 @@ internal class ChatPage : BasePager() {
                     KLog.i(COMPOSER_LOG_TAG, "EV keyboardHeightChange h=${it.height} dur=${it.duration}")
                     this@ChatPage.keyboardHeight = it.height
                     this@ChatPage.keyboardVisible = it.height > 0f
+                    if (it.height > 0f) {
+                        this@ChatPage.scheduleComposerFocusAfterKeyboardLayout(it.duration)
+                    }
                     this@ChatPage.scheduleScrollChatToBottom()
                 }
                 inputReturn {
@@ -1452,9 +1537,6 @@ internal class ChatPage : BasePager() {
     }
 
     private fun handleStockEntityLongPress(entity: EntitySpan, state: String, cancelled: Boolean) {
-        if (state != "move" || cancelled) {
-            println("[STOCKCHAT_DBG] handleStockEntityLongPress target=${entity.target} state=$state cancelled=$cancelled pending=${pendingEntitySheetSymbol}")
-        }
         // Once "start" has fired, the long press is already recognised. Some
         // Android bridges mark the terminal event cancelled when the parent
         // scroller wins the final touch arbitration, so cancellation must not
@@ -1471,7 +1553,6 @@ internal class ChatPage : BasePager() {
             if (cancelled || pendingLongPressSymbol == entity.target) return
             pendingLongPressSymbol = entity.target
             suppressNextStockClickSymbol = entity.target
-            println("[STOCKCHAT_DBG] handleStockEntityLongPress recognised(start) -> dispatch SHEET")
             handleStockEntity(entity, EntityAction.SHEET)
             return
         }
@@ -1484,11 +1565,9 @@ internal class ChatPage : BasePager() {
             return
         }
 
-        println("[STOCKCHAT_DBG] handleStockEntityLongPress ignored(state=$state)")
     }
 
     private fun finishStockLongPress(symbol: String) {
-        println("[STOCKCHAT_DBG] finishStockLongPress symbol=$symbol mounted=${sheetCard?.cardId}")
         // Mount after the terminal touch callback returns. Kuikly's vif block
         // captures presentation values when it mounts, so mounting hidden and
         // toggling the flag later leaves the native view permanently invisible.
@@ -1497,7 +1576,6 @@ internal class ChatPage : BasePager() {
                 sheetPresented = true
                 sheetInteractive = true
                 sheetMounted = true
-                println("[STOCKCHAT_DBG] entity sheet mounted after gesture end")
             }
         }
         setTimeout(400) {
@@ -1508,7 +1586,6 @@ internal class ChatPage : BasePager() {
     }
 
     private fun handleStockEntity(entity: EntitySpan, action: EntityAction) {
-        println("[STOCKCHAT_DBG] handleStockEntity target=${entity.target} candidates=${entity.candidates.size} action=$action")
         if (entity.candidates.size == 1) performEntityAction(entity.target, action)
         else {
             ambiguousEntityText = entity.text
@@ -1541,7 +1618,6 @@ internal class ChatPage : BasePager() {
     }
 
     private fun openEntityQuoteSheet(symbol: String) {
-        println("[STOCKCHAT_DBG] openEntityQuoteSheet symbol=$symbol pendingBefore=${pendingEntitySheetSymbol} quoteForCached=${quoteFor(symbol) != null}")
         pendingEntitySheetSymbol = symbol
         requestQuote(symbol)
         val cached = quoteFor(symbol)
@@ -1553,14 +1629,12 @@ internal class ChatPage : BasePager() {
     }
 
     private fun presentPendingEntitySheet(symbol: String, quote: Quote?) {
-        println("[STOCKCHAT_DBG] presentPendingEntitySheet symbol=$symbol pending=${pendingEntitySheetSymbol} quoteNull=${quote == null}")
         if (pendingEntitySheetSymbol != symbol) return
         if (quote == null) {
             pendingEntitySheetSymbol = ""
             return
         }
         pendingEntitySheetSymbol = ""
-        println("[STOCKCHAT_DBG] -> openCardSheet for $symbol")
         openCardSheet(
             StockQuoteCardModel(quote, "entity-sheet:$symbol"),
             deferInteraction = pendingLongPressSymbol == symbol,
@@ -1581,11 +1655,9 @@ internal class ChatPage : BasePager() {
 
     private fun requestQuote(symbol: String) {
         val firstRequest = requestedSymbols.add(symbol)
-        println("[STOCKCHAT_DBG] requestQuote symbol=$symbol firstRequest=$firstRequest")
-        if (!firstRequest) { println("[STOCKCHAT_DBG] requestQuote early-return(dup) symbol=$symbol"); return }
+        if (!firstRequest) return
         if (!liveDataMode) {
             mockQuoteProvider.snapshot(symbol) { quote ->
-                println("[STOCKCHAT_DBG] requestQuote mock callback symbol=$symbol quoteNull=${quote == null}")
                 val updated = ChatQuoteState(symbol, quote, DataMode.OFFLINE)
                 val index = quoteStates.indexOfFirst { it.symbol == symbol }
                 if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
@@ -1594,7 +1666,6 @@ internal class ChatPage : BasePager() {
             return
         }
         quoteRepository.load(symbol) { result ->
-            println("[STOCKCHAT_DBG] requestQuote live callback symbol=$symbol quoteNull=${result.quote == null}")
             val updated = ChatQuoteState(symbol, result.quote, result.mode)
             val index = quoteStates.indexOfFirst { it.symbol == symbol }
             if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
@@ -1646,25 +1717,13 @@ internal class ChatPage : BasePager() {
             inputRef?.view?.focus()
             return
         }
-        var text = viewModel.inputText
-        var cursor = composerEditingState.selectionEnd.takeIf { it in 0..text.length } ?: text.length
-        if (session != null) {
-            val end = cursor.coerceAtLeast(session.triggerStart).coerceAtMost(text.length)
-            if (session.triggerStart <= end) {
-                text = text.substring(0, session.triggerStart) + text.substring(end)
-                cursor = session.triggerStart
-            }
-        }
-        val before = text.substring(0, cursor)
-        val after = text.substring(cursor)
-        val needsSpace = before.isNotEmpty() && !before.last().isWhitespace()
-        val inserted = (if (needsSpace) " " else "") + trigger
-        val newText = before + inserted + after
-        val newCursor = cursor + inserted.length
+        val text = viewModel.inputText
+        val cursor = composerEditingState.selectionEnd.takeIf { it in 0..text.length } ?: text.length
+        val edit = ComposerTextOperations.insertTrigger(text, cursor, session, trigger)
         // 原子写入「文本 + 光标」，避免 setText 后光标被重置到末尾。
-        setComposerText(newText, newCursor)
+        setComposerText(edit.text, edit.cursor)
         inputRef?.view?.focus()
-        updateTriggerSession(newText, newCursor, false)
+        updateTriggerSession(edit.text, edit.cursor, false)
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
     }
 
@@ -1749,7 +1808,7 @@ internal class ChatPage : BasePager() {
         } else if (prev != null && session == null && !composing) {
             trackComposerEvent(
                 if (prev.type == '@') "at_abort" else "slash_abort",
-                "reason" to abortReason(text, cursor, prev),
+                "reason" to ComposerTextOperations.triggerAbortReason(text, cursor, prev),
                 "query" to prev.query,
             )
             lastTrackedTriggerKey = ""
@@ -1792,12 +1851,6 @@ internal class ChatPage : BasePager() {
             "query_len" to session.query.length,
             "count" to list.size,
         )
-    }
-
-    private fun abortReason(text: String, cursor: Int, previous: TriggerSession): String {
-        if (previous.triggerStart >= text.length || text.getOrNull(previous.triggerStart) != previous.type) return "delete-out"
-        if (cursor <= previous.triggerStart || cursor > text.length) return "cursor-out"
-        return if (text.substring(previous.triggerStart, cursor).any { it.isWhitespace() }) "space" else "cursor-out"
     }
 
     private fun loadSlashCandidates(session: TriggerSession) {
@@ -1911,7 +1964,7 @@ internal class ChatPage : BasePager() {
         if (commandStart < 0) return
         val commandEnd = commandStart + commandPrefix.length
         val tailStart = (commandEnd + 1).coerceAtMost(text.length)
-        val replaceStart = lastParamTokenStart(text, tailStart)
+        val replaceStart = ComposerTextOperations.lastParameterTokenStart(text, tailStart)
         val before = text.substring(0, replaceStart)
         val separator = if (before.isNotEmpty() && !before.last().isWhitespace()) " " else ""
         val newText = before + separator + entity.mentionText + " "
@@ -1946,15 +1999,6 @@ internal class ChatPage : BasePager() {
             "value" to option,
         )
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-    }
-
-    private fun lastParamTokenStart(text: String, minStart: Int): Int {
-        if (text.isEmpty()) return 0
-        var end = text.length
-        while (end > minStart && text[end - 1].isWhitespace()) end--
-        var start = end
-        while (start > minStart && !text[start - 1].isWhitespace()) start--
-        return if (end == text.length && start < end) start else text.length
     }
 
     /** 选中一个 / 命令 → 定型进入参数态或直接执行（规范 §5.3）。 */
@@ -2042,52 +2086,7 @@ internal class ChatPage : BasePager() {
      * SECURITY 槽按 @ 固化提及顺序填，TEXT/ENUM 槽按剩余文本片段填。
      */
     private fun resolveCommandFromText(text: String, mentions: List<MentionEntity>): CommandInvocation? {
-        val trimmed = text.trimStart()
-        if (!trimmed.startsWith("/")) return null
-        val name = trimmed.removePrefix("/").substringBefore(' ').substringBefore('@')
-        val command = CommandRegistry.resolve(name) ?: return null
-        val remainder = trimmed.substringAfter("/$name").trim()
-        // 剥离 @ 固化提及文本后的纯文本片段（按空白切分）。
-        var stripped = remainder
-        for (m in mentions) stripped = stripped.replace(m.mentionText, "\u0001")
-        val fragments = stripped.split(Regex("\\s+|\u0001+")).filter { it.isNotBlank() }
-        val secIterator = mentions.iterator()
-        var fragIndex = 0
-        val args = LinkedHashMap<String, String>()
-        for (param in command.params) {
-            when (param.type) {
-                ParamType.SECURITY -> {
-                    val m = if (secIterator.hasNext()) secIterator.next() else null
-                    val next = fragments.getOrNull(fragIndex)
-                    args[param.key] = when {
-                        m != null -> m.name
-                        next != null && exactSecurityFragment(next) -> {
-                            fragIndex++
-                            next
-                        }
-                        else -> ""
-                    }
-                }
-                ParamType.ENUM -> {
-                    val next = fragments.getOrNull(fragIndex)
-                    args[param.key] = if (next != null && param.enumOptions.contains(next)) {
-                        fragIndex++
-                        next
-                    } else {
-                        ""
-                    }
-                }
-                ParamType.TEXT -> {
-                    args[param.key] = if (fragIndex < fragments.size) {
-                        fragments.drop(fragIndex).joinToString(" ")
-                    } else {
-                        ""
-                    }
-                    fragIndex = fragments.size
-                }
-            }
-        }
-        return CommandInvocation(command.id, command.name, args)
+        return CommandInvocationParser.parse(text, mentions, ::exactSecurityFragment)
     }
 
     private fun exactSecurityFragment(fragment: String): Boolean {
@@ -2098,10 +2097,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun currentParamQuery(command: SlashCommand): String {
-        val rest = commandRemainder(viewModel.inputText, command.name)
-        val trimmedEnd = rest.trimEnd()
-        val last = trimmedEnd.substringAfterLast(' ')
-        return last.removePrefix("@")
+        return CommandInvocationParser.currentParameterQuery(viewModel.inputText, command.name)
     }
 
     /**
@@ -2592,7 +2588,6 @@ internal class ChatPage : BasePager() {
         sheetLevel = if (model.cardType == "stock-chart") SheetLevel.FULL else SheetLevel.HALF
         sheetPresented = !deferInteraction
         sheetInteractive = !deferInteraction
-        println("[STOCKCHAT_DBG] openCardSheet model=${model.cardType} deferInteraction=$deferInteraction")
         if (!deferInteraction) {
             setTimeout(0) {
                 if (sheetPresentationVersion == version) sheetMounted = true
@@ -2712,9 +2707,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun quoteFor(symbol: String): Quote? {
-        val q = quoteStates.firstOrNull { it.symbol == symbol }?.quote ?: quoteRepository.cachedOrOffline(symbol)
-        println("[STOCKCHAT_DBG] quoteFor symbol=$symbol found=${q != null}")
-        return q
+        return quoteStates.firstOrNull { it.symbol == symbol }?.quote ?: quoteRepository.cachedOrOffline(symbol)
     }
 
 }
@@ -2733,68 +2726,6 @@ private data class ChatQuoteState(
     val mode: DataMode,
 )
 
-private data class SubThreadState(
-    val cardId: String,
-    val title: String,
-    val input: String,
-    val response: String,
-    val streaming: Boolean = false,
-    val collapsed: Boolean = false,
-)
-
-private fun ViewContainer<*, *>.WelcomeSection(theme: StockChatTheme, onChoose: (String) -> Unit) {
-    View {
-        attr { paddingTop(52f); paddingLeft(20f); paddingRight(20f); alignItemsCenter() }
-        View {
-            attr { size(56f, 56f); allCenter(); borderRadius(16f); backgroundColor(theme.brand) }
-            Text { attr { text("↗"); fontSize(29f); fontWeightBold(); color(theme.onBrand) } }
-        }
-        Text { attr { text("你好，我是股问 AI"); marginTop(14f); fontSize(17f); fontWeightSemiBold(); color(theme.textPrimary) } }
-        Text { attr { text("做股民的解释器，不做荐股机"); marginTop(5f); fontSize(12f); color(theme.textTertiary) } }
-        WelcomeChip("📊", "贵州茅台今天为什么跌？", theme.riseSoft, theme.rise, theme, onChoose)
-        WelcomeChip("📖", "MACD 金叉是什么意思？", theme.brandSoft, theme.term, theme, onChoose)
-        WelcomeChip("⚖", "茅台和五粮液怎么选？", theme.brandSoft, theme.brand, theme, onChoose)
-    }
-}
-
-private fun ViewContainer<*, *>.WelcomeChip(
-    icon: String,
-    text: String,
-    iconBackground: Color,
-    iconColor: Color,
-    theme: StockChatTheme,
-    onChoose: (String) -> Unit,
-) {
-    View {
-        attr { alignSelfStretch(); height(54f); marginTop(12f); paddingLeft(12f); paddingRight(12f); flexDirectionRow(); alignItemsCenter(); backgroundColor(theme.surface); borderRadius(14f) }
-        View { attr { size(30f, 30f); allCenter(); borderRadius(9f); backgroundColor(iconBackground); marginRight(10f) }; Text { attr { text(icon); fontSize(15f); color(iconColor) } } }
-        Text { attr { text(text); fontSize(14f); color(theme.textPrimary); flex(1f) } }
-        Text { attr { text("›"); fontSize(22f); color(theme.textTertiary) } }
-        event { click { onChoose(text) } }
-    }
-}
-
-private fun ViewContainer<*, *>.DateDivider(theme: StockChatTheme) {
-    View {
-        attr { marginTop(14f); marginBottom(8f); flexDirectionRow(); alignItemsCenter() }
-        View { attr { height(1f); flex(1f); backgroundColor(theme.divider) } }
-        Text { attr { text("今天"); marginLeft(10f); marginRight(10f); fontSize(11f); color(theme.textTertiary) } }
-        View { attr { height(1f); flex(1f); backgroundColor(theme.divider) } }
-    }
-}
-
-private fun ViewContainer<*, *>.RecentSymbolRow(theme: StockChatTheme, onSelect: (String) -> Unit) {
-    Scroller {
-        attr { height(28f); flexDirectionRow() }
-        listOf("📍 贵州茅台", "五粮液", "上证指数", "+ 添加关注").forEach { label ->
-            View {
-                attr { height(26f); marginRight(7f); paddingLeft(10f); paddingRight(10f); justifyContentCenter(); backgroundColor(theme.surfaceMuted); borderRadius(13f) }
-                Text { attr { text(label); fontSize(11f); color(if (label.startsWith("+")) theme.brand else theme.textSecondary) } }
-                event { click { if (!label.startsWith("+")) onSelect(label.removePrefix("📍 ")) } }
-            }
-        }
-    }
-}
 
 /** MEDIA（相册/拍照面板）维度；@ / / 联想面板走 [AssistantPanel]，两者正交。 */
 private enum class InputPanel { NONE, MEDIA }
@@ -2878,667 +2809,4 @@ private fun ViewContainer<*, *>.MediaInputRow(theme: StockChatTheme, onSelect: (
             }
         }
     }
-}
-
-private fun ViewContainer<*, *>.ChatMessageView(
-    message: ChatMessage,
-    theme: StockChatTheme,
-    contextSymbols: List<String>,
-    suggestionsActive: Boolean,
-    onEntityStock: (EntitySpan) -> Unit,
-    onEntityStockLongPress: (EntitySpan, String, Boolean) -> Unit,
-    onCardStock: (String) -> Unit,
-    onTerm: (String) -> Unit,
-    onSuggestion: (String) -> Unit,
-    onRetry: () -> Unit,
-    repairingCardKey: String,
-    onRetryCard: (String, String, String, String) -> Unit,
-    onQuoteNeeded: (String) -> Unit,
-    quoteFor: (String) -> Quote?,
-    isCardExpanded: (String) -> Boolean,
-    onToggleCardExpanded: (String) -> Unit,
-    onOpenCardSheet: (CardModel) -> Unit,
-    drilledKeys: Set<String>,
-    onToggleDrill: (String) -> Unit,
-    subThreads: List<SubThreadState>,
-    onStartSubThread: (CardModel) -> Unit,
-    onToggleSubThread: (String) -> Unit,
-    onUpdateSubThreadInput: (String, String) -> Unit,
-    onSendSubThread: (String) -> Unit,
-    focusedCardKey: String,
-    onFocusChanged: (String, Boolean) -> Unit,
-    compareCandidateSymbol: String,
-    onCompareCandidate: (String, String) -> Unit,
-    onCardEvent: (String, CardEvent) -> Unit,
-) {
-    val user = message.role == MessageRole.USER
-    View {
-        attr {
-            marginTop(20f)
-            if (user) alignItemsFlexEnd()
-        }
-        View {
-            attr {
-                if (user) {
-                    marginLeft(58f)
-                    marginRight(2f)
-                    paddingTop(10f)
-                    paddingBottom(10f)
-                    paddingLeft(16f)
-                    paddingRight(16f)
-                    backgroundColor(theme.brand)
-                    borderRadius(20f)
-                } else {
-                    // No avatar: the AI message spans the row with symmetric
-                    // margins so the left and right insets always match.
-                    marginLeft(6f)
-                    marginRight(6f)
-                }
-            }
-            if (user) {
-                Text { attr { text(message.content); fontSize(14f); lineHeight(21f); color(theme.onBrand) } }
-            } else {
-                vif({ message.streaming }) {
-                    View {
-                        EntityStreamingMarkdown(message.content, theme, contextSymbols, onEntityStock, onEntityStockLongPress, onTerm)
-                    }
-                }
-                vif({ !message.streaming }) {
-                    View {
-                    try {
-                        AssistantContent(message, theme, contextSymbols, suggestionsActive, onEntityStock, onEntityStockLongPress, onCardStock, onTerm, onSuggestion, onRetry, repairingCardKey, onRetryCard, onQuoteNeeded, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, drilledKeys, onToggleDrill, subThreads, onStartSubThread, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
-                    } catch (error: Throwable) {
-                        Text {
-                            attr {
-                                text("结构化内容暂时无法展示：${error.message.orEmpty()}")
-                                fontSize(12f)
-                                lineHeight(18f)
-                                color(theme.textSecondary)
-                            }
-                        }
-                    }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.AssistantContent(
-    message: ChatMessage,
-    theme: StockChatTheme,
-    contextSymbols: List<String>,
-    suggestionsActive: Boolean,
-    onEntityStock: (EntitySpan) -> Unit,
-    onEntityStockLongPress: (EntitySpan, String, Boolean) -> Unit,
-    onCardStock: (String) -> Unit,
-    onTerm: (String) -> Unit,
-    onSuggestion: (String) -> Unit,
-    onRetry: () -> Unit,
-    repairingCardKey: String,
-    onRetryCard: (String, String, String, String) -> Unit,
-    onQuoteNeeded: (String) -> Unit,
-    quoteFor: (String) -> Quote?,
-    isCardExpanded: (String) -> Boolean,
-    onToggleCardExpanded: (String) -> Unit,
-    onOpenCardSheet: (CardModel) -> Unit,
-    drilledKeys: Set<String>,
-    onToggleDrill: (String) -> Unit,
-    subThreads: List<SubThreadState>,
-    onStartSubThread: (CardModel) -> Unit,
-    onToggleSubThread: (String) -> Unit,
-    onUpdateSubThreadInput: (String, String) -> Unit,
-    onSendSubThread: (String) -> Unit,
-    focusedCardKey: String,
-    onFocusChanged: (String, Boolean) -> Unit,
-    compareCandidateSymbol: String,
-    onCompareCandidate: (String, String) -> Unit,
-    onCardEvent: (String, CardEvent) -> Unit,
-) {
-    val blocks = AiResponseLexer.lex(message.content, finished = !message.streaming)
-    blocks.forEach { block ->
-        when (block) {
-            is TextBlock -> {
-                View {
-                    attr { marginTop(4f) }
-                    EntityRichText(block.content, theme, contextSymbols, onEntityStock, onEntityStockLongPress, onTerm)
-                }
-            }
-            is CardBlock -> {
-                try {
-                    val cardKey = "${message.id}:${block.id}"
-                    val intent = CardPayloadParser.parse(block.type, block.payload)
-                    if (intent is SuggestionsIntent) {
-                        if (suggestionsActive) SuggestionRow(intent, theme, onSuggestion)
-                    } else {
-                        when (intent) {
-                            is SymbolCardIntent -> onQuoteNeeded(intent.symbol)
-                            is AttributionIntent -> onQuoteNeeded(intent.symbol)
-                            else -> Unit
-                        }
-                        if (intent is SymbolCardIntent && intent.type == "stock-chart") {
-                            ChatStockChartCard(block, intent, theme, onCardStock, onTerm, quoteFor, isCardExpanded, onToggleCardExpanded, onOpenCardSheet, cardKey, focusedCardKey, onFocusChanged, compareCandidateSymbol, onCompareCandidate, onCardEvent)
-                        } else {
-                            val model = CardAssembler.assemble(block, quoteFor)
-                            ReactiveCardShell(
-                                model,
-                                CardContext(
-                                    theme = theme,
-                                    density = CardDensity.COMPACT,
-                                    onOpenStock = onCardStock,
-                                    onExplainTerm = onTerm,
-                                    expanded = false,
-                                    onToggleExpanded = { onToggleCardExpanded(cardKey) },
-                                    onOpenSheet = onOpenCardSheet,
-                                    drilledKeys = drilledKeys,
-                                    onToggleDrill = onToggleDrill,
-                                    onStartSubThread = onStartSubThread,
-                                    cardKey = cardKey,
-                                    focusedCardKey = focusedCardKey,
-                                    onFocusChanged = onFocusChanged,
-                                    compareCandidateSymbol = compareCandidateSymbol,
-                                    onCompareCandidate = onCompareCandidate,
-                                    onCardEvent = onCardEvent,
-                                ),
-                                cardKey,
-                                isCardExpanded,
-                            )
-                            if (model is InsightCardModel) {
-                                subThreads.firstOrNull { it.cardId == model.cardId }?.let { thread ->
-                                    NestedConversation(thread, theme, onToggleSubThread, onUpdateSubThreadInput, onSendSubThread)
-                                }
-                            }
-                        }
-                    }
-                } catch (_: Throwable) {
-                    val rawCard = "```card:${block.type}\n${block.payload}\n```"
-                    val cardKey = "${message.id}:${block.id}"
-                    StructuredContentUnavailable(
-                        type = block.type,
-                        theme = theme,
-                        retrying = repairingCardKey == cardKey,
-                        onRetry = { onRetryCard(message.id, block.id, block.type, rawCard) },
-                    )
-                }
-            }
-            is BrokenCardBlock -> {
-                val cardKey = "${message.id}:${block.id}"
-                StructuredContentUnavailable(
-                    type = block.type,
-                    theme = theme,
-                    retrying = repairingCardKey == cardKey,
-                    onRetry = { onRetryCard(message.id, block.id, block.type, block.raw) },
-                )
-            }
-            is SkeletonBlock -> CardShell(
-                CardAssembler.assemble(block),
-                CardContext(theme, CardDensity.COMPACT, onCardStock, onTerm),
-            )
-        }
-    }
-    if (message.id == "m1" && suggestionsActive) {
-        SuggestionRow(
-            SuggestionsIntent(
-                listOf(
-                    com.kuikly.stockchat.protocol.SuggestionIntent("贵州茅台最近怎么样"),
-                    com.kuikly.stockchat.protocol.SuggestionIntent("为什么跌"),
-                    com.kuikly.stockchat.protocol.SuggestionIntent("PE 是什么", "diverge"),
-                ),
-            ),
-            theme,
-            onSuggestion,
-        )
-    }
-    if (!message.streaming) {
-        Text {
-            attr {
-                text(
-                    when {
-                        message.failed -> "生成失败，点击重试"
-                        message.cancelled -> "已停止生成"
-                        else -> "AI 生成，仅供参考，不构成投资建议"
-                    },
-                )
-                marginTop(10f)
-                fontSize(9f)
-                color(if (message.failed) theme.brand else theme.textTertiary)
-            }
-            if (message.failed) event { click { onRetry() } }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.StructuredContentUnavailable(
-    type: String,
-    theme: StockChatTheme,
-    retrying: Boolean,
-    onRetry: () -> Unit,
-) {
-    View {
-        attr {
-            alignSelfStretch()
-            marginTop(10f)
-            padding(12f)
-            backgroundColor(theme.surface)
-            borderRadius(theme.cardRadius)
-            flexDirectionRow()
-            alignItemsCenter()
-        }
-        View {
-            attr {
-                width(52f)
-                height(52f)
-                marginRight(12f)
-                allCenter()
-                backgroundColor(theme.surfaceMuted)
-                borderRadius(8f)
-            }
-            Text {
-                attr {
-                    text("CARD")
-                    fontSize(10f)
-                    fontWeightMedium()
-                    color(theme.textTertiary)
-                }
-            }
-        }
-        View {
-            attr { flex(1f) }
-            Text {
-                attr {
-                    text("${type.ifEmpty { "结构化内容" }} 加载失败")
-                    fontSize(13f)
-                    fontWeightMedium()
-                    color(theme.textSecondary)
-                }
-            }
-            Text {
-                attr {
-                    text("可单独重试这张卡片")
-                    marginTop(3f)
-                    fontSize(10f)
-                    color(theme.textTertiary)
-                }
-            }
-        }
-        View {
-            attr {
-                height(30f)
-                paddingLeft(12f)
-                paddingRight(12f)
-                allCenter()
-                backgroundColor(if (retrying) theme.surfaceMuted else theme.brandSoft)
-                borderRadius(8f)
-            }
-            Text {
-                attr {
-                    text(if (retrying) "重试中" else "重试")
-                    fontSize(11f)
-                    fontWeightMedium()
-                    color(if (retrying) theme.textTertiary else theme.brand)
-                }
-            }
-            if (!retrying) event { click { onRetry() } }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.ChatStockChartCard(
-    block: CardBlock,
-    intent: SymbolCardIntent,
-    theme: StockChatTheme,
-    onCardStock: (String) -> Unit,
-    onTerm: (String) -> Unit,
-    quoteFor: (String) -> Quote?,
-    isCardExpanded: (String) -> Boolean,
-    onToggleCardExpanded: (String) -> Unit,
-    onOpenCardSheet: (CardModel) -> Unit,
-    cardKey: String,
-    focusedCardKey: String,
-    onFocusChanged: (String, Boolean) -> Unit,
-    compareCandidateSymbol: String,
-    onCompareCandidate: (String, String) -> Unit,
-    onCardEvent: (String, CardEvent) -> Unit,
-) {
-    val context = CardContext(
-        theme = theme,
-        density = CardDensity.COMPACT,
-        onOpenStock = onCardStock,
-        onExplainTerm = onTerm,
-        expanded = false,
-        onToggleExpanded = { onToggleCardExpanded(cardKey) },
-        onOpenSheet = onOpenCardSheet,
-        cardKey = cardKey,
-        focusedCardKey = focusedCardKey,
-        onFocusChanged = onFocusChanged,
-        compareCandidateSymbol = compareCandidateSymbol,
-        onCompareCandidate = onCompareCandidate,
-        onCardEvent = onCardEvent,
-    )
-    vif({ quoteFor(intent.symbol)?.timeline?.isNotEmpty() == true }) {
-        quoteFor(intent.symbol)?.let { quote ->
-            ReactiveCardShell(StockChartCardModel(quote, cardId = block.id), context, cardKey, isCardExpanded)
-        }
-    }
-    vif({ quoteFor(intent.symbol)?.let { it.timeline.isEmpty() && it.kLines.isNotEmpty() } == true }) {
-        quoteFor(intent.symbol)?.let { quote ->
-            ReactiveCardShell(StockChartCardModel(quote, StockChartMode.K_LINE, cardId = block.id), context, cardKey, isCardExpanded)
-        }
-    }
-    vif({ quoteFor(intent.symbol)?.let { it.timeline.isEmpty() && it.kLines.isEmpty() } != false }) {
-        CardShell(SkeletonCardModel("stock-chart", block.id), context)
-    }
-}
-
-private fun ViewContainer<*, *>.ReactiveCardShell(
-    model: CardModel,
-    context: CardContext,
-    cardKey: String,
-    isCardExpanded: (String) -> Boolean,
-) {
-    vif({ isCardExpanded(cardKey) }) {
-        CardShell(model, context.copy(expanded = true))
-    }
-    vif({ !isCardExpanded(cardKey) }) {
-        CardShell(model, context.copy(expanded = false))
-    }
-}
-
-private fun ViewContainer<*, *>.SuggestionRow(
-    intent: SuggestionsIntent,
-    theme: StockChatTheme,
-    onSuggestion: (String) -> Unit,
-) {
-    Scroller {
-        attr {
-            flexDirectionRow()
-            height(38f)
-            marginTop(10f)
-        }
-        intent.chips.forEach { suggestion ->
-            View {
-                attr {
-                    height(34f)
-                    marginRight(7f)
-                    paddingLeft(11f)
-                    paddingRight(11f)
-                    justifyContentCenter()
-                    borderRadius(11f)
-                    backgroundColor(if (suggestion.type == "drill") theme.brandSoft else theme.surfaceMuted)
-                }
-                Text {
-                    attr {
-                        text(suggestion.text)
-                        fontSize(12f)
-                        color(if (suggestion.type == "drill") theme.brand else theme.textSecondary)
-                    }
-                }
-                event { click { onSuggestion(suggestion.text) } }
-            }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.RegressionQuestionRow(
-    theme: StockChatTheme,
-    onQuestion: (String) -> Unit,
-) {
-    val cases = listOf(
-        "手风琴" to "回归：手风琴 贵州茅台最近怎么样",
-        "资讯 Sheet" to "回归：资讯 Sheet 看贵州茅台资讯",
-        "归因下钻" to "回归：归因下钻 为什么跌",
-        "分支追问" to "回归：分支追问 贵州茅台最近怎么样",
-        "焦点放大" to "回归：焦点放大 贵州茅台最近怎么样",
-        "对比卡" to "回归：对比卡 贵州茅台和五粮液比较",
-    )
-    Scroller {
-        attr {
-            height(42f)
-            paddingLeft(14f)
-            paddingRight(14f)
-            paddingBottom(6f)
-            flexDirectionRow()
-        }
-        cases.forEach { item ->
-            View {
-                attr {
-                    height(32f)
-                    marginRight(7f)
-                    paddingLeft(10f)
-                    paddingRight(10f)
-                    justifyContentCenter()
-                    borderRadius(10f)
-                    backgroundColor(theme.surfaceMuted)
-                }
-                Text {
-                    attr {
-                        text(item.first)
-                        fontSize(11f)
-                        fontWeightMedium()
-                        color(theme.textSecondary)
-                    }
-                }
-                event { click { onQuestion(item.second) } }
-            }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.NestedConversation(
-    state: SubThreadState,
-    theme: StockChatTheme,
-    onToggle: (String) -> Unit,
-    onInput: (String, String) -> Unit,
-    onSend: (String) -> Unit,
-) {
-    View {
-        attr {
-            marginTop(8f)
-            marginLeft(16f)
-            padding(10f)
-            backgroundColor(theme.brandSoft)
-            borderRadius(8f)
-        }
-        View {
-            attr { flexDirectionRow(); alignItemsCenter() }
-            View { attr { width(2f); height(18f); marginRight(7f); backgroundColor(theme.brand); borderRadius(1f) } }
-            Text { attr { text(state.title); fontSize(11f); fontWeightMedium(); color(theme.brand); flex(1f) } }
-            Text { attr { text(if (state.collapsed) "展开" else "收起"); fontSize(11f); color(theme.brand) } }
-            event { click { onToggle(state.cardId) } }
-        }
-        if (!state.collapsed) {
-            Text { attr { text(state.response); marginTop(8f); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
-            View {
-                attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
-                View {
-                    attr { flex(1f); height(34f); paddingLeft(9f); paddingRight(9f); backgroundColor(theme.surface); borderRadius(8f); justifyContentCenter() }
-                    Input {
-                        attr { height(32f); fontSize(12f); color(theme.textPrimary); placeholder("继续追问"); placeholderColor(theme.textTertiary) }
-                        event { textDidChange { onInput(state.cardId, it.text) } }
-                    }
-                }
-                View {
-                    attr { marginLeft(6f); height(34f); paddingLeft(10f); paddingRight(10f); allCenter(); backgroundColor(theme.brand); borderRadius(8f) }
-                    Text { attr { text(if (state.streaming) "…" else "发送"); fontSize(11f); color(theme.onBrand) } }
-                    if (!state.streaming) event { click { onSend(state.cardId) } }
-                }
-            }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.ActiveComparePanel(
-    model: StockCompareCardModel,
-    theme: StockChatTheme,
-    onOpenStock: (String) -> Unit,
-    onClose: () -> Unit,
-) {
-    View {
-        attr {
-            marginLeft(12f)
-            marginRight(12f)
-            marginBottom(8f)
-            padding(10f)
-            backgroundColor(theme.surface)
-            borderRadius(theme.cardRadius)
-        }
-        View {
-            attr { flexDirectionRow(); alignItemsCenter() }
-            Text {
-                attr {
-                    text("对比视图")
-                    fontSize(12f)
-                    fontWeightSemiBold()
-                    color(theme.textPrimary)
-                    flex(1f)
-                }
-            }
-            Text { attr { text("退出"); fontSize(11f); color(theme.textSecondary) } }
-            event { click { onClose() } }
-        }
-        CardShell(
-            model,
-            CardContext(
-                theme = theme,
-                density = CardDensity.FULL,
-                onOpenStock = onOpenStock,
-            ),
-        )
-    }
-}
-
-internal fun ViewContainer<*, *>.CardSheetHost(
-    model: CardModel,
-    level: SheetLevel,
-    theme: StockChatTheme,
-    renderer: GlassRenderer = GlassRenderer.Default,
-    presented: Boolean = true,
-    interactive: Boolean = presented,
-    viewportHeight: Float,
-    bottomInset: Float,
-    onDismiss: () -> Unit,
-    onLower: () -> Unit,
-    onRaise: () -> Unit,
-    onPan: (String, Float) -> Unit,
-    onOpenStock: (String) -> Unit,
-    onTerm: (String) -> Unit,
-    primaryActionLabel: String? = null,
-    onPrimaryAction: (String) -> Unit = {},
-) {
-    println("[STOCKCHAT_DBG] CardSheetHost render model=${model.cardType} level=$level presented=$presented interactive=$interactive")
-    val availableHeight = (viewportHeight - bottomInset).coerceAtLeast(520f)
-    val sheetHeight = (availableHeight * level.ratio).coerceAtLeast(180f)
-    val footerHeight = if (level == SheetLevel.FULL) 0f else 52f
-    val overlayHeight = (viewportHeight - sheetHeight - bottomInset).coerceAtLeast(0f)
-    View {
-        attr {
-            absolutePosition(top = 0f, left = 0f, right = 0f)
-            height(overlayHeight)
-            backgroundColor(Color(0x4D000000))
-            opacity(if (presented) 1f else 0f)
-            // While hidden the scrim must not swallow touches, otherwise the
-            // page underneath (including the fresh sheet's own content) is
-            // left unresponsive for the whole presentation window.
-            touchEnable(interactive)
-            animate(Animation.easeOut(0.20f), presented)
-        }
-        event { click { if (interactive) onDismiss() } }
-    }
-    View {
-        attr {
-            absolutePosition(left = 0f, right = 0f, bottom = 0f)
-            height(sheetHeight + bottomInset)
-            paddingLeft(16f)
-            paddingRight(16f)
-            paddingBottom(12f + bottomInset)
-            opacity(if (presented) 1f else 0f)
-            transform(scale = if (presented) Scale.DEFAULT else Scale(0.98f, 0.98f))
-            touchEnable(interactive)
-            animate(Animation.easeOut(if (renderer.mode == GlassRenderingMode.SIMPLIFIED) 0.20f else 0.40f), presented)
-            animate(Animation.easeOut(0.26f), level)
-        }
-        // The transition material fades its blur toward removal before the sheet unmounts.
-        GlassBackdrop(
-            if (presented) theme.glass.sheet else theme.glass.dissolve,
-            renderer,
-            blurVisible = presented,
-        )
-        View {
-            attr {
-                width(56f)
-                height(36f)
-                alignSelfCenter()
-                allCenter()
-                capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
-            }
-            View {
-                attr {
-                    width(36f)
-                    height(4f)
-                    backgroundColor(theme.divider)
-                    borderRadius(2f)
-                }
-            }
-            event { pan { onPan(it.state, it.y) } }
-        }
-        View {
-            attr { flexDirectionRow(); alignItemsCenter() }
-            Text { attr { text("完整内容"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary); flex(1f) } }
-            if (primaryActionLabel != null) {
-                Text {
-                    attr {
-                        text(primaryActionLabel)
-                        marginRight(14f)
-                        fontSize(12f)
-                        fontWeightSemiBold()
-                        color(if (primaryActionLabel == "已自选") theme.textTertiary else theme.brand)
-                    }
-                    event {
-                        click {
-                            if (interactive) cardPrimarySymbol(model)?.let(onPrimaryAction)
-                        }
-                    }
-                }
-            }
-            Text { attr { text("收起"); fontSize(12f); color(theme.textSecondary) } }
-            event { click { onLower() } }
-        }
-        Scroller {
-            attr { height((sheetHeight - 82f - footerHeight).coerceAtLeast(64f)); marginTop(6f) }
-            CardShell(
-                model,
-                CardContext(
-                    theme = theme,
-                    density = level.density,
-                    onOpenStock = onOpenStock,
-                    onExplainTerm = onTerm,
-                    glass = renderer,
-                ),
-            )
-        }
-        if (level != SheetLevel.FULL) {
-            View {
-                attr {
-                    alignSelfStretch()
-                    height(38f)
-                    marginTop(8f)
-                    allCenter()
-                    backgroundColor(theme.brandSoft)
-                    borderRadius(10f)
-                }
-                Text { attr { text("展开更多"); fontSize(12f); fontWeightMedium(); color(theme.brand) } }
-                event { click { onRaise() } }
-            }
-        }
-    }
-}
-
-private fun cardPrimarySymbol(model: CardModel): String? = when (model) {
-    is StockQuoteCardModel -> model.quote.symbol
-    is StockChartCardModel -> model.quote.symbol
-    is AttributionCardModel -> model.quote.symbol
-    is InsightCardModel -> model.quote.symbol
-    is NewsCardModel -> model.quote.symbol
-    is StockCompareCardModel -> model.quotes.firstOrNull()?.symbol
-    else -> null
 }

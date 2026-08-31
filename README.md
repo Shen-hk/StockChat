@@ -23,10 +23,17 @@
 
 ## 工程结构
 
-- `shared/src/commonMain`：跨端页面、卡片、协议、数据 Provider 和算法
+- `shared/src/commonMain`：跨端业务与 UI；按下列边界组织
+  - `page`：页面生命周期与状态编排，不承载协议解析或持久化细节
+  - `page/components`：无页面所有权的可复用视图（消息流、卡片 Sheet、页面脚手架）
+  - `chat` / `composer`：对话用例、发送协议、命令解析与输入编辑状态机
+  - `data`：行情、自选、配置和缓存；通过 `KeyValueStorage` 与平台存储隔离
+  - `cards` / `protocol` / `richtext`：结构化卡片、流式协议和实体富文本
 - `shared/src/commonTest`：协议、格式、图表、实体和行情解析测试
 - `androidApp`：Android 壳工程
 - `h5App`：Web 渲染入口
+
+依赖从页面流向领域和数据接口。平台模块只允许出现在 `PagerKeyValueStorage`、网络 Provider、语音录制器等基础设施适配器中。行情与自选依赖按页面作用域创建，避免全局对象持有已经销毁的页面上下文。
 
 ## 构建与验证
 

@@ -20,6 +20,7 @@ import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.data.mock.MockDataBank
 import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.CardSheetHost
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.tencent.kuikly.core.annotations.Page

@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.data.provider
 
-import com.tencent.kuikly.core.base.PagerScope
-import com.tencent.kuikly.core.module.SharedPreferencesModule
+import com.kuikly.stockchat.data.storage.KeyValueStorage
+import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -29,9 +29,10 @@ data class StoredKLines(
     val savedAtMillis: Long,
 )
 
-class SharedPreferencesQuoteCacheStore(override val pagerId: String) : QuoteCacheStore, PagerScope {
-    private val preferences: SharedPreferencesModule
-        get() = getPager().acquireModule(SharedPreferencesModule.MODULE_NAME)
+class SharedPreferencesQuoteCacheStore(
+    private val preferences: KeyValueStorage,
+) : QuoteCacheStore {
+    constructor(pagerId: String) : this(PagerKeyValueStorage(pagerId))
 
     override fun loadSnapshots(): List<StoredQuote<Quote>> =
         readRows(SNAPSHOT_KEY).mapNotNull { row ->

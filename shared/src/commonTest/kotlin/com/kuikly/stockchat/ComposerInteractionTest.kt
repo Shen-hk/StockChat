@@ -2,14 +2,17 @@ package com.kuikly.stockchat
 
 import com.kuikly.stockchat.composer.AtCandidateProvider
 import com.kuikly.stockchat.composer.CommandExecution
+import com.kuikly.stockchat.composer.CommandInvocationParser
 import com.kuikly.stockchat.composer.CommandInvocation
 import com.kuikly.stockchat.composer.CommandRegistry
 import com.kuikly.stockchat.composer.ComposerCatalog
+import com.kuikly.stockchat.composer.ComposerTextOperations
 import com.kuikly.stockchat.composer.MentionEntity
 import com.kuikly.stockchat.composer.MentionType
 import com.kuikly.stockchat.composer.SendPayload
 import com.kuikly.stockchat.composer.SolidTokenRegistry
 import com.kuikly.stockchat.composer.TriggerDetector
+import com.kuikly.stockchat.composer.TriggerSession
 import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.data.provider.QuoteRepository
 import kotlin.test.Test
@@ -60,6 +63,54 @@ class ComposerInteractionTest {
         assertTrue(prompt.contains("估值"))
         assertTrue(prompt.contains("600519.SH 贵州茅台"))
         assertTrue(prompt.contains("000858.SZ 五粮液"))
+    }
+
+    @Test
+    fun commandParserBuildsTypedArgumentsOutsideThePageLayer() {
+        val maotai = MentionEntity.of(ComposerCatalog.find("600519.SH")!!)
+        val wuliangye = MentionEntity.of(ComposerCatalog.find("000858.SZ")!!)
+
+        val invocation = CommandInvocationParser.parse(
+            "/对比 @贵州茅台 @五粮液 估值",
+            listOf(maotai, wuliangye),
+            isExactSecurity = { false },
+        )
+
+        assertEquals("compare", invocation?.commandId)
+        assertEquals(
+            mapOf("left" to "贵州茅台", "right" to "五粮液", "dim" to "估值"),
+            invocation?.args,
+        )
+        assertTrue(CommandInvocationParser.missingRequiredParams(CommandRegistry.resolve("对比")!!, invocation!!.args).isEmpty())
+    }
+
+    @Test
+    fun commandParserFallsBackToExactPlainTextSecurity() {
+        val invocation = CommandInvocationParser.parse(
+            "/解读 600519.SH",
+            emptyList(),
+            isExactSecurity = { it == "600519.SH" },
+        )
+
+        assertEquals(mapOf("target" to "600519.SH"), invocation?.args)
+        assertEquals("600519.SH", CommandInvocationParser.currentParameterQuery("/解读 600519.SH", "解读"))
+        assertEquals("贵州茅台怎么看", CommandInvocationParser.remainder("/ssq 贵州茅台怎么看", "深水区"))
+    }
+
+    @Test
+    fun triggerInsertionPreservesCursorAndReplacesAnActiveFragment() {
+        val inserted = ComposerTextOperations.insertTrigger("看看贵州茅台", 2, null, '@')
+        assertEquals("看看 @贵州茅台", inserted.text)
+        assertEquals(4, inserted.cursor)
+
+        val replaced = ComposerTextOperations.insertTrigger(
+            text = "看看 @茅台",
+            cursor = 6,
+            activeSession = TriggerSession('@', 3, "茅台", 6),
+            trigger = '/',
+        )
+        assertEquals("看看 /", replaced.text)
+        assertEquals(4, replaced.cursor)
     }
 
     @Test

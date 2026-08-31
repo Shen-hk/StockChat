@@ -126,6 +126,7 @@ object Glossary {
             category = GlossaryCategory.TECHNICAL,
             plain = "以最早的价格为基准往前推，保留你真实拿到手的累计涨幅。",
             example = "十年长牛股用后复权看，涨幅往往比前复权数字更惊人，因为把分红送股都算进去了。",
+            advanced = "后复权把分红、送股等收益累计到后续价格中，适合衡量长期持有的总回报，但价格不对应当时真实成交价。",
         ),
         GlossaryEntry(
             key = "SUPPORT", term = "支撑位", aliases = listOf("支撑区"),
@@ -139,6 +140,7 @@ object Glossary {
             category = GlossaryCategory.TECHNICAL,
             plain = "股价上涨时比较难突破的位置，上方套牢盘多在此聚集。",
             example = "股价逼近前期高点却连续放量滞涨，说明上方压力位抛压较重。",
+            advanced = "压力位是成交密集区而非精确价格；放量有效突破后，原压力常会转为回踩支撑，缩量假突破则更容易回落。",
         ),
         GlossaryEntry(
             key = "GAP", term = "缺口", aliases = listOf("跳空", "跳空缺口"),
@@ -152,6 +154,7 @@ object Glossary {
             category = GlossaryCategory.TECHNICAL,
             plain = "当天最高价与最低价的差距，衡量这只票今天波动有多大。",
             example = "振幅 12% 说明多空分歧极大，持仓体验会很颠簸。",
+            advanced = "振幅通常按（最高价－最低价）÷昨收价计算；高位放量大振幅常代表分歧加剧，低位则需结合换手与趋势判断。",
         ),
 
         // ── 估值指标 ────────────────────────────────────────────────
