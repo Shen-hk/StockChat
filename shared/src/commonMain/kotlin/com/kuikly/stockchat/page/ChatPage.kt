@@ -140,16 +140,11 @@ internal class ChatPage : BasePager() {
     private var keepChatAtBottomVersion = 0
     private var peekSymbol: String by observable("")
     private var peekVisible: Boolean by observable(false)
-    // A long-pressed stock opens its quote in the global glass sheet.  Keep the
-    // symbol while a live quote is loading so the interaction never gets lost.
-    private var pendingEntitySheetSymbol: String by observable("")
     // Symbol whose long press was recognised but whose gesture has not ended.
-    // The sheet can render immediately, but stays non-interactive until release.
+    // It also suppresses the click some bridges emit after the terminal touch.
     private var pendingLongPressSymbol: String = ""
-    // The long-press gesture's terminal touch can bleed through into the freshly
-    // mounted sheet and trigger its onOpenStock (jumping to the detail page).
-    // Keep the sheet non-interactive for a short window after it opens so that
-    // the releasing finger can never reach the sheet content.
+    // Sheet interaction is gated independently so its fading layer cannot
+    // accept late taps while it is being dismissed.
     private var sheetInteractive: Boolean by observable(false)
     private var sheetPresentationVersion = 0
     private var ambiguousSymbols: ObservableList<String> by observableList()
@@ -160,7 +155,8 @@ internal class ChatPage : BasePager() {
     private var liveDataMode: Boolean by observable(true)
     // Dynamic island: the top title capsule morphs into a live quote card.
     private var islandExpanded: Boolean by observable(false)
-    private val islandSymbol = "600519.SH"
+    private var islandSymbol: String by observable("600519.SH")
+    private var islandWatchlisted: Boolean by observable(false)
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
@@ -276,6 +272,7 @@ internal class ChatPage : BasePager() {
     override fun pageDidAppear() {
         super.pageDidAppear()
         viewModel.refreshConfigStatus()
+        islandWatchlisted = watchlistStore.contains(islandSymbol)
         // Preload the island quote so the morph opens with data in place.
         requestQuote(islandSymbol)
     }
@@ -360,8 +357,10 @@ internal class ChatPage : BasePager() {
                 pageWidth = page.pagerData.pageViewWidth,
                 islandExpanded = { page.islandExpanded },
                 islandQuote = { page.quoteFor(page.islandSymbol) },
+                islandWatchlisted = { page.islandWatchlisted },
                 onToggleIsland = { page.toggleIsland() },
                 onOpenIslandDetail = { symbol -> page.islandExpanded = false; page.openStockDetail(symbol) },
+                onToggleIslandWatchlist = { symbol -> page.toggleIslandWatchlist(symbol) },
                 onMenu = { page.drawerOpen = !page.drawerOpen },
                 onNewChat = { page.startNewChat() },
             )
@@ -941,10 +940,10 @@ internal class ChatPage : BasePager() {
     private fun resetSessionUiState() {
         ambiguousSymbols.clear()
         ambiguousEntityText = ""
-        pendingEntitySheetSymbol = ""
         pendingLongPressSymbol = ""
         peekSymbol = ""
         peekVisible = false
+        islandExpanded = false
         sheetCard = null
         sheetMounted = false
         sheetPresented = false
@@ -1553,7 +1552,7 @@ internal class ChatPage : BasePager() {
             if (cancelled || pendingLongPressSymbol == entity.target) return
             pendingLongPressSymbol = entity.target
             suppressNextStockClickSymbol = entity.target
-            handleStockEntity(entity, EntityAction.SHEET)
+            handleStockEntity(entity, EntityAction.ISLAND)
             return
         }
 
@@ -1568,16 +1567,8 @@ internal class ChatPage : BasePager() {
     }
 
     private fun finishStockLongPress(symbol: String) {
-        // Mount after the terminal touch callback returns. Kuikly's vif block
-        // captures presentation values when it mounts, so mounting hidden and
-        // toggling the flag later leaves the native view permanently invisible.
-        setTimeout(16) {
-            if (sheetCard?.cardId == "entity-sheet:$symbol") {
-                sheetPresented = true
-                sheetInteractive = true
-                sheetMounted = true
-            }
-        }
+        // The island is outside the releasing finger's hit area, so no deferred
+        // mount is needed. Keep only the short click-suppression guard.
         setTimeout(400) {
             if (suppressNextStockClickSymbol == symbol) {
                 suppressNextStockClickSymbol = ""
@@ -1601,7 +1592,7 @@ internal class ChatPage : BasePager() {
         when (action) {
             EntityAction.DETAIL -> openStockDetail(symbol)
             EntityAction.PREVIEW -> showQuote(symbol)
-            EntityAction.SHEET -> openEntityQuoteSheet(symbol)
+            EntityAction.ISLAND -> openEntityQuoteIsland(symbol)
         }
     }
 
@@ -1617,28 +1608,29 @@ internal class ChatPage : BasePager() {
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(message)
     }
 
-    private fun openEntityQuoteSheet(symbol: String) {
-        pendingEntitySheetSymbol = symbol
+    private fun openEntityQuoteIsland(symbol: String) {
+        islandSymbol = symbol
+        islandWatchlisted = watchlistStore.contains(symbol)
         requestQuote(symbol)
-        val cached = quoteFor(symbol)
-        if (cached != null) {
-            presentPendingEntitySheet(symbol, cached)
-        } else if (quoteStates.any { it.symbol == symbol }) {
-            pendingEntitySheetSymbol = ""
-        }
+        islandExpanded = true
     }
 
-    private fun presentPendingEntitySheet(symbol: String, quote: Quote?) {
-        if (pendingEntitySheetSymbol != symbol) return
-        if (quote == null) {
-            pendingEntitySheetSymbol = ""
-            return
+    private fun toggleIslandWatchlist(symbol: String) {
+        val quote = quoteFor(symbol)
+        val security = Securities.all.firstOrNull { it.symbol == symbol }
+        val name = quote?.name ?: security?.name ?: symbol
+        val message = if (watchlistStore.contains(symbol)) {
+            watchlistStore.remove(symbol)
+            "已从自选移除：$name"
+        } else {
+            when (watchlistStore.add(symbol, name)) {
+                WatchlistAddResult.ADDED -> "已加入自选：$name"
+                WatchlistAddResult.ALREADY_IN -> "$name 已在自选中"
+                WatchlistAddResult.FULL -> "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
+            }
         }
-        pendingEntitySheetSymbol = ""
-        openCardSheet(
-            StockQuoteCardModel(quote, "entity-sheet:$symbol"),
-            deferInteraction = pendingLongPressSymbol == symbol,
-        )
+        islandWatchlisted = watchlistStore.contains(symbol)
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(message)
     }
 
     private fun contextSymbolsBefore(messageId: String): List<String> =
@@ -1661,7 +1653,6 @@ internal class ChatPage : BasePager() {
                 val updated = ChatQuoteState(symbol, quote, DataMode.OFFLINE)
                 val index = quoteStates.indexOfFirst { it.symbol == symbol }
                 if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
-                presentPendingEntitySheet(symbol, quote)
             }
             return
         }
@@ -1669,7 +1660,6 @@ internal class ChatPage : BasePager() {
             val updated = ChatQuoteState(symbol, result.quote, result.mode)
             val index = quoteStates.indexOfFirst { it.symbol == symbol }
             if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
-            presentPendingEntitySheet(symbol, result.quote)
         }
     }
 
@@ -1694,7 +1684,10 @@ internal class ChatPage : BasePager() {
         quoteStates.clear()
         (viewModel.messages.flatMap { EntityRecognizer.recognize(it.content) }
             .filter { it.type == EntityType.STOCK }
-            .map { it.target } + listOfNotNull(peekSymbol.takeIf { it.isNotEmpty() }))
+            .map { it.target } + listOfNotNull(
+                peekSymbol.takeIf { it.isNotEmpty() },
+                islandSymbol.takeIf { it.isNotEmpty() },
+            ))
             .distinct()
             .forEach(::requestQuote)
     }
@@ -2712,7 +2705,7 @@ internal class ChatPage : BasePager() {
 
 }
 
-private enum class EntityAction { DETAIL, PREVIEW, SHEET }
+private enum class EntityAction { DETAIL, PREVIEW, ISLAND }
 
 internal enum class SheetLevel(val ratio: Float, val density: CardDensity) {
     PEEK(0.25f, CardDensity.MINI),

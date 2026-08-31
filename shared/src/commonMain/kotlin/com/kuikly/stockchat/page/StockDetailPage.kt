@@ -42,7 +42,9 @@ internal class StockDetailPage : BasePager() {
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val quoteRepository get() = dependencies.quoteRepository
     private val watchlistStore get() = dependencies.watchlistStore
-    private var quote: Quote by observable(quoteRepository.cachedOrOffline("600519.SH")!!)
+    // Page instances are constructed before Kuikly assigns pagerId. Do not
+    // touch page-scoped storage/repositories from a property initializer.
+    private var quote: Quote by observable(Quote.placeholder("600519.SH", "贵州茅台"))
     private var dataModeLabel: String by observable("正在连接行情")
     private var chartMode: StockChartMode by observable(StockChartMode.TIMELINE)
     private var chartPeriod: StockChartPeriod by observable(StockChartPeriod.DAY)

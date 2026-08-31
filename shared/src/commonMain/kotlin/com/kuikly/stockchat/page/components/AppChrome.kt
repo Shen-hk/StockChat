@@ -36,8 +36,10 @@ fun ViewContainer<*, *>.ChatTopNav(
     // so reactive island inputs are accessors rather than frozen values.
     islandExpanded: () -> Boolean = { false },
     islandQuote: () -> Quote? = { null },
+    islandWatchlisted: () -> Boolean = { false },
     onToggleIsland: () -> Unit = {},
     onOpenIslandDetail: (String) -> Unit = {},
+    onToggleIslandWatchlist: (String) -> Unit = {},
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
 ) {
@@ -123,12 +125,14 @@ fun ViewContainer<*, *>.ChatTopNav(
         pageWidth = pageWidth,
         expanded = islandExpanded,
         quote = islandQuote,
+        watchlisted = islandWatchlisted,
         liveData = liveData,
         title = contextTitle,
         theme = theme,
         renderer = renderer,
         onToggle = onToggleIsland,
         onOpenDetail = onOpenIslandDetail,
+        onToggleWatchlist = onToggleIslandWatchlist,
     )
 }
 /**
@@ -147,12 +151,14 @@ private fun ViewContainer<*, *>.StockIsland(
     pageWidth: Float,
     expanded: () -> Boolean,
     quote: () -> Quote?,
+    watchlisted: () -> Boolean,
     liveData: () -> Boolean,
     title: String?,
     theme: StockChatTheme,
     renderer: GlassRenderer,
     onToggle: () -> Unit,
     onOpenDetail: (String) -> Unit,
+    onToggleWatchlist: (String) -> Unit,
 ) {
     val collapsedWidth = if (title == null) 128f else 200f
     val expandedWidth = (pageWidth - 28f).coerceAtLeast(collapsedWidth)
@@ -289,12 +295,45 @@ private fun ViewContainer<*, *>.StockIsland(
                         attr { marginTop(9f); flexDirectionRow(); alignItemsCenter() }
                         Text { attr { text(quote()?.let { "高 ${Format.price(it.high)}" } ?: "高 --"); fontSize(10f); color(theme.textSecondary) } }
                         Text { attr { text(quote()?.let { "低 ${Format.price(it.low)}" } ?: "低 --"); marginLeft(10f); fontSize(10f); color(theme.textSecondary) } }
-                        Text { attr { text(quote()?.let { "额 ${Format.compactAmount(it.amount)}" } ?: "额 --"); marginLeft(10f); fontSize(10f); color(theme.textSecondary) } }
                         View { attr { flex(1f) } }
-                        Text { attr { text("查看详情 ›"); fontSize(11f); fontWeightMedium(); color(theme.brand) } }
-                        event {
-                            click {
-                                if (expanded()) quote()?.let { onOpenDetail(it.symbol) }
+                        View {
+                            attr {
+                                height(24f)
+                                paddingLeft(7f)
+                                paddingRight(7f)
+                                allCenter()
+                                borderRadius(8f)
+                                backgroundColor(if (watchlisted()) theme.brandSoft else theme.surfaceMuted)
+                            }
+                            Text {
+                                attr {
+                                    text(if (watchlisted()) "✓ 自选" else "＋ 自选")
+                                    fontSize(10f)
+                                    fontWeightMedium()
+                                    color(if (watchlisted()) theme.brand else theme.textSecondary)
+                                }
+                            }
+                            event {
+                                click {
+                                    if (expanded()) quote()?.let { onToggleWatchlist(it.symbol) }
+                                }
+                            }
+                        }
+                        View {
+                            attr {
+                                height(24f)
+                                marginLeft(6f)
+                                paddingLeft(8f)
+                                paddingRight(8f)
+                                allCenter()
+                                borderRadius(8f)
+                                backgroundColor(theme.brandSoft)
+                            }
+                            Text { attr { text("详情 ›"); fontSize(10f); fontWeightMedium(); color(theme.brand) } }
+                            event {
+                                click {
+                                    if (expanded()) quote()?.let { onOpenDetail(it.symbol) }
+                                }
                             }
                         }
                     }
@@ -439,7 +478,7 @@ fun ViewContainer<*, *>.ChatDrawer(
 
         // Quick entries with tinted icon tiles.
         View { attr { height(1f); marginTop(8f); marginBottom(6f); backgroundColor(theme.divider) } }
-        DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛演示（茅台）", theme) { onClose(); onToggleIsland() }
+        DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛行情", theme) { onClose(); onToggleIsland() }
         DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme) { onClose(); onOpenWatchlist() }
         DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme) { onClose(); onOpenGlossary() }
         DrawerMenuItem("▦", theme.textSecondary, theme.surfaceMuted, "卡片图鉴", theme) { onClose(); onOpenGallery() }

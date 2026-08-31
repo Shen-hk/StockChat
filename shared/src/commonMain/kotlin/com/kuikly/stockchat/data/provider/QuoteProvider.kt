@@ -56,6 +56,27 @@ data class Quote(
     val change: Double get() = price - previousClose
     val changePercent: Double get() = if (previousClose == 0.0) 0.0 else change / previousClose * 100.0
     val rising: Boolean get() = change >= 0.0
+
+    companion object {
+        /** Safe construction-time value for pages whose scoped repository is not available yet. */
+        fun placeholder(symbol: String, name: String = symbol): Quote = Quote(
+            symbol = symbol,
+            name = name,
+            price = 0.0,
+            previousClose = 0.0,
+            open = 0.0,
+            high = 0.0,
+            low = 0.0,
+            volume = 0.0,
+            amount = 0.0,
+            turnoverRate = 0.0,
+            peTtm = 0.0,
+            pb = 0.0,
+            marketCap = 0.0,
+            timestamp = "",
+            source = "",
+        )
+    }
 }
 
 interface QuoteProvider {
