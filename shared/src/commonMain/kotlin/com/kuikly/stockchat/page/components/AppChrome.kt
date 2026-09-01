@@ -13,6 +13,7 @@ import com.tencent.kuikly.core.base.Direction
 import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -37,12 +38,25 @@ fun ViewContainer<*, *>.ChatTopNav(
     islandExpanded: () -> Boolean = { false },
     islandQuote: () -> Quote? = { null },
     islandWatchlisted: () -> Boolean = { false },
+    islandDropActive: () -> Boolean = { false },
+    islandFirstCompareDrop: () -> Boolean = { false },
+    islandCompareVisible: () -> Boolean = { false },
+    islandTextOnly: () -> Boolean = { false },
+    islandCompareLeftSymbol: () -> String = { "" },
+    islandCompareRightSymbol: () -> String = { "" },
+    islandCompareLeftQuote: () -> Quote? = { null },
+    islandCompareRightQuote: () -> Quote? = { null },
+    islandCompareInsightLoading: () -> Boolean = { false },
+    islandCompareInsightAvailable: () -> Boolean = { false },
     onToggleIsland: () -> Unit = {},
     onOpenIslandDetail: (String) -> Unit = {},
     onToggleIslandWatchlist: (String) -> Unit = {},
+    onOpenIslandCompare: () -> Unit = {},
+    onClearIslandCompare: () -> Unit = {},
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
 ) {
+    val islandPresented = { islandExpanded() || islandDropActive() || islandCompareVisible() }
     View {
         attr {
             // This chrome must float above the scroller.  If it participates in
@@ -83,7 +97,7 @@ fun ViewContainer<*, *>.ChatTopNav(
                     // being swallowed by the card.  The return is slower and
                     // slightly delayed (easeOut 0.30s + 0.06s) so the card
                     // settles before the controls come back.
-                    val e = islandExpanded()
+                    val e = islandPresented()
                     opacity(if (e) 0f else 1f)
                     transform(
                         scale = Scale(if (e) 0.84f else 1f, if (e) 0.84f else 1f),
@@ -105,7 +119,7 @@ fun ViewContainer<*, *>.ChatTopNav(
                     size(40f, 40f); allCenter(); borderRadius(20f)
                     // Mirror of the menu button above: same retreat motion,
                     // pushed to the right instead of the left.
-                    val e = islandExpanded()
+                    val e = islandPresented()
                     opacity(if (e) 0f else 1f)
                     transform(
                         scale = Scale(if (e) 0.84f else 1f, if (e) 0.84f else 1f),
@@ -123,9 +137,19 @@ fun ViewContainer<*, *>.ChatTopNav(
     StockIsland(
         statusBarHeight = statusBarHeight,
         pageWidth = pageWidth,
-        expanded = islandExpanded,
+        expanded = islandPresented,
         quote = islandQuote,
         watchlisted = islandWatchlisted,
+        dropActive = islandDropActive,
+        firstCompareDrop = islandFirstCompareDrop,
+        compareVisible = islandCompareVisible,
+        textOnly = islandTextOnly,
+        compareLeftSymbol = islandCompareLeftSymbol,
+        compareRightSymbol = islandCompareRightSymbol,
+        compareLeftQuote = islandCompareLeftQuote,
+        compareRightQuote = islandCompareRightQuote,
+        compareInsightLoading = islandCompareInsightLoading,
+        compareInsightAvailable = islandCompareInsightAvailable,
         liveData = liveData,
         title = contextTitle,
         theme = theme,
@@ -133,6 +157,8 @@ fun ViewContainer<*, *>.ChatTopNav(
         onToggle = onToggleIsland,
         onOpenDetail = onOpenIslandDetail,
         onToggleWatchlist = onToggleIslandWatchlist,
+        onOpenCompare = onOpenIslandCompare,
+        onClearCompare = onClearIslandCompare,
     )
 }
 /**
@@ -152,6 +178,16 @@ private fun ViewContainer<*, *>.StockIsland(
     expanded: () -> Boolean,
     quote: () -> Quote?,
     watchlisted: () -> Boolean,
+    dropActive: () -> Boolean,
+    firstCompareDrop: () -> Boolean,
+    compareVisible: () -> Boolean,
+    textOnly: () -> Boolean,
+    compareLeftSymbol: () -> String,
+    compareRightSymbol: () -> String,
+    compareLeftQuote: () -> Quote?,
+    compareRightQuote: () -> Quote?,
+    compareInsightLoading: () -> Boolean,
+    compareInsightAvailable: () -> Boolean,
     liveData: () -> Boolean,
     title: String?,
     theme: StockChatTheme,
@@ -159,6 +195,8 @@ private fun ViewContainer<*, *>.StockIsland(
     onToggle: () -> Unit,
     onOpenDetail: (String) -> Unit,
     onToggleWatchlist: (String) -> Unit,
+    onOpenCompare: () -> Unit,
+    onClearCompare: () -> Unit,
 ) {
     val collapsedWidth = if (title == null) 128f else 200f
     val expandedWidth = (pageWidth - 28f).coerceAtLeast(collapsedWidth)
@@ -176,12 +214,15 @@ private fun ViewContainer<*, *>.StockIsland(
         View {
             attr {
                 val e = expanded()
-                width(if (e) expandedWidth else collapsedWidth)
-                height(if (e) 132f else 36f)
+                val dropTextOnly = dropActive() && !firstCompareDrop()
+                width(if (e && !dropTextOnly) expandedWidth else collapsedWidth)
+                height(if (e) if (dropTextOnly) 36f else if (compareVisible()) 146f else 132f else 36f)
                 borderRadius(if (e) 24f else 18f)
                 animate(Animation.easeOut(0.34f), e)
             }
-            GlassBackdrop(theme.glass.peek, renderer)
+            vif({ (!textOnly() || expanded() || compareVisible()) && (!dropActive() || firstCompareDrop()) }) {
+                GlassBackdrop(theme.glass.peek, renderer)
+            }
 
             // Collapsed identity layer: title + live dot.  It owns taps only
             // while visible so the card beneath never swallows the toggle.
@@ -224,9 +265,10 @@ private fun ViewContainer<*, *>.StockIsland(
                     paddingRight(16f)
                     paddingTop(12f)
                     paddingBottom(11f)
-                    opacity(if (e) 1f else 0f)
+                    val showQuote = e && !dropActive() && !compareVisible()
+                    opacity(if (showQuote) 1f else 0f)
                     transform(Translate(0f, if (e) 0f else 0.10f))
-                    touchEnable(e)
+                    touchEnable(showQuote)
                     animate(Animation.easeOut(0.26f), e)
                 }
                 View {
@@ -337,6 +379,193 @@ private fun ViewContainer<*, *>.StockIsland(
                             }
                         }
                     }
+                }
+            }
+
+            // Drag target layer. It replaces the quote content while a stock is hovering so the
+            // destination and the result of releasing are unambiguous.
+            View {
+                attr {
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    allCenter()
+                    opacity(if (dropActive()) 1f else 0f)
+                    touchEnable(false)
+                    backgroundColor(if (firstCompareDrop()) theme.brandSoft else Color(0xFFFFFFFF, 0f))
+                    animate(Animation.easeOut(0.14f), dropActive())
+                }
+                View {
+                    attr {
+                        size(if (firstCompareDrop()) 42f else 0f, if (firstCompareDrop()) 42f else 0f)
+                        borderRadius(21f)
+                        allCenter()
+                        backgroundColor(theme.brand)
+                        opacity(if (firstCompareDrop()) 1f else 0f)
+                    }
+                    Text { attr { text("⇄"); fontSize(21f); fontWeightBold(); color(theme.onBrand) } }
+                }
+                Text {
+                    attr {
+                        text(if (compareLeftSymbol().isEmpty()) "松手创建股票对比" else "松手加入对比")
+                        marginTop(if (firstCompareDrop()) 9f else 0f)
+                        fontSize(13f)
+                        fontWeightSemiBold()
+                        color(theme.brand)
+                    }
+                }
+            }
+
+            // Comparison lobby. The first drop fills one slot and keeps the island open; the
+            // second drop fills the other slot and creates the full comparison panel.
+            View {
+                attr {
+                    val visible = expanded() && !dropActive() && compareVisible() && compareLeftSymbol().isNotEmpty()
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    padding(12f)
+                    opacity(if (visible) 1f else 0f)
+                    touchEnable(visible)
+                    animate(Animation.easeOut(0.2f), visible)
+                }
+                View {
+                    attr { height(24f); flexDirectionRow(); alignItemsCenter() }
+                    Text { attr { text("股票对比"); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text {
+                        attr {
+                            val ready = compareRightSymbol().isNotEmpty() &&
+                                compareLeftQuote() != null && compareRightQuote() != null
+                            text(
+                                when {
+                                    compareRightSymbol().isEmpty() -> "已选 1/2"
+                                    compareInsightLoading() -> "AI 解读中"
+                                    compareInsightAvailable() -> "含 AI 解读"
+                                    ready -> "对比就绪"
+                                    else -> "正在读取行情"
+                                }
+                            )
+                            marginLeft(7f)
+                            fontSize(10f)
+                            color(theme.brand)
+                        }
+                    }
+                    View { attr { flex(1f) } }
+                    View {
+                        attr { size(24f, 24f); allCenter(); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
+                        Text { attr { text("×"); fontSize(13f); color(theme.textSecondary) } }
+                        event { click { onClearCompare() } }
+                    }
+                }
+                View {
+                    attr { height(52f); marginTop(7f); flexDirectionRow() }
+                    CompareIslandSlot(
+                        name = { compareLeftQuote()?.name ?: "正在读取" },
+                        symbol = compareLeftSymbol,
+                        quote = compareLeftQuote,
+                        filled = { true },
+                        theme = theme,
+                    )
+                    View { attr { width(8f) } }
+                    CompareIslandSlot(
+                        name = { compareRightQuote()?.name ?: "拖入另一只股票" },
+                        symbol = compareRightSymbol,
+                        quote = compareRightQuote,
+                        filled = { compareRightSymbol().isNotEmpty() },
+                        theme = theme,
+                    )
+                }
+                View {
+                    attr {
+                        val ready = compareRightSymbol().isNotEmpty() &&
+                            compareLeftQuote() != null && compareRightQuote() != null
+                        height(25f)
+                        marginTop(5f)
+                        borderRadius(9f)
+                        allCenter()
+                        backgroundColor(if (ready) theme.brand else theme.surfaceMuted)
+                    }
+                    Text {
+                        attr {
+                            val ready = compareRightSymbol().isNotEmpty() &&
+                                compareLeftQuote() != null && compareRightQuote() != null
+                            text(
+                                when {
+                                    compareRightSymbol().isEmpty() -> "继续拖入股票实体"
+                                    compareInsightLoading() -> "行情对比已生成，AI 解读中"
+                                    compareInsightAvailable() -> "查看对比与 AI 解读"
+                                    ready -> "查看对比"
+                                    else -> "正在生成对比"
+                                }
+                            )
+                            fontSize(10f)
+                            fontWeightMedium()
+                            color(if (ready) theme.onBrand else theme.textTertiary)
+                        }
+                    }
+                    event {
+                        click {
+                            val ready = compareRightSymbol().isNotEmpty() &&
+                                compareLeftQuote() != null && compareRightQuote() != null
+                            if (ready) onOpenCompare()
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.CompareIslandSlot(
+    name: () -> String,
+    symbol: () -> String,
+    quote: () -> Quote?,
+    filled: () -> Boolean,
+    theme: StockChatTheme,
+) {
+    View {
+        attr {
+            flex(1f)
+            height(52f)
+            paddingLeft(10f)
+            paddingRight(10f)
+            justifyContentCenter()
+            borderRadius(12f)
+            backgroundColor(if (filled()) theme.surface else theme.surfaceMuted)
+        }
+        Text {
+            attr {
+                text(name())
+                fontSize(11f)
+                fontWeightMedium()
+                color(if (filled()) theme.textPrimary else theme.textTertiary)
+            }
+        }
+        Text {
+            attr {
+                text(symbol())
+                marginTop(2f)
+                fontSize(8f)
+                color(theme.textTertiary)
+            }
+        }
+        View {
+            attr {
+                marginTop(4f)
+                flexDirectionRow()
+                alignItemsCenter()
+                opacity(if (quote() == null) 0f else 1f)
+            }
+            Text {
+                attr {
+                    text(quote()?.let { Format.price(it.price) } ?: "--")
+                    fontSize(10f)
+                    fontWeightSemiBold()
+                    color(theme.textPrimary)
+                }
+            }
+            Text {
+                attr {
+                    text(quote()?.let { Format.percent(it.changePercent) } ?: "--")
+                    marginLeft(6f)
+                    fontSize(9f)
+                    color(quote()?.let { if (it.rising) theme.rise else theme.fall } ?: theme.textTertiary)
                 }
             }
         }

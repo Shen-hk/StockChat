@@ -27,6 +27,7 @@ import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatViewModel
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.StreamState
+import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
@@ -73,8 +74,11 @@ import com.kuikly.stockchat.richtext.EntityStreamingMarkdown
 import com.kuikly.stockchat.richtext.EntityRecognizer
 import com.kuikly.stockchat.richtext.EntitySpan
 import com.kuikly.stockchat.richtext.EntityType
+import com.kuikly.stockchat.richtext.EntityDropResolver
+import com.kuikly.stockchat.richtext.EntityDropTarget
 import com.kuikly.stockchat.composer.AtCandidate
 import com.kuikly.stockchat.composer.AtCandidateProvider
+import com.kuikly.stockchat.composer.ComposerCatalog
 import com.kuikly.stockchat.composer.CommandExecution
 import com.kuikly.stockchat.composer.CommandInvocationParser
 import com.kuikly.stockchat.composer.CommandInvocation
@@ -101,6 +105,7 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.attr.CaptureRule
 import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
+import com.tencent.kuikly.core.base.event.LongPressParams
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
@@ -143,6 +148,14 @@ internal class ChatPage : BasePager() {
     // Symbol whose long press was recognised but whose gesture has not ended.
     // It also suppresses the click some bridges emit after the terminal touch.
     private var pendingLongPressSymbol: String = ""
+    private var draggedEntity: EntitySpan? = null
+    private var entityDragActive: Boolean by observable(false)
+    private var entityDragX: Float by observable(0f)
+    private var entityDragY: Float by observable(0f)
+    private var entityDragStartX = 0f
+    private var entityDragStartY = 0f
+    private var entityDragName: String by observable("")
+    private var entityDropTarget: EntityDropTarget by observable(EntityDropTarget.NONE)
     // Sheet interaction is gated independently so its fading layer cannot
     // accept late taps while it is being dismissed.
     private var sheetInteractive: Boolean by observable(false)
@@ -157,6 +170,9 @@ internal class ChatPage : BasePager() {
     private var islandExpanded: Boolean by observable(false)
     private var islandSymbol: String by observable("600519.SH")
     private var islandWatchlisted: Boolean by observable(false)
+    private var islandCompareLeftSymbol: String by observable("")
+    private var islandCompareRightSymbol: String by observable("")
+    private var islandCompareVisible: Boolean by observable(false)
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
@@ -226,6 +242,11 @@ internal class ChatPage : BasePager() {
     private var compareCandidateKey: String by observable("")
     private var compareCandidateSymbol: String by observable("")
     private var compareCard: StockCompareCardModel? by observable(null)
+    private var compareInsightState: CompareInsightState by observable(CompareInsightState.IDLE)
+    private var compareInsightText: String by observable("")
+    private var compareInsightError: String by observable("")
+    private var compareInsightPairKey = ""
+    private var compareInsightVersion = 0
     private var sheetCard: CardModel? by observable(null)
     private var sheetMounted: Boolean by observable(false)
     private var sheetPresented: Boolean by observable(false)
@@ -358,9 +379,27 @@ internal class ChatPage : BasePager() {
                 islandExpanded = { page.islandExpanded },
                 islandQuote = { page.quoteFor(page.islandSymbol) },
                 islandWatchlisted = { page.islandWatchlisted },
+                islandDropActive = {
+                    page.entityDragActive && page.entityDropTarget == EntityDropTarget.ISLAND
+                },
+                islandFirstCompareDrop = {
+                    page.entityDragActive &&
+                        page.entityDropTarget == EntityDropTarget.ISLAND &&
+                        page.isIslandFirstCompareDrop()
+                },
+                islandCompareLeftSymbol = { page.islandCompareLeftSymbol },
+                islandCompareRightSymbol = { page.islandCompareRightSymbol },
+                islandCompareLeftQuote = { page.quoteFor(page.islandCompareLeftSymbol) },
+                islandCompareRightQuote = { page.quoteFor(page.islandCompareRightSymbol) },
+                islandCompareVisible = { page.isIslandCompareLobbyVisible() },
+                islandTextOnly = { false },
+                islandCompareInsightLoading = { page.compareInsightState == CompareInsightState.LOADING },
+                islandCompareInsightAvailable = { page.compareInsightState == CompareInsightState.READY },
                 onToggleIsland = { page.toggleIsland() },
                 onOpenIslandDetail = { symbol -> page.islandExpanded = false; page.openStockDetail(symbol) },
                 onToggleIslandWatchlist = { symbol -> page.toggleIslandWatchlist(symbol) },
+                onOpenIslandCompare = { page.openIslandComparePanel() },
+                onClearIslandCompare = { page.clearIslandCompare() },
                 onMenu = { page.drawerOpen = !page.drawerOpen },
                 onNewChat = { page.startNewChat() },
             )
@@ -440,7 +479,16 @@ internal class ChatPage : BasePager() {
             }
             vif({ page.compareCard != null }) {
                 page.compareCard?.let { compareModel ->
-                    ActiveComparePanel(compareModel, page.theme, { page.openStockDetail(it) }) { page.clearCompare() }
+                    ActiveComparePanel(
+                        model = compareModel,
+                        theme = page.theme,
+                        insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
+                        insightText = { page.compareInsightText },
+                        insightError = { page.compareInsightError },
+                        onRetryInsight = { page.retryCompareInsight() },
+                        onOpenStock = { page.openStockDetail(it) },
+                        onClose = { page.clearCompare() },
+                    )
                 }
             }
             View {
@@ -495,6 +543,21 @@ internal class ChatPage : BasePager() {
                         paddingBottom(9f)
                         paddingLeft(10f)
                         paddingRight(10f)
+                        backgroundColor(
+                            if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) page.theme.brandSoft
+                            else Color(0xFFFFFFFF, 0f)
+                        )
+                        transform(
+                            scale = if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) {
+                                Scale(1.015f, 1.015f)
+                            } else {
+                                Scale.DEFAULT
+                            }
+                        )
+                        animate(
+                            Animation.easeOut(0.16f),
+                            page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER,
+                        )
                     }
                     GlassBackdrop(page.theme.glass.sheet, page.glassRenderer)
                         // 联想面板打开时收起"最近标的"横条：面板本身已含"最近"数据源候选，
@@ -716,6 +779,9 @@ internal class ChatPage : BasePager() {
                         }
                     page.renderComposerGradientRim(this)
                 }
+            }
+            vif({ page.entityDragActive }) {
+                page.renderEntityDragOverlay(this)
             }
             vif({ page.sheetMounted }) {
                 page.sheetCard?.let { model ->
@@ -941,9 +1007,16 @@ internal class ChatPage : BasePager() {
         ambiguousSymbols.clear()
         ambiguousEntityText = ""
         pendingLongPressSymbol = ""
+        draggedEntity = null
+        entityDragActive = false
+        entityDropTarget = EntityDropTarget.NONE
+        entityDragName = ""
         peekSymbol = ""
         peekVisible = false
         islandExpanded = false
+        islandCompareLeftSymbol = ""
+        islandCompareRightSymbol = ""
+        islandCompareVisible = false
         sheetCard = null
         sheetMounted = false
         sheetPresented = false
@@ -956,6 +1029,7 @@ internal class ChatPage : BasePager() {
         compareCandidateKey = ""
         compareCandidateSymbol = ""
         compareCard = null
+        resetCompareInsight()
         drilledKeys.clear()
         subThreads.clear()
         suppressNextStockClickSymbol = ""
@@ -1527,6 +1601,57 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    private fun renderEntityDragOverlay(container: ViewContainer<*, *>) {
+        val page = this
+        container.View {
+            attr {
+                absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                touchEnable(false)
+            }
+            View {
+                attr {
+                    val width = 166f
+                    val left = (page.entityDragX - width / 2f)
+                        .coerceIn(8f, (page.pagerData.pageViewWidth - width - 8f).coerceAtLeast(8f))
+                    val top = (page.entityDragY - 64f)
+                        .coerceIn(page.pagerData.statusBarHeight + 4f, page.pagerData.pageViewHeight - 62f)
+                    absolutePosition(top = top, left = left)
+                    width(width)
+                    height(50f)
+                    paddingLeft(13f)
+                    paddingRight(13f)
+                    justifyContentCenter()
+                    borderRadius(18f)
+                    backgroundColor(page.theme.brand)
+                    boxShadow(BoxShadow(0f, 7f, 18f, page.theme.brand.opacity(0.28f)))
+                    transform(scale = Scale(1.03f, 1.03f))
+                }
+                Text {
+                    attr {
+                        text(page.entityDragName)
+                        fontSize(13f)
+                        fontWeightSemiBold()
+                        color(page.theme.onBrand)
+                    }
+                }
+                Text {
+                    attr {
+                        text(
+                            when (page.entityDropTarget) {
+                                EntityDropTarget.ISLAND -> "松手加入股票对比"
+                                EntityDropTarget.COMPOSER -> "松手插入 @ 提及"
+                                EntityDropTarget.NONE -> "拖到输入框或灵动岛"
+                            }
+                        )
+                        marginTop(2f)
+                        fontSize(9f)
+                        color(page.theme.onBrand.opacity(0.78f))
+                    }
+                }
+            }
+        }
+    }
+
     private fun handleStockEntityClick(entity: EntitySpan) {
         if (suppressNextStockClickSymbol == entity.target) {
             suppressNextStockClickSymbol = ""
@@ -1535,34 +1660,114 @@ internal class ChatPage : BasePager() {
         handleStockEntity(entity, EntityAction.DETAIL)
     }
 
-    private fun handleStockEntityLongPress(entity: EntitySpan, state: String, cancelled: Boolean) {
-        // Once "start" has fired, the long press is already recognised. Some
-        // Android bridges mark the terminal event cancelled when the parent
-        // scroller wins the final touch arbitration, so cancellation must not
-        // discard a gesture that has already started.
-        if (state == "move") {
-            if (cancelled && pendingLongPressSymbol == entity.target) {
-                pendingLongPressSymbol = ""
-                finishStockLongPress(entity.target)
+    private fun handleStockEntityLongPress(entity: EntitySpan, params: LongPressParams) {
+        when (params.state) {
+            "start" -> {
+                if (params.isCancel || pendingLongPressSymbol == entity.target) return
+                pendingLongPressSymbol = entity.target
+                suppressNextStockClickSymbol = entity.target
+                draggedEntity = entity
+                entityDragName = entityDisplayName(entity.target, entity.text)
+                entityDragStartX = params.pageX
+                entityDragStartY = params.pageY
+                entityDragX = params.pageX
+                entityDragY = params.pageY
+                entityDragActive = false
+                entityDropTarget = EntityDropTarget.NONE
+                // A stationary long press remains the quote-preview gesture.
+                openEntityQuoteIsland(entity.target)
+                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                trackComposerEvent("entity_hold_preview", "symbol" to entity.target)
+                return
             }
-            return
-        }
-
-        if (state == "start") {
-            if (cancelled || pendingLongPressSymbol == entity.target) return
-            pendingLongPressSymbol = entity.target
-            suppressNextStockClickSymbol = entity.target
-            handleStockEntity(entity, EntityAction.ISLAND)
-            return
-        }
-
-        if (state == "end" || cancelled) {
-            if (pendingLongPressSymbol == entity.target) {
-                pendingLongPressSymbol = ""
-                finishStockLongPress(entity.target)
+            "move" -> {
+                if (pendingLongPressSymbol != entity.target) return
+                if (!entityDragActive && EntityDropResolver.hasExceededDragThreshold(
+                        entityDragStartX,
+                        entityDragStartY,
+                        params.pageX,
+                        params.pageY,
+                    )
+                ) {
+                    entityDragActive = true
+                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                    trackComposerEvent("entity_drag_start", "symbol" to entity.target)
+                }
+                if (entityDragActive) updateEntityDragPosition(params.pageX, params.pageY)
+                if (params.isCancel) {
+                    if (entityDragActive) finishEntityDrag() else finishEntityHold(entity.target)
+                }
+                return
             }
-            return
+            "end" -> {
+                if (pendingLongPressSymbol != entity.target) return
+                if (entityDragActive) {
+                    updateEntityDragPosition(params.pageX, params.pageY)
+                    finishEntityDrag()
+                } else {
+                    finishEntityHold(entity.target)
+                }
+                return
+            }
+            else -> if (params.isCancel && pendingLongPressSymbol == entity.target) {
+                if (entityDragActive) finishEntityDrag() else finishEntityHold(entity.target)
+                return
+            }
         }
+    }
+
+    private fun finishEntityHold(symbol: String) {
+        draggedEntity = null
+        entityDragActive = false
+        entityDropTarget = EntityDropTarget.NONE
+        entityDragName = ""
+        pendingLongPressSymbol = ""
+        finishStockLongPress(symbol)
+    }
+
+    private fun updateEntityDragPosition(pageX: Float, pageY: Float) {
+        entityDragX = pageX
+        entityDragY = pageY
+        entityDropTarget = EntityDropResolver.resolve(
+            pageX = pageX,
+            pageY = pageY,
+            pageWidth = pagerData.pageViewWidth,
+            pageHeight = pagerData.pageViewHeight,
+            statusBarHeight = pagerData.statusBarHeight,
+            safeAreaBottom = pagerData.safeAreaInsets.bottom,
+            keyboardHeight = keyboardHeight,
+            islandExpanded = islandExpanded || islandCompareLeftSymbol.isNotEmpty(),
+        )
+    }
+
+    private fun isIslandFirstCompareDrop(): Boolean =
+        islandCompareLeftSymbol.isEmpty()
+
+    private fun isIslandCompareLobbyVisible(): Boolean =
+        islandCompareVisible &&
+            islandCompareLeftSymbol.isNotEmpty()
+
+    private fun finishEntityDrag() {
+        val entity = draggedEntity
+        val target = entityDropTarget
+        val symbol = entity?.target ?: pendingLongPressSymbol
+        draggedEntity = null
+        entityDragActive = false
+        entityDropTarget = EntityDropTarget.NONE
+        entityDragName = ""
+        pendingLongPressSymbol = ""
+
+        if (entity != null) {
+            when (target) {
+                EntityDropTarget.COMPOSER -> handleStockEntity(entity, EntityAction.MENTION)
+                EntityDropTarget.ISLAND -> handleStockEntity(entity, EntityAction.COMPARE)
+                EntityDropTarget.NONE -> Unit
+            }
+            if (target != EntityDropTarget.NONE) {
+                trackComposerEvent("entity_drag_drop", "symbol" to entity.target, "target" to target.name.lowercase())
+            }
+        }
+        finishStockLongPress(symbol)
 
     }
 
@@ -1593,7 +1798,109 @@ internal class ChatPage : BasePager() {
             EntityAction.DETAIL -> openStockDetail(symbol)
             EntityAction.PREVIEW -> showQuote(symbol)
             EntityAction.ISLAND -> openEntityQuoteIsland(symbol)
+            EntityAction.MENTION -> insertDraggedMention(symbol)
+            EntityAction.COMPARE -> addDraggedStockToIsland(symbol)
         }
+    }
+
+    private fun entityDisplayName(symbol: String, fallback: String = symbol): String =
+        quoteFor(symbol)?.name ?: ComposerCatalog.find(symbol)?.name ?:
+        Securities.all.firstOrNull { it.symbol == symbol }?.name ?: fallback
+
+    private fun insertDraggedMention(symbol: String) {
+        val entry = ComposerCatalog.find(symbol)
+        val name = entry?.name ?: entityDisplayName(symbol)
+        val mention = entry?.let(MentionEntity::of)
+            ?: MentionEntity(symbol, name, MentionType.STOCK, "@$name")
+        val edit = ComposerTextOperations.insertMention(
+            text = viewModel.inputText,
+            selectionStart = composerEditingState.selectionStart,
+            selectionEnd = composerEditingState.selectionEnd,
+            mentionText = mention.mentionText,
+        )
+        setComposerText(edit.text, edit.cursor)
+        mentionEntities.removeAll { it.symbol == symbol }
+        mentionEntities.add(mention)
+        recentMentions.remove(symbol)
+        recentMentions.add(0, symbol)
+        if (recentMentions.size > 8) recentMentions.subList(8, recentMentions.size).clear()
+        closeAssistantPanel()
+        if (paramCommand != null) assistantPanel = AssistantPanel.COMMAND_PARAMS
+        expandComposer(requestFocus = true)
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+    }
+
+    private fun addDraggedStockToIsland(symbol: String) {
+        compareCandidateKey = ""
+        compareCandidateSymbol = ""
+        if (islandCompareLeftSymbol.isEmpty()) {
+            islandCompareLeftSymbol = symbol
+            islandCompareRightSymbol = ""
+            compareCard = null
+            resetCompareInsight()
+        } else if (islandCompareLeftSymbol == symbol || islandCompareRightSymbol == symbol) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("请选择另一只股票进行对比")
+            islandExpanded = true
+            return
+        } else if (islandCompareRightSymbol.isNotEmpty()) {
+            islandCompareLeftSymbol = islandCompareRightSymbol
+            islandCompareRightSymbol = symbol
+            compareCard = null
+            resetCompareInsight()
+        } else {
+            islandCompareRightSymbol = symbol
+        }
+        requestQuote(symbol)
+        requestQuote(islandCompareLeftSymbol)
+        // The island owns the comparison session from the first drop until the
+        // user explicitly exits it.  Keep the completed two-stock summary open
+        // while the full comparison panel is visible below.
+        islandCompareVisible = true
+        islandExpanded = true
+        syncIslandCompareCard()
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+    }
+
+    private fun syncIslandCompareCard() {
+        val leftSymbol = islandCompareLeftSymbol
+        val rightSymbol = islandCompareRightSymbol
+        if (leftSymbol.isEmpty() || rightSymbol.isEmpty()) return
+        val left = quoteFor(leftSymbol) ?: return
+        val right = quoteFor(rightSymbol) ?: return
+        compareCard = StockCompareCardModel(
+            listOf(left, right),
+            "island-compare:${left.symbol}:${right.symbol}",
+        )
+        requestCompareInsightIfNeeded(left, right)
+    }
+
+    private fun clearIslandCompare() {
+        clearCompareExperience()
+    }
+
+    private fun clearCompareExperience() {
+        // Closing comparison is also a hard interaction boundary.  A terminal
+        // long-press event can be lost when the comparison panel mounts under
+        // the releasing finger, so explicitly invalidate every drag field.
+        pendingLongPressSymbol = ""
+        draggedEntity = null
+        entityDragActive = false
+        entityDropTarget = EntityDropTarget.NONE
+        entityDragName = ""
+        islandCompareLeftSymbol = ""
+        islandCompareRightSymbol = ""
+        islandCompareVisible = false
+        compareCard = null
+        compareCandidateKey = ""
+        compareCandidateSymbol = ""
+        resetCompareInsight()
+        islandExpanded = false
+    }
+
+    private fun openIslandComparePanel() {
+        if (compareCard == null) return
+        islandCompareVisible = true
+        islandExpanded = true
     }
 
     private fun addWatchlistFromEntity(symbol: String) {
@@ -1611,6 +1918,7 @@ internal class ChatPage : BasePager() {
     private fun openEntityQuoteIsland(symbol: String) {
         islandSymbol = symbol
         islandWatchlisted = watchlistStore.contains(symbol)
+        islandCompareVisible = false
         requestQuote(symbol)
         islandExpanded = true
     }
@@ -1653,6 +1961,7 @@ internal class ChatPage : BasePager() {
                 val updated = ChatQuoteState(symbol, quote, DataMode.OFFLINE)
                 val index = quoteStates.indexOfFirst { it.symbol == symbol }
                 if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
+                syncIslandCompareCard()
             }
             return
         }
@@ -1660,6 +1969,7 @@ internal class ChatPage : BasePager() {
             val updated = ChatQuoteState(symbol, result.quote, result.mode)
             val index = quoteStates.indexOfFirst { it.symbol == symbol }
             if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
+            syncIslandCompareCard()
         }
     }
 
@@ -1674,6 +1984,9 @@ internal class ChatPage : BasePager() {
         if (islandAnimating) return
         islandAnimating = true
         islandExpanded = !islandExpanded
+        if (islandExpanded && islandCompareLeftSymbol.isNotEmpty() && islandCompareRightSymbol.isEmpty() && compareCard == null) {
+            islandCompareVisible = true
+        }
         if (islandExpanded) requestQuote(islandSymbol)
         setTimeout(400) { islandAnimating = false }
     }
@@ -1687,6 +2000,8 @@ internal class ChatPage : BasePager() {
             .map { it.target } + listOfNotNull(
                 peekSymbol.takeIf { it.isNotEmpty() },
                 islandSymbol.takeIf { it.isNotEmpty() },
+                islandCompareLeftSymbol.takeIf { it.isNotEmpty() },
+                islandCompareRightSymbol.takeIf { it.isNotEmpty() },
             ))
             .distinct()
             .forEach(::requestQuote)
@@ -2284,9 +2599,9 @@ internal class ChatPage : BasePager() {
         )
     }
 
-    /** 涨跌幅格式化：+2.8% / -4.1% / —（无涨跌）。手写取整避免 Float 直转的长尾小数。 */
+    /** 涨跌幅格式化：+2.8% / -4.1% / --（无涨跌）。手写取整避免 Float 直转的长尾小数。 */
     private fun formatChgPct(pct: Float?): String {
-        if (pct == null) return "—"
+        if (pct == null) return "--"
         val sign = if (pct >= 0f) "+" else "−"
         val abs = if (pct >= 0f) pct else -pct
         val int = abs.toInt()
@@ -2543,6 +2858,7 @@ internal class ChatPage : BasePager() {
             compareCandidateKey = ""
             compareCandidateSymbol = ""
             focusedCardKey = ""
+            requestCompareInsightIfNeeded(left, right)
         } else {
             requestQuote(compareCandidateSymbol)
             requestQuote(symbol)
@@ -2569,9 +2885,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun clearCompare() {
-        compareCard = null
-        compareCandidateKey = ""
-        compareCandidateSymbol = ""
+        clearCompareExperience()
     }
 
     private fun openCardSheet(model: CardModel, deferInteraction: Boolean = false) {
@@ -2694,6 +3008,75 @@ internal class ChatPage : BasePager() {
         )
     }
 
+    private fun retryCompareInsight() {
+        val cardQuotes = compareCard?.quotes.orEmpty()
+        val left = cardQuotes.getOrNull(0) ?: quoteFor(islandCompareLeftSymbol) ?: return
+        val right = cardQuotes.getOrNull(1) ?: quoteFor(islandCompareRightSymbol) ?: return
+        compareInsightPairKey = ""
+        requestCompareInsightIfNeeded(left, right)
+    }
+
+    private fun resetCompareInsight() {
+        compareInsightVersion += 1
+        compareInsightPairKey = ""
+        compareInsightState = CompareInsightState.IDLE
+        compareInsightText = ""
+        compareInsightError = ""
+    }
+
+    private fun requestCompareInsightIfNeeded(left: Quote, right: Quote) {
+        val pairKey = "${left.symbol}:${right.symbol}"
+        if (compareInsightPairKey == pairKey && compareInsightState != CompareInsightState.ERROR) return
+        compareInsightPairKey = pairKey
+        compareInsightState = CompareInsightState.LOADING
+        compareInsightText = ""
+        compareInsightError = ""
+        val requestVersion = ++compareInsightVersion
+        var response = ""
+        viewModel.askSubThread(
+            prompt = buildCompareInsightPrompt(left, right),
+            onDelta = { delta ->
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
+                response += delta
+                compareInsightText = response
+            },
+            onDone = {
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
+                compareInsightText = response.ifBlank { "暂未生成对比解读" }
+                compareInsightState = CompareInsightState.READY
+            },
+            onError = { error ->
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
+                compareInsightError = error
+                compareInsightState = CompareInsightState.ERROR
+            },
+        )
+    }
+
+    private fun buildCompareInsightPrompt(left: Quote, right: Quote): String {
+        return """
+            请基于以下两只股票的即时行情做一个简洁对比解读。
+            要求：
+            1. 只解释差异和可能关注点，不给买卖建议。
+            2. 用 3 到 5 句中文，适合显示在手机卡片里。
+            3. 明确说明价格、涨跌幅、日内高低点、成交额、换手率里的关键差异。
+
+            股票 A：${left.name} ${left.symbol}
+            价格：${Format.price(left.price)}
+            涨跌幅：${Format.percent(left.changePercent)}
+            日内高低：${Format.price(left.high)} / ${Format.price(left.low)}
+            成交额：${Format.compactAmount(left.amount)}
+            换手率：${Format.decimal(left.turnoverRate, 2)}%
+
+            股票 B：${right.name} ${right.symbol}
+            价格：${Format.price(right.price)}
+            涨跌幅：${Format.percent(right.changePercent)}
+            日内高低：${Format.price(right.high)} / ${Format.price(right.low)}
+            成交额：${Format.compactAmount(right.amount)}
+            换手率：${Format.decimal(right.turnoverRate, 2)}%
+        """.trimIndent()
+    }
+
     private fun updateSubThread(cardId: String, update: (SubThreadState) -> SubThreadState) {
         val index = subThreads.indexOfFirst { it.cardId == cardId }
         if (index >= 0) subThreads[index] = update(subThreads[index])
@@ -2705,7 +3088,9 @@ internal class ChatPage : BasePager() {
 
 }
 
-private enum class EntityAction { DETAIL, PREVIEW, ISLAND }
+private enum class EntityAction { DETAIL, PREVIEW, ISLAND, MENTION, COMPARE }
+
+private enum class CompareInsightState { IDLE, LOADING, READY, ERROR }
 
 internal enum class SheetLevel(val ratio: Float, val density: CardDensity) {
     PEEK(0.25f, CardDensity.MINI),

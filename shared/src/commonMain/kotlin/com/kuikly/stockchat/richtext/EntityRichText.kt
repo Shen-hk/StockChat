@@ -3,6 +3,7 @@ package com.kuikly.stockchat.richtext
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.attr.CaptureRule
+import com.tencent.kuikly.core.base.event.LongPressParams
 import com.tencent.kuiklybase.KuiklyMarkdown
 import com.tencent.kuiklybase.KuiklyStreamingMarkdown
 import com.tencent.kuiklybase.config.FontWeight
@@ -22,7 +23,7 @@ fun ViewContainer<*, *>.EntityRichText(
     theme: StockChatTheme,
     contextSymbols: List<String> = emptyList(),
     onStockClick: (EntitySpan) -> Unit,
-    onStockLongPress: (EntitySpan, String, Boolean) -> Unit,
+    onStockLongPress: (EntitySpan, LongPressParams) -> Unit,
     onTermClick: (String) -> Unit,
 ) {
     val adapted = EntityMarkdownAdapter.withEntityLinks(rawText, contextSymbols)
@@ -49,7 +50,7 @@ fun ViewContainer<*, *>.EntityStreamingMarkdown(
     theme: StockChatTheme,
     contextSymbols: List<String> = emptyList(),
     onStockClick: (EntitySpan) -> Unit,
-    onStockLongPress: (EntitySpan, String, Boolean) -> Unit,
+    onStockLongPress: (EntitySpan, LongPressParams) -> Unit,
     onTermClick: (String) -> Unit,
 ) {
     val adapted = EntityMarkdownAdapter.withEntityLinks(rawText, contextSymbols)
@@ -118,7 +119,7 @@ private fun stockMarkdownConfig(
     theme: StockChatTheme,
     entities: List<EntitySpan>,
     onStockClick: (EntitySpan) -> Unit,
-    onStockLongPress: (EntitySpan, String, Boolean) -> Unit,
+    onStockLongPress: (EntitySpan, LongPressParams) -> Unit,
     onTermClick: (String) -> Unit,
 ): MarkdownConfig {
     val dark = theme == StockChatTheme.Dark
@@ -162,7 +163,7 @@ private fun stockMarkdownConfig(
         },
         onLinkLongPress = { url, params ->
             entityFromUrl(url, entities)?.let { entity ->
-                if (entity.type == EntityType.STOCK) onStockLongPress(entity, params.state, params.isCancel)
+                if (entity.type == EntityType.STOCK) onStockLongPress(entity, params)
             }
         },
         unorderedListBullet = { _, depth ->
