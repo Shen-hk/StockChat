@@ -771,6 +771,9 @@ fun ViewContainer<*, *>.ChatDrawer(
     onToggleIsland: () -> Unit = {},
     onOpenGlossary: () -> Unit = {},
     onOpenWatchlist: () -> Unit = {},
+    onOpenMarket: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
+    onOpenAlerts: () -> Unit = {},
     onSettings: () -> Unit,
 ) {
     View {
@@ -889,9 +892,11 @@ fun ViewContainer<*, *>.ChatDrawer(
         // Quick entries with tinted icon tiles.
         View { attr { height(1f); marginTop(8f); marginBottom(6f); backgroundColor(theme.divider) } }
         DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛行情", theme) { onClose(); onToggleIsland() }
+        DrawerMenuItem("⌕", theme.brand, theme.brandSoft, "全局搜索", theme) { onClose(); onOpenSearch() }
+        DrawerMenuItem("▥", theme.term, theme.brandSoft, "市场总览", theme) { onClose(); onOpenMarket() }
         DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme) { onClose(); onOpenWatchlist() }
         DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme) { onClose(); onOpenGlossary() }
-        DrawerMenuItem("▦", theme.textSecondary, theme.surfaceMuted, "卡片图鉴", theme) { onClose(); onOpenGallery() }
+        DrawerMenuItem("⌁", theme.textSecondary, theme.surfaceMuted, "异动预警", theme) { onClose(); onOpenAlerts() }
         DrawerMenuItem("⚙", theme.textSecondary, theme.surfaceMuted, "设置", theme, onClick = onSettings)
 
         // Data source & rendering preferences card.

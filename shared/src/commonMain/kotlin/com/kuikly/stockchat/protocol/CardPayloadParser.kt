@@ -10,15 +10,32 @@ data class FactorIntent(
     val source: String,
 )
 
-sealed interface CardIntent { val type: String }
-data class SymbolCardIntent(override val type: String, val symbol: String) : CardIntent
-data class DefinitionIntent(val term: String, val plainText: String, val example: String) : CardIntent {
+sealed interface CardIntent {
+    val type: String
+    val source: String get() = ""
+    val asOf: String get() = ""
+}
+data class SymbolCardIntent(
+    override val type: String,
+    val symbol: String,
+    override val source: String = "",
+    override val asOf: String = "",
+) : CardIntent
+data class DefinitionIntent(
+    val term: String,
+    val plainText: String,
+    val example: String,
+    override val source: String = "",
+    override val asOf: String = "",
+) : CardIntent {
     override val type: String = "definition"
 }
 data class AttributionIntent(
     val symbol: String,
     val direction: String,
     val factors: List<FactorIntent>,
+    override val source: String = "",
+    override val asOf: String = "",
 ) : CardIntent { override val type: String = "attribution" }
 data class SuggestionsIntent(val chips: List<SuggestionIntent>) : CardIntent {
     override val type: String = "suggestions"
@@ -28,16 +45,25 @@ data class UnknownIntent(override val type: String, val rawPayload: String) : Ca
 object CardPayloadParser {
     fun parse(type: String, payload: String): CardIntent = when (type) {
         "stock-quote", "stock-chart", "insight", "news", "stock-compare" ->
-            SymbolCardIntent(type, stringField(payload, "symbol") ?: "600519.SH")
+            SymbolCardIntent(
+                type,
+                stringField(payload, "symbol") ?: "600519.SH",
+                stringField(payload, "source").orEmpty(),
+                stringField(payload, "asOf").orEmpty(),
+            )
         "definition" -> DefinitionIntent(
             term = stringField(payload, "term") ?: "市盈率 PE",
             plainText = stringField(payload, "plainText") ?: "股价相对于每股收益的倍数，用来观察估值水平。",
             example = stringField(payload, "example") ?: "PE 需要结合行业、增速和盈利稳定性一起看。",
+            source = stringField(payload, "source").orEmpty(),
+            asOf = stringField(payload, "asOf").orEmpty(),
         )
         "attribution" -> AttributionIntent(
             symbol = stringField(payload, "symbol") ?: "600519.SH",
             direction = stringField(payload, "direction") ?: "fall",
             factors = parseFactors(payload).ifEmpty { defaultFactors() },
+            source = stringField(payload, "source").orEmpty(),
+            asOf = stringField(payload, "asOf").orEmpty(),
         )
         "suggestions" -> SuggestionsIntent(parseSuggestions(payload))
         else -> UnknownIntent(type, payload)

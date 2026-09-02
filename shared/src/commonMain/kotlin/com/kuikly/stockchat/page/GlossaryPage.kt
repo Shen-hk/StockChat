@@ -5,6 +5,7 @@ import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.DefinitionCardModel
+import com.kuikly.stockchat.cards.core.ExplanationDepth
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
@@ -41,6 +42,7 @@ internal class GlossaryPage : BasePager() {
     private var activeCategory: GlossaryCategory? by observable(null)
     private var rows: ObservableList<GlossaryRow> by observableList()
     private var expandedKey: String by observable("")
+    private var explanationDepth: ExplanationDepth by observable(ExplanationDepth.PARAGRAPH)
 
     override fun created() {
         super.created()
@@ -100,6 +102,19 @@ internal class GlossaryPage : BasePager() {
 
                 View {
                     attr { flexDirectionRow(); marginBottom(12f) }
+                    ExplanationDepth.values().forEach { depth ->
+                        GlossaryFilterChip(
+                            label = depth.label,
+                            theme = page.theme,
+                            selected = { page.explanationDepth == depth },
+                            onTap = { page.explanationDepth = depth },
+                            container = this,
+                        )
+                    }
+                }
+
+                View {
+                    attr { flexDirectionRow(); marginBottom(12f) }
                     GlossaryFilterChip(
                         label = "全部",
                         theme = page.theme,
@@ -135,6 +150,7 @@ internal class GlossaryPage : BasePager() {
                                     cardId = key,
                                     advanced = entry.advanced,
                                     category = entry.category.label,
+                                    depth = page.explanationDepth,
                                 ),
                                 CardContext(
                                     theme = page.theme,

@@ -67,6 +67,14 @@ class WatchlistStore(
         return WatchlistAddResult.ADDED
     }
 
+    fun setGroup(symbol: String, groupId: String) {
+        writeRows(readRows().map { if (it.symbol == symbol) it.copy(groupId = groupId) else it })
+    }
+
+    fun setAlertRules(symbol: String, alertRules: String) {
+        writeRows(readRows().map { if (it.symbol == symbol) it.copy(alertRules = alertRules) else it })
+    }
+
     private fun readRows(): List<WatchlistItem> {
         val raw = preferences.getString(KEY)
         if (raw.isEmpty()) return emptyList()

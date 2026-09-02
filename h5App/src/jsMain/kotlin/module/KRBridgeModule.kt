@@ -17,6 +17,9 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 toast(params)
             }
 
+            "copyToPasteboard" -> copyToPasteboard(params)
+            "shareInterpretation" -> shareInterpretation(params)
+
             "log" -> {
                 console.log(params)
             }
@@ -56,6 +59,60 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     }
 
     private fun currentTimestamp(params: String?): String = Date.now().toString()
+
+    private fun copyToPasteboard(params: String?) {
+        val content = JSONObject(params ?: "{}").optString("content")
+        js("navigator.clipboard && navigator.clipboard.writeText(content)")
+    }
+
+    private fun shareInterpretation(params: String?) {
+        val content = JSONObject(params ?: "{}").optString("content")
+        if (content.isBlank()) return
+        js("""
+            (function(text) {
+                var canvas = document.createElement('canvas');
+                var width = 1080, side = 84, lineHeight = 52;
+                var measure = canvas.getContext('2d');
+                measure.font = '34px sans-serif';
+                var lines = [];
+                String(text).split('\n').forEach(function(paragraph) {
+                    if (!paragraph) { lines.push(''); return; }
+                    var line = '';
+                    Array.from(paragraph).forEach(function(ch) {
+                        var next = line + ch;
+                        if (measure.measureText(next).width > width - side * 2 && line) {
+                            lines.push(line); line = ch;
+                        } else { line = next; }
+                    });
+                    lines.push(line);
+                });
+                canvas.width = width;
+                canvas.height = Math.min(24000, Math.max(720, 330 + lines.length * lineHeight));
+                var ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#F4F6FA'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#FFFFFF'; ctx.fillRect(42, 42, width - 84, canvas.height - 84);
+                ctx.fillStyle = '#1A5CD9'; ctx.font = 'bold 48px sans-serif'; ctx.fillText('股问 StockChat', side, 130);
+                ctx.fillStyle = '#262A36'; ctx.font = '34px sans-serif';
+                lines.forEach(function(line, index) {
+                    var y = 220 + index * lineHeight;
+                    if (y < canvas.height - 130) ctx.fillText(line, side, y);
+                });
+                ctx.fillStyle = '#737986'; ctx.font = '24px sans-serif';
+                ctx.fillText('信息解释，不构成投资建议 · 数据以原始信源为准', side, canvas.height - 78);
+                canvas.toBlob(function(blob) {
+                    if (!blob) return;
+                    var file = new File([blob], 'StockChat-share.png', {type: 'image/png'});
+                    if (navigator.share && navigator.canShare && navigator.canShare({files: [file]})) {
+                        navigator.share({title: '股问 StockChat', files: [file]}).catch(function() {});
+                    } else {
+                        var link = document.createElement('a');
+                        link.download = file.name; link.href = URL.createObjectURL(blob); link.click();
+                        setTimeout(function() { URL.revokeObjectURL(link.href); }, 1000);
+                    }
+                }, 'image/png');
+            })(content)
+        """)
+    }
 
     private fun formatDate(date: Date, format: String): String {
         fun pad(num: Int) = num.toString().padStart(2, '0')

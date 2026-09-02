@@ -30,6 +30,12 @@ internal class BridgeModule : Module() {
         callNativeMethod("copyToPasteboard", methodArgs, null)
     }
 
+    fun shareInterpretation(content: String) {
+        val methodArgs = JSONObject()
+        methodArgs.put("content", content)
+        callNativeMethod("shareInterpretation", methodArgs, null)
+    }
+
     fun showAlert(
         title: String?,
         message: String?,

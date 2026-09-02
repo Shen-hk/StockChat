@@ -50,6 +50,7 @@ internal class WatchlistPage : BasePager() {
     private var hint: String by observable("")
     private var lastRemoved: WatchlistItem? = null
     private var dataModeLabel: String by observable("")
+    private var activeGroup: String by observable("")
 
     override fun created() {
         super.created()
@@ -116,6 +117,20 @@ internal class WatchlistPage : BasePager() {
                     }
                 }
 
+                View {
+                    attr { marginTop(10f); marginBottom(4f); flexDirectionRow() }
+                    listOf("" to "全部", "core" to "核心观察", "research" to "待研究").forEach { (id, label) ->
+                        View {
+                            attr {
+                                marginRight(7f); paddingLeft(11f); paddingRight(11f); height(30f); allCenter(); borderRadius(9f)
+                                backgroundColor(if (page.activeGroup == id) page.theme.brandSoft else page.theme.surfaceMuted)
+                            }
+                            Text { attr { text(label); fontSize(11f); color(if (page.activeGroup == id) page.theme.brand else page.theme.textSecondary) } }
+                            event { click { page.activeGroup = id; page.reload() } }
+                        }
+                    }
+                }
+
                 vif({ page.hint.isNotEmpty() }) {
                     Text {
                         attr {
@@ -151,6 +166,9 @@ internal class WatchlistPage : BasePager() {
                             } else {
                                 WatchlistPendingRow(name = row.name, symbol = row.symbol, theme = page.theme, container = this)
                             }
+                            vif({ row.quote?.let { kotlin.math.abs(it.changePercent) >= 3.0 } == true }) {
+                                Text { attr { text("异动"); marginTop(4f); fontSize(9.5f); color(page.theme.fall) } }
+                            }
                         }
                         View {
                             attr {
@@ -162,10 +180,15 @@ internal class WatchlistPage : BasePager() {
                                 borderRadius(8f)
                                 backgroundColor(page.theme.surfaceMuted)
                             }
-                            Text { attr { text("移除"); fontSize(12f); color(page.theme.textSecondary) } }
                             event {
-                                click { page.remove(row.symbol) }
+                                click { page.cycleGroup(row.symbol, row.groupId) }
                             }
+                            Text { attr { text(groupLabel(row.groupId)); fontSize(10f); color(page.theme.brand) } }
+                        }
+                        View {
+                            attr { marginLeft(6f); paddingLeft(9f); paddingRight(9f); height(30f); allCenter(); borderRadius(8f); backgroundColor(page.theme.surfaceMuted) }
+                            Text { attr { text("移除"); fontSize(11f); color(page.theme.textSecondary) } }
+                            event { click { page.remove(row.symbol) } }
                         }
                     }
                 }
@@ -222,6 +245,13 @@ internal class WatchlistPage : BasePager() {
         reload()
     }
 
+    private fun cycleGroup(symbol: String, current: String) {
+        val next = when (current) { "" -> "core"; "core" -> "research"; else -> "" }
+        watchlistStore.setGroup(symbol, next)
+        hint = "已移至${groupLabel(next)}"
+        reload()
+    }
+
     private fun undoRemove() {
         val item = lastRemoved ?: return
         when (watchlistStore.restore(item)) {
@@ -236,8 +266,8 @@ internal class WatchlistPage : BasePager() {
     /** 重建行数据并逐个拉取行情；缓存价先占位，网络结果到达后原地替换。 */
     private fun reload() {
         rows.clear()
-        watchlistStore.list().forEach { item ->
-            rows.add(WatchlistRow(item.symbol, item.name, quoteRepository.cachedOrOffline(item.symbol)))
+        watchlistStore.list().filter { activeGroup.isEmpty() || it.groupId == activeGroup }.forEach { item ->
+            rows.add(WatchlistRow(item.symbol, item.name, quoteRepository.cachedOrOffline(item.symbol), item.groupId))
             quoteRepository.load(item.symbol) { result ->
                 val index = rows.indexOfFirst { it.symbol == item.symbol }
                 val quote = result.quote
@@ -254,7 +284,14 @@ internal data class WatchlistRow(
     val symbol: String,
     val name: String,
     val quote: Quote?,
+    val groupId: String,
 )
+
+private fun groupLabel(groupId: String): String = when (groupId) {
+    "core" -> "核心"
+    "research" -> "研究"
+    else -> "未分组"
+}
 
 private fun WatchlistCandidateRow(
     security: Security,

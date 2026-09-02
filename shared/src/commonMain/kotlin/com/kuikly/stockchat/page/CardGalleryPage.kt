@@ -14,6 +14,8 @@ import com.kuikly.stockchat.cards.core.NewsItem
 import com.kuikly.stockchat.cards.core.StockChartCardModel
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.cards.core.StockCompareCardModel
+import com.kuikly.stockchat.cards.core.ProductConceptCardModel
+import com.kuikly.stockchat.cards.stock.MarketCardRenderers
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
@@ -50,6 +52,7 @@ internal class CardGalleryPage : BasePager() {
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
+        MarketCardRenderers.ensureRegistered()
     }
 
     override fun body(): ViewBuilder {
@@ -67,6 +70,20 @@ internal class CardGalleryPage : BasePager() {
                 NewsItem("公司发布近期经营情况说明", "公司公告", "2 小时前"),
                 NewsItem("白酒板块盘中震荡，龙头股表现分化", "公开资讯", "3 小时前"),
             )),
+            ProductConceptCardModel(
+                title = "交易台账 / AI 复盘",
+                value = "买入前只记录事实与原始理由，卖出或复盘时逐条核对哪些逻辑已经变化。",
+                flow = listOf("记录日期、标的与三条原始理由", "自动关联后续公告和财报", "复盘只核对逻辑变化，不评价买卖对错"),
+                boundary = "不连接券商、不代下单、不输出收益承诺。",
+                cardId = "concept:journal",
+            ),
+            ProductConceptCardModel(
+                title = "持仓结构分析",
+                value = "导入持仓后只解释集中度、行业分布和共同风险暴露，让用户看见组合里重复承担的风险。",
+                flow = listOf("本地录入持仓与成本", "聚合行业、市值与波动暴露", "用中性语言解释集中风险"),
+                boundary = "不推荐调仓比例，不给个股买卖建议。",
+                cardId = "concept:portfolio",
+            ),
         )
         return {
             attr { backgroundColor(page.theme.page) }

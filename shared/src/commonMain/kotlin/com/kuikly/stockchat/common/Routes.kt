@@ -11,6 +11,11 @@ object Routes {
     const val GLOSSARY = "GlossaryPage"
     const val WATCHLIST = "WatchlistPage"
     const val API_CONFIG = "ApiConfigPage"
+    const val MARKET = "MarketPage"
+    const val HOTSPOTS = "HotspotPage"
+    const val SEARCH = "GlobalSearchPage"
+    const val CALENDAR = "MarketCalendarPage"
+    const val ALERTS = "AlertCenterPage"
     const val LEGACY_ROUTER = "router"
 }
 

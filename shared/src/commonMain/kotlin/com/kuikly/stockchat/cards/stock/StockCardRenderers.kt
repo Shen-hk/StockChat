@@ -9,6 +9,7 @@ import com.kuikly.stockchat.cards.core.CardRegistry
 import com.kuikly.stockchat.cards.core.CardRenderer
 import com.kuikly.stockchat.cards.core.CardModel
 import com.kuikly.stockchat.cards.core.DefinitionCardModel
+import com.kuikly.stockchat.cards.core.ExplanationDepth
 import com.kuikly.stockchat.cards.core.InsightCardModel
 import com.kuikly.stockchat.cards.core.NewsCardModel
 import com.kuikly.stockchat.cards.core.NewsItem
@@ -390,7 +391,10 @@ object DefinitionCardRenderer : CardRenderer {
             }
             container.Text { attr { text(model.term); marginTop(if (model.category.isBlank()) 0f else 2f); fontSize(if (context.density == CardDensity.COMPACT) 16f else 18f); fontWeightBold(); color(theme.brand) } }
             container.Text { attr { text(model.plainText); marginTop(8f); fontSize(14f); lineHeight(21f); color(theme.textPrimary) } }
-            if (context.density == CardDensity.FULL) {
+            if (model.depth == ExplanationDepth.PARAGRAPH && context.density != CardDensity.FULL && model.advanced.isNotBlank()) {
+                container.Text { attr { text(model.advanced.take(150)); marginTop(7f); fontSize(11.5f); lineHeight(18f); color(theme.textSecondary) } }
+            }
+            if (model.depth == ExplanationDepth.EXAMPLE_AND_DATA || context.density == CardDensity.FULL) {
                 container.View {
                     attr { marginTop(10f); padding(10f); backgroundColor(theme.surfaceMuted); borderRadius(10f) }
                     Text { attr { text(model.example); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
@@ -399,7 +403,7 @@ object DefinitionCardRenderer : CardRenderer {
                     container.Text { attr { text("进阶解释"); marginTop(12f); fontSize(11f); fontWeightSemiBold(); color(theme.textTertiary) } }
                     container.Text { attr { text(model.advanced); marginTop(4f); fontSize(12f); lineHeight(19f); color(theme.textSecondary) } }
                 }
-            } else if (model.advanced.isNotBlank()) {
+            } else if (model.depth != ExplanationDepth.ONE_SENTENCE && model.advanced.isNotBlank()) {
                 container.Text { attr { text("展开后查看例子与进阶解释"); marginTop(8f); fontSize(10f); color(theme.textTertiary) } }
             }
         }

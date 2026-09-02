@@ -4,11 +4,22 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.net.Uri
+import android.os.Build
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -49,6 +60,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "copyToPasteboard" -> {
                 copyToPasteboard(params)
+            }
+
+            "shareInterpretation" -> {
+                shareInterpretation(params)
             }
 
             "toast" -> {
@@ -229,6 +244,83 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         val paramJSON = JSONObject(params)
         (context?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.also {
             it.setPrimaryClip(ClipData.newPlainText(MODULE_NAME, paramJSON.optString("content")))
+        }
+    }
+
+    private fun shareInterpretation(params: String?) {
+        val currentActivity = activity ?: return
+        val content = JSONObject(params ?: "{}").optString("content")
+        if (content.isBlank()) return
+        try {
+            val width = 1080
+            val side = 84
+            val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(38, 42, 54)
+                textSize = 38f
+            }
+            val layoutWidth = width - side * 2
+            @Suppress("DEPRECATION")
+            val textLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                StaticLayout.Builder.obtain(content, 0, content.length, textPaint, layoutWidth)
+                    .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                    .setLineSpacing(8f, 1.05f)
+                    .build()
+            } else {
+                StaticLayout(content, textPaint, layoutWidth, Layout.Alignment.ALIGN_NORMAL, 1.05f, 8f, false)
+            }
+            val height = (textLayout.height + 420).coerceAtLeast(1200)
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(Color.rgb(245, 247, 252))
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            paint.color = Color.rgb(47, 107, 255)
+            canvas.drawRoundRect(RectF(58f, 58f, 1022f, 238f), 42f, 42f, paint)
+            paint.color = Color.WHITE
+            paint.textSize = 60f
+            paint.isFakeBoldText = true
+            canvas.drawText("股问 StockChat", 92f, 142f, paint)
+            paint.textSize = 28f
+            paint.isFakeBoldText = false
+            canvas.drawText("把数据解释成人话", 94f, 196f, paint)
+            paint.color = Color.WHITE
+            canvas.drawRoundRect(RectF(58f, 272f, 1022f, (height - 92).toFloat()), 38f, 38f, paint)
+            canvas.save()
+            canvas.translate(side.toFloat(), 326f)
+            textLayout.draw(canvas)
+            canvas.restore()
+            paint.color = Color.rgb(128, 134, 151)
+            paint.textSize = 25f
+            canvas.drawText("生成于股问 · 信息解释不构成投资建议", 84f, (height - 38).toFloat(), paint)
+
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "StockChat_${System.currentTimeMillis()}.png")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/StockChat")
+                    put(MediaStore.Images.Media.IS_PENDING, 1)
+                }
+            }
+            val collection: Uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            } else {
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            }
+            val uri = currentActivity.contentResolver.insert(collection, values) ?: return
+            currentActivity.contentResolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.PNG, 96, it) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                values.clear(); values.put(MediaStore.Images.Media.IS_PENDING, 0)
+                currentActivity.contentResolver.update(uri, values, null, null)
+            }
+            bitmap.recycle()
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            currentActivity.startActivity(Intent.createChooser(intent, "分享股问解读"))
+        } catch (error: Throwable) {
+            Log.w("StockChatShare", "share image failed", error)
+            Toast.makeText(KRApplication.application, "长图生成失败，文案已复制", Toast.LENGTH_SHORT).show()
         }
     }
 

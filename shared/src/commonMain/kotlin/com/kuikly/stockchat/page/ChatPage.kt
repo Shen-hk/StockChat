@@ -33,6 +33,7 @@ import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
+import com.kuikly.stockchat.data.LocalAlertProvider
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.entity.Securities
@@ -271,6 +272,9 @@ internal class ChatPage : BasePager() {
     private var peekVersion = 0
     private val quoteRepository get() = dependencies.quoteRepository
     private val watchlistStore get() = dependencies.watchlistStore
+    private val alertStore get() = dependencies.alertStore
+    private var alertPollGeneration = 0
+    private val deliveredAlertBuckets = mutableSetOf<String>()
     private val mockQuoteProvider = MockQuoteProvider()
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
@@ -303,6 +307,7 @@ internal class ChatPage : BasePager() {
 
     override fun pageDidDisappear() {
         super.pageDidDisappear()
+        alertPollGeneration++
         // If the stock detail route is covering this page, JS state may
         // already read as idle while the native view is still waiting for the
         // collapsed-frame write. Force the write unconditionally.
@@ -319,6 +324,7 @@ internal class ChatPage : BasePager() {
         islandWatchlisted = watchlistStore.contains(islandSymbol)
         // Preload the island quote so the morph opens with data in place.
         requestQuote(islandSymbol)
+        startAlertPolling()
     }
 
     override fun body(): ViewBuilder {
@@ -357,6 +363,7 @@ internal class ChatPage : BasePager() {
                         theme = page.theme,
                         contextSymbols = page.contextSymbolsBefore(message.id),
                         suggestionsActive = page.suggestionsAreActive(message),
+                        understoodQuery = page.questionBefore(message.id),
                         state = ChatMessageRenderState(
                             repairingCardKey = page.repairingCardKey,
                             drilledKeys = page.drilledKeys.toSet(),
@@ -385,6 +392,8 @@ internal class ChatPage : BasePager() {
                             onFocusChanged = page::setFocusedCard,
                             onCompareCandidate = page::handleCompareCandidate,
                             onCardEvent = page::handleCardEvent,
+                            onCorrectUnderstanding = page::beginUnderstandingCorrection,
+                            onShareInterpretation = page::copyShareCard,
                         ),
                     )
                 }
@@ -852,6 +861,9 @@ internal class ChatPage : BasePager() {
                     onOpenGallery = { page.openPage(Routes.CARD_GALLERY) },
                     onOpenGlossary = { page.openPage(Routes.GLOSSARY) },
                     onOpenWatchlist = { page.openPage(Routes.WATCHLIST) },
+                    onOpenMarket = { page.openPage(Routes.MARKET) },
+                    onOpenSearch = { page.openPage(Routes.SEARCH) },
+                    onOpenAlerts = { page.openPage(Routes.ALERTS) },
                     onToggleIsland = { page.toggleIsland() },
                     onSettings = { page.drawerOpen = false; page.openPage(Routes.API_CONFIG) },
                 )
@@ -1979,6 +1991,52 @@ internal class ChatPage : BasePager() {
             .flatMap { EntityRecognizer.recognize(it.content) }
             .filter { it.type == EntityType.STOCK }
             .map { it.target }
+
+    private fun startAlertPolling() {
+        val generation = ++alertPollGeneration
+        pollAlerts(generation)
+    }
+
+    private fun pollAlerts(generation: Int) {
+        if (generation != alertPollGeneration) return
+        alertStore.list().filter { it.enabled }.forEach { rule ->
+            quoteRepository.load(rule.symbol) { result ->
+                val quote = result.quote ?: return@load
+                val trigger = LocalAlertProvider.evaluate(rule, quote) ?: return@load
+                val bucket = "${rule.symbol}:${quote.timestamp.take(10)}:${quote.changePercent.toInt()}"
+                if (deliveredAlertBuckets.add(bucket)) {
+                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
+                        .toast("${trigger.title}：${Format.percent(quote.changePercent)}，已生成归因提示")
+                }
+            }
+        }
+        setTimeout(60_000) { pollAlerts(generation) }
+    }
+
+    private fun questionBefore(messageId: String): String =
+        viewModel.messages
+            .takeWhile { it.id != messageId }
+            .lastOrNull { it.role == MessageRole.USER }
+            ?.content
+            .orEmpty()
+
+    private fun beginUnderstandingCorrection(question: String) {
+        val text = "请纠正你对这个问题的理解：$question。我的真实意思是："
+        setComposerText(text)
+        inputRef?.view?.focus()
+        keepChatAtBottomTemporarily()
+    }
+
+    private fun copyShareCard(content: String) {
+        val plain = AiResponseLexer.lex(content, finished = true)
+            .filterIsInstance<TextBlock>()
+            .joinToString("\n") { it.content.trim() }
+            .ifBlank { content.substringBefore("```card").trim() }
+        val share = "股问 StockChat\n\n$plain\n\n数据与 AI 解读仅供理解信息，不构成投资建议。"
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).copyToPasteboard(share)
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).shareInterpretation(share)
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("分享长图已生成，文案也已复制")
+    }
 
     private fun suggestionsAreActive(message: ChatMessage): Boolean {
         val latestAssistant = viewModel.messages.lastOrNull { it.role == MessageRole.ASSISTANT }

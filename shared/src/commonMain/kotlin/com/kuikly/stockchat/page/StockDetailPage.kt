@@ -8,7 +8,15 @@ import com.kuikly.stockchat.cards.core.StockChartCardModel
 import com.kuikly.stockchat.cards.core.StockChartMode
 import com.kuikly.stockchat.cards.core.StockChartPeriod
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
+import com.kuikly.stockchat.cards.core.FundFlowCardModel
+import com.kuikly.stockchat.cards.core.FinancialCardModel
+import com.kuikly.stockchat.cards.core.ShareholderCardModel
+import com.kuikly.stockchat.cards.core.BillboardCardModel
+import com.kuikly.stockchat.cards.core.CorporateActionCardModel
+import com.kuikly.stockchat.cards.core.DisclosureCardModel
+import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.stock.KLineChart
+import com.kuikly.stockchat.cards.stock.MarketCardRenderers
 import com.kuikly.stockchat.cards.stock.MiniTimeline
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -20,6 +28,8 @@ import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.StockInsightBundle
+import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
@@ -50,11 +60,13 @@ internal class StockDetailPage : BasePager() {
     private var chartPeriod: StockChartPeriod by observable(StockChartPeriod.DAY)
     private var watchlisted: Boolean by observable(false)
     private var watchlistHint: String by observable("")
+    private var insight: StockInsightBundle by observable(OfflineMarketInsightProvider().stock("600519.SH"))
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
 
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
+        MarketCardRenderers.ensureRegistered()
         symbol = pagerData.params.optString("symbol").ifEmpty { "600519.SH" }
         quote = quoteRepository.cachedOrOffline(symbol) ?: quote
         watchlisted = watchlistStore.contains(symbol)
@@ -62,13 +74,15 @@ internal class StockDetailPage : BasePager() {
             result.quote?.let { quote = it }
             dataModeLabel = result.mode.quoteLabel()
         }
+        insight = dependencies.insightRepository.cachedStock(symbol)
+        dependencies.insightRepository.loadStock(symbol) { insight = it }
     }
 
     override fun body(): ViewBuilder {
         val page = this
         val attribution = CardPayloadParser.parse("attribution", "{\"symbol\":\"${page.quote.symbol}\"}") as AttributionIntent
         val ctx = CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer)
-        val aiSummary = "短线价格偏弱，资金与板块联动影响较大。中期判断应继续核对现金流、渠道库存和公司公告。"
+        val aiSummary = page.buildInsightSummary()
         return {
             attr { backgroundColor(page.theme.page) }
             Scroller {
@@ -222,6 +236,25 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
 
+                // ---- 真实业务数据：每一块都由 CardRegistry 注册并携带信源时间 ----
+                SectionLabel("资金流", page.theme)
+                page.insight.fundFlow?.let { CardShell(FundFlowCardModel(it, "fund-flow:${page.symbol}"), ctx) }
+
+                SectionLabel("财务", page.theme)
+                page.insight.fundamentals?.financial?.let { CardShell(FinancialCardModel(it, "financial:${page.symbol}"), ctx) }
+
+                SectionLabel("股东户数", page.theme)
+                page.insight.fundamentals?.shareholder?.let { CardShell(ShareholderCardModel(it, "shareholders:${page.symbol}"), ctx) }
+
+                SectionLabel("龙虎榜", page.theme)
+                page.insight.fundamentals?.billboard?.let { CardShell(BillboardCardModel(it, "billboard:${page.symbol}"), ctx) }
+
+                SectionLabel("分红与解禁", page.theme)
+                page.insight.fundamentals?.actions?.takeIf { it.isNotEmpty() }?.let { CardShell(CorporateActionCardModel(it, "actions:${page.symbol}"), ctx) }
+
+                SectionLabel("公告与研报", page.theme)
+                CardShell(DisclosureCardModel(page.insight.disclosures, "disclosures:${page.symbol}"), ctx)
+
                 // ---- AI 解读：要点卡片（方案 C） ----
                 SectionLabel("AI 解读", page.theme)
                 AiInsightBlock(aiSummary, page.theme)
@@ -232,8 +265,6 @@ internal class StockDetailPage : BasePager() {
                     page.theme,
                 )
 
-                // ---- 相关资讯：去卡列表 ----
-                NewsSection(page.theme)
             }
 
             AppTopBar(
@@ -276,6 +307,14 @@ internal class StockDetailPage : BasePager() {
             }
             WatchlistAddResult.FULL -> watchlistHint = "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
         }
+    }
+
+    private fun buildInsightSummary(): String {
+        val financial = insight.fundamentals?.financial
+        val flow = insight.fundFlow
+        val business = financial?.explanation ?: "财务数据仍在加载，先不要用单一估值指标下结论。"
+        val trading = flow?.explanation ?: "资金流数据仍在加载。"
+        return "$business $trading"
     }
 }
 
