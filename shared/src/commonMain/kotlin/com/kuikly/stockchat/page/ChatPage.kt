@@ -36,6 +36,9 @@ import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.LocalAlertProvider
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
+import com.kuikly.stockchat.data.provider.platformCurrentHour
+import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
+import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
@@ -48,7 +51,10 @@ import com.kuikly.stockchat.page.components.DateDivider
 import com.kuikly.stockchat.page.components.RecentSymbolRow
 import com.kuikly.stockchat.page.components.RegressionQuestionRow
 import com.kuikly.stockchat.page.components.SubThreadState
+import com.kuikly.stockchat.page.components.WelcomeMode
 import com.kuikly.stockchat.page.components.WelcomeSection
+import com.kuikly.stockchat.page.components.WelcomeStarter
+import com.kuikly.stockchat.page.components.defaultWelcomeStarters
 import com.kuikly.stockchat.page.components.ChatTopNav
 import com.kuikly.stockchat.page.components.IslandGestureMotion
 import com.kuikly.stockchat.page.components.IslandGesturePhase
@@ -141,9 +147,12 @@ internal class ChatPage : BasePager() {
     // 输入栏诊断日志统一 tag。logcat 过滤：adb logcat -s KLog 或搜 "Composer"。
     private companion object {
         const val COMPOSER_LOG_TAG = "Composer"
+        const val WELCOME_USED_KIND_KEY = "stockchat_welcome_used_starter_kinds_v1"
     }
     private val dependencies by lazy { ChatDependencies.forPager(pagerId) }
     private val viewModel by lazy { ChatViewModel(pagerId, dependencies) }
+    private val welcomeStorage by lazy { PagerKeyValueStorage(pagerId) }
+    private val welcomeKeywords = listOf("行情", "术语", "财报", "公告")
     // 全页唯一、持久挂载的 TextArea。ref 只在首次 body 挂载前为空。
     private var inputRef: ViewRef<TextAreaView>? = null
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
@@ -278,6 +287,16 @@ internal class ChatPage : BasePager() {
     private val mockQuoteProvider = MockQuoteProvider()
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
+    private var welcomeKeywordText: String by observable("行情")
+    private var welcomeKeywordStopped: Boolean by observable(false)
+    private var welcomeKeywordVersion = 0
+    // 轮播关键词尾部的 2px 光标：轮播存活期 550ms 翻转（1.1s step-end），停止即隐藏
+    private var welcomeCursorVisible: Boolean by observable(false)
+    // 入场动效：整区 300ms 淡入 + 示例卡 40ms 阶梯上滑；每次空会话只播一次
+    private var welcomeEntranceVisible: Boolean by observable(true)
+    private var welcomeEntranceArmed = false
+    private var welcomeEntranceVersion = 0
+    private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
     /** The document caps simultaneously visible real-time blur surfaces at two. */
     private val glassRenderer: GlassRenderer
@@ -308,6 +327,7 @@ internal class ChatPage : BasePager() {
     override fun pageDidDisappear() {
         super.pageDidDisappear()
         alertPollGeneration++
+        stopWelcomeKeywordLoop(lock = true)
         // If the stock detail route is covering this page, JS state may
         // already read as idle while the native view is still waiting for the
         // collapsed-frame write. Force the write unconditionally.
@@ -325,6 +345,8 @@ internal class ChatPage : BasePager() {
         // Preload the island quote so the morph opens with data in place.
         requestQuote(islandSymbol)
         startAlertPolling()
+        startWelcomeKeywordLoopIfNeeded()
+        playWelcomeEntranceIfNeeded()
     }
 
     override fun body(): ViewBuilder {
@@ -352,7 +374,18 @@ internal class ChatPage : BasePager() {
                     click { page.handleOutsideTap() }
                 }
                 vif({ page.viewModel.messages.isEmpty() }) {
-                    WelcomeSection(page.theme) { question -> page.injectQuestion(question) }
+                    val welcomeMode = page.welcomeMode()
+                    WelcomeSection(
+                        theme = page.theme,
+                        mode = welcomeMode,
+                        greeting = page.welcomeGreeting(welcomeMode),
+                        rotatingKeyword = page.welcomeKeywordText,
+                        cursorVisible = page.welcomeCursorVisible,
+                        entranceVisible = page.welcomeEntranceVisible,
+                        starters = page.welcomeStarters(welcomeMode),
+                    ) { starter ->
+                        page.chooseWelcomeStarter(starter)
+                    }
                 }
                 vif({ page.viewModel.messages.isNotEmpty() }) {
                     DateDivider(page.theme)
@@ -872,13 +905,152 @@ internal class ChatPage : BasePager() {
     }
 
     private fun startNewChat() {
+        drawerOpen = false
+        stopWelcomeKeywordLoop(lock = false)
+        welcomeKeywordStopped = false
+        welcomeEntranceArmed = false
+        keepChatAtBottomVersion = 0
+        chatContentHeight = 0f
         viewModel.startNewChat()
         resetSessionUiState()
         setComposerText("")
-        keepChatAtBottomTemporarily()
+        startWelcomeKeywordLoopIfNeeded()
+        playWelcomeEntranceIfNeeded()
+        resetChatScrollToTop()
+    }
+
+    private fun welcomeMode(): WelcomeMode =
+        if (viewModel.hasSessionHistory) WelcomeMode.BRIEF else WelcomeMode.FULL
+
+    private fun welcomeGreeting(mode: WelcomeMode): String {
+        val base = when (platformCurrentHour().coerceIn(0, 23)) {
+            in 6..10 -> "早上好"
+            in 11..12 -> "中午好"
+            in 13..17 -> "下午好"
+            in 18..23 -> "晚上好"
+            else -> "夜深了"
+        }
+        return if (mode == WelcomeMode.BRIEF) "$base，聊点新的" else base
+    }
+
+    private fun welcomeStarters(mode: WelcomeMode): List<WelcomeStarter> {
+        val defaults = defaultWelcomeStarters()
+        if (mode == WelcomeMode.FULL) return defaults
+        val used = readWelcomeUsedStarterKinds()
+        val allKinds = defaults.map { it.kind.name }.toSet()
+        if (used.containsAll(allKinds)) return defaults
+        return (defaults.filter { it.kind.name !in used } + defaults.filter { it.kind.name in used }).take(defaults.size)
+    }
+
+    private fun chooseWelcomeStarter(starter: WelcomeStarter) {
+        markWelcomeStarterUsed(starter)
+        stopWelcomeKeywordLoop(lock = true)
+        injectQuestion(starter.question)
+    }
+
+    private fun readWelcomeUsedStarterKinds(): Set<String> =
+        welcomeStorage.getString(WELCOME_USED_KIND_KEY)
+            .split('|')
+            .filter { it.isNotBlank() }
+            .toSet()
+
+    private fun markWelcomeStarterUsed(starter: WelcomeStarter) {
+        val allKinds = defaultWelcomeStarters().map { it.kind.name }.toSet()
+        val current = readWelcomeUsedStarterKinds()
+        val next = if (current.containsAll(allKinds)) {
+            mutableSetOf()
+        } else {
+            current.toMutableSet()
+        }
+        next.add(starter.kind.name)
+        welcomeStorage.setString(WELCOME_USED_KIND_KEY, next.joinToString("|"))
+    }
+
+    private fun startWelcomeKeywordLoopIfNeeded() {
+        if (welcomeKeywordStopped || welcomeMode() != WelcomeMode.FULL || viewModel.messages.isNotEmpty()) return
+        if (welcomeReducedMotion) {
+            // 「减弱动态效果」开启：不轮播、不闪烁，静态显示默认词。
+            welcomeKeywordVersion++
+            welcomeKeywordText = welcomeKeywords.first()
+            welcomeCursorVisible = false
+            return
+        }
+        val version = ++welcomeKeywordVersion
+        welcomeKeywordText = welcomeKeywords.first()
+        welcomeCursorVisible = true
+        scheduleWelcomeKeywordTyping(version, wordIndex = 0, length = welcomeKeywords.first().length)
+        scheduleWelcomeCursorBlink(version)
+    }
+
+    private fun stopWelcomeKeywordLoop(lock: Boolean = false) {
+        if (lock) welcomeKeywordStopped = true
+        welcomeKeywordVersion++
+        welcomeKeywordText = welcomeKeywords.first()
+        welcomeCursorVisible = false
+    }
+
+    private fun welcomeKeywordShouldRun(version: Int): Boolean =
+        version == welcomeKeywordVersion &&
+            !welcomeKeywordStopped &&
+            !isWillDestroy() &&
+            isAppeared &&
+            welcomeMode() == WelcomeMode.FULL &&
+            viewModel.messages.isEmpty()
+
+    private fun scheduleWelcomeKeywordTyping(version: Int, wordIndex: Int, length: Int) {
+        if (!welcomeKeywordShouldRun(version)) return
+        val word = welcomeKeywords[wordIndex % welcomeKeywords.size]
+        welcomeKeywordText = word.take(length)
+        if (length < word.length) {
+            setTimeout(200) { scheduleWelcomeKeywordTyping(version, wordIndex, length + 1) }
+        } else {
+            setTimeout(1200) { scheduleWelcomeKeywordDeleting(version, wordIndex, word.length - 1) }
+        }
+    }
+
+    private fun scheduleWelcomeKeywordDeleting(version: Int, wordIndex: Int, length: Int) {
+        if (!welcomeKeywordShouldRun(version)) return
+        val word = welcomeKeywords[wordIndex % welcomeKeywords.size]
+        welcomeKeywordText = word.take(length)
+        if (length > 0) {
+            setTimeout(120) { scheduleWelcomeKeywordDeleting(version, wordIndex, length - 1) }
+        } else {
+            setTimeout(300) { scheduleWelcomeKeywordTyping(version, wordIndex + 1, 1) }
+        }
+    }
+
+    /** 光标 1.1s step-end 闪烁：每 550ms 翻转一次，与轮播共用版本号，随轮播一起停止。 */
+    private fun scheduleWelcomeCursorBlink(version: Int) {
+        if (!welcomeKeywordShouldRun(version)) return
+        setTimeout(550) {
+            if (!welcomeKeywordShouldRun(version)) return@setTimeout
+            welcomeCursorVisible = !welcomeCursorVisible
+            scheduleWelcomeCursorBlink(version)
+        }
+    }
+
+    /**
+     * 首屏入场：整区 300ms 淡入 + 示例卡 40ms 阶梯上滑。
+     * 每个空会话实例只播一次；从详情页返回不重播；减弱动态时直接落到终态。
+     */
+    private fun playWelcomeEntranceIfNeeded() {
+        if (welcomeEntranceArmed || viewModel.messages.isNotEmpty()) return
+        welcomeEntranceArmed = true
+        if (welcomeReducedMotion) {
+            welcomeEntranceVisible = true
+            return
+        }
+        welcomeEntranceVisible = false
+        val version = ++welcomeEntranceVersion
+        setTimeout(60) {
+            if (version == welcomeEntranceVersion && !isWillDestroy() && viewModel.messages.isEmpty()) {
+                welcomeEntranceVisible = true
+            }
+        }
     }
 
     private fun openHistorySession(sessionId: String) {
+        stopWelcomeKeywordLoop(lock = true)
         viewModel.openSession(sessionId)
         resetSessionUiState()
         reloadQuotesForCurrentSession()
@@ -887,6 +1059,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun submitInput() {
+        stopWelcomeKeywordLoop(lock = true)
         val payload = buildSendPayload()
         if (payload.displayText.isEmpty() || viewModel.streamState == StreamState.STREAMING) return
         val command = payload.command?.let { commandById(it.commandId) }
@@ -1485,6 +1658,7 @@ internal class ChatPage : BasePager() {
                 inputFocus {
                     // 键盘自己弹起（系统输入法回调 / 原生点击）也算进入输入态。
                     KLog.i(COMPOSER_LOG_TAG, "EV inputFocus len=${it.text.length}")
+                    this@ChatPage.stopWelcomeKeywordLoop(lock = true)
                     this@ChatPage.composerFocusLocked = true
                     // 已展开后的恢复 focus 必须是纯事件：不要再次进入任何布局函数。
                     // 即使函数内部最终没有改值，Kuikly 的事件/依赖追踪也可能安排
@@ -1611,6 +1785,14 @@ internal class ChatPage : BasePager() {
     private fun scheduleScrollChatToBottom(animated: Boolean = true) {
         setTimeout(16) {
             chatScrollerRef?.view?.setContentOffset(0f, chatContentHeight, animated)
+        }
+    }
+
+    private fun resetChatScrollToTop() {
+        intArrayOf(0, 16, 80).forEach { delay ->
+            setTimeout(delay) {
+                chatScrollerRef?.view?.setContentOffset(0f, 0f, false)
+            }
         }
     }
 

@@ -19,7 +19,7 @@ class ChatSessionStore(
     fun activeSessionId(): String {
         ensureMigrated()
         val activeId = preferences.getString(ACTIVE_SESSION_KEY)
-        if (activeId.isNotBlank() && readSessions().any { it.id == activeId }) return activeId
+        if (activeId.isNotBlank()) return activeId
         return readSessions().firstOrNull()?.id ?: newSessionId()
     }
 
@@ -46,6 +46,11 @@ class ChatSessionStore(
                     groupTitle = groupTitleFor(session.updatedAtMillis, now),
                 )
             }
+    }
+
+    fun hasSessions(): Boolean {
+        ensureMigrated()
+        return readSessions().isNotEmpty()
     }
 
     fun save(sessionId: String, messages: List<ChatMessage>) {

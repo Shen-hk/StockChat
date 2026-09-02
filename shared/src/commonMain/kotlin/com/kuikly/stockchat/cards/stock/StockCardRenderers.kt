@@ -130,7 +130,7 @@ object StockQuoteCardRenderer : CardRenderer {
                 color(theme.textTertiary)
             }
         }
-        MiniTimeline(container, model, context, height = 128f)
+        KuiklyTimelineChart(container, model.quote, context, height = 128f)
         container.View {
             attr { flexDirectionRow(); marginTop(10f) }
             Metric("今开", Format.price(quote.open), theme, this)
@@ -189,7 +189,7 @@ object StockChartCardRenderer : CardRenderer {
             }
             return
         }
-        if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = 132f)
+        if (model.mode == StockChartMode.TIMELINE) KuiklyTimelineChart(container, model.quote, context, height = 132f)
         else KLineChart(container, model, context)
         container.Text {
             attr { text(if (model.mode == StockChartMode.TIMELINE) "虚线为昨收基准" else "显示 MA5 / MA10 / MA20；日线数据可能存在延迟"); marginTop(6f); fontSize(10f); color(theme.textTertiary) }

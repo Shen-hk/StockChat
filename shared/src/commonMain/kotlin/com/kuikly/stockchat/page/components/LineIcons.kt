@@ -227,3 +227,121 @@ fun ViewContainer<*, *>.LineIconRecordingDot(color: Color, size: Float) {
         fill()
     }
 }
+
+/** Trend down: market movement explanation. */
+fun ViewContainer<*, *>.LineIconTrendDown(color: Color, size: Float) {
+    lineIcon(color, size) {
+        beginPath()
+        moveTo(4f, 7f)
+        lineTo(9f, 12f)
+        lineTo(13f, 9f)
+        lineTo(20f, 16f)
+        stroke()
+        beginPath()
+        moveTo(20f, 10f)
+        lineTo(20f, 16f)
+        lineTo(14f, 16f)
+        stroke()
+    }
+}
+
+/** Book: terminology learning. */
+fun ViewContainer<*, *>.LineIconBook(color: Color, size: Float) {
+    lineIcon(color, size) {
+        beginPath()
+        moveTo(5f, 5f)
+        lineTo(10.5f, 5f)
+        arc(12f, 7f, 2f, PI.toFloat(), 0f, false)
+        lineTo(12f, 20f)
+        arc(10.5f, 18f, 2f, 0f, PI.toFloat(), false)
+        lineTo(5f, 18f)
+        closePath()
+        stroke()
+        beginPath()
+        moveTo(19f, 5f)
+        lineTo(13.5f, 5f)
+        arc(12f, 7f, 2f, 0f, PI.toFloat(), true)
+        moveTo(12f, 20f)
+        arc(13.5f, 18f, 2f, PI.toFloat(), 0f, true)
+        lineTo(19f, 18f)
+        closePath()
+        stroke()
+    }
+}
+
+/** File text: financial report reading. */
+fun ViewContainer<*, *>.LineIconFileText(color: Color, size: Float) {
+    lineIcon(color, size) {
+        beginPath()
+        moveTo(7f, 3.5f)
+        lineTo(14f, 3.5f)
+        lineTo(18f, 7.5f)
+        lineTo(18f, 20.5f)
+        lineTo(7f, 20.5f)
+        closePath()
+        stroke()
+        beginPath()
+        moveTo(14f, 3.5f)
+        lineTo(14f, 8f)
+        lineTo(18f, 8f)
+        stroke()
+        beginPath()
+        moveTo(9f, 12f)
+        lineTo(15f, 12f)
+        moveTo(9f, 15f)
+        lineTo(15f, 15f)
+        moveTo(9f, 18f)
+        lineTo(13f, 18f)
+        stroke()
+    }
+}
+
+/** Columns: factual side-by-side comparison. */
+fun ViewContainer<*, *>.LineIconColumns(color: Color, size: Float) {
+    lineIcon(color, size) {
+        roundRectPath(4f, 5f, 16f, 14f, 3f)
+        stroke()
+        beginPath()
+        moveTo(12f, 5f)
+        lineTo(12f, 19f)
+        moveTo(7f, 9f)
+        lineTo(9.5f, 9f)
+        moveTo(14.5f, 9f)
+        lineTo(17f, 9f)
+        moveTo(7f, 13f)
+        lineTo(9.5f, 13f)
+        moveTo(14.5f, 13f)
+        lineTo(17f, 13f)
+        stroke()
+    }
+}
+
+/** Shield check: trust and source traceability. */
+fun ViewContainer<*, *>.LineIconShieldCheck(color: Color, size: Float) {
+    lineIcon(color, size) {
+        beginPath()
+        moveTo(12f, 3.5f)
+        lineTo(18.5f, 6f)
+        lineTo(18f, 12.5f)
+        arc(12f, 18f, 6f, 0.35f, (PI - 0.35f).toFloat(), false)
+        lineTo(5.5f, 6f)
+        closePath()
+        stroke()
+        beginPath()
+        moveTo(8.5f, 12.2f)
+        lineTo(11f, 14.6f)
+        lineTo(15.7f, 9.8f)
+        stroke()
+    }
+}
+
+/** Chevron right: secondary disclosure. */
+fun ViewContainer<*, *>.LineIconChevronRight(color: Color, size: Float) {
+    lineIcon(color, size) {
+        beginPath()
+        moveTo(9f, 6f)
+        lineTo(15f, 12f)
+        lineTo(9f, 18f)
+        stroke()
+    }
+}

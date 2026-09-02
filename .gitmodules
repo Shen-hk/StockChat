@@ -1,0 +1,3 @@
+[submodule "vendor/KuiklyChartKit"]
+	path = vendor/KuiklyChartKit
+	url = https://github.com/Shen-hk/KuiklyChartKit

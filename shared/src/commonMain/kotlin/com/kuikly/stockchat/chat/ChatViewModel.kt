@@ -23,6 +23,8 @@ class ChatViewModel(
     var streamState: StreamState by observable(StreamState.IDLE)
     var apiConfigured: Boolean by observable(false)
         private set
+    var hasSessionHistory: Boolean by observable(false)
+        private set
     private val configStore = dependencies.configStore
     private val sessionStore = dependencies.sessionStore
     private val watchlistStore = dependencies.watchlistStore
@@ -257,6 +259,7 @@ class ChatViewModel(
     }
 
     private fun refreshSessionSummaries() {
+        hasSessionHistory = sessionStore.hasSessions()
         sessionSummaries.clear()
         sessionSummaries.addAll(sessionStore.listSummaries())
     }

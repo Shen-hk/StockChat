@@ -1,6 +1,8 @@
 package com.kuikly.stockchat.data.provider
 
 import platform.Foundation.NSDate
+import platform.Foundation.NSCalendar
+import platform.Foundation.NSCalendarUnitHour
 import platform.Foundation.NSDateFormatter
 import platform.Foundation.NSLocale
 import platform.Foundation.NSTimeZone
@@ -12,3 +14,5 @@ internal actual fun platformCurrentDate(compact: Boolean): String = NSDateFormat
     timeZone = NSTimeZone.localTimeZone
     stringFromDate(NSDate())
 }
+internal actual fun platformCurrentHour(): Int =
+    NSCalendar.currentCalendar.component(NSCalendarUnitHour, fromDate = NSDate()).toInt()
