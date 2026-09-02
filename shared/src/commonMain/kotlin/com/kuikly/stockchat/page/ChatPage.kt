@@ -49,6 +49,11 @@ import com.kuikly.stockchat.page.components.RegressionQuestionRow
 import com.kuikly.stockchat.page.components.SubThreadState
 import com.kuikly.stockchat.page.components.WelcomeSection
 import com.kuikly.stockchat.page.components.ChatTopNav
+import com.kuikly.stockchat.page.components.IslandGestureMotion
+import com.kuikly.stockchat.page.components.IslandGesturePhase
+import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_CLOSE
+import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_DETAIL
+import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_RETURN
 import com.kuikly.stockchat.page.components.LineIconPlus
 import com.kuikly.stockchat.page.components.LineIconMicWithFill
 import com.kuikly.stockchat.page.components.LineIconCamera
@@ -169,6 +174,12 @@ internal class ChatPage : BasePager() {
     // Dynamic island: the top title capsule morphs into a live quote card.
     private var islandExpanded: Boolean by observable(false)
     private var islandSymbol: String by observable("600519.SH")
+    private var islandGestureMotion: IslandGestureMotion by observable(IslandGestureMotion())
+    private var islandGestureStartY = 0f
+    private var islandMotionRevision = 0
+    private var islandDetailRouteActive = false
+    private var islandDetailRouteResetVersion = 0
+    private var islandMounted: Boolean by observable(true)
     private var islandWatchlisted: Boolean by observable(false)
     private var islandCompareLeftSymbol: String by observable("")
     private var islandCompareRightSymbol: String by observable("")
@@ -290,8 +301,20 @@ internal class ChatPage : BasePager() {
         StockCardRenderers.ensureRegistered()
     }
 
+    override fun pageDidDisappear() {
+        super.pageDidDisappear()
+        // If the stock detail route is covering this page, JS state may
+        // already read as idle while the native view is still waiting for the
+        // collapsed-frame write. Force the write unconditionally.
+        if (islandDetailRouteActive) {
+            islandMounted = false
+            forceIslandCollapsedForDetailRoute()
+        }
+    }
+
     override fun pageDidAppear() {
         super.pageDidAppear()
+        if (islandDetailRouteActive) scheduleIslandDetailReturnReset()
         viewModel.refreshConfigStatus()
         islandWatchlisted = watchlistStore.contains(islandSymbol)
         // Preload the island quote so the morph opens with data in place.
@@ -376,8 +399,11 @@ internal class ChatPage : BasePager() {
                 renderer = page.glassRenderer,
                 contextTitle = if (page.drilledKeys.isNotEmpty()) "归因链 · 资金面 ›" else null,
                 pageWidth = page.pagerData.pageViewWidth,
+                pageHeight = page.pagerData.pageViewHeight,
                 islandExpanded = { page.islandExpanded },
+                islandMounted = { page.islandMounted },
                 islandQuote = { page.quoteFor(page.islandSymbol) },
+                islandGestureMotion = { page.islandGestureMotion },
                 islandWatchlisted = { page.islandWatchlisted },
                 islandDropActive = {
                     page.entityDragActive && page.entityDropTarget == EntityDropTarget.ISLAND
@@ -396,7 +422,8 @@ internal class ChatPage : BasePager() {
                 islandCompareInsightLoading = { page.compareInsightState == CompareInsightState.LOADING },
                 islandCompareInsightAvailable = { page.compareInsightState == CompareInsightState.READY },
                 onToggleIsland = { page.toggleIsland() },
-                onOpenIslandDetail = { symbol -> page.islandExpanded = false; page.openStockDetail(symbol) },
+                onIslandGesture = { state, y -> page.handleIslandGesture(state, y) },
+                onIslandMotionComplete = { key -> page.completeIslandMotion(key) },
                 onToggleIslandWatchlist = { symbol -> page.toggleIslandWatchlist(symbol) },
                 onOpenIslandCompare = { page.openIslandComparePanel() },
                 onClearIslandCompare = { page.clearIslandCompare() },
@@ -1014,6 +1041,7 @@ internal class ChatPage : BasePager() {
         peekSymbol = ""
         peekVisible = false
         islandExpanded = false
+        resetIslandMotion()
         islandCompareLeftSymbol = ""
         islandCompareRightSymbol = ""
         islandCompareVisible = false
@@ -1831,6 +1859,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun addDraggedStockToIsland(symbol: String) {
+        resetIslandMotion()
         compareCandidateKey = ""
         compareCandidateSymbol = ""
         if (islandCompareLeftSymbol.isEmpty()) {
@@ -1879,6 +1908,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun clearCompareExperience() {
+        resetIslandMotion()
         // Closing comparison is also a hard interaction boundary.  A terminal
         // long-press event can be lost when the comparison panel mounts under
         // the releasing finger, so explicitly invalidate every drag field.
@@ -1899,6 +1929,7 @@ internal class ChatPage : BasePager() {
 
     private fun openIslandComparePanel() {
         if (compareCard == null) return
+        resetIslandMotion()
         islandCompareVisible = true
         islandExpanded = true
     }
@@ -1916,6 +1947,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun openEntityQuoteIsland(symbol: String) {
+        resetIslandMotion()
         islandSymbol = symbol
         islandWatchlisted = watchlistStore.contains(symbol)
         islandCompareVisible = false
@@ -1978,10 +2010,59 @@ internal class ChatPage : BasePager() {
     }
 
     private var islandAnimating = false
+
+    private fun resetIslandMotion(snap: Boolean = false) {
+        islandGestureMotion = IslandGestureMotion(revision = ++islandMotionRevision, snap = snap)
+        islandAnimating = false
+    }
+
+    private fun forceIslandCollapsedForDetailRoute() {
+        islandExpanded = false
+        resetIslandMotion(snap = true)
+    }
+
+    private fun remountIslandCollapsedForDetailRoute() {
+        islandMounted = false
+        forceIslandCollapsedForDetailRoute()
+        setTimeout(16) {
+            islandMounted = true
+            forceIslandCollapsedForDetailRoute()
+        }
+    }
+
+    private fun scheduleIslandDetailReturnReset() {
+        val resetVersion = ++islandDetailRouteResetVersion
+        remountIslandCollapsedForDetailRoute()
+        val writeCollapsedFrame: () -> Unit = {
+            if (islandDetailRouteActive && resetVersion == islandDetailRouteResetVersion) {
+                forceIslandCollapsedForDetailRoute()
+            }
+        }
+        writeCollapsedFrame()
+        intArrayOf(16, 80, 180, 360).forEach { delay ->
+            setTimeout(delay) { writeCollapsedFrame() }
+        }
+        setTimeout(520) {
+            if (resetVersion == islandDetailRouteResetVersion) {
+                forceIslandCollapsedForDetailRoute()
+                islandMounted = true
+                islandDetailRouteActive = false
+            }
+        }
+    }
+
+    private fun cancelIslandDetailRouteReset() {
+        if (!islandDetailRouteActive) return
+        islandDetailRouteActive = false
+        islandDetailRouteResetVersion++
+        islandMounted = true
+    }
+
     private fun toggleIsland() {
         // A tap can be re-delivered to stacked layers while the morph
         // re-layouts; ignore toggles until the animation settles.
-        if (islandAnimating) return
+        if (islandAnimating || islandGestureMotion.phase != IslandGesturePhase.IDLE) return
+        cancelIslandDetailRouteReset()
         islandAnimating = true
         islandExpanded = !islandExpanded
         if (islandExpanded && islandCompareLeftSymbol.isNotEmpty() && islandCompareRightSymbol.isEmpty() && compareCard == null) {
@@ -1989,6 +2070,109 @@ internal class ChatPage : BasePager() {
         }
         if (islandExpanded) requestQuote(islandSymbol)
         setTimeout(400) { islandAnimating = false }
+    }
+
+    private fun handleIslandGesture(state: String, y: Float) {
+        when (state) {
+            "start" -> {
+                if (
+                    !islandExpanded ||
+                    islandAnimating ||
+                    islandGestureMotion.phase != IslandGesturePhase.IDLE ||
+                    isIslandCompareLobbyVisible()
+                ) return
+                islandGestureStartY = y
+                islandGestureMotion = islandGestureMotion.copy(
+                    phase = IslandGesturePhase.DRAGGING,
+                    offsetY = 0f,
+                )
+            }
+            "move" -> if (islandGestureMotion.phase == IslandGesturePhase.DRAGGING) {
+                val maxDown = (pagerData.pageViewHeight * 0.42f).coerceAtLeast(180f)
+                islandGestureMotion = islandGestureMotion.copy(
+                    phase = IslandGesturePhase.DRAGGING,
+                    offsetY = (y - islandGestureStartY).coerceIn(-104f, maxDown),
+                )
+            }
+            "end", "cancel" -> {
+                if (islandGestureMotion.phase != IslandGesturePhase.DRAGGING) return
+                val deltaY = (y - islandGestureStartY).coerceIn(
+                    -104f,
+                    (pagerData.pageViewHeight * 0.42f).coerceAtLeast(180f),
+                )
+                when {
+                    state == "end" && deltaY <= -24f -> settleIslandClosedFromGesture()
+                    state == "end" && deltaY >= 28f -> openIslandDetailFromGesture(islandSymbol)
+                    else -> settleIslandGestureBack()
+                }
+            }
+        }
+    }
+
+    private fun settleIslandGestureBack() {
+        islandGestureMotion = islandGestureMotion.copy(
+            phase = IslandGesturePhase.RETURNING,
+            offsetY = 0f,
+        )
+        // Completion event is authoritative. The timeout is only a renderer
+        // fallback and is phase-gated, so stale callbacks cannot move the card.
+        setTimeout(280) { completeIslandMotion(ISLAND_ANIMATION_RETURN) }
+    }
+
+    private fun settleIslandClosedFromGesture() {
+        islandAnimating = true
+        islandGestureMotion = islandGestureMotion.copy(
+            phase = IslandGesturePhase.CLOSING,
+            offsetY = -104f,
+        )
+        setTimeout(280) { completeIslandMotion(ISLAND_ANIMATION_CLOSE) }
+    }
+
+    private fun openIslandDetailFromGesture(symbol: String) {
+        if (
+            !islandExpanded ||
+            islandGestureMotion.phase != IslandGesturePhase.DRAGGING ||
+            symbol.isEmpty()
+        ) return
+        islandGestureMotion = islandGestureMotion.copy(
+            phase = IslandGesturePhase.OPENING_DETAIL,
+            offsetY = 0f,
+        )
+        islandAnimating = true
+
+        // The native route starts only after the glass has actually covered
+        // the viewport. This timeout is a phase-gated renderer fallback.
+        setTimeout(280) { completeIslandMotion(ISLAND_ANIMATION_DETAIL) }
+    }
+
+    private fun completeIslandMotion(animationKey: String) {
+        when {
+            animationKey == ISLAND_ANIMATION_RETURN &&
+                islandGestureMotion.phase == IslandGesturePhase.RETURNING -> {
+                resetIslandMotion()
+            }
+            animationKey == ISLAND_ANIMATION_CLOSE &&
+                islandGestureMotion.phase == IslandGesturePhase.CLOSING -> {
+                islandExpanded = false
+                resetIslandMotion()
+            }
+            animationKey == ISLAND_ANIMATION_DETAIL &&
+                islandGestureMotion.phase == IslandGesturePhase.OPENING_DETAIL -> {
+                val symbol = islandSymbol
+                islandExpanded = false
+                islandDetailRouteActive = true
+                islandDetailRouteResetVersion++
+                openStockDetail(symbol)
+                // openPage is synchronous. Reset the covered ChatPage now so
+                // the full-screen transform cannot survive until navigation
+                // returns; pageDidAppear repeats this as a lifecycle fallback.
+                // Snap (no tween): this reset can end up committing right as
+                // the page is covered or uncovered, and animating from the
+                // full-screen frame at that moment is what reads as the
+                // island jumping to the top of the screen.
+                remountIslandCollapsedForDetailRoute()
+            }
+        }
     }
 
     private fun toggleDataMode() {

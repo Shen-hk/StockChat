@@ -13,10 +13,38 @@ import com.tencent.kuikly.core.base.Direction
 import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.attr.CaptureRule
+import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+
+enum class IslandGesturePhase {
+    IDLE,
+    DRAGGING,
+    RETURNING,
+    CLOSING,
+    OPENING_DETAIL,
+}
+
+data class IslandGestureMotion(
+    val phase: IslandGesturePhase = IslandGesturePhase.IDLE,
+    val offsetY: Float = 0f,
+    // A reset can have the same visual values as the current idle state.
+    // Revision still invalidates the reactive layout so native anchors and
+    // transforms are written again after returning from another page.
+    val revision: Int = 0,
+    // A forced/lifecycle reset (page cover racing a timer, returning from a
+    // background page) must land on the idle geometry with no visible tween;
+    // otherwise the card replays its morph from whatever frame was last on
+    // screen the instant it becomes visible again.
+    val snap: Boolean = false,
+)
+
+internal const val ISLAND_ANIMATION_RETURN = "island-gesture-return"
+internal const val ISLAND_ANIMATION_CLOSE = "island-gesture-close"
+internal const val ISLAND_ANIMATION_DETAIL = "island-gesture-detail"
 
 /**
  * The compact, conversation-first chrome used by ChatHome.
@@ -33,10 +61,13 @@ fun ViewContainer<*, *>.ChatTopNav(
     renderer: GlassRenderer = GlassRenderer.Default,
     contextTitle: String? = null,
     pageWidth: Float = 0f,
+    pageHeight: Float = 0f,
     // Kuikly only re-runs attr/vif closures that read observables directly,
     // so reactive island inputs are accessors rather than frozen values.
     islandExpanded: () -> Boolean = { false },
+    islandMounted: () -> Boolean = { true },
     islandQuote: () -> Quote? = { null },
+    islandGestureMotion: () -> IslandGestureMotion = { IslandGestureMotion() },
     islandWatchlisted: () -> Boolean = { false },
     islandDropActive: () -> Boolean = { false },
     islandFirstCompareDrop: () -> Boolean = { false },
@@ -49,7 +80,8 @@ fun ViewContainer<*, *>.ChatTopNav(
     islandCompareInsightLoading: () -> Boolean = { false },
     islandCompareInsightAvailable: () -> Boolean = { false },
     onToggleIsland: () -> Unit = {},
-    onOpenIslandDetail: (String) -> Unit = {},
+    onIslandGesture: (String, Float) -> Unit = { _, _ -> },
+    onIslandMotionComplete: (String) -> Unit = {},
     onToggleIslandWatchlist: (String) -> Unit = {},
     onOpenIslandCompare: () -> Unit = {},
     onClearIslandCompare: () -> Unit = {},
@@ -134,32 +166,37 @@ fun ViewContainer<*, *>.ChatTopNav(
             }
         }
     }
-    StockIsland(
-        statusBarHeight = statusBarHeight,
-        pageWidth = pageWidth,
-        expanded = islandPresented,
-        quote = islandQuote,
-        watchlisted = islandWatchlisted,
-        dropActive = islandDropActive,
-        firstCompareDrop = islandFirstCompareDrop,
-        compareVisible = islandCompareVisible,
-        textOnly = islandTextOnly,
-        compareLeftSymbol = islandCompareLeftSymbol,
-        compareRightSymbol = islandCompareRightSymbol,
-        compareLeftQuote = islandCompareLeftQuote,
-        compareRightQuote = islandCompareRightQuote,
-        compareInsightLoading = islandCompareInsightLoading,
-        compareInsightAvailable = islandCompareInsightAvailable,
-        liveData = liveData,
-        title = contextTitle,
-        theme = theme,
-        renderer = renderer,
-        onToggle = onToggleIsland,
-        onOpenDetail = onOpenIslandDetail,
-        onToggleWatchlist = onToggleIslandWatchlist,
-        onOpenCompare = onOpenIslandCompare,
-        onClearCompare = onClearIslandCompare,
-    )
+    vif({ islandMounted() }) {
+        StockIsland(
+            statusBarHeight = statusBarHeight,
+            pageWidth = pageWidth,
+            pageHeight = pageHeight,
+            expanded = islandPresented,
+            quote = islandQuote,
+            gestureMotion = islandGestureMotion,
+            watchlisted = islandWatchlisted,
+            dropActive = islandDropActive,
+            firstCompareDrop = islandFirstCompareDrop,
+            compareVisible = islandCompareVisible,
+            textOnly = islandTextOnly,
+            compareLeftSymbol = islandCompareLeftSymbol,
+            compareRightSymbol = islandCompareRightSymbol,
+            compareLeftQuote = islandCompareLeftQuote,
+            compareRightQuote = islandCompareRightQuote,
+            compareInsightLoading = islandCompareInsightLoading,
+            compareInsightAvailable = islandCompareInsightAvailable,
+            liveData = liveData,
+            title = contextTitle,
+            theme = theme,
+            renderer = renderer,
+            onToggle = onToggleIsland,
+            onGesture = onIslandGesture,
+            onMotionComplete = onIslandMotionComplete,
+            onToggleWatchlist = onToggleIslandWatchlist,
+            onOpenCompare = onOpenIslandCompare,
+            onClearCompare = onClearIslandCompare,
+        )
+    }
 }
 /**
  * Dynamic-island style interaction hub: the liquid-glass title capsule.
@@ -175,8 +212,10 @@ fun ViewContainer<*, *>.ChatTopNav(
 private fun ViewContainer<*, *>.StockIsland(
     statusBarHeight: Float,
     pageWidth: Float,
+    pageHeight: Float,
     expanded: () -> Boolean,
     quote: () -> Quote?,
+    gestureMotion: () -> IslandGestureMotion,
     watchlisted: () -> Boolean,
     dropActive: () -> Boolean,
     firstCompareDrop: () -> Boolean,
@@ -193,13 +232,16 @@ private fun ViewContainer<*, *>.StockIsland(
     theme: StockChatTheme,
     renderer: GlassRenderer,
     onToggle: () -> Unit,
-    onOpenDetail: (String) -> Unit,
+    onGesture: (String, Float) -> Unit,
+    onMotionComplete: (String) -> Unit,
     onToggleWatchlist: (String) -> Unit,
     onOpenCompare: () -> Unit,
     onClearCompare: () -> Unit,
 ) {
     val collapsedWidth = if (title == null) 128f else 200f
     val expandedWidth = (pageWidth - 28f).coerceAtLeast(collapsedWidth)
+    val quoteHeight = 140f
+    val fullScreenHeight = pageHeight.coerceAtLeast(quoteHeight)
     // Full-width transparent strip centres the island via flex.  It has no
     // event handler, so taps outside the island fall through to the nav
     // buttons and the scroller underneath; only the morphing child below
@@ -207,18 +249,95 @@ private fun ViewContainer<*, *>.StockIsland(
     // of absolute left) keeps layout and touch bounds in sync.
     View {
         attr {
-            absolutePosition(top = statusBarHeight + 4f, left = 0f, right = 0f)
+            val motion = gestureMotion()
+            val navigating = motion.phase == IslandGesturePhase.OPENING_DETAIL
+            absolutePosition(top = if (navigating) 0f else statusBarHeight + 4f, left = 0f, right = 0f)
             flexDirectionRow()
             justifyContentCenter()
+            if (motion.phase == IslandGesturePhase.OPENING_DETAIL) {
+                animate(Animation.easeOut(0.18f), gestureMotion())
+            } else if (motion.snap) {
+                animate(Animation.linear(0f), gestureMotion())
+            }
         }
         View {
             attr {
                 val e = expanded()
+                val motion = gestureMotion()
+                val navigating = motion.phase == IslandGesturePhase.OPENING_DETAIL
+                val dragY = motion.offsetY
+                val closeProgress = (-dragY / 104f).coerceIn(0f, 1f)
+                val spreadProgress = (dragY / 180f).coerceIn(0f, 1f)
                 val dropTextOnly = dropActive() && !firstCompareDrop()
-                width(if (e && !dropTextOnly) expandedWidth else collapsedWidth)
-                height(if (e) if (dropTextOnly) 36f else if (compareVisible()) 146f else 132f else 36f)
-                borderRadius(if (e) 24f else 18f)
-                animate(Animation.easeOut(0.34f), e)
+                val gestureEnabled = e && !dropTextOnly && !compareVisible()
+                val targetWidth = when {
+                    navigating -> pageWidth.coerceAtLeast(expandedWidth)
+                    gestureEnabled && dragY < 0f ->
+                        expandedWidth - (expandedWidth - collapsedWidth) * closeProgress
+                    gestureEnabled && dragY > 0f ->
+                        expandedWidth + (pageWidth - expandedWidth).coerceAtLeast(0f) * spreadProgress
+                    e && !dropTextOnly -> expandedWidth
+                    else -> collapsedWidth
+                }
+                val targetHeight = when {
+                    navigating -> fullScreenHeight
+                    gestureEnabled -> (quoteHeight + dragY).coerceIn(36f, fullScreenHeight)
+                    e && dropTextOnly -> 36f
+                    e && compareVisible() -> 146f
+                    e -> quoteHeight
+                    else -> 36f
+                }
+                val targetRadius = when {
+                    navigating -> 0f
+                    gestureEnabled && dragY < 0f -> 24f - 6f * closeProgress
+                    gestureEnabled && dragY > 0f -> 24f - 12f * spreadProgress
+                    e -> 24f
+                    else -> 18f
+                }
+                width(targetWidth)
+                height(targetHeight)
+                borderRadius(targetRadius)
+                transform(
+                    translate = Translate(
+                        0f,
+                        0f,
+                        offsetY = 0f,
+                    )
+                )
+                // Motion phase and target offset live in one observable value.
+                // This makes release a single atomic update, so Kuikly always
+                // animates from the finger's last frame to one exact endpoint.
+                val isGestureSettling =
+                    motion.phase == IslandGesturePhase.RETURNING ||
+                    motion.phase == IslandGesturePhase.CLOSING ||
+                    motion.phase == IslandGesturePhase.OPENING_DETAIL
+                if (isGestureSettling) {
+                    val motionAnimationKey = gestureMotion()
+                    val animationKey = when (motion.phase) {
+                        IslandGesturePhase.RETURNING -> ISLAND_ANIMATION_RETURN
+                        IslandGesturePhase.CLOSING -> ISLAND_ANIMATION_CLOSE
+                        IslandGesturePhase.OPENING_DETAIL -> ISLAND_ANIMATION_DETAIL
+                        else -> ""
+                    }
+                    animate(
+                        Animation.easeOut(
+                            if (motion.phase == IslandGesturePhase.OPENING_DETAIL) 0.18f else 0.20f,
+                            key = animationKey,
+                        ),
+                        motionAnimationKey,
+                    )
+                } else {
+                    val expandedAnimationKey = expanded()
+                    animate(
+                        if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.34f),
+                        expandedAnimationKey,
+                    )
+                }
+            }
+            event {
+                animationCompletion { params ->
+                    if (params.animationKey.isNotEmpty()) onMotionComplete(params.animationKey)
+                }
             }
             vif({ (!textOnly() || expanded() || compareVisible()) && (!dropActive() || firstCompareDrop()) }) {
                 GlassBackdrop(theme.glass.peek, renderer)
@@ -264,12 +383,51 @@ private fun ViewContainer<*, *>.StockIsland(
                     paddingLeft(16f)
                     paddingRight(16f)
                     paddingTop(12f)
-                    paddingBottom(11f)
-                    val showQuote = e && !dropActive() && !compareVisible()
-                    opacity(if (showQuote) 1f else 0f)
-                    transform(Translate(0f, if (e) 0f else 0.10f))
+                    paddingBottom(19f)
+                    val motion = gestureMotion()
+                    val dragY = motion.offsetY
+                    val closeProgress = (-dragY / 104f).coerceIn(0f, 1f)
+                    val spreadProgress = (dragY / 180f).coerceIn(0f, 1f)
+                    val openingDetail = motion.phase == IslandGesturePhase.OPENING_DETAIL
+                    val showQuote = e && !dropActive() && !compareVisible() && !openingDetail
+                    val gestureFade = maxOf(closeProgress, spreadProgress * 0.72f)
+                    opacity(if (showQuote) 1f - gestureFade else 0f)
+                    transform(
+                        Translate(
+                            0f,
+                            when {
+                                dragY < 0f -> -0.08f * closeProgress
+                                dragY > 0f -> 0.05f * spreadProgress
+                                else -> 0f
+                            },
+                        )
+                    )
                     touchEnable(showQuote)
-                    animate(Animation.easeOut(0.26f), e)
+                    // Exactly one animate() call per pass: registering a second one
+                    // for the same property silently clobbers the first, so the two
+                    // timelines must stay mutually exclusive, mirroring the outer
+                    // card's own isGestureSettling branch above.
+                    val isGestureSettling =
+                        motion.phase == IslandGesturePhase.RETURNING ||
+                        motion.phase == IslandGesturePhase.CLOSING ||
+                        motion.phase == IslandGesturePhase.OPENING_DETAIL
+                    if (isGestureSettling) {
+                        val motionAnimationKey = gestureMotion()
+                        animate(
+                            if (motion.snap) {
+                                Animation.linear(0f)
+                            } else {
+                                Animation.easeOut(if (openingDetail) 0.18f else 0.20f)
+                            },
+                            motionAnimationKey,
+                        )
+                    } else if (motion.phase != IslandGesturePhase.DRAGGING) {
+                        val expandedAnimationKey = expanded()
+                        animate(
+                            if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.26f),
+                            expandedAnimationKey,
+                        )
+                    }
                 }
                 View {
                     attr { flexDirectionRow(); alignItemsCenter() }
@@ -278,11 +436,6 @@ private fun ViewContainer<*, *>.StockIsland(
                     View { attr { flex(1f) } }
                     View { attr { size(5f, 5f); borderRadius(3f); backgroundColor(if (liveData()) Color(0xFF34C759) else theme.textTertiary) } }
                     Text { attr { text(if (liveData()) "实时" else "模拟"); marginLeft(4f); fontSize(9f); color(theme.textTertiary) } }
-                    View {
-                        attr { size(24f, 24f); marginLeft(10f); allCenter(); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
-                        Text { attr { text("×"); fontSize(13f); color(theme.textSecondary) } }
-                        event { click { onToggle() } }
-                    }
                 }
                 View {
                     // Loading hint occupies the same slot as the stats block;
@@ -298,7 +451,7 @@ private fun ViewContainer<*, *>.StockIsland(
                 }
                 View {
                     attr {
-                        absolutePosition(top = 44f, left = 16f, right = 16f, bottom = 11f)
+                        absolutePosition(top = 44f, left = 16f, right = 16f, bottom = 23f)
                         opacity(if (quote() == null) 0f else 1f)
                         touchEnable(quote() != null)
                     }
@@ -361,22 +514,50 @@ private fun ViewContainer<*, *>.StockIsland(
                                 }
                             }
                         }
-                        View {
-                            attr {
-                                height(24f)
-                                marginLeft(6f)
-                                paddingLeft(8f)
-                                paddingRight(8f)
-                                allCenter()
-                                borderRadius(8f)
-                                backgroundColor(theme.brandSoft)
-                            }
-                            Text { attr { text("详情 ›"); fontSize(10f); fontWeightMedium(); color(theme.brand) } }
-                            event {
-                                click {
-                                    if (expanded()) quote()?.let { onOpenDetail(it.symbol) }
-                                }
-                            }
+                    }
+                }
+                // The visible handle stays intentionally small, while its
+                // capture area is large enough for a reliable one-thumb swipe.
+                // Up dismisses; down continues into the current stock detail.
+                View {
+                    attr {
+                        val motion = gestureMotion()
+                        absolutePosition(left = 0f, right = 0f, bottom = 0f)
+                        height(27f)
+                        alignItemsCenter()
+                        capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
+                        touchEnable(motion.phase != IslandGesturePhase.OPENING_DETAIL)
+                    }
+                    View {
+                        attr {
+                            val motion = gestureMotion()
+                            val openingDetail = motion.phase == IslandGesturePhase.OPENING_DETAIL
+                            val dragging = motion.phase == IslandGesturePhase.DRAGGING
+                            width(44f)
+                            height(4f)
+                            marginTop(10f)
+                            borderRadius(2f)
+                            backgroundColor(Color(0xFFFFFFFF, 0.92f))
+                            opacity(if (openingDetail) 0f else 1f)
+                            transform(
+                                scale = Scale(
+                                    if (dragging) 1.08f else 1f,
+                                    if (dragging) 1.08f else 1f,
+                                )
+                            )
+                            val motionAnimationKey = gestureMotion()
+                            animate(
+                                if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.16f),
+                                motionAnimationKey,
+                            )
+                        }
+                    }
+                    event {
+                        pan { params ->
+                            // pageY remains stable while the handle itself moves
+                            // with the resizing card; local y would cancel out
+                            // part of the finger travel and feel detached.
+                            onGesture(params.state, params.pageY)
                         }
                     }
                 }
