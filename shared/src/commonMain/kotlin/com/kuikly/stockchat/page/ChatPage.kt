@@ -290,13 +290,17 @@ internal class ChatPage : BasePager() {
     private var welcomeKeywordText: String by observable("行情")
     private var welcomeKeywordStopped: Boolean by observable(false)
     private var welcomeKeywordVersion = 0
+    private var welcomeKeywordTimer: Timer? = null
+    private var welcomeCursorTimer: Timer? = null
     // 轮播关键词尾部的 2px 光标：轮播存活期 550ms 翻转（1.1s step-end），停止即隐藏
     private var welcomeCursorVisible: Boolean by observable(false)
-    // 入场动效：整区 300ms 淡入 + 示例卡 40ms 阶梯上滑；每次空会话只播一次
+    // 入场动效：示例卡 40ms 阶梯上滑；每次空会话只播一次。
+    // 初值必须可见：部分 Android 冷启动/清数据路径里 pageDidAppear 的延迟回调可能
+    // 早于首个有效渲染帧，若整区依赖 opacity=0 -> 1，会留下一个不可恢复的空首页。
     private var welcomeEntranceVisible: Boolean by observable(true)
     private var welcomeEntranceArmed = false
-    private var welcomeEntranceVersion = 0
     private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
+    private var pendingRouteQuestion: String = ""
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
     /** The document caps simultaneously visible real-time blur surfaces at two. */
     private val glassRenderer: GlassRenderer
@@ -321,13 +325,25 @@ internal class ChatPage : BasePager() {
     override fun created() {
         super.created()
         glassMode = hostGlassRenderer.mode
+        pendingRouteQuestion = pagerData.params.optString("question")
         StockCardRenderers.ensureRegistered()
+    }
+
+    // 首帧已画出来是播入场动效最合适的时机；pageDidAppear 里也会调一次兜底，
+    // 因为 firstFramePaint 事件不是每个宿主都保证下发。
+    override fun onFirstFramePaint() {
+        super.onFirstFramePaint()
+        playWelcomeEntranceIfNeeded()
     }
 
     override fun pageDidDisappear() {
         super.pageDidDisappear()
         alertPollGeneration++
-        stopWelcomeKeywordLoop(lock = true)
+        // 只暂停、不上锁：lock=true 会把 welcomeKeywordStopped 永久置真，
+        // 于是从详情页返回或应用回到前台后 startWelcomeKeywordLoopIfNeeded()
+        // 会被首行的 stopped 判断直接挡掉，轮播再也不会恢复。
+        // 上锁只留给「用户已经开始对话」的路径（提交输入、选示例卡、打开历史会话）。
+        stopWelcomeKeywordLoop(lock = false)
         // If the stock detail route is covering this page, JS state may
         // already read as idle while the native view is still waiting for the
         // collapsed-frame write. Force the write unconditionally.
@@ -347,6 +363,7 @@ internal class ChatPage : BasePager() {
         startAlertPolling()
         startWelcomeKeywordLoopIfNeeded()
         playWelcomeEntranceIfNeeded()
+        consumeRouteQuestionIfNeeded()
     }
 
     override fun body(): ViewBuilder {
@@ -379,9 +396,13 @@ internal class ChatPage : BasePager() {
                         theme = page.theme,
                         mode = welcomeMode,
                         greeting = page.welcomeGreeting(welcomeMode),
-                        rotatingKeyword = page.welcomeKeywordText,
-                        cursorVisible = page.welcomeCursorVisible,
-                        entranceVisible = page.welcomeEntranceVisible,
+                        // 取值闭包，不能在这里直接读 observable：vif 体只执行一次，
+                        // 读到的快照不会建立依赖，attr 不重跑、animate() 也拿不到
+                        // observablePropertyKey，整块动效会静默失效。
+                        rotatingKeyword = { page.welcomeKeywordText },
+                        cursorVisible = { page.welcomeCursorVisible },
+                        entranceVisible = { page.welcomeEntranceVisible },
+                        reduceMotion = page.welcomeReducedMotion,
                         starters = page.welcomeStarters(welcomeMode),
                     ) { starter ->
                         page.chooseWelcomeStarter(starter)
@@ -909,6 +930,7 @@ internal class ChatPage : BasePager() {
         stopWelcomeKeywordLoop(lock = false)
         welcomeKeywordStopped = false
         welcomeEntranceArmed = false
+        welcomeEntranceVisible = true
         keepChatAtBottomVersion = 0
         chatContentHeight = 0f
         viewModel.startNewChat()
@@ -919,8 +941,12 @@ internal class ChatPage : BasePager() {
         resetChatScrollToTop()
     }
 
+    // 2026-09-03 产品决策：全量走 FULL 档，BRIEF 档（老用户简版欢迎语）暂不启用。
+    // 恢复 BRIEF 只需把该开关改回 true，原有降级逻辑全部保留。
+    private val welcomeBriefEnabled = false
+
     private fun welcomeMode(): WelcomeMode =
-        if (viewModel.hasSessionHistory) WelcomeMode.BRIEF else WelcomeMode.FULL
+        if (welcomeBriefEnabled && viewModel.hasSessionHistory) WelcomeMode.BRIEF else WelcomeMode.FULL
 
     private fun welcomeGreeting(mode: WelcomeMode): String {
         val base = when (platformCurrentHour().coerceIn(0, 23)) {
@@ -985,6 +1011,10 @@ internal class ChatPage : BasePager() {
     private fun stopWelcomeKeywordLoop(lock: Boolean = false) {
         if (lock) welcomeKeywordStopped = true
         welcomeKeywordVersion++
+        welcomeKeywordTimer?.cancel()
+        welcomeKeywordTimer = null
+        welcomeCursorTimer?.cancel()
+        welcomeCursorTimer = null
         welcomeKeywordText = welcomeKeywords.first()
         welcomeCursorVisible = false
     }
@@ -993,7 +1023,6 @@ internal class ChatPage : BasePager() {
         version == welcomeKeywordVersion &&
             !welcomeKeywordStopped &&
             !isWillDestroy() &&
-            isAppeared &&
             welcomeMode() == WelcomeMode.FULL &&
             viewModel.messages.isEmpty()
 
@@ -1002,9 +1031,13 @@ internal class ChatPage : BasePager() {
         val word = welcomeKeywords[wordIndex % welcomeKeywords.size]
         welcomeKeywordText = word.take(length)
         if (length < word.length) {
-            setTimeout(200) { scheduleWelcomeKeywordTyping(version, wordIndex, length + 1) }
+            scheduleWelcomeKeywordStep(version, 200) {
+                scheduleWelcomeKeywordTyping(version, wordIndex, length + 1)
+            }
         } else {
-            setTimeout(1200) { scheduleWelcomeKeywordDeleting(version, wordIndex, word.length - 1) }
+            scheduleWelcomeKeywordStep(version, 1200) {
+                scheduleWelcomeKeywordDeleting(version, wordIndex, word.length - 1)
+            }
         }
     }
 
@@ -1013,40 +1046,77 @@ internal class ChatPage : BasePager() {
         val word = welcomeKeywords[wordIndex % welcomeKeywords.size]
         welcomeKeywordText = word.take(length)
         if (length > 0) {
-            setTimeout(120) { scheduleWelcomeKeywordDeleting(version, wordIndex, length - 1) }
+            scheduleWelcomeKeywordStep(version, 120) {
+                scheduleWelcomeKeywordDeleting(version, wordIndex, length - 1)
+            }
         } else {
-            setTimeout(300) { scheduleWelcomeKeywordTyping(version, wordIndex + 1, 1) }
+            scheduleWelcomeKeywordStep(version, 300) {
+                scheduleWelcomeKeywordTyping(version, wordIndex + 1, 1)
+            }
+        }
+    }
+
+    private fun scheduleWelcomeKeywordStep(version: Int, delay: Int, block: () -> Unit) {
+        welcomeKeywordTimer?.cancel()
+        val timer = Timer()
+        welcomeKeywordTimer = timer
+        timer.schedule(delay, delay.coerceAtLeast(16)) {
+            timer.cancel()
+            if (welcomeKeywordTimer === timer) welcomeKeywordTimer = null
+            if (welcomeKeywordShouldRun(version)) block()
         }
     }
 
     /** 光标 1.1s step-end 闪烁：每 550ms 翻转一次，与轮播共用版本号，随轮播一起停止。 */
     private fun scheduleWelcomeCursorBlink(version: Int) {
         if (!welcomeKeywordShouldRun(version)) return
-        setTimeout(550) {
-            if (!welcomeKeywordShouldRun(version)) return@setTimeout
+        welcomeCursorTimer?.cancel()
+        val timer = Timer()
+        welcomeCursorTimer = timer
+        timer.schedule(550, 550) {
+            if (!welcomeKeywordShouldRun(version)) {
+                timer.cancel()
+                if (welcomeCursorTimer === timer) welcomeCursorTimer = null
+                return@schedule
+            }
             welcomeCursorVisible = !welcomeCursorVisible
-            scheduleWelcomeCursorBlink(version)
         }
     }
 
     /**
-     * 首屏入场：整区 300ms 淡入 + 示例卡 40ms 阶梯上滑。
+     * 首屏入场：示例卡 40ms 阶梯上滑。
      * 每个空会话实例只播一次；从详情页返回不重播；减弱动态时直接落到终态。
      */
     private fun playWelcomeEntranceIfNeeded() {
-        if (welcomeEntranceArmed || viewModel.messages.isNotEmpty()) return
-        welcomeEntranceArmed = true
-        if (welcomeReducedMotion) {
+        if (viewModel.messages.isNotEmpty()) {
+            // 有消息时不显示欢迎区，但把状态留在终态，避免下次空会话带着 opacity 0 入场。
             welcomeEntranceVisible = true
             return
         }
+        if (welcomeEntranceArmed) return
+        welcomeEntranceArmed = true
+        if (welcomeReducedMotion) return
+        // true -> false -> true：false 与 true 必须落在两个不同的 setTimeout tick 上，
+        // 否则两次属性变更会并进同一批 DOM 同步，animate() 看不到跨帧的值变化。
+        // 32ms ≈ 2 帧，既够 opacity=0 那一帧下发，又不会让首屏可感知地空一拍。
         welcomeEntranceVisible = false
-        val version = ++welcomeEntranceVersion
-        setTimeout(60) {
-            if (version == welcomeEntranceVersion && !isWillDestroy() && viewModel.messages.isEmpty()) {
-                welcomeEntranceVisible = true
-            }
+        setTimeout(32) {
+            if (viewModel.messages.isEmpty() && welcomeEntranceArmed) welcomeEntranceVisible = true
         }
+        // 兜底：翻回 true 的那个回调一旦丢失（冷启动/清数据路径上出现过），
+        // 欢迎区会永久停在 opacity 0 的空首页。这里无条件再补一次终态。
+        setTimeout(600) {
+            if (viewModel.messages.isEmpty() && !welcomeEntranceVisible) welcomeEntranceVisible = true
+        }
+    }
+
+    private fun resetWelcomeForEmptySession() {
+        if (viewModel.messages.isNotEmpty()) return
+        welcomeKeywordStopped = false
+        welcomeEntranceArmed = false
+        welcomeEntranceVisible = true
+        startWelcomeKeywordLoopIfNeeded()
+        playWelcomeEntranceIfNeeded()
     }
 
     private fun openHistorySession(sessionId: String) {
@@ -1117,6 +1187,7 @@ internal class ChatPage : BasePager() {
                 when (command.id) {
                     "clear" -> {
                         viewModel.clear()
+                        resetWelcomeForEmptySession()
                         val rest = CommandInvocationParser.remainder(payload.text, command.name)
                         finishCommandSideEffect(rest)
                         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已清屏")
@@ -3306,6 +3377,15 @@ internal class ChatPage : BasePager() {
         inputPanel = InputPanel.NONE
         // 推荐问句/联想词/历史标的：统一从 expandComposer 进入，输入态与键盘一起到位。
         expandComposer(requestFocus = true)
+    }
+
+    private fun consumeRouteQuestionIfNeeded() {
+        val question = pendingRouteQuestion.trim()
+        if (question.isEmpty()) return
+        pendingRouteQuestion = ""
+        setTimeout(0) {
+            injectQuestion(question)
+        }
     }
 
     private fun clearCompare() {

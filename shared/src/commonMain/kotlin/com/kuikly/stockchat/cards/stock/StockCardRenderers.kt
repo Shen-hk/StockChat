@@ -21,6 +21,8 @@ import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.chart.model.KLineCalculator
 import com.kuikly.stockchat.common.Format
+import com.tencent.kuikly.core.base.Border
+import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.Text
@@ -197,7 +199,13 @@ object StockChartCardRenderer : CardRenderer {
     }
 }
 
-internal fun KLineChart(container: ViewContainer<*, *>, model: StockChartCardModel, context: CardContext) {
+internal fun KLineChart(
+    container: ViewContainer<*, *>,
+    model: StockChartCardModel,
+    context: CardContext,
+    selectedIndex: Int = -1,
+    onSelectIndex: ((Int) -> Unit)? = null,
+) {
     val sourceLines = when (model.period) {
         StockChartPeriod.DAY -> model.quote.kLines
         StockChartPeriod.WEEK -> model.quote.weekKLines.ifEmpty { KLineCalculator.aggregate(model.quote.kLines, model.period.grouping) }
@@ -213,13 +221,51 @@ internal fun KLineChart(container: ViewContainer<*, *>, model: StockChartCardMod
         KLineCalculator.movingAverage(sourceLines, period).takeLast(lines.size)
     }
     val theme = context.theme
-    container.Canvas({ attr { height(168f); marginTop(10f); alignSelfStretch() } }) { canvas, width, height ->
+    if (lines.isEmpty()) {
+        container.View {
+            attr {
+                height(168f)
+                marginTop(10f)
+                alignSelfStretch()
+                borderRadius(12f)
+                backgroundColor(theme.surfaceMuted)
+                allCenter()
+            }
+            Text {
+                attr {
+                    text("K线数据正在加载")
+                    fontSize(11f)
+                    color(theme.textTertiary)
+                }
+            }
+        }
+        return
+    }
+    var measuredWidth = 0f
+    fun resolveIndex(x: Float): Int {
+        val safeWidth = measuredWidth.coerceAtLeast(1f)
+        val step = safeWidth / lines.size
+        return (x / step).toInt().coerceIn(0, lines.lastIndex)
+    }
+    container.Canvas({
+        attr { height(168f); marginTop(10f); alignSelfStretch() }
+        if (onSelectIndex != null) {
+            event {
+                click { params -> onSelectIndex(resolveIndex(params.x)) }
+                pan { params ->
+                    if (!params.isEnd) onSelectIndex(resolveIndex(params.x))
+                }
+            }
+        }
+    }) { canvas, width, height ->
+        measuredWidth = width
         if (lines.isEmpty() || width <= 0f) return@Canvas
         val low = lines.minOf { it.low }
         val high = lines.maxOf { it.high }
         val range = (high - low).coerceAtLeast(0.0001)
         fun y(value: Double) = ((high - value) / range * (height - 8f) + 4f).toFloat()
         val step = width / lines.size
+        val selected = selectedIndex.takeIf { it in lines.indices } ?: lines.lastIndex
         lines.forEachIndexed { index, line ->
             val x = step * index + step / 2f
             val color = if (line.close >= line.open) theme.rise else theme.fall
@@ -246,11 +292,50 @@ internal fun KLineChart(container: ViewContainer<*, *>, model: StockChartCardMod
             }
             if (started) { canvas.strokeStyle(color); canvas.lineWidth(1.2f); canvas.stroke() }
         }
+        lines.getOrNull(selected)?.let { latest ->
+            val x = step * selected + step / 2f
+            val closeY = y(latest.close)
+            canvas.setLineDash(listOf(4f, 5f))
+            canvas.beginPath()
+            canvas.moveTo(x, 4f)
+            canvas.lineTo(x, height - 4f)
+            canvas.strokeStyle(theme.textTertiary.opacity(0.34f))
+            canvas.lineWidth(1f)
+            canvas.stroke()
+            canvas.beginPath()
+            canvas.moveTo(0f, closeY)
+            canvas.lineTo(width, closeY)
+            canvas.strokeStyle(theme.textTertiary.opacity(0.24f))
+            canvas.lineWidth(1f)
+            canvas.stroke()
+            canvas.setLineDash(emptyList())
+        }
     }
     container.View {
         attr { marginTop(5f); flexDirectionRow() }
         Text { attr { text(lines.first().date); fontSize(9f); color(theme.textTertiary); flex(1f) } }
         Text { attr { text(lines.last().date); fontSize(9f); color(theme.textTertiary); textAlignRight() } }
+    }
+    val selectedLine = lines.getOrNull(selectedIndex.takeIf { it in lines.indices } ?: lines.lastIndex)
+    selectedLine?.let { latest ->
+        container.View {
+            attr {
+                marginTop(6f)
+                paddingTop(6f)
+                borderTop(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                flexDirectionRow()
+            }
+            Text { attr { text("定位 ${latest.date}"); fontSize(10f); color(theme.textTertiary); flex(1f) } }
+            Text {
+                attr {
+                    text("收 ${Format.price(latest.close)}")
+                    fontSize(10f)
+                    fontWeightSemiBold()
+                    color(if (latest.close >= latest.open) theme.rise else theme.fall)
+                    textAlignRight()
+                }
+            }
+        }
     }
 }
 

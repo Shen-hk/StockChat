@@ -29,6 +29,15 @@ fun PagerScope.openStockDetail(symbol: String, from: String = Routes.CHAT) {
     )
 }
 
+fun PagerScope.openChatWithQuestion(question: String) {
+    getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
+        Routes.CHAT,
+        JSONObject().apply {
+            put("question", question)
+        },
+    )
+}
+
 fun PagerScope.openPage(page: String) {
     if (!platformOpenPage(page)) {
         getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(page, JSONObject())

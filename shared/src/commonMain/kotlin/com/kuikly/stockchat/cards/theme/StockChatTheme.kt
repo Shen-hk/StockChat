@@ -17,7 +17,11 @@ data class StockChatTheme(
     val onBrand: Color,
     val rise: Color,
     val fall: Color,
+    val flat: Color,
     val divider: Color,
+    /** Market-only glass layer; distinct from the app chrome glass palette. */
+    val marketGlass: Color,
+    val marketGlassEdge: Color,
     val glass: GlassPalette = GlassPalette.Light,
     val cardRadius: Float = 14f,
     val inputRadius: Float = 20f,
@@ -26,21 +30,24 @@ data class StockChatTheme(
 ) {
     companion object {
         val Light = StockChatTheme(
-            page = Color(0xFFFAFAF8),
+            page = Color(0xFFF5F6F8),
             surface = Color(0xFFFFFFFF),
-            surfaceMuted = Color(0xFFF1F1EF),
-            textPrimary = Color(0xFF1D1D1F),
-            textSecondary = Color(0xFF6E6E73),
-            textTertiary = Color(0xFFAEAEB2),
-            brand = Color(0xFF2563EB),
-            brandSoft = Color(0xFFEFF6FF),
-            term = Color(0xFF7C3AED),
-            riseSoft = Color(0xFFFFF5F5),
-            fallSoft = Color(0xFFF0FCF6),
+            surfaceMuted = Color(0xFFEEF1F5),
+            textPrimary = Color(0xFF1A1D23),
+            textSecondary = Color(0xFF5B6573),
+            textTertiary = Color(0xFF5F6B82),
+            brand = Color(0xFF1E5BD6),
+            brandSoft = Color(0xFFEAF1FD),
+            term = Color(0xFF5F6B82),
+            riseSoft = Color(0xFFFCEDED),
+            fallSoft = Color(0xFFE9F4EE),
             onBrand = Color(0xFFFFFFFF),
-            rise = Color(0xFFE03131),
-            fall = Color(0xFF0CA678),
-            divider = Color(0xFFE8E8E6),
+            rise = Color(0xFFD92E2E),
+            fall = Color(0xFF0C7A45),
+            flat = Color(0xFF8A93A3),
+            divider = Color(0xFFE2E8F0),
+            marketGlass = Color(0xFFFFFFFF, 0.82f),
+            marketGlassEdge = Color(0xFFFFFFFF, 0.72f),
             glass = GlassPalette.Light,
         )
 
@@ -59,7 +66,10 @@ data class StockChatTheme(
             onBrand = Color(0xFF101827),
             rise = Color(0xFFFF7878),
             fall = Color(0xFF54D6A6),
+            flat = Color(0xFF7A7A80),
             divider = Color(0xFF363638),
+            marketGlass = Color(0xFF1D1D1F, 0.76f),
+            marketGlassEdge = Color(0xFFFFFFFF, 0.08f),
             glass = GlassPalette.Dark,
         )
     }
@@ -77,7 +87,7 @@ data class SpacingTokens(
 )
 
 data class TypeTokens(
-    val display: Float = 38f,
+    val display: Float = 40f,
     val h1: Float = 20f,
     val title: Float = 16f,
     val body: Float = 14f,

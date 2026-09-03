@@ -7,6 +7,8 @@ import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.tencent.kuikly.core.base.Animation
+import com.tencent.kuikly.core.base.Border
+import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
@@ -1048,6 +1050,11 @@ fun ViewContainer<*, *>.AppTopBar(
     renderer: GlassRenderer = GlassRenderer.Default,
     backLabel: String? = null,
     onBack: () -> Unit = {},
+    compactLine: String? = null,
+    compactLineColor: Color? = null,
+    compactVisible: Boolean = compactLine != null,
+    progress: Float? = null,
+    reduceMotion: Boolean = false,
     actions: List<Pair<String, () -> Unit>> = emptyList(),
 ) {
     View {
@@ -1077,17 +1084,64 @@ fun ViewContainer<*, *>.AppTopBar(
             View {
                 attr { flex(1f) }
                 Text { attr { text(title); fontSize(18f); fontWeightBold(); color(theme.textPrimary) } }
-                Text { attr { text(subtitle); marginTop(1f); fontSize(10f); color(theme.textTertiary) } }
+                View {
+                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(1f) }
+                    Text { attr { text(subtitle); fontSize(10f); color(theme.textTertiary) } }
+                    if (compactLine != null) {
+                        Text {
+                            attr {
+                                text(compactLine)
+                                marginLeft(8f)
+                                fontSize(10f)
+                                fontWeightSemiBold()
+                                color(compactLineColor ?: theme.textSecondary)
+                                opacity(if (compactVisible) 1f else 0f)
+                                if (!reduceMotion) {
+                                    transform(Translate(0f, if (compactVisible) 0f else -0.12f))
+                                    animate(Animation.easeOut(0.18f), compactVisible)
+                                }
+                            }
+                        }
+                    }
+                }
             }
             actions.forEach { (label, action) ->
                 View {
-                    attr { marginLeft(6f); padding(8f); borderRadius(9f); backgroundColor(theme.surfaceMuted) }
-                    Text { attr { text(label); fontSize(12f); color(theme.textSecondary) } }
+                    attr {
+                        marginLeft(6f)
+                        minWidth(32f)
+                        height(32f)
+                        allCenter()
+                        borderRadius(16f)
+                        backgroundColor(if (label == "+" || label == "✓") theme.brandSoft else theme.surfaceMuted)
+                        border(Border(1f, BorderStyle.SOLID, if (label == "+" || label == "✓") theme.brand.opacity(0.20f) else theme.divider))
+                    }
+                    Text {
+                        attr {
+                            text(label)
+                            fontSize(13f)
+                            fontWeightSemiBold()
+                            color(if (label == "+" || label == "✓") theme.brand else theme.textSecondary)
+                        }
+                    }
                     event { click { action() } }
                 }
             }
         }
-        View { attr { height(1f); backgroundColor(theme.divider) } }
+        if (progress == null) {
+            View { attr { height(1f); backgroundColor(theme.divider) } }
+        } else {
+            val fill = progress.coerceIn(0f, 1f)
+            View {
+                attr {
+                    height(2f)
+                    flexDirectionRow()
+                    backgroundColor(theme.divider)
+                }
+                View { attr { flex(fill.coerceAtLeast(0.001f)); backgroundColor(theme.brand) } }
+                View { attr { flex((1f - fill).coerceAtLeast(0.001f)) } }
+            }
+        }
     }
 }
 
