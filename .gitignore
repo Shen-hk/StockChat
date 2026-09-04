@@ -16,12 +16,23 @@ rename_native.py
 .cxx
 local.properties
 *.so
-*.js
 node_modules
 Pods
 Pods/*
 Pods-iosApp/*
+kotlin-js-store
 Kotlin-js-store
+
+# 真机调试截图 / UI dump（一次性调试产物，不入库）
+/device-*.png
+/device-*.xml
+/fix-market-*.png
+/market-*.xml
+/ui-now.xml
+/v-step*.png
+/v-swipe.png
+/preview/
+*.bak.*
 
 ## Various settings
 *.pbxuser
