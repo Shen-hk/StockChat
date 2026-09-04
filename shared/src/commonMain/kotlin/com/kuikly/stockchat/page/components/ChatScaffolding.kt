@@ -71,7 +71,7 @@ internal fun ViewContainer<*, *>.WelcomeSection(
         // 入场只能从实际挂载点启动。pageDidAppear 可能早于 body/子视图构建，
         // 在那里触发会令一次性的 presented 变化发生在 attr 注册依赖之前。
         ref { onMounted() }
-        WelcomeBackdrop(theme, full)
+//        WelcomeBackdrop(theme, full)
         Text {
             attr {
                 text(greeting)
@@ -123,61 +123,60 @@ internal fun ViewContainer<*, *>.WelcomeSection(
 
 /**
  * 方案 C 背景：顶部一束柔光（规范 6.4.1）。
- * Kuikly 无 radial-gradient，用两个竖直线性渐变的椭圆叠加近似：
- * 峰值透明度浅色 ≤ .075 / 深色 ≤ .10，精简档 ×0.6；椭圆顶端探出屏外，
- * 光束中心落在问候语与 Logo 之间（约容器纵向 22%）。
+ * Kuikly 无 radial-gradient，用「同心胶囊由外向内逐层收窄提亮」近似径向衰减。
+ * 旧版两层大台阶（.045/.030）+ 内芯 stop0 满量 alpha，会读成两枚叠放胶囊，
+ * 且内芯顶边在可见区留下一条硬线——这是丑感主因。现改四层：
+ *   1) 层间 alpha 台阶 ≤ .02，胶囊轮廓互相融掉；
+ *   2) 每层渐变两端全透明、中点峰值（0.25/0.75 处 55% 过渡站近似钟形），
+ *      任何一层都不露硬边，也不再依赖「顶端探出屏外 + 父容器裁剪」这一假设。
+ * 四层峰值之和 ≈ 浅色 .075 / 深色 .10（规范 6.4.1）；精简档 ×0.6。
  */
 private fun ViewContainer<*, *>.WelcomeBackdrop(theme: StockChatTheme, full: Boolean) {
     val dark = theme == StockChatTheme.Dark
     val dim = if (full) 1f else 0.6f
-    // 两层叠加后的峰值 ≈ 浅色 .075 / 深色 .10（规范 6.4.1）；精简档 ×0.6
-    val outerAlpha = (if (dark) 0.055f else 0.045f) * dim
-    val innerAlpha = (if (dark) 0.050f else 0.030f) * dim
-    // 光束中心 = 椭圆中心，对齐「Logo 与标题之间」：
-    // 完整档 Logo 占 44~96dp、主标题 112~136dp → 取 100dp；
+    // 四层几何：(高度, 左右内缩)。由外向内收窄；最内层保证宽 > 高，避免退化成圆斑。
+    val geometry = if (full) {
+        listOf(300f to 16f, 228f to 58f, 162f to 100f, 104f to 138f)
+    } else {
+        listOf(188f to 16f, 142f to 54f, 100f to 92f, 66f to 126f)
+    }
+    // 各层峰值 alpha，逐层求和守预算：浅色 .018+.020+.020+.017 = .075，
+    // 深色 .024+.027+.027+.022 = .100（规范 6.4.1），精简档整体 ×0.6。
+    val peaks = if (dark) {
+        listOf(0.024f, 0.027f, 0.027f, 0.022f)
+    } else {
+        listOf(0.018f, 0.020f, 0.020f, 0.017f)
+    }
+    // 光束中心对齐「Logo 与标题之间」：
+    // 完整档 Logo 占 44~96dp、主标题 112~136dp → 取 98dp；
     // 精简档无 Logo 无标题，上部内容（问候语 12~26 + 信任条 38~72）→ 取 44dp。
-    val outerCenter = if (full) 100f else 44f
-    val innerCenter = if (full) 96f else 42f
-    val outerHeight = if (full) 260f else 170f
-    val innerHeight = if (full) 170f else 110f
+    val center = if (full) 98f else 44f
     View {
         attr {
             absolutePosition(top = 0f, left = 0f, right = 0f)
-            height(if (full) 320f else 180f)
+            height(if (full) 260f else 150f)
             touchEnable(false)
         }
-        // 外圈：宽而淡的光晕，顶端探出容器形成自上而下的引导
-        View {
-            attr {
-                absolutePosition(top = outerCenter - outerHeight / 2f, left = 0f, right = 0f)
-                marginLeft(40f)
-                marginRight(40f)
-                height(outerHeight)
-                borderRadius(outerHeight / 2f)
-                touchEnable(false)
-                backgroundLinearGradient(
-                    Direction.TO_BOTTOM,
-                    ColorStop(theme.brand.opacity(outerAlpha), 0f),
-                    ColorStop(theme.brand.opacity(outerAlpha * 0.5f), 0.45f),
-                    ColorStop(theme.brand.opacity(0f), 1f),
-                )
-            }
-        }
-        // 内芯：窄而亮，压在光晕中心上，让峰值落在 Logo 与标题之间
-        View {
-            attr {
-                absolutePosition(top = innerCenter - innerHeight / 2f, left = 0f, right = 0f)
-                marginLeft(96f)
-                marginRight(96f)
-                height(innerHeight)
-                borderRadius(innerHeight / 2f)
-                touchEnable(false)
-                backgroundLinearGradient(
-                    Direction.TO_BOTTOM,
-                    ColorStop(theme.brand.opacity(innerAlpha), 0f),
-                    ColorStop(theme.brand.opacity(innerAlpha * 0.5f), 0.45f),
-                    ColorStop(theme.brand.opacity(0f), 1f),
-                )
+        geometry.forEachIndexed { index, (glowHeight, inset) ->
+            val alpha = peaks[index] * dim
+            View {
+                attr {
+                    absolutePosition(top = center - glowHeight / 2f, left = 0f, right = 0f)
+                    marginLeft(inset)
+                    marginRight(inset)
+                    height(glowHeight)
+                    borderRadius(glowHeight / 2f)
+                    touchEnable(false)
+                    // 两端全透明 → 中点峰值，0.25/0.75 处 55% 过渡近似钟形衰减
+                    backgroundLinearGradient(
+                        Direction.TO_BOTTOM,
+                        ColorStop(theme.brand.opacity(0f), 0f),
+                        ColorStop(theme.brand.opacity(alpha * 0.55f), 0.25f),
+                        ColorStop(theme.brand.opacity(alpha), 0.5f),
+                        ColorStop(theme.brand.opacity(alpha * 0.55f), 0.75f),
+                        ColorStop(theme.brand.opacity(0f), 1f),
+                    )
+                }
             }
         }
     }

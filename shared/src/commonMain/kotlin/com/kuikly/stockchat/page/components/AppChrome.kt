@@ -9,6 +9,7 @@ import com.kuikly.stockchat.glass.GlassRenderer
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
+import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
@@ -17,6 +18,7 @@ import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.attr.CaptureRule
 import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
@@ -29,6 +31,15 @@ enum class IslandGesturePhase {
     CLOSING,
     OPENING_DETAIL,
 }
+
+/** A dense, value-first top-bar state for pages whose Hero has scrolled away. */
+data class AppTopBarMetric(
+    val label: String,
+    val value: String,
+    val change: String,
+    val changeColor: Color,
+    val flash: Boolean = false,
+)
 
 data class IslandGestureMotion(
     val phase: IslandGesturePhase = IslandGesturePhase.IDLE,
@@ -764,6 +775,13 @@ fun ViewContainer<*, *>.ChatDrawer(
     visualLabel: String = renderer.statusLabel(),
     sessions: List<ChatSessionSummary> = emptyList(),
     activeSessionId: String = "",
+    // Double-state presentation (CardSheet pattern): mounted via vif at the call
+    // site, presented drives the open/close transition. Lambdas, not Boolean
+    // params: the attr block must read the observable in place (island-button
+    // pattern, AppChrome L144) or animate() silently binds to nothing and the
+    // panel never slides in.
+    presented: () -> Boolean = { true },
+    interactive: () -> Boolean = presented,
     onClose: () -> Unit,
     onToggleDataMode: () -> Unit,
     onCycleVisualMode: () -> Unit = {},
@@ -773,6 +791,7 @@ fun ViewContainer<*, *>.ChatDrawer(
     onToggleIsland: () -> Unit = {},
     onOpenGlossary: () -> Unit = {},
     onOpenWatchlist: () -> Unit = {},
+    onOpenRiskMap: () -> Unit = {},
     onOpenMarket: () -> Unit = {},
     onOpenSearch: () -> Unit = {},
     onOpenAlerts: () -> Unit = {},
@@ -782,6 +801,11 @@ fun ViewContainer<*, *>.ChatDrawer(
         attr {
             absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
             backgroundColor(Color(0x59000000))
+            val shown = presented()
+            val active = interactive()
+            opacity(if (shown) 1f else 0f)
+            touchEnable(active)
+            animate(Animation.easeOut(0.24f), shown)
         }
         event { click { onClose() } }
     }
@@ -793,8 +817,19 @@ fun ViewContainer<*, *>.ChatDrawer(
             paddingLeft(16f)
             paddingRight(16f)
             paddingBottom(bottomInset + 14f)
+            // Solid white sheet instead of frosted glass (2026-09-04): blur on
+            // Android reads muddy at this size, a flat surface keeps rows legible.
+            backgroundColor(Color(0xFFFFFFFF))
+            boxShadow(BoxShadow(-2f, 0f, 14f, Color(0x000000, 0.12f)))
+            // Slide from the left edge; open eases out, close eases in faster
+            // so dismissal feels lighter than presentation (doc 22 L2).
+            // shown must be read in place: see the island-button pattern note.
+            val shown = presented()
+            val active = interactive()
+            transform(translate = Translate(0f, 0f, offsetX = if (shown) 0f else -292f))
+            touchEnable(active)
+            animate(if (shown) Animation.easeOut(0.30f) else Animation.easeIn(0.22f), shown)
         }
-        GlassBackdrop(theme.glass.sheet, renderer)
 
         // Brand header: gradient logo mark, wordmark and close button.
         View {
@@ -891,46 +926,20 @@ fun ViewContainer<*, *>.ChatDrawer(
             }
         }
 
-        // Quick entries with tinted icon tiles.
-        View { attr { height(1f); marginTop(8f); marginBottom(6f); backgroundColor(theme.divider) } }
+        // Quick entries with tinted icon tiles, grouped by intent so the white
+        // sheet reads as sections instead of one flat 8-row stack (LDRS-R).
+        DrawerGroupTitle("行情与工具", theme)
         DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛行情", theme) { onClose(); onToggleIsland() }
         DrawerMenuItem("⌕", theme.brand, theme.brandSoft, "全局搜索", theme) { onClose(); onOpenSearch() }
         DrawerMenuItem("▥", theme.term, theme.brandSoft, "市场总览", theme) { onClose(); onOpenMarket() }
+        DrawerMenuItem("⌁", theme.term, theme.brandSoft, "异动预警", theme) { onClose(); onOpenAlerts() }
+        // doc 23 信息架构：自选 → 风险地图 → 知识库是一条闭环，成组呈现
+        DrawerGroupTitle("投资闭环", theme)
         DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme) { onClose(); onOpenWatchlist() }
+        DrawerMenuItem("◈", theme.brand, theme.brandSoft, "风险地图", theme) { onClose(); onOpenRiskMap() }
         DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme) { onClose(); onOpenGlossary() }
-        DrawerMenuItem("⌁", theme.textSecondary, theme.surfaceMuted, "异动预警", theme) { onClose(); onOpenAlerts() }
         DrawerMenuItem("⚙", theme.textSecondary, theme.surfaceMuted, "设置", theme, onClick = onSettings)
 
-        // Data source & rendering preferences card.
-        View {
-            attr {
-                marginTop(10f)
-                paddingLeft(12f)
-                paddingRight(12f)
-                paddingTop(11f)
-                paddingBottom(4f)
-                borderRadius(14f)
-                backgroundColor(theme.surface)
-            }
-            View {
-                attr { flexDirectionRow(); alignItemsCenter() }
-                View { attr { size(8f, 8f); borderRadius(4f); backgroundColor(if (liveData) Color(0xFF34C759) else theme.textTertiary) } }
-                View {
-                    attr { flex(1f); marginLeft(8f) }
-                    Text { attr { text(if (liveData) "实时数据" else "模拟数据"); fontSize(13f); fontWeightSemiBold(); color(theme.textPrimary) } }
-                    Text { attr { text(if (liveData) "行情与信息均为真实数据" else "使用本地演示数据"); marginTop(1f); fontSize(10f); color(theme.textTertiary) } }
-                }
-                DrawerSwitch(liveData, theme, onToggleDataMode)
-            }
-            View { attr { height(1f); marginTop(11f); backgroundColor(theme.divider) } }
-            View {
-                attr { height(38f); flexDirectionRow(); alignItemsCenter() }
-                Text { attr { text("渲染模式"); fontSize(12f); color(theme.textSecondary); flex(1f) } }
-                Text { attr { text(visualLabel); fontSize(11f); color(theme.textTertiary) } }
-                Text { attr { text("切换"); marginLeft(8f); fontSize(11f); fontWeightMedium(); color(theme.brand) } }
-                event { click { onCycleVisualMode() } }
-            }
-        }
         Text {
             attr {
                 text("StockChat v1.0 · 数据仅供参考")
@@ -1018,30 +1027,6 @@ private fun ViewContainer<*, *>.DrawerMenuItem(glyph: String, glyphColor: Color,
     }
 }
 
-private fun ViewContainer<*, *>.DrawerSwitch(on: Boolean, theme: StockChatTheme, onClick: () -> Unit) {
-    View {
-        attr {
-            width(42f)
-            height(25f)
-            borderRadius(13f)
-            backgroundColor(if (on) theme.brand else theme.surfaceMuted)
-        }
-        View {
-            attr {
-                size(19f, 19f)
-                borderRadius(10f)
-                backgroundColor(Color(0xFFFFFFFF))
-                if (on) {
-                    absolutePosition(top = 3f, right = 3f)
-                } else {
-                    absolutePosition(top = 3f, left = 3f)
-                }
-            }
-        }
-        event { click { onClick() } }
-    }
-}
-
 fun ViewContainer<*, *>.AppTopBar(
     title: String,
     subtitle: String,
@@ -1050,11 +1035,17 @@ fun ViewContainer<*, *>.AppTopBar(
     renderer: GlassRenderer = GlassRenderer.Default,
     backLabel: String? = null,
     onBack: () -> Unit = {},
-    compactLine: String? = null,
-    compactLineColor: Color? = null,
-    compactVisible: Boolean = compactLine != null,
-    progress: Float? = null,
+    // Scroll-driven state arrives as value closures, not plain values (same rule
+    // as ChatDrawer's presented/interactive above). A caller reading its own
+    // observable in the page body would hand us a first-frame snapshot: attr
+    // never re-runs, and animate() finds no observablePropertyKey, so the
+    // compact handoff silently never plays. These must be READ INSIDE attr.
+    compactLine: () -> String? = { null },
+    compactLineColor: () -> Color? = { null },
+    compactVisible: () -> Boolean = { compactLine() != null },
+    progress: () -> Float? = { null },
     reduceMotion: Boolean = false,
+    compactMetrics: () -> List<AppTopBarMetric> = { emptyList() },
     actions: List<Pair<String, () -> Unit>> = emptyList(),
 ) {
     View {
@@ -1082,23 +1073,81 @@ fun ViewContainer<*, *>.AppTopBar(
                 }
             }
             View {
-                attr { flex(1f) }
-                Text { attr { text(title); fontSize(18f); fontWeightBold(); color(theme.textPrimary) } }
+                attr { flex(1f); height(56f); justifyContentCenter() }
                 View {
-                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(1f) }
-                    Text { attr { text(subtitle); fontSize(10f); color(theme.textTertiary) } }
-                    if (compactLine != null) {
-                        Text {
-                            attr {
-                                text(compactLine)
-                                marginLeft(8f)
-                                fontSize(10f)
-                                fontWeightSemiBold()
-                                color(compactLineColor ?: theme.textSecondary)
-                                opacity(if (compactVisible) 1f else 0f)
-                                if (!reduceMotion) {
-                                    transform(Translate(0f, if (compactVisible) 0f else -0.12f))
-                                    animate(Animation.easeOut(0.18f), compactVisible)
+                    attr {
+                        // Every non-driving read happens first; animate() goes
+                        // last so compactVisible's read is the one that owns the
+                        // animation key (Attr.animate uses the LAST observable
+                        // read in the block, not its `value` argument).
+                        val dense = compactMetrics().isNotEmpty()
+                        val compact = compactVisible()
+                        opacity(if (dense && compact) 0f else 1f)
+                        touchEnable(!dense || !compact)
+                        if (!reduceMotion && dense) {
+                            transform(Translate(0f, if (compact) -0.08f else 0f))
+                            animate(Animation.easeOut(0.20f), compactVisible())
+                        }
+                    }
+                    Text { attr { text(title); fontSize(18f); fontWeightBold(); color(theme.textPrimary) } }
+                    View {
+                        attr { flexDirectionRow(); alignItemsCenter(); marginTop(1f) }
+                        Text { attr { text(subtitle); fontSize(10f); color(theme.textTertiary) } }
+                        vif({ compactLine() != null }) {
+                            Text {
+                                attr {
+                                    text(compactLine() ?: "")
+                                    marginLeft(8f)
+                                    fontSize(10f)
+                                    fontWeightSemiBold()
+                                    color(compactLineColor() ?: theme.textSecondary)
+                                    val compact = compactVisible()
+                                    opacity(if (compact) 1f else 0f)
+                                    if (!reduceMotion) {
+                                        transform(Translate(0f, if (compact) 0f else -0.12f))
+                                        animate(Animation.easeOut(0.18f), compactVisible())
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                vif({ compactMetrics().isNotEmpty() }) {
+                    View {
+                        attr {
+                            absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                            zIndex(2, useOutline = false)
+                            val compact = compactVisible()
+                            opacity(if (compact) 1f else 0f)
+                            touchEnable(compact)
+                            if (!reduceMotion) {
+                                transform(Translate(0f, if (compact) 0f else 0.08f))
+                                animate(Animation.easeOut(0.20f), compactVisible())
+                            }
+                        }
+                        // The fade lives on the container above; only the row
+                        // rebuilds when the numbers change, so a quote update
+                        // never interrupts an in-flight compact handoff.
+                        View { attr { height(56f); flexDirectionRow(); alignItemsCenter() }
+                            vbind({ compactMetrics() }) {
+                                compactMetrics().forEachIndexed { index, metric ->
+                                    View {
+                                        attr {
+                                            flex(1f)
+                                            paddingLeft(if (index == 0) 0f else 4f)
+                                            paddingRight(4f)
+                                            borderRadius(5f)
+                                            // Compact market metrics are L1 only: no
+                                            // panel/background flash, just a brief
+                                            // semantic colour change on the value.
+                                            backgroundColor(theme.surface.opacity(0f))
+                                        }
+                                        Text { attr { text(metric.label); fontSize(8.5f); color(theme.textTertiary) } }
+                                        View { attr { marginTop(2f); flexDirectionRow(); alignItemsCenter() }
+                                            Text { attr { text(metric.value); fontSize(10.5f); fontWeightBold(); color(if (metric.flash) metric.changeColor else theme.textPrimary) } }
+                                            Text { attr { text(metric.change); marginLeft(3f); fontSize(8.5f); fontWeightSemiBold(); color(metric.changeColor) } }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1128,18 +1177,20 @@ fun ViewContainer<*, *>.AppTopBar(
                 }
             }
         }
-        if (progress == null) {
+        vif({ progress() == null }) {
             View { attr { height(1f); backgroundColor(theme.divider) } }
-        } else {
-            val fill = progress.coerceIn(0f, 1f)
+        }
+        vif({ progress() != null }) {
             View {
                 attr {
                     height(2f)
                     flexDirectionRow()
                     backgroundColor(theme.divider)
                 }
-                View { attr { flex(fill.coerceAtLeast(0.001f)); backgroundColor(theme.brand) } }
-                View { attr { flex((1f - fill).coerceAtLeast(0.001f)) } }
+                // Read inside attr so scroll progress actually tracks; the two
+                // flex weights are one fact, so both read the same closure.
+                View { attr { flex((progress() ?: 0f).coerceIn(0f, 1f).coerceAtLeast(0.001f)); backgroundColor(theme.brand) } }
+                View { attr { flex((1f - (progress() ?: 0f).coerceIn(0f, 1f)).coerceAtLeast(0.001f)) } }
             }
         }
     }
