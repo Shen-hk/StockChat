@@ -1,0 +1,439 @@
+package com.kuikly.stockchat.data.provider
+
+import com.kuikly.stockchat.data.entity.Security
+import com.tencent.kuikly.core.base.PagerScope
+import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
+import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
+import com.tencent.kuikly.core.timer.setTimeout
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.encodeURLParameter
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+object EastMoneyInsightParser {
+    data class MarketTotals(val turnoverAmount: Double)
+    fun parseSecurities(root: JSONObject): List<Security> =
+        root.optJSONObject("QuotationCodeTable")
+            ?.optJSONArray("Data")
+            ?.objects()
+            .orEmpty()
+            .mapNotNull { row ->
+                val code = row.optString("Code")
+                val market = when (row.optString("MktNum")) {
+                    "1" -> "SH"
+                    "0" -> "SZ"
+                    else -> return@mapNotNull null
+                }
+                if (code.isBlank()) return@mapNotNull null
+                Security(
+                    symbol = "$code.$market",
+                    name = row.optString("Name"),
+                    aliases = listOf(row.optString("PinYin"), code).filter(String::isNotBlank),
+                )
+            }
+            .distinctBy(Security::symbol)
+
+    fun parseFundFlow(root: JSONObject, asOf: String): FundFlow? {
+        val row = root.rows("data", "diff").firstOrNull() ?: return null
+        return FundFlow(
+            main = row.double("f62"),
+            superLarge = row.double("f66"),
+            large = row.double("f72"),
+            medium = row.double("f78"),
+            small = row.double("f84"),
+            stamp = marketStamp(asOf),
+        )
+    }
+
+    fun parseFinancial(root: JSONObject): FinancialSummary? {
+        val row = root.rows("result", "data").firstOrNull() ?: return null
+        val reportDate = row.date("REPORTDATE")
+        return FinancialSummary(
+            reportDate = reportDate,
+            revenue = row.double("TOTAL_OPERATE_INCOME"),
+            netProfit = row.double("PARENT_NETPROFIT"),
+            revenueYoY = row.double("YSTZ"),
+            profitYoY = row.double("SJLTZ"),
+            eps = row.double("BASIC_EPS"),
+            roe = row.double("WEIGHTAVG_ROE"),
+            grossMargin = row.double("XSMLL"),
+            stamp = exchangeStamp(row.date("NOTICE_DATE").ifEmpty { reportDate }),
+        )
+    }
+
+    fun parseShareholder(root: JSONObject): ShareholderSnapshot? {
+        val row = root.rows("result", "data").firstOrNull() ?: return null
+        return ShareholderSnapshot(
+            holders = row.long("HOLDER_NUM"),
+            change = row.long("HOLDER_NUM_CHANGE"),
+            changePercent = row.double("HOLDER_NUM_RATIO"),
+            period = row.date("END_DATE"),
+            stamp = exchangeStamp(row.date("HOLD_NOTICE_DATE")),
+        )
+    }
+
+    fun parseBillboard(root: JSONObject): BillboardRecord? {
+        val row = root.rows("result", "data").firstOrNull() ?: return null
+        return BillboardRecord(
+            tradeDate = row.date("TRADE_DATE"),
+            reason = row.optString("EXPLANATION").ifEmpty { row.optString("EXPLAIN") },
+            buyAmount = row.double("BILLBOARD_BUY_AMT"),
+            sellAmount = row.double("BILLBOARD_SELL_AMT"),
+            netAmount = row.double("BILLBOARD_NET_AMT"),
+            stamp = marketStamp(row.date("TRADE_DATE")),
+        )
+    }
+
+    fun parseActions(root: JSONObject): List<CorporateAction> = root.rows("result", "data").mapNotNull { row ->
+        val title = row.optString("IMPL_PLAN_PROFILE").ifEmpty { row.optString("ASSIGNDSCRPT") }
+        if (title.isEmpty()) null else CorporateAction(
+            title = title,
+            date = row.date("EX_DIVIDEND_DATE").ifEmpty { row.date("NOTICE_DATE") },
+            status = row.optString("ASSIGN_PROGRESS").ifEmpty { "已披露" },
+            stamp = exchangeStamp(row.date("NOTICE_DATE")),
+        )
+    }
+
+    fun parseAnnouncements(root: JSONObject): List<DisclosureItem> = root.rows("data", "list").map { row ->
+        val id = row.optString("art_code")
+        val title = row.optString("title_ch").ifEmpty { row.optString("title") }
+        val date = row.date("notice_date").ifEmpty { row.date("display_time") }
+        DisclosureItem(
+            id = id,
+            kind = DisclosureKind.ANNOUNCEMENT,
+            title = title,
+            publisher = "上市公司公告",
+            date = date,
+            summary = summarizeTitle(title),
+            riskLabel = riskLabel(title),
+            url = if (id.isEmpty()) "" else "https://data.eastmoney.com/notices/detail/600519/$id.html",
+            stamp = exchangeStamp(date),
+        )
+    }
+
+    fun parseReports(root: JSONObject): List<DisclosureItem> = root.rows(null, "data").map { row ->
+        val title = row.optString("title")
+        val date = row.date("publishDate")
+        val publisher = row.optString("orgSName").ifEmpty { row.optString("orgName") }.ifEmpty { "券商研报" }
+        DisclosureItem(
+            id = row.optString("infoCode"),
+            kind = DisclosureKind.RESEARCH,
+            title = title,
+            publisher = publisher,
+            date = date,
+            summary = "研报关注：${title.take(110)}。评级与预测属于机构观点，不代表股问立场。",
+            riskLabel = "机构观点",
+            url = "",
+            stamp = SourceStamp(publisher, date, SourceTier.RESEARCH),
+        )
+    }
+
+    fun withAnnouncementContent(item: DisclosureItem, contentRoot: JSONObject?): DisclosureItem {
+        val content = contentRoot?.optJSONObject("data")?.optString("notice_content").orEmpty()
+        if (content.isBlank()) return item
+        val cleaned = content.replace(Regex("\\s+"), " ").trim()
+        val summary = cleaned
+            .substringAfter("重要提示", cleaned)
+            .take(300)
+            .trim()
+            .ifEmpty { item.summary }
+        return item.copy(summary = summary, riskLabel = riskLabel("${item.title} $summary"))
+    }
+
+    fun parseIndices(root: JSONObject): List<MarketIndex> = root.rows("data", "diff").map { row ->
+        MarketIndex(
+            code = row.optString("f12"),
+            name = row.optString("f14"),
+            price = row.double("f2"),
+            changePercent = row.double("f3"),
+            high = row.double("f15").takeIf { it > 0.0 },
+            low = row.double("f16").takeIf { it > 0.0 },
+        )
+    }
+
+    fun parseSectors(root: JSONObject): List<SectorRank> = root.rows("data", "diff").map { row ->
+        SectorRank(
+            code = row.optString("f12"),
+            name = row.optString("f14"),
+            changePercent = row.double("f3"),
+            mainFlow = row.double("f62"),
+            risingCount = row.int("f104"),
+            fallingCount = row.int("f105"),
+        )
+    }
+
+    fun parseBreadth(root: JSONObject): Triple<Int, Int, Int> {
+        var rising = 0
+        var falling = 0
+        var flat = 0
+        root.rows("data", "diff").forEach { row ->
+            when {
+                row.double("f3") > 0.0 -> rising++
+                row.double("f3") < 0.0 -> falling++
+                else -> flat++
+            }
+        }
+        return Triple(rising, falling, flat)
+    }
+
+    /** The broad market list carries the market-wide成交额 in f6 for every row. */
+    fun parseMarketTotals(root: JSONObject): MarketTotals {
+        val amount = root.rows("data", "diff").sumOf { it.double("f6") }
+        return MarketTotals(amount)
+    }
+
+    fun parseLimitUps(root: JSONObject): List<LimitUpStock> {
+        val rows = root.optJSONObject("data")?.optJSONArray("pool") ?: return emptyList()
+        return rows.objects().map { row ->
+            val code = row.optString("c")
+            val suffix = if (row.int("m") == 1) "SH" else "SZ"
+            LimitUpStock(
+                symbol = "$code.$suffix",
+                name = row.optString("n").replace(" ", ""),
+                changePercent = row.double("zdp"),
+                sector = row.optString("hybk").ifEmpty { "其他" },
+                consecutiveBoards = row.int("lbc").coerceAtLeast(1),
+                sealedAmount = row.double("fund"),
+                openCount = row.int("zbc"),
+            )
+        }
+    }
+
+    fun parsePoolCount(root: JSONObject): Int = root.optJSONObject("data")?.int("tc") ?: 0
+
+    fun parseCalendar(root: JSONObject): List<MarketCalendarEvent> = root.rows("result", "data").mapNotNull { row ->
+        val code = row.optString("SECURITY_CODE")
+        val date = row.date("APPOINT_PUBLISH_DATE").ifEmpty { row.date("ACTUAL_PUBLISH_DATE") }
+        if (code.isEmpty() || date.isEmpty()) null else MarketCalendarEvent(
+            date = date,
+            symbol = row.optString("SECUCODE").ifEmpty { code },
+            name = row.optString("SECURITY_NAME_ABBR"),
+            kind = CalendarEventKind.EARNINGS,
+            title = "${row.optString("REPORT_TYPE_NAME").ifEmpty { "预约披露财报" }}",
+            stamp = exchangeStamp(date),
+        )
+    }
+
+    /** f12=代码 f13=市场 f100=行业 → symbol → 行业名。空白行业（指数等）不落表。 */
+    fun parseIndustries(root: JSONObject, symbols: List<String>): Map<String, String> {
+        val byCodeAndMarket = HashMap<String, String>()
+        root.rows("data", "diff").forEach { row ->
+            val code = row.optString("f12")
+            val market = row.optString("f13")
+            val industry = row.optString("f100").trim()
+            if (code.isNotEmpty() && industry.isNotEmpty() && industry != "-") {
+                byCodeAndMarket["$market.$code"] = industry
+            }
+        }
+        return buildMap {
+            symbols.forEach { symbol ->
+                val code = symbol.substringBefore('.')
+                val market = if (symbol.endsWith(".SH", ignoreCase = true)) "1" else "0"
+                byCodeAndMarket["$market.$code"]?.let { put(symbol, it) }
+            }
+        }
+    }
+
+    private fun summarizeTitle(title: String): String = when {
+        "业绩" in title || "报告" in title -> "公司披露定期报告或业绩相关信息。优先核对收入、利润、现金流及同比变化。"
+        "分红" in title || "权益" in title -> "公告涉及股东回报或权益变动，请以登记日、除权日和实施进度为准。"
+        "风险" in title -> "公告包含风险相关信息，建议直接阅读原文中的风险范围、影响期间和应对措施。"
+        "股东" in title || "减持" in title || "增持" in title -> "公告涉及股东或持股变化，需区分计划、实施进展与已完成三个阶段。"
+        else -> "这是公司正式披露信息。摘要只帮助定位重点，关键事实请以公告原文为准。"
+    }
+
+    private fun riskLabel(text: String): String = when {
+        listOf("风险", "亏损", "下降", "减持", "处罚", "终止", "诉讼").any { it in text } -> "关注风险"
+        listOf("增长", "增持", "分红", "中标", "回购").any { it in text } -> "积极事项"
+        else -> "中性披露"
+    }
+
+    private fun marketStamp(asOf: String) = SourceStamp("东方财富公开行情", asOf, SourceTier.MARKET_DATA)
+    private fun exchangeStamp(asOf: String) = SourceStamp("上市公司/交易所披露", asOf, SourceTier.EXCHANGE)
+
+    private fun JSONObject.rows(parent: String?, key: String): List<JSONObject> {
+        val container = if (parent == null) this else optJSONObject(parent) ?: return emptyList()
+        return container.optJSONArray(key)?.objects().orEmpty()
+    }
+    private fun JSONArray.objects(): List<JSONObject> = buildList {
+        repeat(length()) { index -> optJSONObject(index)?.let(::add) }
+    }
+    private fun JSONObject.double(key: String): Double = optString(key).toDoubleOrNull() ?: 0.0
+    private fun JSONObject.long(key: String): Long = optString(key).toDoubleOrNull()?.toLong() ?: 0L
+    private fun JSONObject.int(key: String): Int = optString(key).toDoubleOrNull()?.toInt() ?: 0
+    private fun JSONObject.date(key: String): String = optString(key).take(10)
+}
+
+class EastMoneyInsightProvider(
+    override val pagerId: String,
+) : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, SecuritySearchProvider, IndustryProvider, PagerScope {
+    private val client = createPlatformHttpClient()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val throttle = Mutex()
+    private var lastRequestAt = 0L
+
+    override fun searchSecurities(query: String, onResult: (List<Security>) -> Unit) {
+        scope.launch {
+            if (query.isBlank()) {
+                deliver { onResult(emptyList()) }
+                return@launch
+            }
+            val encoded = query.trim().encodeURLParameter()
+            val url = "https://searchapi.eastmoney.com/api/suggest/get?input=$encoded&type=14&token=D43BF722C8E33D1E3C1E4A8C9DFD2A52&count=20"
+            val result = request(url)?.let(EastMoneyInsightParser::parseSecurities).orEmpty()
+            deliver { onResult(result) }
+        }
+    }
+
+    override fun fundFlow(symbol: String, onResult: (FundFlow?) -> Unit) {
+        scope.launch {
+            val fields = "f12,f14,f2,f3,f62,f66,f72,f78,f84"
+            val root = request("https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=$fields&secids=${secId(symbol)}")
+            deliver { onResult(root?.let { EastMoneyInsightParser.parseFundFlow(it, platformCurrentDate()) }) }
+        }
+    }
+
+    override fun fundamentals(symbol: String, onResult: (FundamentalBundle?) -> Unit) {
+        scope.launch {
+            val code = symbol.substringBefore('.')
+            val filter = "(SECURITY_CODE=%22$code%22)"
+            val financial = request(dataCenterUrl("RPT_LICO_FN_CPD", filter, "REPORTDATE", 1))
+            val holder = request(dataCenterUrl("RPT_HOLDERNUMLATEST", filter, "END_DATE", 1))
+            val billboard = request(dataCenterUrl("RPT_DAILYBILLBOARD_DETAILSNEW", filter, "TRADE_DATE", 1))
+            val actions = request(dataCenterUrl("RPT_SHAREBONUS_DET", filter, "REPORT_DATE", 3))
+            val bundle = FundamentalBundle(
+                financial = financial?.let(EastMoneyInsightParser::parseFinancial),
+                shareholder = holder?.let(EastMoneyInsightParser::parseShareholder),
+                billboard = billboard?.let(EastMoneyInsightParser::parseBillboard),
+                actions = actions?.let(EastMoneyInsightParser::parseActions).orEmpty(),
+            ).takeIf { it.financial != null || it.shareholder != null || it.billboard != null || it.actions.isNotEmpty() }
+            deliver { onResult(bundle) }
+        }
+    }
+
+    override fun disclosures(symbol: String, onResult: (List<DisclosureItem>) -> Unit) {
+        scope.launch {
+            val code = symbol.substringBefore('.')
+            val annRoot = request("https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=6&page_index=1&ann_type=A&client_source=web&stock_list=$code")
+            var announcements = annRoot?.let(EastMoneyInsightParser::parseAnnouncements).orEmpty()
+            announcements.firstOrNull()?.let { first ->
+                val content = request("https://np-cnotice-stock.eastmoney.com/api/content/ann?art_code=${first.id}&client_source=web&page_index=1")
+                announcements = listOf(EastMoneyInsightParser.withAnnouncementContent(first, content)) + announcements.drop(1)
+            }
+            val reportsRoot = request("https://reportapi.eastmoney.com/report/list?pageSize=5&pageNo=1&qType=0&beginTime=2024-01-01&endTime=${platformCurrentDate()}&code=$code")
+            val reports = reportsRoot?.let(EastMoneyInsightParser::parseReports).orEmpty()
+            deliver { onResult((announcements.take(4) + reports.take(3))) }
+        }
+    }
+
+    override fun overview(onResult: (MarketOverview?) -> Unit) {
+        scope.launch {
+            val indices = request("https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f12,f14,f2,f3,f15,f16&secids=1.000001,0.399001,0.399006,1.000688,0.899050,1.000300,1.000016,1.000905,100.HSI")
+            val breadth = request("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6000&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f3,f6")
+            val sectors = request(sectorUrl(20))
+            val date = platformCurrentDate(compact = true)
+            val upPool = request(limitPoolUrl(false, date, 100))
+            val downPool = request(limitPoolUrl(true, date, 100))
+            val indexValues = indices?.let(EastMoneyInsightParser::parseIndices).orEmpty()
+            val breadthValue = breadth?.let(EastMoneyInsightParser::parseBreadth) ?: Triple(0, 0, 0)
+            val totals = breadth?.let(EastMoneyInsightParser::parseMarketTotals)
+            val sectorValues = sectors?.let(EastMoneyInsightParser::parseSectors).orEmpty()
+            val limitUps = upPool?.let(EastMoneyInsightParser::parseLimitUps).orEmpty()
+            val result = MarketOverview(
+                indices = indexValues,
+                risingCount = breadthValue.first,
+                fallingCount = breadthValue.second,
+                flatCount = breadthValue.third,
+                limitUpCount = upPool?.let(EastMoneyInsightParser::parsePoolCount) ?: 0,
+                limitDownCount = downPool?.let(EastMoneyInsightParser::parsePoolCount) ?: 0,
+                sectors = sectorValues,
+                stamp = SourceStamp("东方财富公开行情", platformCurrentDate(), SourceTier.MARKET_DATA),
+                turnoverAmount = totals?.turnoverAmount?.takeIf { it > 0.0 },
+                sealRate = limitUps.takeIf { it.isNotEmpty() }?.let { rows -> rows.count { it.openCount == 0 }.toDouble() / rows.size },
+                brokenBoardCount = limitUps.sumOf { it.openCount },
+                highestBoard = limitUps.maxOfOrNull { it.consecutiveBoards },
+            ).takeIf { it.indices.isNotEmpty() || it.sectors.isNotEmpty() }
+            deliver { onResult(result) }
+        }
+    }
+
+    override fun hotspots(onResult: (HotspotSnapshot?) -> Unit) {
+        scope.launch {
+            val sectors = request(sectorUrl(20))
+            val pool = request(limitPoolUrl(false, platformCurrentDate(compact = true), 100))
+            val result = HotspotSnapshot(
+                sectors = sectors?.let(EastMoneyInsightParser::parseSectors).orEmpty(),
+                limitUps = pool?.let(EastMoneyInsightParser::parseLimitUps).orEmpty(),
+                stamp = SourceStamp("东方财富板块与涨停池", platformCurrentDate(), SourceTier.MARKET_DATA),
+            ).takeIf { it.sectors.isNotEmpty() || it.limitUps.isNotEmpty() }
+            deliver { onResult(result) }
+        }
+    }
+
+    override fun calendar(onResult: (List<MarketCalendarEvent>) -> Unit) {
+        scope.launch {
+            val filter = "(APPOINT_PUBLISH_DATE%3E=%27${platformCurrentDate()}%27)"
+            val root = request(dataCenterUrl("RPT_PUBLIC_BS_APPOIN", filter, "APPOINT_PUBLISH_DATE", 40, ascending = true))
+            deliver { onResult(root?.let(EastMoneyInsightParser::parseCalendar).orEmpty()) }
+        }
+    }
+
+    /** 一次批量请求拉取整份自选的行业归属（f100）。 */
+    override fun industries(symbols: List<String>, onResult: (Map<String, String>) -> Unit) {
+        if (symbols.isEmpty()) {
+            deliver { onResult(emptyMap()) }
+            return
+        }
+        scope.launch {
+            val secids = symbols.joinToString(",") { secId(it) }
+            // f12=代码 f13=市场(1=SH/0=SZ) f100=行业；f13 必须带上：
+            // 000001.SH(上证指数) 与 000001.SZ(平安银行) 只靠代码会撞车。
+            val root = request("https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f12,f13,f100&secids=$secids")
+            deliver { onResult(root?.let { EastMoneyInsightParser.parseIndustries(it, symbols) }.orEmpty()) }
+        }
+    }
+
+    private suspend fun request(url: String): JSONObject? = try {
+        throttle.withLock {
+            val wait = 210L - (platformCurrentTimeMillis() - lastRequestAt)
+            if (wait > 0) delay(wait)
+            lastRequestAt = platformCurrentTimeMillis()
+        }
+        val response = client.get(url) {
+            header("User-Agent", "Mozilla/5.0 StockChat/1.0")
+            header("Referer", "https://quote.eastmoney.com/")
+            header("Accept", "application/json,text/plain,*/*")
+        }
+        if (response.status.value !in 200..299) null else runCatching { JSONObject(response.bodyAsText()) }.getOrNull()
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun deliver(block: () -> Unit) {
+        setTimeout(0) { block() }
+    }
+
+    private fun secId(symbol: String): String {
+        val code = symbol.substringBefore('.')
+        return if (symbol.endsWith(".SH", ignoreCase = true)) "1.$code" else "0.$code"
+    }
+
+    private fun dataCenterUrl(report: String, filter: String, sort: String, size: Int, ascending: Boolean = false): String =
+        "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=$report&columns=ALL&filter=$filter&pageNumber=1&pageSize=$size&sortTypes=${if (ascending) 1 else -1}&sortColumns=$sort"
+
+    private fun sectorUrl(size: Int): String =
+        "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=$size&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3,f62,f104,f105,f106"
+
+    private fun limitPoolUrl(down: Boolean, date: String, size: Int): String {
+        val topic = if (down) "DTPool" else "ZTPool"
+        val dpt = if (down) "wz.ztzt" else "wz.ztzt"
+        return "https://push2ex.eastmoney.com/getTopic$topic?ut=7eea3edcaed734bea9cbfc24409ed989&dpt=$dpt&Pageindex=0&pagesize=$size&sort=fbt:asc&date=$date"
+    }
+}
