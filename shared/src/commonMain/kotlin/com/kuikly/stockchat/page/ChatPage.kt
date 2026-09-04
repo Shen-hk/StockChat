@@ -39,6 +39,7 @@ import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.platformCurrentHour
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
+import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
@@ -180,6 +181,13 @@ internal class ChatPage : BasePager() {
     private var ambiguousAction: EntityAction by observable(EntityAction.PREVIEW)
     private var keyboardHeight: Float by observable(0f)
     private var drawerOpen: Boolean by observable(false)
+    // Drawer double-state machine (mirrors sheetMounted/sheetPresented): vif
+    // binds to drawerMounted, the transition animates on drawerPresented.
+    // A vif-created view cannot animate on its own mount, so presented flips
+    // one tick after mount via updateDrawerOpen (animate-binding rule 2026-09-03).
+    private var drawerMounted: Boolean by observable(false)
+    private var drawerPresented: Boolean by observable(false)
+    private var drawerPresentationVersion = 0
     private var liveDataMode: Boolean by observable(true)
     // Dynamic island: the top title capsule morphs into a live quote card.
     private var islandExpanded: Boolean by observable(false)
@@ -282,6 +290,7 @@ internal class ChatPage : BasePager() {
     private val quoteRepository get() = dependencies.quoteRepository
     private val watchlistStore get() = dependencies.watchlistStore
     private val alertStore get() = dependencies.alertStore
+    private val glossaryStore get() = dependencies.glossaryStore
     private var alertPollGeneration = 0
     private val deliveredAlertBuckets = mutableSetOf<String>()
     private val mockQuoteProvider = MockQuoteProvider()
@@ -294,11 +303,18 @@ internal class ChatPage : BasePager() {
     private var welcomeCursorTimer: Timer? = null
     // 轮播关键词尾部的 2px 光标：轮播存活期 550ms 翻转（1.1s step-end），停止即隐藏
     private var welcomeCursorVisible: Boolean by observable(false)
-    // 入场动效：示例卡 40ms 阶梯上滑；每次空会话只播一次。
-    // 初值必须可见：部分 Android 冷启动/清数据路径里 pageDidAppear 的延迟回调可能
-    // 早于首个有效渲染帧，若整区依赖 opacity=0 -> 1，会留下一个不可恢复的空首页。
-    private var welcomeEntranceVisible: Boolean by observable(true)
+    // 入场动效：欢迎区先挂载，再在下一帧呈现；示例卡各自以 40ms 阶梯上滑。
+    // vif 新挂载的视图不会在首帧补间，不能只靠 messages.isEmpty() 直接显示。
+    private var welcomeEntranceMounted: Boolean by observable(true)
+    private var welcomeEntranceVisible: Boolean by observable(false)
     private var welcomeEntranceArmed = false
+    // 定时回调只能检查普通版本号，不能在回调中读取 observable。
+    private var welcomeEntranceVersion = 0
+    // 与欢迎词轮播共用 Kuikly Timer 调度路径；每次只保留一个入场阶段任务。
+    private var welcomeEntranceTimer: Timer? = null
+    // 入场兜底（独立于 welcomeEntranceTimer）：ref/Timer 链路任一环丢失时，
+    // 示例卡不得停留在 opacity 0 的空首页。600ms 一次性，版本号守卫。
+    private var welcomeEntranceSafetyTimer: Timer? = null
     private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
     private var pendingRouteQuestion: String = ""
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
@@ -329,13 +345,6 @@ internal class ChatPage : BasePager() {
         StockCardRenderers.ensureRegistered()
     }
 
-    // 首帧已画出来是播入场动效最合适的时机；pageDidAppear 里也会调一次兜底，
-    // 因为 firstFramePaint 事件不是每个宿主都保证下发。
-    override fun onFirstFramePaint() {
-        super.onFirstFramePaint()
-        playWelcomeEntranceIfNeeded()
-    }
-
     override fun pageDidDisappear() {
         super.pageDidDisappear()
         alertPollGeneration++
@@ -362,7 +371,7 @@ internal class ChatPage : BasePager() {
         requestQuote(islandSymbol)
         startAlertPolling()
         startWelcomeKeywordLoopIfNeeded()
-        playWelcomeEntranceIfNeeded()
+        scheduleWelcomeEntranceSafety()
         consumeRouteQuestionIfNeeded()
     }
 
@@ -390,7 +399,7 @@ internal class ChatPage : BasePager() {
                     // 会把事件消费掉，不会冒泡上来）：这是输入态 → 默认态的唯一出口。
                     click { page.handleOutsideTap() }
                 }
-                vif({ page.viewModel.messages.isEmpty() }) {
+                vif({ page.viewModel.messages.isEmpty() && page.welcomeEntranceMounted }) {
                     val welcomeMode = page.welcomeMode()
                     WelcomeSection(
                         theme = page.theme,
@@ -402,6 +411,7 @@ internal class ChatPage : BasePager() {
                         rotatingKeyword = { page.welcomeKeywordText },
                         cursorVisible = { page.welcomeCursorVisible },
                         entranceVisible = { page.welcomeEntranceVisible },
+                        onMounted = page::welcomeDidMount,
                         reduceMotion = page.welcomeReducedMotion,
                         starters = page.welcomeStarters(welcomeMode),
                     ) { starter ->
@@ -429,7 +439,11 @@ internal class ChatPage : BasePager() {
                             onEntityStock = page::handleStockEntityClick,
                             onEntityStockLongPress = page::handleStockEntityLongPress,
                             onCardStock = page::openStockDetail,
-                            onTerm = { page.viewModel.send("$it 是什么意思") },
+                            onTerm = {
+                                // 用户卡在术语上主动点高亮 = 一次真实「遇到」（doc 24 §6.3）。
+                                Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
+                                page.viewModel.send("$it 是什么意思")
+                            },
                             onSuggestion = page.viewModel::send,
                             onRetry = page.viewModel::retryLast,
                             onRetryCard = page::retryCard,
@@ -490,7 +504,7 @@ internal class ChatPage : BasePager() {
                 onToggleIslandWatchlist = { symbol -> page.toggleIslandWatchlist(symbol) },
                 onOpenIslandCompare = { page.openIslandComparePanel() },
                 onClearIslandCompare = { page.clearIslandCompare() },
-                onMenu = { page.drawerOpen = !page.drawerOpen },
+                onMenu = { page.updateDrawerOpen(!page.drawerOpen) },
                 onNewChat = { page.startNewChat() },
             )
             vif({ page.ambiguousSymbols.isNotEmpty() }) {
@@ -889,7 +903,11 @@ internal class ChatPage : BasePager() {
                         onRaise = { page.raiseCardSheet() },
                         onPan = { state, y -> page.handleSheetPan(state, y) },
                         onOpenStock = { if (page.sheetInteractive) page.openStockDetail(it) },
-                        onTerm = { page.viewModel.send("$it 是什么意思") },
+                        onTerm = {
+                            // 卡片底部「问术语」同样记一次「遇到」。
+                            Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
+                            page.viewModel.send("$it 是什么意思")
+                        },
                         primaryActionLabel = (model as? StockQuoteCardModel)?.quote?.symbol?.let { symbol ->
                             if (page.watchlistStore.contains(symbol)) "已自选" else "加自选"
                         },
@@ -897,7 +915,7 @@ internal class ChatPage : BasePager() {
                     )
                 }
             }
-            vif({ page.drawerOpen }) {
+            vif({ page.drawerMounted }) {
                 ChatDrawer(
                     statusBarHeight = page.pagerData.statusBarHeight,
                     bottomInset = page.pagerData.safeAreaInsets.bottom,
@@ -907,7 +925,9 @@ internal class ChatPage : BasePager() {
                     visualLabel = page.glassRenderer.statusLabel(),
                     sessions = page.viewModel.sessionSummaries.toList(),
                     activeSessionId = page.viewModel.activeSessionId,
-                    onClose = { page.drawerOpen = false },
+                    presented = { page.drawerPresented },
+                    interactive = { page.drawerOpen },
+                    onClose = { page.updateDrawerOpen(false) },
                     onToggleDataMode = { page.toggleDataMode() },
                     onCycleVisualMode = { page.cycleGlassMode() },
                     onNewChat = { page.startNewChat() },
@@ -915,29 +935,51 @@ internal class ChatPage : BasePager() {
                     onOpenGallery = { page.openPage(Routes.CARD_GALLERY) },
                     onOpenGlossary = { page.openPage(Routes.GLOSSARY) },
                     onOpenWatchlist = { page.openPage(Routes.WATCHLIST) },
+                    onOpenRiskMap = { page.openPage(Routes.RISK) },
                     onOpenMarket = { page.openPage(Routes.MARKET) },
                     onOpenSearch = { page.openPage(Routes.SEARCH) },
                     onOpenAlerts = { page.openPage(Routes.ALERTS) },
                     onToggleIsland = { page.toggleIsland() },
-                    onSettings = { page.drawerOpen = false; page.openPage(Routes.API_CONFIG) },
+                    onSettings = { page.updateDrawerOpen(false); page.openPage(Routes.API_CONFIG) },
                 )
             }
         }
     }
 
+    /**
+     * Drawer open/close with the CardSheet presentation pattern:
+     * open  = mount now, flip presented next tick so the entrance animates;
+     * close = un-present now (plays the exit), unmount after 280ms guarded by
+     * a version counter so rapid toggles never leave a stale timer behind.
+     */
+    private fun updateDrawerOpen(open: Boolean) {
+        val version = ++drawerPresentationVersion
+        drawerOpen = open
+        if (open) {
+            drawerMounted = true
+            drawerPresented = false
+            setTimeout(0) {
+                if (drawerPresentationVersion == version) drawerPresented = true
+            }
+        } else {
+            drawerPresented = false
+            setTimeout(280) {
+                if (drawerPresentationVersion == version && !drawerPresented) {
+                    drawerMounted = false
+                }
+            }
+        }
+    }
+
     private fun startNewChat() {
-        drawerOpen = false
+        updateDrawerOpen(false)
         stopWelcomeKeywordLoop(lock = false)
-        welcomeKeywordStopped = false
-        welcomeEntranceArmed = false
-        welcomeEntranceVisible = true
         keepChatAtBottomVersion = 0
         chatContentHeight = 0f
         viewModel.startNewChat()
         resetSessionUiState()
         setComposerText("")
-        startWelcomeKeywordLoopIfNeeded()
-        playWelcomeEntranceIfNeeded()
+        resetWelcomeForEmptySession()
         resetChatScrollToTop()
     }
 
@@ -1087,36 +1129,73 @@ internal class ChatPage : BasePager() {
      * 首屏入场：示例卡 40ms 阶梯上滑。
      * 每个空会话实例只播一次；从详情页返回不重播；减弱动态时直接落到终态。
      */
-    private fun playWelcomeEntranceIfNeeded() {
-        if (viewModel.messages.isNotEmpty()) {
-            // 有消息时不显示欢迎区，但把状态留在终态，避免下次空会话带着 opacity 0 入场。
+    private fun welcomeDidMount() {
+        if (welcomeEntranceArmed) return
+        welcomeEntranceArmed = true
+        if (welcomeReducedMotion) {
             welcomeEntranceVisible = true
             return
         }
-        if (welcomeEntranceArmed) return
-        welcomeEntranceArmed = true
-        if (welcomeReducedMotion) return
-        // true -> false -> true：false 与 true 必须落在两个不同的 setTimeout tick 上，
-        // 否则两次属性变更会并进同一批 DOM 同步，animate() 看不到跨帧的值变化。
-        // 32ms ≈ 2 帧，既够 opacity=0 那一帧下发，又不会让首屏可感知地空一拍。
+        // 该状态只在欢迎区已挂载后翻转；attr 内会读它并将它绑定为动画驱动。
         welcomeEntranceVisible = false
-        setTimeout(32) {
-            if (viewModel.messages.isEmpty() && welcomeEntranceArmed) welcomeEntranceVisible = true
-        }
-        // 兜底：翻回 true 的那个回调一旦丢失（冷启动/清数据路径上出现过），
-        // 欢迎区会永久停在 opacity 0 的空首页。这里无条件再补一次终态。
-        setTimeout(600) {
-            if (viewModel.messages.isEmpty() && !welcomeEntranceVisible) welcomeEntranceVisible = true
+        val version = ++welcomeEntranceVersion
+        // 轮播已验证的 Timer 调度路径：约两帧后再呈现，保证 vif 新建卡片的初态
+        // 已实际下发给原生视图，随后由 attr 中的 visible 读取驱动 animate()。
+        scheduleWelcomeEntranceStep(version, 32) {
+            if (welcomeEntranceArmed) {
+                welcomeEntranceVisible = true
+            }
         }
     }
 
     private fun resetWelcomeForEmptySession() {
-        if (viewModel.messages.isNotEmpty()) return
         welcomeKeywordStopped = false
         welcomeEntranceArmed = false
-        welcomeEntranceVisible = true
+        val version = ++welcomeEntranceVersion
+        welcomeEntranceTimer?.cancel()
+        welcomeEntranceTimer = null
+        welcomeEntranceMounted = false
+        welcomeEntranceVisible = false
         startWelcomeKeywordLoopIfNeeded()
-        playWelcomeEntranceIfNeeded()
+        scheduleWelcomeEntranceSafety()
+        // 先让旧欢迎区卸载；Timer 的下一次调度只负责挂载。
+        // presented 必须由新实例的 ref 回调启动，不能在挂载前抢跑。
+        scheduleWelcomeEntranceStep(version, 16) {
+            welcomeEntranceMounted = true
+        }
+    }
+
+    /**
+     * 入场兜底：挂载后 600ms 仍不可见则强制落到终态。
+     * 覆盖冷启动与新会话两条路径；正常链路（ref → 32ms 呈现）先完成时，
+     * 版本号已前移，本回调按版本号守卫静默退出。
+     */
+    private fun scheduleWelcomeEntranceSafety() {
+        welcomeEntranceSafetyTimer?.cancel()
+        val version = welcomeEntranceVersion
+        val timer = Timer()
+        welcomeEntranceSafetyTimer = timer
+        timer.schedule(600, 600) {
+            timer.cancel()
+            if (welcomeEntranceSafetyTimer === timer) welcomeEntranceSafetyTimer = null
+            if (version == welcomeEntranceVersion && !isWillDestroy() &&
+                viewModel.messages.isEmpty() && welcomeEntranceMounted && !welcomeEntranceVisible
+            ) {
+                welcomeEntranceVisible = true
+            }
+        }
+    }
+
+    /** 与欢迎词轮播相同的单次 Timer 调度；回调不读取任何 observable。 */
+    private fun scheduleWelcomeEntranceStep(version: Int, delay: Int, block: () -> Unit) {
+        welcomeEntranceTimer?.cancel()
+        val timer = Timer()
+        welcomeEntranceTimer = timer
+        timer.schedule(delay, delay.coerceAtLeast(16)) {
+            timer.cancel()
+            if (welcomeEntranceTimer === timer) welcomeEntranceTimer = null
+            if (version == welcomeEntranceVersion && !isWillDestroy()) block()
+        }
     }
 
     private fun openHistorySession(sessionId: String) {
@@ -2203,8 +2282,13 @@ internal class ChatPage : BasePager() {
         val quote = quoteFor(symbol)
         val security = Securities.all.firstOrNull { it.symbol == symbol }
         val name = quote?.name ?: security?.name ?: symbol
-        val message = when (watchlistStore.add(symbol, name)) {
-            WatchlistAddResult.ADDED -> "已加入自选：$name"
+        val message = when (watchlistStore.add(symbol, name, pinned = true)) {
+            WatchlistAddResult.ADDED -> {
+                // FR-W2：对话入口的来源即理由（后续可在自选长按改写，留痕在 reasonHistory）
+                // FR-W6：对话入口加入 → 置顶 + ★，「刚聊过的票」在自选列表最上面
+                watchlistStore.setReason(symbol, "对话中添加")
+                "已加入自选：$name（长按自选可补记理由）"
+            }
             WatchlistAddResult.ALREADY_IN -> "$name 已在自选中"
             WatchlistAddResult.FULL -> "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
         }
@@ -2228,7 +2312,7 @@ internal class ChatPage : BasePager() {
             watchlistStore.remove(symbol)
             "已从自选移除：$name"
         } else {
-            when (watchlistStore.add(symbol, name)) {
+            when (watchlistStore.add(symbol, name, pinned = true)) {
                 WatchlistAddResult.ADDED -> "已加入自选：$name"
                 WatchlistAddResult.ALREADY_IN -> "$name 已在自选中"
                 WatchlistAddResult.FULL -> "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
