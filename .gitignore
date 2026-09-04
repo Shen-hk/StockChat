@@ -33,6 +33,7 @@ Kotlin-js-store
 /v-swipe.png
 /preview/
 *.bak.*
+/build_log.txt
 
 ## Various settings
 *.pbxuser
