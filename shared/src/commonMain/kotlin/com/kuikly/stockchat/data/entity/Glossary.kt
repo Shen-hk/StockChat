@@ -444,6 +444,129 @@ object Glossary {
             plain = "基金、券商等机构上门了解公司经营情况，调研密度常被当作关注度的指标。",
             example = "一个月接待十几批机构调研，通常意味着机构在认真评估这家公司。",
         ),
+
+        // ── 风险与组合（FR-K8 扩充：风险地图的术语出口需要这些词） ──
+        GlossaryEntry(
+            key = "POSITION", term = "仓位", aliases = listOf("持仓比例", "轻仓", "重仓"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "你投进股市的钱占可用资金的比例，几成仓就是说投了百分之几十。",
+            example = "「半仓」= 一半资金买了股票，剩下一半还是现金，跌了还有钱补，涨了也不踏空。",
+        ),
+        GlossaryEntry(
+            key = "WEIGHT", term = "权重", aliases = listOf("占比"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "一只股票在你全部持仓里占的比例，权重越大，它涨跌对你的总资产影响越大。",
+            example = "10 万本金里 6 万买茅台，茅台权重就是 60%，它跌 5% 你的组合就跌约 3%。",
+        ),
+        GlossaryEntry(
+            key = "DIVERSIFY", term = "分散投资", aliases = listOf("分散", "鸡蛋不放一个篮子"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "把钱分到不同行业、不同类型的标的上，让单一标的的坏消息不至于伤到全部。",
+            example = "全部押一只券商股，行情冷就全亏；分一半到公用事业股，波动会明显变小。",
+        ),
+        GlossaryEntry(
+            key = "REBALANCE", term = "再平衡", aliases = listOf("调仓再平衡"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "定期把涨大了、占比变高的部分卖一些，买回占比变低的，恢复原来的分配。",
+            example = "原定股票各占一半，股票涨到七成后卖出一部分买回另一边，涨的落袋、跌的补位。",
+        ),
+        GlossaryEntry(
+            key = "RESTRICTED_SHARE", term = "限售股", aliases = listOf("限售股份"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "上市时承诺一段时间内不能卖的股票，到期才能流通。",
+            example = "新股上市一年后，原始股东的限售股解禁流通，市场上的可卖股票变多。",
+        ),
+        GlossaryEntry(
+            key = "UNLOCK", term = "解禁", aliases = listOf("限售解禁", "解禁期"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "限售股到期可以卖了。可卖筹码突然变多，股价常在解禁日前承压。",
+            example = "公告下月有占总股本 20% 的解禁，说明大股东理论上可以卖，抛压预期会先反映在股价里。",
+        ),
+        GlossaryEntry(
+            key = "SHARE_REDUCTION", term = "减持", aliases = listOf("股东减持", "减持公告"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "大股东或高管卖出自家股票。人数多、金额大时，常被解读为对股价没信心。",
+            example = "公告三位高管拟合计减持 2%，短线情绪通常受压，要看减持比例和用途。",
+        ),
+        GlossaryEntry(
+            key = "STD_DEV", term = "标准差", aliases = listOf("均方差"),
+            category = GlossaryCategory.TECHNICAL,
+            plain = "衡量一组数字离平均有多散。日收益的标准差大 = 这只票上蹿下跳得厉害。",
+            example = "A 股日波动标准差 1%，B 股 3%，同样的行情下 B 的过山车幅度大约是 A 的三倍。",
+            advanced = "日标准差 × √250 可粗略年化。它衡量的是波动幅度本身，不分涨跌方向——大涨大跌都会推高标准差。",
+        ),
+        GlossaryEntry(
+            key = "VOLATILITY", term = "波动率", ascii = "VOL", aliases = listOf("波动性"),
+            category = GlossaryCategory.TECHNICAL,
+            plain = "价格波动剧烈程度的指标，通常由日收益标准差年化而来，越高越颠簸。",
+            example = "说某票「波动率是大盘两倍」，意思是它每天的起伏幅度大约是大盘的两倍。",
+            advanced = "常指年化历史波动率 = 日收益标准差 × √250。另有期权隐含波动率（IV），反映市场对未来波动的预期，与历史波动率不同。",
+        ),
+        GlossaryEntry(
+            key = "CORRELATION", term = "相关系数", ascii = "r", aliases = listOf("相关性", "相关度"),
+            category = GlossaryCategory.TECHNICAL,
+            plain = "两个标的涨跌步调有多一致，从 -1 到 +1。越接近 1 越同步，接近 0 各走各的。",
+            example = "两只白酒股相关系数 0.9，同涨同跌；白酒股和银行股 0.3，一起拿才算分散。",
+            advanced = "常用日收益率的 Pearson 相关系数。注意：相关性不稳定，行情剧变时会快速抬升——「平时不同步、危机时齐跌」是常见现象。",
+        ),
+        GlossaryEntry(
+            key = "BETA", term = "贝塔", ascii = "β", aliases = listOf("贝塔系数", "Beta"),
+            category = GlossaryCategory.TECHNICAL,
+            plain = "个股跟着大盘涨跌的放大倍数。贝塔 1.5 = 大盘涨 1% 它平均涨 1.5%，跌时也放大。",
+            example = "券商股贝塔普遍高，牛市里弹性大；公用事业股贝塔低，大盘怎么走它都波澜不惊。",
+            advanced = "由个股对指数收益做回归得到，= 相关系数 × (个股波动率 / 指数波动率)。贝塔高不代表能赚钱，只代表对大盘的敏感度高。",
+        ),
+        GlossaryEntry(
+            key = "ALPHA", term = "阿尔法", ascii = "α", aliases = listOf("阿尔法收益", "超额收益"),
+            category = GlossaryCategory.TECHNICAL,
+            plain = "扣掉大盘带来的部分后，你自己多赚（或多亏）的那部分。",
+            example = "大盘涨 10%，你的组合涨 13%，多出的 3% 就近似你的阿尔法——正负才是本事，跟着大盘的部分不是。",
+            advanced = "严格定义来自 CAPM 回归的截距项。散户场景下用「组合收益 − 贝塔 × 指数收益」估算即可，注意成本与运气成分。",
+        ),
+        GlossaryEntry(
+            key = "SHARPE", term = "夏普比率", ascii = "Sharpe", aliases = listOf("夏普指数", "夏普值"),
+            category = GlossaryCategory.TECHNICAL,
+            plain = "每承受一份波动换来多少超额收益，是衡量「赚得稳不稳」的常用比例。",
+            example = "两个组合都年赚 15%，一个睡得着觉（低波动）一个天天过山车，夏普比率会把前者算得更高。",
+            advanced = "夏普 = (收益 − 无风险利率) / 收益标准差。比较时要在相似周期与标的类型间进行；短周期高夏普常是运气或杠杆的产物。",
+        ),
+        GlossaryEntry(
+            key = "MAX_DRAWDOWN", term = "最大回撤", aliases = listOf("回撤"),
+            category = GlossaryCategory.TECHNICAL,
+            plain = "从阶段最高点跌到最低点的最大幅度，衡量最疼的时候有多疼。",
+            example = "净值从 1.5 跌到 1.2，最大回撤 20%——问问自己能不能扛住，再决定要不要这样的组合。",
+        ),
+        GlossaryEntry(
+            key = "HHI", term = "赫芬达尔指数", ascii = "HHI", aliases = listOf("HHI指数", "集中度指数"),
+            category = GlossaryCategory.CAPITAL,
+            plain = "把各部分占比平方后加总的集中度指标，数值越大越「把鸡蛋放一个篮子」。",
+            example = "五只票各占 20%，HHI = 0.2；一只占 80% 其余各 5%，HHI 高出数倍——后者其实更集中。",
+            advanced = "HHI = Σ(权重²)。等权 N 只时 HHI = 1/N。它对头部权重敏感：一只 60% 的票对 HHI 的贡献超过其余所有票之和。",
+        ),
+        GlossaryEntry(
+            key = "LIQUIDITY", term = "流动性", aliases = listOf("流通性"),
+            category = GlossaryCategory.CAPITAL,
+            plain = "想买能买到、想卖能卖掉、且不明显推动价格的能力。",
+            example = "日成交几亿的大盘股随时进出；日成交几十万的冷门票，一笔稍大的卖单就能砸出长下影。",
+        ),
+        GlossaryEntry(
+            key = "RISK_PREMIUM", term = "风险溢价", aliases = listOf("股权风险溢价"),
+            category = GlossaryCategory.VALUATION,
+            plain = "承担风险比把钱存银行应该多赚的部分。市场给的不确定性补偿。",
+            example = "无风险利率 2%、股市长期回报约 8%，中间约 6% 就是风险溢价——它是对承担波动的报酬，不是保证。",
+        ),
+        GlossaryEntry(
+            key = "ST_STOCK", term = "ST股票", ascii = "ST", aliases = listOf("ST股", "戴帽"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "因财务异常或其他风险被交易所特别处理的股票，名字前带 ST，涨跌幅限制也不同。",
+            example = "*ST 前缀意味着退市风险警示，这类票可能直接退市，波动规则与普通股不同。",
+        ),
+        GlossaryEntry(
+            key = "LEVERAGE", term = "杠杆", aliases = listOf("加杠杆", "杠杆率"),
+            category = GlossaryCategory.MECHANISM,
+            plain = "借钱投资。涨跌都会被同倍放大，亏起来可能超过本金。",
+            example = "1 倍杠杆下股价跌 20% 本金亏 20%；两倍杠杆跌 20% 本金就亏 40%，还可能被强制平仓。",
+        ),
     )
 
     private val byKeyIndex: Map<String, GlossaryEntry> by lazy { all.associateBy { it.key } }
@@ -452,19 +575,23 @@ object Glossary {
 
     /**
      * 检索术语表：中文名、英文缩写、别名均可命中，且支持片段匹配。
-     * 用于术语表页面的搜索框（拼音首字母检索为 P1）。
+     * FR-K6 拼音首字母检索：[pinyinInitials] 里的首字母串精确命中 = 高分，
+     * 前缀命中 = 中分（"hsl" → 换手率，"syl" → 市盈率）。
      */
     fun search(query: String, limit: Int = 100): List<GlossaryEntry> {
         val q = query.trim().uppercase()
         if (q.isEmpty()) return all
         return all.mapNotNull { entry ->
             val haystack = entry.searchHaystack()
+            val initials = pinyinInitials[entry.key].orEmpty().uppercase()
             val score = when {
                 entry.term.uppercase() == q -> 100
                 entry.ascii.equals(q, ignoreCase = true) -> 95
                 entry.aliases.any { it.uppercase() == q } -> 90
+                initials.isNotEmpty() && initials == q -> 88
                 entry.term.uppercase().startsWith(q) -> 80
                 entry.ascii.startsWith(q) -> 75
+                initials.isNotEmpty() && initials.startsWith(q) -> 72
                 haystack.contains(q) -> 60
                 else -> return@mapNotNull null
             }
@@ -475,7 +602,99 @@ object Glossary {
             .take(limit)
     }
 
+    /**
+     * FR-K9 相关术语推荐：同域（同分类）优先，依赖路径上的词（先懂/看懂后）
+     * 永远排最前——推荐要服务依赖链，不只是「同类凑数」。
+     */
+    fun relatedOf(key: String, limit: Int = 3): List<GlossaryEntry> {
+        val self = byKey(key) ?: return emptyList()
+        val linked = (dependentsOf(key) + prerequisitesOf(key))
+            .distinct()
+            .mapNotNull { byKey(it) }
+        val sameDomain = all.filter { it.category == self.category && it.key != key && linked.none { l -> l.key == it.key } }
+        return (linked + sameDomain).take(limit)
+    }
+
+    /**
+     * 拼音首字母索引（key → 首字母串），FR-K6 的数据源。
+     * 手工维护：commonMain 无拼音库，词条量 80 且增速低，手工表成本最低且可审校。
+     */
+    private val pinyinInitials: Map<String, String> = mapOf(
+        "MA" to "jx", "BOLL" to "bld", "GOLDEN_CROSS" to "jc", "DEATH_CROSS" to "sc",
+        "DIVERGENCE" to "bl", "TURNOVER" to "hsl", "VOLUME_RATIO" to "lb", "QFQ" to "qfq",
+        "HFQ" to "hfq", "SUPPORT" to "zcw", "RESISTANCE" to "ylw", "GAP" to "qk",
+        "AMPLITUDE" to "zf", "PE" to "syl", "PB" to "sjl", "PS" to "sxsl",
+        "EPS" to "mgsy", "ROE" to "jzcsyl", "DIVIDEND_YIELD" to "gxl", "MARKET_CAP" to "zsz",
+        "FLOAT_MARKET_CAP" to "ltsz", "VALUATION_PERCENTILE" to "gzfw", "PRICE_LIMIT" to "zdt",
+        "CALL_AUCTION" to "jhjj", "SUSPENSION" to "tp", "EX_RIGHTS" to "cqcx", "IPO_SUBSCRIPTION" to "dx",
+        "BLOCK_TRADE" to "dzjy", "MARGIN" to "rzrq", "COMMISSION" to "yj", "STAMP_DUTY" to "yhs",
+        "CHINEXT" to "cyb", "NORTHBOUND" to "bxzj", "MAIN_CAPITAL" to "zlzj", "DRAGON_TIGER" to "lhb",
+        "NET_INFLOW" to "jlr", "SECTOR" to "bk", "LEADER_STOCK" to "ltg", "HOT_MONEY" to "yz",
+        "CONCEPT_STOCK" to "gng", "SENTIMENT" to "qxm", "AMOUNT" to "cje", "REVENUE" to "yysr",
+        "NET_PROFIT" to "jlr", "DEDUCTED_PROFIT" to "kfjlr", "GROSS_MARGIN" to "mll", "NET_MARGIN" to "jll",
+        "YOY" to "tb", "MOM" to "hb", "EARNINGS_PREANNOUNCEMENT" to "yjyg", "FINANCIAL_REPORT" to "cb",
+        "GOODWILL" to "sy", "CASH_FLOW" to "xjl", "DEBT_RATIO" to "zcfzl", "DIVIDEND" to "fh",
+        "INSTITUTIONAL_RESEARCH" to "jgdy",
+        // 风险与组合
+        "POSITION" to "cw", "WEIGHT" to "qz", "DIVERSIFY" to "fstz", "REBALANCE" to "zph",
+        "RESTRICTED_SHARE" to "xsg", "UNLOCK" to "jj", "SHARE_REDUCTION" to "jc",
+        "STD_DEV" to "bzc", "VOLATILITY" to "bdl", "CORRELATION" to "xgxs", "BETA" to "bt",
+        "ALPHA" to "aef", "SHARPE" to "xpbl", "MAX_DRAWDOWN" to "zdhc", "HHI" to "hfdezs",
+        "LIQUIDITY" to "ldx", "RISK_PREMIUM" to "fxyj", "ST_STOCK" to "st", "LEVERAGE" to "gg",
+    )
+
     fun byCategory(category: GlossaryCategory): List<GlossaryEntry> = all.filter { it.category == category }
+
+    /**
+     * 依赖路径（doc 24 §6.3 改动 #4）：学某个概念前应先懂的前置概念。
+     * 有向关系第一次被画出来——「先懂 / 看懂后」两条路径都由这张表驱动。
+     * 只收录确有依赖关系的词，无依赖 = 空表 = 可直接学。
+     */
+    val prerequisites: Map<String, List<String>> = mapOf(
+        "GOLDEN_CROSS" to listOf("MA", "MACD"),
+        "DEATH_CROSS" to listOf("MA", "MACD"),
+        "DIVERGENCE" to listOf("MACD"),
+        "BOLL" to listOf("MA"),
+        "SUPPORT" to listOf("MA"),
+        "RESISTANCE" to listOf("MA"),
+        "PEG" to listOf("PE"),
+        "EPS" to listOf("NET_PROFIT"),
+        "VALUATION_PERCENTILE" to listOf("PE", "PB"),
+        "FLOAT_MARKET_CAP" to listOf("MARKET_CAP"),
+        "DIVIDEND_YIELD" to listOf("DIVIDEND", "MARKET_CAP"),
+        "VOLUME_RATIO" to listOf("TURNOVER"),
+        "NET_INFLOW" to listOf("MAIN_CAPITAL"),
+        "DEDUCTED_PROFIT" to listOf("NET_PROFIT"),
+        "GROSS_MARGIN" to listOf("REVENUE"),
+        "NET_MARGIN" to listOf("REVENUE", "NET_PROFIT"),
+        "YOY" to listOf("FINANCIAL_REPORT"),
+        "MOM" to listOf("YOY"),
+    )
+
+    /** 反向依赖：「看懂后」能解锁哪些概念。 */
+    private val dependentsIndex: Map<String, List<String>> by lazy {
+        val index = mutableMapOf<String, MutableList<String>>()
+        prerequisites.forEach { (key, pres) ->
+            pres.forEach { pre -> index.getOrPut(pre) { mutableListOf() }.add(key) }
+        }
+        index
+    }
+
+    fun prerequisitesOf(key: String): List<String> = prerequisites[key].orEmpty()
+
+    fun dependentsOf(key: String): List<String> = dependentsIndex[key].orEmpty()
+
+    private val keyByTokenIndex: Map<String, String> by lazy {
+        val index = mutableMapOf<String, String>()
+        matchTokens().forEach { (token, key) ->
+            val upper = token.uppercase()
+            if (!index.containsKey(upper)) index[upper] = key
+        }
+        index
+    }
+
+    /** 把用户实际遇到的词形（正名/缩写/别名）还原成稳定 key；聊天侧「遇到」埋点用。 */
+    fun keyForToken(token: String): String? = keyByTokenIndex[token.trim().uppercase()]
 
     /** 供 EntityRecognizer 构建 Trie：词形 → 稳定 key。 */
     fun matchTokens(): List<Pair<String, String>> =

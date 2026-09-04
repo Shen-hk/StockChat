@@ -19,6 +19,8 @@ data class StockChatTheme(
     val fall: Color,
     val flat: Color,
     val divider: Color,
+    /** 知识库「见过」态明度色（doc 24 §6.3 四段状态条；零新增饱和色，中性阶梯）。 */
+    val glossarySeen: Color,
     /** Market-only glass layer; distinct from the app chrome glass palette. */
     val marketGlass: Color,
     val marketGlassEdge: Color,
@@ -46,6 +48,7 @@ data class StockChatTheme(
             fall = Color(0xFF0C7A45),
             flat = Color(0xFF8A93A3),
             divider = Color(0xFFE2E8F0),
+            glossarySeen = Color(0xFFCBD5E1),
             marketGlass = Color(0xFFFFFFFF, 0.82f),
             marketGlassEdge = Color(0xFFFFFFFF, 0.72f),
             glass = GlassPalette.Light,
@@ -68,6 +71,7 @@ data class StockChatTheme(
             fall = Color(0xFF54D6A6),
             flat = Color(0xFF7A7A80),
             divider = Color(0xFF363638),
+            glossarySeen = Color(0xFF3E4654),
             marketGlass = Color(0xFF1D1D1F, 0.76f),
             marketGlassEdge = Color(0xFFFFFFFF, 0.08f),
             glass = GlassPalette.Dark,

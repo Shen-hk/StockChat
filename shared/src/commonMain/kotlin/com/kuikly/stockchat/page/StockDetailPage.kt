@@ -158,7 +158,7 @@ internal class StockDetailPage : BasePager() {
                 }
                 event {
                     scroll { params ->
-                        page.updateTopProgress(params.offsetY, params.contentHeight, params.viewHeight)
+                        page.updateTopProgress(params.offsetX, params.contentHeight, params.viewHeight)
                     }
                     contentSizeChanged { _, contentHeight ->
                         page.updateTopProgress(0f, contentHeight, page.pagerData.pageViewHeight)
@@ -271,6 +271,18 @@ internal class StockDetailPage : BasePager() {
                             }
                         }
                     }
+                    // FR-W2 对照物：详情页是「当前事实」一侧，当初理由在此对照
+                    vif({ page.watchlisted && page.watchlistReason().isNotEmpty() }) {
+                        Text {
+                            attr {
+                                text("当初理由：${page.watchlistReason()}")
+                                marginTop(4f)
+                                fontSize(page.theme.type.meta)
+                                lineHeight(16f)
+                                color(page.theme.textSecondary)
+                            }
+                        }
+                    }
                 }
 
                 // ---- 行情指标：细分隔线网格（替代白卡） ----
@@ -378,10 +390,10 @@ internal class StockDetailPage : BasePager() {
                 renderer = page.hostGlassRenderer,
                 backLabel = "返回",
                 onBack = { page.closePage() },
-                compactLine = "${Format.price(page.quote.price)}  ${Format.percent(page.quote.changePercent)}",
-                compactLineColor = page.toneColor(),
-                compactVisible = page.topCompactVisible,
-                progress = page.topProgress,
+                compactLine = { "${Format.price(page.quote.price)}  ${Format.percent(page.quote.changePercent)}" },
+                compactLineColor = { page.toneColor() },
+                compactVisible = { page.topCompactVisible },
+                progress = { page.topProgress },
                 reduceMotion = page.reduceMotion,
                 actions = listOf(
                     (if (page.watchlisted) "✓" else "+") to { page.toggleWatchlist() },
@@ -416,6 +428,8 @@ internal class StockDetailPage : BasePager() {
             WatchlistAddResult.ADDED -> {
                 watchlisted = true
                 watchlistHint = "已加入自选"
+                // FR-W2：详情页入口的来源即理由，可在自选长按改写
+                watchlistStore.setReason(symbol, "详情页添加")
                 playWatchlistFeedback()
             }
             WatchlistAddResult.ALREADY_IN -> {
@@ -426,6 +440,10 @@ internal class StockDetailPage : BasePager() {
             WatchlistAddResult.FULL -> watchlistHint = "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
         }
     }
+
+    /** FR-W2：当前自选理由（未自选或未填返回空）。 */
+    private fun watchlistReason(): String =
+        watchlistStore.list().firstOrNull { it.symbol == symbol }?.reason.orEmpty()
 
     private fun applyQuote(next: Quote) {
         val old = quote

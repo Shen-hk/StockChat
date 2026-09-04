@@ -1,14 +1,18 @@
 package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.base.BasePager
+import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
+import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.common.closePage
+import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistItem
@@ -17,10 +21,20 @@ import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.entity.Security
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.DivergingBar
+import com.kuikly.stockchat.page.components.SwipeAction
+import com.kuikly.stockchat.page.components.SwipeActionRow
+import com.kuikly.stockchat.page.components.SwipeRow
+import com.kuikly.stockchat.page.components.UndoBar
 import com.tencent.kuikly.core.annotations.Page
+import com.tencent.kuikly.core.base.Animation
+import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.Scale
+import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vfor
@@ -28,13 +42,24 @@ import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
+import com.tencent.kuikly.core.timer.clearTimeout
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.TextArea
 import com.tencent.kuikly.core.views.View
+import kotlin.math.abs
 
 /**
- * 自选股列表页（12 号需求文档 FR-W2 / FR-W3）。
+ * 自选股列表页 v2（doc 24 §6.1 重构规格）。
+ *
+ * 层次结构（z 轴从后到前）：
+ * - z0 聚合头：等权涨跌幅主数字 + 规则引擎结论 + 中心分界比例条（涨跌家数的关系
+ *   用图形表达，不靠文案罗列）。规则引擎纯本地计算，不调 LLM——聚合结论是算术，
+ *   不是观点。
+ * - z1 筛选：状态筛选（全部/异动 N）在上，分组弱化到第二行。
+ * - z2 行：SwipeActionRow（左滑移除）+ 长按菜单（置顶/分组显式列表）。
+ * - z3 异动上浮：同屏涨幅最异常的一行垫玻璃底浮起；行情平静时无 z3。
+ * - z5 浮层：搜索（原顶部长驻搜索框下沉于此）与长按菜单。
  *
  * 设计取向遵循「聊看一体」：入口放在抽屉而非独立 Tab，列表行复用 MINI 行情渲染器，
  * 点击直接进详情页；行情走三级降级链并诚实标注数据模式，不拿陈旧价格冒充实时。
@@ -45,12 +70,60 @@ internal class WatchlistPage : BasePager() {
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val watchlistStore get() = dependencies.watchlistStore
     private val quoteRepository get() = dependencies.quoteRepository
+    private val reduceMotion by lazy { platformPrefersReducedMotion() }
+
     private var rows: ObservableList<WatchlistRow> by observableList()
+    /** 渲染层过滤结果。vfor 只接受 ObservableList，所以过滤结果要落到这份拷贝上。 */
+    private var displayList: ObservableList<WatchlistRow> by observableList()
     private var candidates: ObservableList<Security> by observableList()
     private var hint: String by observable("")
     private var lastRemoved: WatchlistItem? = null
     private var dataModeLabel: String by observable("")
     private var activeGroup: String by observable("")
+
+    /** 状态筛选："" = 全部，"movers" = 仅异动行。分组筛选在 [activeGroup]。 */
+    private var statusFilter: String by observable("")
+
+    /**
+     * z3 异动上浮行（同屏唯一）。必须落在 observable 上并**在行 attr 内读取**——
+     * 若像 v1 那样在 vfor 子构建闭包读 `rows` 推导（[heroSymbol] 快照），行情逐只
+     * 到达时只有内容变了的行会重建，旧 hero 行不重建 → 玻璃残留多行、且没有任何
+     * 可驱动的变化。每次行情落定后经 [refreshHero] 重算（值不变不通知）。
+     */
+    private var heroSymbol: String by observable("")
+
+    /** 搜索浮层开关：常驻搜索框下沉到 z5 后，这是唯一入口。 */
+    private var searchOpen: Boolean by observable(false)
+
+    /** 长按菜单正在操作的行；空 = 菜单关闭。 */
+    private var menuSymbol: String by observable("")
+
+    // ── FR-W2 关注理由浮层：三入口（搜索添加 / 长按菜单 / 详情页）共用同一编辑浮层 ──
+    /** 理由浮层正在编辑的行；空 = 关闭。 */
+    private var reasonEditSymbol: String by observable("")
+    /** 快捷理由 chip 当前选中项；"" = 未选（用自定义输入）。 */
+    private var reasonChip: String by observable("")
+    /** 自定义输入的实时同步值（TextArea isSyncEdit）。选中 chip 后再打字则 chip 让位。 */
+    private var reasonTyped: String by observable("")
+
+    // ── 左滑状态：全页共用一组，天然保证「同时只有一行展开」 ──
+    /** 正在跟手拖动的行；为空表示没有行在拖动。 */
+    private var swipeDragSymbol: String by observable("")
+    /** 已吸附到展开态的行。 */
+    private var swipeOpenSymbol: String by observable("")
+    /** 跟手拖动的实时位移（dp，非负）。 */
+    private var swipeDistance: Float by observable(0f)
+    /** true 表示处于松手后的吸附动画，false 表示跟手阶段（不注册 animate 才跟手）。 */
+    private var swipeAnimating: Boolean by observable(false)
+    /** 松手吸附的跨 tick 提交定时器（两拍范式，见 [endSwipe]；被新手势/移除先行清掉）。 */
+    private var swipeSnapTimerRef: String = ""
+
+    // ── 撤销条：移除是破坏性操作，且从「常驻可见按钮」改成手势后误触率上升，
+    //    撤销入口必须落在手指附近（底部），不能沿用顶部 hint。 ──
+    private var undoText: String by observable("")
+    private var undoTimerRef: String = ""
+
+    private val swipeTotalWidth: Float get() = SwipeRow.ACTION_WIDTH
 
     override fun created() {
         super.created()
@@ -72,61 +145,59 @@ internal class WatchlistPage : BasePager() {
                     paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(60f)
                 }
+
+                // ── z0 聚合头：回答「我的自选今天整体怎么样」 ──
+                vif({ page.rows.isNotEmpty() }) {
+                    page.renderAggregateHeader(this)
+                }
+
+                // ── z1 筛选：状态在上，分组弱化到第二行 ──
                 View {
-                    attr {
-                        height(38f)
-                        flexDirectionRow()
-                        alignItemsCenter()
-                        paddingLeft(11f)
-                        paddingRight(11f)
-                        borderRadius(10f)
-                        backgroundColor(page.theme.surfaceMuted)
+                    attr { marginTop(12f); flexDirectionRow(); alignItemsCenter() }
+                    WatchlistFilterChip(
+                        label = "全部 ${page.rows.size}",
+                        selected = page.statusFilter.isEmpty(),
+                        theme = page.theme,
+                        compact = false,
+                    ) {
+                        page.statusFilter = ""
+                        page.refreshDisplay()
                     }
-                    Text { attr { text("＋"); fontSize(15f); color(page.theme.textTertiary) } }
-                    TextArea {
+                    vif({ page.aggregate().moverCount > 0 }) {
+                        WatchlistFilterChip(
+                            label = "异动 ${page.aggregate().moverCount}",
+                            selected = page.statusFilter == FILTER_MOVERS,
+                            theme = page.theme,
+                            compact = false,
+                        ) {
+                            page.statusFilter = FILTER_MOVERS
+                            page.refreshDisplay()
+                        }
+                    }
+                }
+                View {
+                    attr { marginTop(7f); flexDirectionRow(); alignItemsCenter() }
+                    listOf("core" to "核心观察", "research" to "待研究", "" to "未分组").forEach { (id, label) ->
+                        WatchlistFilterChip(
+                            label = label,
+                            selected = page.activeGroup == id,
+                            theme = page.theme,
+                            compact = true,
+                        ) {
+                            page.activeGroup = if (page.activeGroup == id) "" else id
+                            page.reload()
+                        }
+                    }                }
+
+                // ── FR-W9「没看过」半边：久未点开的一句话提示（事实陈述，不劝删） ──
+                vif({ page.staleRows().isNotEmpty() }) {
+                    Text {
                         attr {
-                            flex(1f)
-                            marginLeft(6f)
-                            height(36f)
-                            fontSize(13f)
-                            color(page.theme.textPrimary)
-                            backgroundColor(Color(0xFFFFFFFF, 0f))
-                            text(searchSeed)
-                            placeholder("搜索股票加入自选：贵州茅台 / 600519")
-                            placeholderColor(page.theme.textTertiary)
-                            tintColor(page.theme.brand)
-                            selectionColor(page.theme.brand)
-                        }
-                        event {
-                            textDidChange(isSyncEdit = true) { state -> page.search(state.text) }
-                        }
-                    }
-                }
-
-                vif({ page.candidates.isNotEmpty() }) {
-                    View {
-                        attr { marginTop(8f) }
-                        vfor({ page.candidates }) { security ->
-                            WatchlistCandidateRow(
-                                security = security,
-                                theme = page.theme,
-                                onAdd = { page.add(security) },
-                                container = this,
-                            )
-                        }
-                    }
-                }
-
-                View {
-                    attr { marginTop(10f); marginBottom(4f); flexDirectionRow() }
-                    listOf("" to "全部", "core" to "核心观察", "research" to "待研究").forEach { (id, label) ->
-                        View {
-                            attr {
-                                marginRight(7f); paddingLeft(11f); paddingRight(11f); height(30f); allCenter(); borderRadius(9f)
-                                backgroundColor(if (page.activeGroup == id) page.theme.brandSoft else page.theme.surfaceMuted)
-                            }
-                            Text { attr { text(label); fontSize(11f); color(if (page.activeGroup == id) page.theme.brand else page.theme.textSecondary) } }
-                            event { click { page.activeGroup = id; page.reload() } }
+                            text(page.staleLabel())
+                            marginTop(10f)
+                            fontSize(11.5f)
+                            lineHeight(17f)
+                            color(page.theme.textTertiary)
                         }
                     }
                 }
@@ -139,7 +210,17 @@ internal class WatchlistPage : BasePager() {
                             fontSize(12f)
                             color(page.theme.term)
                         }
-                        event { click { page.undoRemove() } }
+                    }
+                }
+
+                vif({ page.displayList.isEmpty() && page.rows.isNotEmpty() }) {
+                    Text {
+                        attr {
+                            text("当前筛选下没有标的")
+                            marginTop(24f)
+                            fontSize(12.5f)
+                            color(page.theme.textTertiary)
+                        }
                     }
                 }
 
@@ -147,48 +228,135 @@ internal class WatchlistPage : BasePager() {
                     WatchlistEmptyState(theme = page.theme, container = this)
                 }
 
-                vfor({ page.rows }) { row ->
+                vfor({ page.displayList }) { row ->
+                    // 主题捕获在构建作用域：theme 读取的是 observable(nightModel)（见
+                    // BasePager.isNightMode），若在 attr 里读到会覆盖动画 key（R2 高危
+                    // 陷阱，MarketPage 同款处理）。vfor 行内还要读 heroSymbol 驱动动效。
+                    val rowTheme = page.theme
+                    val heroGlass = rowTheme.marketGlass
                     View {
-                        attr { flexDirectionRow(); alignItemsCenter(); marginTop(10f) }
-                        View {
-                            attr { flex(1f) }
-                            val quote = row.quote
-                            if (quote != null) {
-                                CardShell(
-                                    StockQuoteCardModel(quote, cardId = "watchlist:${row.symbol}"),
-                                    CardContext(
-                                        theme = page.theme,
-                                        density = CardDensity.MINI,
-                                        onOpenStock = { page.openStockDetail(row.symbol, Routes.WATCHLIST) },
-                                        cardKey = "watchlist:${row.symbol}",
-                                    ),
+                        attr {
+                            marginTop(10f)
+                            // z3 异动上浮（M-2，doc 24 §8）：最异常的一行垫玻璃浮起。
+                            // heroSymbol 是 observable，读取发生在 attr 内（R1），行随
+                            // 行情落定即时重算（[refreshHero]），旧 hero 行同步下沉。
+                            val isHero = page.heroSymbol == row.symbol
+                            if (isHero) {
+                                // 玻璃垫片：内容层必须不透明（遮住动作层），所以玻璃做成
+                                // 行外 4dp 的垫圈——视觉上是行浮在玻璃上，层次不失真。
+                                padding(4f)
+                                borderRadius(18f)
+                                backgroundColor(heroGlass)
+                                boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.10f)))
+                            }
+                            if (!page.reduceMotion) {
+                                transform(
+                                    scale = Scale(if (isHero) 1.012f else 1f, if (isHero) 1.012f else 1f),
+                                    translate = Translate(0f, 0f, offsetY = if (isHero) -1.5f else 0f),
                                 )
-                            } else {
-                                WatchlistPendingRow(name = row.name, symbol = row.symbol, theme = page.theme, container = this)
-                            }
-                            vif({ row.quote?.let { kotlin.math.abs(it.changePercent) >= 3.0 } == true }) {
-                                Text { attr { text("异动"); marginTop(4f); fontSize(9.5f); color(page.theme.fall) } }
+                                // animate 恒定注册（R5：本周期注册的动画由下一拍同 key 的
+                                // 驱动变化消费）。isHero/glass 等其它读取在前，heroSymbol
+                                // 在 animate 实参位置做最后一次读取，动画 key 归它（R2）。
+                                animate(Animation.springEaseOut(0.32f, 0.82f, 0.16f), page.heroSymbol)
                             }
                         }
-                        View {
+                        SwipeActionRow(
+                            theme = rowTheme,
+                            actions = page.swipeActions(),
+                            totalWidth = page.swipeTotalWidth,
+                            offset = { page.swipeOffset(row.symbol) },
+                            animating = { page.swipeAnimating },
+                            reduceMotion = page.reduceMotion,
+                            onDragStart = { page.beginSwipe(row.symbol) },
+                            onDrag = { distance -> page.dragSwipe(row.symbol, distance) },
+                            onRelease = { distance -> page.endSwipe(row.symbol, distance) },
+                            onTapContent = { page.tapRow(row.symbol) },
+                            onLongPressContent = { page.menuSymbol = row.symbol },
+                            onAction = { id -> page.runSwipeAction(id, row.symbol) },
+                        ) {
+                            View {
+                                attr { flexDirectionRow() }
+                                // 分组从「常驻按钮」收进手势后，状态不能跟着一起消失：
+                                // 用一条 3dp 色带把分组留在行内（LDRS-R：关系→图形映射），
+                                // 视觉成本近乎为零，但「这行属于哪一组」始终可见。
+                                View {
+                                    attr {
+                                        width(3f)
+                                        backgroundColor(groupTint(row.groupId, page.theme))
+                                    }
+                                }
+                                View {
+                                    attr { flex(1f); padding(12f) }
+                                    val quote = row.quote
+                                    if (quote != null) {
+                                        CardShell(
+                                            StockQuoteCardModel(quote, cardId = "watchlist:${row.symbol}"),
+                                            CardContext(
+                                                theme = page.theme,
+                                                density = CardDensity.MINI,
+                                                onOpenStock = { page.openRowDetail(row.symbol) },
+                                                cardKey = "watchlist:${row.symbol}",
+                                            ),
+                                        )
+                                    } else {
+                                        WatchlistPendingRow(name = row.name, symbol = row.symbol, theme = page.theme, container = this)
+                                    }
+                                    vif({ row.quote != null && abs(row.quote!!.changePercent) >= 3.0 }) {
+                                        Text {
+                                            val pct = row.quote?.changePercent ?: 0.0
+                                            attr {
+                                                text(if (pct > 0) "异动 ↑" else "异动 ↓")
+                                                marginTop(4f)
+                                                fontSize(9.5f)
+                                                color(if (pct > 0) page.theme.rise else page.theme.fall)
+                                            }
+                                        }
+                                    }
+                                    // FR-W6：对话加入的标的带 ★ 来源标记（置顶由 sortOrder 保证）
+                                    vif({ row.starred }) {
+                                        Text {
+                                            attr {
+                                                text("★ 对话加入")
+                                                marginTop(4f)
+                                                fontSize(9.5f)
+                                                color(page.theme.brand)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── FR-W5 底部通路：扫描完列表，下一问是「我押注了什么」 ──
+                vif({ page.rows.isNotEmpty() }) {
+                    View {
+                        attr {
+                            marginTop(14f)
+                            height(44f)
+                            flexDirectionRow()
+                            alignItemsCenter()
+                            paddingLeft(14f)
+                            paddingRight(14f)
+                            borderRadius(12f)
+                            backgroundColor(page.theme.surfaceMuted)
+                        }
+                        event { click { page.openPage(Routes.RISK) } }
+                        Text {
                             attr {
-                                marginLeft(8f)
-                                paddingLeft(10f)
-                                paddingRight(10f)
-                                height(30f)
-                                allCenter()
-                                borderRadius(8f)
-                                backgroundColor(page.theme.surfaceMuted)
+                                flex(1f)
+                                text("我押注了什么？看共同暴露 ›")
+                                fontSize(12.5f)
+                                color(page.theme.textSecondary)
                             }
-                            event {
-                                click { page.cycleGroup(row.symbol, row.groupId) }
-                            }
-                            Text { attr { text(groupLabel(row.groupId)); fontSize(10f); color(page.theme.brand) } }
                         }
-                        View {
-                            attr { marginLeft(6f); paddingLeft(9f); paddingRight(9f); height(30f); allCenter(); borderRadius(8f); backgroundColor(page.theme.surfaceMuted) }
-                            Text { attr { text("移除"); fontSize(11f); color(page.theme.textSecondary) } }
-                            event { click { page.remove(row.symbol) } }
+                        Text {
+                            attr {
+                                text("风险地图")
+                                fontSize(11.5f)
+                                color(page.theme.brand)
+                            }
                         }
                     }
                 }
@@ -205,6 +373,7 @@ internal class WatchlistPage : BasePager() {
                     }
                 }
             }
+
             AppTopBar(
                 title = "自选股",
                 subtitle = "已关注 ${WatchlistStore.MAX_ITEMS} 只上限内的标的，点进详情可继续追问",
@@ -213,8 +382,708 @@ internal class WatchlistPage : BasePager() {
                 renderer = page.hostGlassRenderer,
                 backLabel = "返回",
                 onBack = { page.closePage() },
+                actions = listOf(
+                    "风险" to { page.openPage(Routes.RISK) },
+                    "搜索" to { page.searchOpen = true },
+                ),
+            )
+
+            // ── z5 搜索浮层：原顶部长驻搜索框下沉于此（S-1：首屏 200px 让给结论） ──
+            vif({ page.searchOpen }) {
+                View {
+                    attr {
+                        absolutePosition()
+                        top(0f)
+                        left(0f)
+                        right(0f)
+                        bottom(0f)
+                        zIndex(50, useOutline = false)
+                        backgroundColor(Color(0x000000, 0.42f))
+                        paddingLeft(14f)
+                        paddingRight(14f)
+                        paddingTop(page.pagerData.statusBarHeight + 66f)
+                    }
+                    event {
+                        click {
+                            page.searchOpen = false
+                            page.candidates.clear()
+                        }
+                    }
+                    View {
+                        attr {
+                            borderRadius(16f)
+                            backgroundColor(page.theme.surface)
+                            padding(12f)
+                        }
+                        event { click { /* 吃掉点击，防止冒泡关掉浮层 */ } }
+                        View {
+                            attr {
+                                height(38f)
+                                flexDirectionRow()
+                                alignItemsCenter()
+                                paddingLeft(11f)
+                                paddingRight(11f)
+                                borderRadius(10f)
+                                backgroundColor(page.theme.surfaceMuted)
+                            }
+                            Text { attr { text("＋"); fontSize(15f); color(page.theme.textTertiary) } }
+                            TextArea {
+                                attr {
+                                    flex(1f)
+                                    marginLeft(6f)
+                                    height(36f)
+                                    fontSize(13f)
+                                    color(page.theme.textPrimary)
+                                    backgroundColor(Color(0xFFFFFFFF, 0f))
+                                    text(searchSeed)
+                                    placeholder("搜索股票加入自选：贵州茅台 / 600519")
+                                    placeholderColor(page.theme.textTertiary)
+                                    tintColor(page.theme.brand)
+                                    selectionColor(page.theme.brand)
+                                }
+                                event {
+                                    textDidChange(isSyncEdit = true) { state -> page.search(state.text) }
+                                }
+                            }
+                        }
+                        vif({ page.candidates.isNotEmpty() }) {
+                            View {
+                                attr { marginTop(8f) }
+                                vfor({ page.candidates }) { security ->
+                                    WatchlistCandidateRow(
+                                        security = security,
+                                        theme = page.theme,
+                                        onAdd = { page.add(security) },
+                                        container = this,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── z5 长按菜单：分组从「三态循环」改为显式选项列表（D 黑名单 #7） ──
+            vif({ page.menuSymbol.isNotEmpty() }) {
+                View {
+                    attr {
+                        absolutePosition()
+                        top(0f)
+                        left(0f)
+                        right(0f)
+                        bottom(0f)
+                        zIndex(40, useOutline = false)
+                        backgroundColor(Color(0x000000, 0.42f))
+                        justifyContentFlexEnd()
+                    }
+                    event { click { page.menuSymbol = "" } }
+                    View {
+                        attr {
+                            paddingLeft(16f)
+                            paddingRight(16f)
+                            paddingBottom(28f)
+                        }
+                        event { click { /* 吃掉点击 */ } }
+                        View {
+                            attr {
+                                borderRadius(18f)
+                                backgroundColor(page.theme.surface)
+                                paddingTop(6f)
+                                paddingBottom(6f)
+                            }
+                            Text {
+                                attr {
+                                    text(page.menuTitle())
+                                    marginTop(10f)
+                                    marginLeft(16f)
+                                    fontSize(11f)
+                                    color(page.theme.textTertiary)
+                                }
+                            }
+                            // FR-W2：菜单里回看理由（行上不展示，保持扫描效率）
+                            vif({ page.currentReason().isNotEmpty() }) {
+                                Text {
+                                    attr {
+                                        text("当初理由：${page.currentReason()}")
+                                        marginTop(3f)
+                                        marginLeft(16f)
+                                        marginRight(16f)
+                                        fontSize(11.5f)
+                                        lineHeight(16f)
+                                        color(page.theme.textSecondary)
+                                    }
+                                }
+                            }
+                            // FR-W8：理由变更历史回看「我改主意了几次」
+                            vif({ page.currentReasonHistory().isNotEmpty() }) {
+                                Text {
+                                    attr {
+                                        text("之前：${page.currentReasonHistory().joinToString(" ← ")}")
+                                        marginTop(3f)
+                                        marginLeft(16f)
+                                        marginRight(16f)
+                                        fontSize(10.5f)
+                                        lineHeight(15f)
+                                        color(page.theme.textTertiary)
+                                    }
+                                }
+                            }
+                            listOf(
+                                "core" to "设为核心观察",
+                                "research" to "设为待研究",
+                                "" to "清除分组",
+                            ).forEach { (groupId, label) ->
+                                WatchlistMenuRow(label = label, destructive = false, theme = page.theme) {
+                                    page.setGroupTo(page.menuSymbol, groupId)
+                                    page.menuSymbol = ""
+                                }
+                            }
+                            WatchlistMenuRow(label = if (page.currentReason().isEmpty()) "设置关注理由" else "修改关注理由", destructive = false, theme = page.theme) {
+                                page.reasonChip = ""
+                                page.reasonTyped = ""
+                                page.reasonEditSymbol = page.menuSymbol
+                                page.menuSymbol = ""
+                            }
+                            WatchlistMenuRow(label = "置顶", destructive = false, theme = page.theme) {
+                                page.pinToTop(page.menuSymbol)
+                                page.menuSymbol = ""
+                            }
+                            // FR-W7 手动排序：菜单步进（上移/下移一位）。拖动手势与
+                            // 左滑行/滚动叠加误触率高，这是有意取舍，能力等价（可到任意位）。
+                            WatchlistMenuRow(label = "上移一位", destructive = false, theme = page.theme) {
+                                page.moveRow(page.menuSymbol, -1)
+                                page.menuSymbol = ""
+                            }
+                            WatchlistMenuRow(label = "下移一位", destructive = false, theme = page.theme) {
+                                page.moveRow(page.menuSymbol, +1)
+                                page.menuSymbol = ""
+                            }
+                            WatchlistMenuRow(label = "移除", destructive = true, theme = page.theme) {
+                                page.remove(page.menuSymbol)
+                                page.menuSymbol = ""
+                            }
+                        }
+                        View {
+                            attr {
+                                marginTop(8f)
+                                height(50f)
+                                allCenter()
+                                borderRadius(18f)
+                                backgroundColor(page.theme.surface)
+                            }
+                            Text {
+                                attr { text("取消"); fontSize(14f); fontWeightMedium(); color(page.theme.textSecondary) }
+                            }
+                            event { click { page.menuSymbol = "" } }
+                        }
+                    }
+                }
+            }
+
+            // ── z5 理由浮层（FR-W2）：一行输入 + 3 个常用理由 chip，可跳过不强制 ──
+            vif({ page.reasonEditSymbol.isNotEmpty() }) {
+                View {
+                    attr {
+                        absolutePosition()
+                        top(0f)
+                        left(0f)
+                        right(0f)
+                        bottom(0f)
+                        zIndex(45, useOutline = false)
+                        backgroundColor(Color(0x000000, 0.42f))
+                        justifyContentFlexEnd()
+                    }
+                    event { click { page.reasonEditSymbol = "" } }
+                    View {
+                        attr {
+                            marginLeft(16f)
+                            marginRight(16f)
+                            marginBottom(28f)
+                            borderRadius(18f)
+                            backgroundColor(page.theme.surface)
+                            padding(16f)
+                        }
+                        event { click { /* 吃掉点击 */ } }
+                        Text {
+                            attr {
+                                text("为什么关注 ${page.rows.firstOrNull { it.symbol == page.reasonEditSymbol }?.name.orEmpty()}？")
+                                fontSize(14f)
+                                fontWeightMedium()
+                                color(page.theme.textPrimary)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text("记下当初的理由，之后在风险地图对照「当初理由 vs 当前事实」。留空可跳过。")
+                                marginTop(4f)
+                                fontSize(11f)
+                                lineHeight(16f)
+                                color(page.theme.textTertiary)
+                            }
+                        }
+                        View {
+                            attr {
+                                marginTop(12f)
+                                height(38f)
+                                flexDirectionRow()
+                                alignItemsCenter()
+                                paddingLeft(11f)
+                                paddingRight(11f)
+                                borderRadius(10f)
+                                backgroundColor(page.theme.surfaceMuted)
+                            }
+                            TextArea {
+                                attr {
+                                    flex(1f)
+                                    height(36f)
+                                    fontSize(13f)
+                                    color(page.theme.textPrimary)
+                                    backgroundColor(Color(0xFFFFFFFF, 0f))
+                                    text("")
+                                    placeholder("业绩好转 / 前景看好 / 观察一下…（≤40 字）")
+                                    placeholderColor(page.theme.textTertiary)
+                                    tintColor(page.theme.brand)
+                                    selectionColor(page.theme.brand)
+                                }
+                                event {
+                                    textDidChange(isSyncEdit = true) { state ->
+                                        page.reasonTyped = state.text
+                                        if (state.text.isNotEmpty()) {
+                                            page.reasonChip = ""
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        View {
+                            attr { marginTop(10f); flexDirectionRow() }
+                            listOf("业绩", "政策", "技术面").forEach { chip ->
+                                View {
+                                    attr {
+                                        marginRight(8f)
+                                        paddingTop(6f)
+                                        paddingBottom(6f)
+                                        paddingLeft(12f)
+                                        paddingRight(12f)
+                                        borderRadius(14f)
+                                        backgroundColor(
+                                            if (page.reasonChip == chip) page.theme.brand else page.theme.surfaceMuted,
+                                        )
+                                    }
+                                    event { click { page.reasonChip = if (page.reasonChip == chip) "" else chip } }
+                                    Text {
+                                        attr {
+                                            text(chip)
+                                            fontSize(12f)
+                                            color(if (page.reasonChip == chip) Color(0xFFFFFFFF, 1f) else page.theme.textSecondary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        View {
+                            attr { marginTop(14f); flexDirectionRow(); alignItemsCenter() }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    height(42f)
+                                    allCenter()
+                                    borderRadius(12f)
+                                    backgroundColor(page.theme.surfaceMuted)
+                                }
+                                event { click { page.reasonEditSymbol = "" } }
+                                Text { attr { text("跳过"); fontSize(13.5f); color(page.theme.textSecondary) } }
+                            }
+                            View {
+                                attr {
+                                    flex(1f)
+                                    marginLeft(10f)
+                                    height(42f)
+                                    allCenter()
+                                    borderRadius(12f)
+                                    backgroundColor(page.theme.brand)
+                                }
+                                event { click { page.saveReason() } }
+                                Text { attr { text("保存"); fontSize(13.5f); fontWeightMedium(); color(Color(0xFFFFFFFF, 1f)) } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 撤销条压在最上层：移除是左滑手势触发的，手指还在行的位置，
+            // 撤销入口必须落在拇指可达的底部，沿用顶部 hint 等于没有撤销。
+            UndoBar(
+                theme = page.theme,
+                text = { page.undoText },
+                actionLabel = "撤销",
+                onAction = { page.undoRemove() },
             )
         }
+    }
+
+    // ── z0 聚合头 ──
+
+    /**
+     * 聚合数据。**结论是算术不是观点**（规则引擎，§6.1）：等权涨跌幅回答「整体」，
+     * 红绿盘比回答「结构」，两者组合成一句 ≤16 字的事实性描述，不做任何预测。
+     */
+    private fun aggregate(): Aggregate {
+        val quotes = rows.mapNotNull { it.quote }
+        if (quotes.isEmpty()) {
+            return Aggregate(rows.size, 0, 0.0, 0, 0, 0, "行情尚未就绪", 0)
+        }
+        val avg = quotes.map { it.changePercent }.average()
+        var rising = 0
+        var flat = 0
+        var falling = 0
+        quotes.forEach { q ->
+            when {
+                q.changePercent > 0.005 -> rising++
+                q.changePercent < -0.005 -> falling++
+                else -> flat++
+            }
+        }
+        val movers = quotes.count { abs(it.changePercent) >= 3.0 }
+        val conclusion = when {
+            avg >= 2.0 && rising >= falling * 2 -> "多数上涨，自选强于大盘"
+            avg >= 2.0 -> "上涨，但内部分化明显"
+            avg <= -2.0 && falling >= rising * 2 -> "多数回落，与大盘同步"
+            avg <= -2.0 -> "回落，但跌势集中在少数标的"
+            else -> "整体平稳，波动集中在个别标的"
+        }
+        return Aggregate(rows.size, quotes.size, avg, rising, flat, falling, conclusion, movers)
+    }
+
+    private fun renderAggregateHeader(container: ViewContainer<*, *>) {
+        val page = this@WatchlistPage
+        val agg = page.aggregate()
+        container.View {
+            attr {
+                padding(18f)
+                paddingTop(20f)
+                borderRadius(18f)
+                backgroundColor(page.aggregateTint(agg.avgPct))
+            }
+            // FR-W5：聚合头即风险地图入口——「整体怎么样」的下一问永远是「我押注了什么」
+            event { click { page.openPage(Routes.RISK) } }
+            View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text {
+                    attr {
+                        text("${agg.total} 只自选 · 等权")
+                        fontSize(11f)
+                        color(page.theme.textTertiary)
+                    }
+                }
+                vif({ agg.quoted < agg.total }) {
+                    Text {
+                        attr {
+                            text(" · ${agg.total - agg.quoted} 只无报价")
+                            fontSize(11f)
+                            color(page.theme.textTertiary)
+                        }
+                    }
+                }
+            }
+            Text {
+                attr {
+                    text(Format.percent(agg.avgPct))
+                    marginTop(6f)
+                    fontSize(34f)
+                    fontWeightBold()
+                    color(page.aggregateColor(agg.avgPct))
+                }
+            }
+            Text {
+                attr {
+                    text(agg.conclusion)
+                    marginTop(5f)
+                    fontSize(12.5f)
+                    color(page.theme.textSecondary)
+                }
+            }
+            View {
+                attr { marginTop(16f) }
+                DivergingBar(theme = page.theme, rising = agg.rising, flat = agg.flat, falling = agg.falling)
+            }
+            Text {
+                attr {
+                    text("涨 ${agg.rising} · 平 ${agg.flat} · 跌 ${agg.falling}")
+                    marginTop(7f)
+                    fontSize(10f)
+                    color(page.theme.textTertiary)
+                }
+            }
+        }
+    }
+
+    /** 氛围底取色：随整体方向取 riseSoft/fallSoft，平静取中性。只做氛围不做强调。 */
+    private fun aggregateTint(avgPct: Double): Color = when {
+        avgPct > 0.05 -> theme.riseSoft
+        avgPct < -0.05 -> theme.fallSoft
+        else -> theme.surfaceMuted
+    }
+
+    private fun aggregateColor(avgPct: Double): Color = when {
+        avgPct > 0.005 -> theme.rise
+        avgPct < -0.005 -> theme.fall
+        else -> theme.flat
+    }
+
+    // ── 筛选与行 ──
+
+    private fun displayRows(): List<WatchlistRow> = rows.filter { row ->
+        val groupOk = activeGroup.isEmpty() || row.groupId == activeGroup
+        val statusOk = statusFilter.isEmpty() || (
+            statusFilter == FILTER_MOVERS &&
+                row.quote != null &&
+                abs(row.quote.changePercent) >= 3.0
+            )
+        groupOk && statusOk
+    }
+
+    /**
+     * z3 异动行重算：取 |涨跌幅| 最大的异动行；行情平静（无异动）时清空 → 无 z3。
+     * 在数据回调里调用（不在构建闭包里），只在该行真正变化时写 observable——
+     * ObservableProperties 对同值写入会 early-return，不会产生多余的刷新/打断动画。
+     */
+    private fun refreshHero() {
+        val next = rows
+            .mapNotNull { row -> row.quote?.let { row.symbol to abs(it.changePercent) } }
+            .filter { it.second >= 3.0 }
+            .maxByOrNull { it.second }
+            ?.first
+            ?: ""
+        if (next != heroSymbol) heroSymbol = next
+    }
+
+    /** FR-W9：>STALE_DAYS 天没点开过的行（从未点开按加入时间计，0 时间戳不计）。 */
+    private fun staleRows(): List<WatchlistRow> {
+        val now = platformCurrentTimeMillis()
+        return rows.filter { row ->
+            val anchor = if (row.lastViewedAtMillis > 0) row.lastViewedAtMillis else row.addedAtMillis
+            anchor > 0 && now - anchor >= STALE_DAYS * DAY_MS
+        }
+    }
+
+    private fun staleLabel(): String {
+        val stale = staleRows()
+        val names = stale.take(3).joinToString("、") { it.name }
+        val suffix = if (stale.size > 3) " 等 ${stale.size} 只" else ""
+        return "「$names$suffix」超过 ${STALE_DAYS} 天没点开过"
+    }
+
+    // ── 左滑：状态机 ──
+
+    /**
+     * 该行当前应处位移：跟手/吸附中的行取 [swipeDistance]，其余归 0。
+     *
+     * **三个状态源按固定顺序全部读取、且 [swipeDistance] 恒为最后一次读取**：
+     * `Attr.animate()` 绑定的是紧邻其左侧最后读到的 observable key（R2），若像 v1 那样
+     * 按分支提前 return（开态直接返回 [swipeTotalWidth]），松手那拍动画会注册到
+     * `swipeOpenSymbol`/`swipeDragSymbol` 上，而真正触发位移的是 `swipeDistance`
+     * 写入——key 不匹配 → 队列里的 spring 永远不被消费 → 吸附动画静默失效、直接跳变。
+     */
+    private fun swipeOffset(symbol: String): Float {
+        val dragging = swipeDragSymbol == symbol
+        val opened = swipeOpenSymbol == symbol
+        val distance = swipeDistance
+        return if (dragging || opened) distance else 0f
+    }
+
+    private fun beginSwipe(symbol: String) {
+        // 新手势先行取消上一笔未落定的吸附提交，避免跨 tick 的终值把新拖拽打断。
+        clearTimeout(swipeSnapTimerRef)
+        // 同时只允许一行展开：拖 A 时 B 立刻归位（新拖拽的跟手阶段无动画）。
+        if (swipeOpenSymbol.isNotEmpty() && swipeOpenSymbol != symbol) {
+            swipeOpenSymbol = ""
+            // [swipeDistance] 是行间共享驱动源：收起了别的行才归零，避免新拖的行
+            // 吃到上一行遗留的位移；拖自己已展开的行则保持 72，从展开位接着拖。
+            swipeDistance = 0f
+        }
+        swipeDragSymbol = symbol
+        // 跟手阶段关掉动画，位移直接落位。
+        swipeAnimating = false
+    }
+
+    private fun dragSwipe(symbol: String, distance: Float) {
+        swipeDragSymbol = symbol
+        swipeDistance = distance
+    }
+
+    private fun endSwipe(symbol: String, distance: Float) {
+        val open = distance >= SwipeRow.snapThreshold(swipeTotalWidth)
+        clearTimeout(swipeSnapTimerRef)
+        // tick 1（注册拍，R5）：animating=true → 行内容 attr 重放，spring 进
+        // AnimationState 队列（key=swipeDistance）。行此刻仍停在被拖到的位置，不闪回。
+        swipeAnimating = true
+        if (reduceMotion) {
+            commitSwipeEnd(symbol, open)
+        } else {
+            // tick 2（消费拍，跨 tick 落终值）：保证消费到的是 tick 1 注册的 spring，
+            // 不依赖「同一事件处理器内多次写会逐次重放 attr」这一脆假设。
+            swipeSnapTimerRef = setTimeout(0) { commitSwipeEnd(symbol, open) }
+        }
+    }
+
+    /** 吸附终值落定：先动驱动源 [swipeDistance]，再解除 open/drag 标记（无视觉跳变）。 */
+    private fun commitSwipeEnd(symbol: String, open: Boolean) {
+        swipeDistance = if (open) swipeTotalWidth else 0f
+        if (open) {
+            swipeOpenSymbol = symbol
+        } else if (swipeOpenSymbol == symbol) {
+            // 从「已展开位」拖回并松手：解除 open 标记（等 distance 归零消费完动画）。
+            swipeOpenSymbol = ""
+        }
+        swipeDragSymbol = ""
+    }
+
+    /** 已展开时点内容区只收起，不跳转——否则「想关掉动作层」会误进详情页。 */
+    private fun tapRow(symbol: String) {
+        if (swipeOpenSymbol == symbol) {
+            closeSwipe()
+            return
+        }
+        openRowDetail(symbol)
+    }
+
+    /** FR-W9：点进详情 = 「看过」一笔。埋点先行，失败不影响跳转。 */
+    private fun openRowDetail(symbol: String) {
+        runCatching { watchlistStore.markViewed(symbol) }
+        openStockDetail(symbol, Routes.WATCHLIST)
+    }
+
+    private fun closeSwipe() {
+        clearTimeout(swipeSnapTimerRef)
+        // 收起同为两拍：tick 1 注册 spring（animating=true），tick 2 跨 tick 把
+        // distance 归零——展开态行此刻 offset=distance，位移变化恰好被 spring 消费。
+        swipeAnimating = true
+        if (reduceMotion) {
+            commitSwipeClose()
+        } else {
+            swipeSnapTimerRef = setTimeout(0) { commitSwipeClose() }
+        }
+    }
+
+    /** 收起终值：先归零驱动源 [swipeDistance]，再解除 open/drag 标记。 */
+    private fun commitSwipeClose() {
+        swipeDistance = 0f
+        swipeOpenSymbol = ""
+        swipeDragSymbol = ""
+    }
+
+    private fun runSwipeAction(id: String, symbol: String) {
+        closeSwipe()
+        when (id) {
+            ACTION_REMOVE -> remove(symbol)
+        }
+    }
+
+    /**
+     * 左滑只保留「移除」（高频破坏性操作，跟手 + 撤销条兜底）。分组不进左滑——
+     * 三态循环是隐藏状态机（D 黑名单 #7），显式选项列表放在长按菜单里。
+     */
+    private fun swipeActions(): List<SwipeAction> = listOf(
+        SwipeAction(
+            id = ACTION_REMOVE,
+            label = "移除",
+            background = theme.riseSoft,
+            foreground = theme.rise,
+        ),
+    )
+
+    // ── 长按菜单 ──
+
+    private fun menuTitle(): String {
+        val row = rows.firstOrNull { it.symbol == menuSymbol } ?: return "操作"
+        val days = if (row.addedAtMillis > 0) {
+            ((platformCurrentTimeMillis() - row.addedAtMillis) / DAY_MS).coerceAtLeast(0)
+        } else {
+            -1
+        }
+        val tenure = when {
+            days < 0 -> ""
+            days >= 180 -> " · 已加入 ${days / 30} 个月"
+            else -> " · 已加入 $days 天"
+        }
+        return "${row.name} · 当前：${groupLabel(row.groupId)}$tenure"
+    }
+
+    private fun currentReason(): String = rows.firstOrNull { it.symbol == menuSymbol }?.reason.orEmpty()
+
+    /** FR-W8：理由变更历史（store 内最近 3 次修改，新的在前）。 */
+    private fun currentReasonHistory(): List<String> =
+        watchlistStore.list().firstOrNull { it.symbol == menuSymbol }?.reasonHistory.orEmpty()
+
+    /** FR-W2 保存理由；空输入 = 跳过（允许留空，不强制）。 */
+    private fun saveReason() {
+        val symbol = reasonEditSymbol
+        if (symbol.isEmpty()) return
+        val reason = if (reasonChip.isNotEmpty()) reasonChip else reasonTyped.trim()
+        if (reason.isNotEmpty()) {
+            watchlistStore.setReason(symbol, reason)
+            hint = "理由已记录"
+            reload()
+        }
+        reasonEditSymbol = ""
+    }
+
+    private fun setGroupTo(symbol: String, groupId: String) {
+        watchlistStore.setGroup(symbol, groupId)
+        hint = if (groupId.isEmpty()) "已清除分组" else "已移至${groupLabel(groupId)}"
+        reload()
+    }
+
+    private fun pinToTop(symbol: String) {
+        watchlistStore.moveToTop(symbol)
+        hint = "已置顶"
+        reload()
+    }
+
+    /** FR-W7：步进排序。到边界时给中性提示，不静默无反馈。 */
+    private fun moveRow(symbol: String, delta: Int) {
+        val rowsSnapshot = watchlistStore.list()
+        val index = rowsSnapshot.indexOfFirst { it.symbol == symbol }
+        if (index < 0) return
+        val target = index + delta
+        if (target < 0 || target > rowsSnapshot.lastIndex) {
+            hint = if (delta < 0) "已经在最上面了" else "已经在最下面了"
+            return
+        }
+        watchlistStore.moveBy(symbol, delta)
+        reload()
+    }
+
+    // ── 移除与撤销 ──
+
+    private fun remove(symbol: String) {
+        val removed = watchlistStore.list().firstOrNull { it.symbol == symbol } ?: return
+        watchlistStore.remove(symbol)
+        lastRemoved = removed
+        showUndo("已移除 ${removed.name}")
+        reload()
+    }
+
+    private fun showUndo(text: String) {
+        undoText = text
+        clearTimeout(undoTimerRef)
+        undoTimerRef = setTimeout(UNDO_TIMEOUT_MS) { undoText = "" }
+    }
+
+    private fun hideUndo() {
+        clearTimeout(undoTimerRef)
+        undoText = ""
+    }
+
+    private companion object {
+        const val ACTION_REMOVE = "remove"
+        const val FILTER_MOVERS = "movers"
+        const val UNDO_TIMEOUT_MS = 5000
+        const val DAY_MS = 24L * 60 * 60 * 1000
+
+        /** FR-W9：超过该天数没点开过即算「很久没看」。 */
+        const val STALE_DAYS = 30
     }
 
     private fun search(text: String) {
@@ -237,23 +1106,9 @@ internal class WatchlistPage : BasePager() {
         reload()
     }
 
-    private fun remove(symbol: String) {
-        val removed = watchlistStore.list().firstOrNull { it.symbol == symbol } ?: return
-        watchlistStore.remove(symbol)
-        lastRemoved = removed
-        hint = "已移除 ${removed.name}，点此撤销"
-        reload()
-    }
-
-    private fun cycleGroup(symbol: String, current: String) {
-        val next = when (current) { "" -> "core"; "core" -> "research"; else -> "" }
-        watchlistStore.setGroup(symbol, next)
-        hint = "已移至${groupLabel(next)}"
-        reload()
-    }
-
     private fun undoRemove() {
         val item = lastRemoved ?: return
+        hideUndo()
         when (watchlistStore.restore(item)) {
             WatchlistAddResult.ADDED -> hint = "已恢复 ${item.name}"
             WatchlistAddResult.ALREADY_IN -> hint = "${item.name} 已在自选中"
@@ -263,11 +1118,29 @@ internal class WatchlistPage : BasePager() {
         reload()
     }
 
-    /** 重建行数据并逐个拉取行情；缓存价先占位，网络结果到达后原地替换。 */
+    /** 把渲染层过滤结果落到 [displayList]（vfor 只接受 ObservableList）。 */
+    private fun refreshDisplay() {
+        displayList.clear()
+        displayRows().forEach { displayList.add(it) }
+        // z3 hero 随每次行情落定重算（值不变不通知；见 [refreshHero]）。
+        refreshHero()
+    }
+
+    /**
+     * 重建行数据并逐个拉取行情；缓存价先占位，网络结果到达后原地替换。
+     * **不做分组过滤**——聚合头口径必须是完整自选，「N 只自选」不能跟着
+     * 筛选联动变成子集；分组过滤由 [displayRows] 在渲染层做。
+     */
     private fun reload() {
         rows.clear()
-        watchlistStore.list().filter { activeGroup.isEmpty() || it.groupId == activeGroup }.forEach { item ->
-            rows.add(WatchlistRow(item.symbol, item.name, quoteRepository.cachedOrOffline(item.symbol), item.groupId))
+        watchlistStore.list().forEach { item ->
+            rows.add(
+                WatchlistRow(
+                    item.symbol, item.name,
+                    quoteRepository.cachedOrOffline(item.symbol),
+                    item.groupId, item.reason, item.addedAtMillis,
+                ),
+            )
             quoteRepository.load(item.symbol) { result ->
                 val index = rows.indexOfFirst { it.symbol == item.symbol }
                 val quote = result.quote
@@ -275,8 +1148,10 @@ internal class WatchlistPage : BasePager() {
                     rows[index] = rows[index].copy(quote = quote)
                 }
                 dataModeLabel = result.mode.quoteLabel()
+                refreshDisplay()
             }
         }
+        refreshDisplay()
     }
 }
 
@@ -285,12 +1160,95 @@ internal data class WatchlistRow(
     val name: String,
     val quote: Quote?,
     val groupId: String,
+    /** FR-W2 关注理由。行上不展示（保持扫描效率），只在长按菜单里回看。 */
+    val reason: String = "",
+    /** FR-W9 停留时长：addedAtMillis 原样带出来，菜单里显示「已加入 N 天」。 */
+    val addedAtMillis: Long = 0L,
+    /** FR-W6 对话置顶标记：行上以「★ 对话置顶」小字出现。 */
+    val starred: Boolean = false,
+    /** FR-W9「没看过」半边：最后一次点进详情的时间。0 = 从未点开。 */
+    val lastViewedAtMillis: Long = 0L,
+)
+
+/** 聚合头数据：算术事实，不含任何观点字段（见 [WatchlistPage.aggregate]）。 */
+private data class Aggregate(
+    val total: Int,
+    val quoted: Int,
+    val avgPct: Double,
+    val rising: Int,
+    val flat: Int,
+    val falling: Int,
+    val conclusion: String,
+    val moverCount: Int,
 )
 
 private fun groupLabel(groupId: String): String = when (groupId) {
     "core" -> "核心"
     "research" -> "研究"
     else -> "未分组"
+}
+
+/**
+ * 分组色带颜色。操作收进手势后，这是分组状态**唯一**的常驻可见表达，
+ * 所以三档必须能一眼区分：核心=品牌蓝，待研究=中性灰，未分组=留空（不画）。
+ */
+private fun groupTint(groupId: String, theme: StockChatTheme): Color = when (groupId) {
+    "core" -> theme.brand
+    "research" -> theme.term
+    else -> Color(0xFFFFFFFF, 0f)
+}
+
+/** 筛选 chip。分组行用 [compact] 弱化——它是第二行，不该和状态筛选抢视觉重量。 */
+private fun ViewContainer<*, *>.WatchlistFilterChip(
+    label: String,
+    selected: Boolean,
+    theme: StockChatTheme,
+    compact: Boolean,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            marginRight(7f)
+            paddingLeft(if (compact) 9f else 11f)
+            paddingRight(if (compact) 9f else 11f)
+            height(if (compact) 26f else 30f)
+            allCenter()
+            borderRadius(if (compact) 8f else 9f)
+            backgroundColor(if (selected) theme.brandSoft else theme.surfaceMuted)
+        }
+        Text {
+            attr {
+                text(label)
+                fontSize(if (compact) 10.5f else 11f)
+                color(if (selected) theme.brand else theme.textSecondary)
+            }
+        }
+        event { click { onClick() } }
+    }
+}
+
+private fun ViewContainer<*, *>.WatchlistMenuRow(
+    label: String,
+    destructive: Boolean,
+    theme: StockChatTheme,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            height(46f)
+            paddingLeft(16f)
+            paddingRight(16f)
+            justifyContentCenter()
+        }
+        Text {
+            attr {
+                text(label)
+                fontSize(14.5f)
+                color(if (destructive) theme.rise else theme.textPrimary)
+            }
+        }
+        event { click { onClick() } }
+    }
 }
 
 private fun WatchlistCandidateRow(
@@ -306,7 +1264,7 @@ private fun WatchlistCandidateRow(
             marginTop(6f)
             padding(12f)
             borderRadius(12f)
-            backgroundColor(theme.surface)
+            backgroundColor(theme.surfaceMuted)
         }
         View {
             attr { flex(1f) }
@@ -335,7 +1293,7 @@ private fun WatchlistPendingRow(
     container: ViewContainer<*, *>,
 ) {
     container.View {
-        attr { padding(14f); borderRadius(12f); backgroundColor(theme.surface) }
+        attr { padding(14f); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
         Text { attr { text(name); fontSize(14f); fontWeightSemiBold(); color(theme.textPrimary) } }
         Text { attr { text("$symbol · 行情加载中"); marginTop(4f); fontSize(11f); color(theme.textTertiary) } }
     }
@@ -350,7 +1308,7 @@ private fun WatchlistEmptyState(
         Text { attr { text("还没有自选股"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
         Text {
             attr {
-                text("在上面搜索股票加入自选，也可以在聊天里长按股票名、或从股票详情页添加。加入后可以直接问「我的自选今天怎么样」。")
+                text("点右上角「搜索」加入第一只股票，也可以在聊天里长按股票名、或从股票详情页添加。加入后可以直接问「我的自选今天怎么样」。")
                 marginTop(8f)
                 fontSize(12.5f)
                 lineHeight(19f)
