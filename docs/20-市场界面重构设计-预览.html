@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>股问 · 市场界面重构预览</title>
+<style>
+  :root{
+    --page:#F5F6F8; --surface:#FFFFFF; --surface-muted:#EEF1F5;
+    --ink-1:#1A1D23; --ink-2:#5B6573; --ink-3:#5F6B82;
+    --brand:#1E5BD6; --brand-soft:#EAF1FD;
+    --rise:#D92E2E; --fall:#0C7A45; --rise-soft:#FCEDED; --fall-soft:#E9F4EE;
+    --divider:#E2E8F0;
+    --glass:rgba(255,255,255,0.72); --glass-border:rgba(255,255,255,0.6);
+    --glass-shadow:0 8px 30px rgba(20,30,50,0.08);
+    --backdrop:radial-gradient(80% 36% at 50% 14%, rgba(217,46,46,0.07), transparent 70%);
+    --hairline:rgba(15,23,42,0.08);
+  }
+  [data-theme="dark"]{
+    --page:#141415; --surface:#1D1D1F; --surface-muted:#2C2C2E;
+    --ink-1:#F5F5F7; --ink-2:#C7C7CC; --ink-3:#8E8E93;
+    --brand:#82A8FF; --brand-soft:#1E3158;
+    --rise:#FF7878; --fall:#54D6A6; --rise-soft:#3A2022; --fall-soft:#15342C;
+    --divider:#363638;
+    --glass:rgba(29,29,31,0.66); --glass-border:rgba(255,255,255,0.10);
+    --glass-shadow:0 8px 30px rgba(0,0,0,0.40);
+    --backdrop:radial-gradient(80% 36% at 50% 14%, rgba(255,120,120,0.09), transparent 70%);
+    --hairline:rgba(255,255,255,0.08);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0; background:#0e0f12; color:#e6e6ea; font-family:"PingFang SC","SF Pro Text",-apple-system,"Segoe UI",system-ui,sans-serif;}
+  body{display:flex; flex-direction:column; align-items:center; min-height:100vh; padding:28px 16px 56px;}
+  .toolbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center; margin-bottom:22px;}
+  .toolbar .seg{display:inline-flex; background:#1c1d22; border:1px solid #2a2c33; border-radius:999px; padding:4px;}
+  .toolbar .seg button{appearance:none; border:0; background:transparent; color:#9aa0ab; font-size:13px; padding:7px 16px; border-radius:999px; cursor:pointer; font-weight:600; transition:.2s;}
+  .toolbar .seg button.on{background:var(--brand); color:#fff;}
+  .toolbar .hint{font-size:12px; color:#71757f; max-width:560px; line-height:1.5;}
+
+  /* ---- phone ---- */
+  .phone{width:390px; height:844px; border-radius:46px; background:var(--page); position:relative; overflow:hidden;
+    box-shadow:0 40px 90px rgba(0,0,0,.55), 0 0 0 11px #050608, 0 0 0 13px #202227; transition:background .3s;}
+  .notch{position:absolute; top:11px; left:50%; transform:translateX(-50%); width:118px; height:30px; background:#050608; border-radius:18px; z-index:60;}
+  .statusbar{position:absolute; top:0; left:0; right:0; height:52px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 30px; font-size:13px; font-weight:600; color:var(--ink-1); z-index:55; pointer-events:none;}
+  .statusbar .side{display:flex; gap:6px; align-items:center;}
+
+  /* mood backdrop (parallax layer 0) */
+  .backdrop{position:absolute; left:0; right:0; top:0; height:340px; z-index:0; pointer-events:none;
+    background:var(--backdrop); transition:background .3s;}
+  .backdrop::after{content:""; position:absolute; inset:0;
+    background-image:linear-gradient(var(--hairline) 1px, transparent 1px), linear-gradient(90deg, var(--hairline) 1px, transparent 1px);
+    background-size:26px 26px; opacity:.05; -webkit-mask-image:linear-gradient(180deg,#000,transparent 75%); mask-image:linear-gradient(180deg,#000,transparent 75%);}
+
+  /* top bar (glass, layer 5) */
+  .topbar{position:absolute; top:52px; left:0; right:0; height:58px; z-index:50; display:flex; align-items:center;
+    padding:0 18px; gap:10px; backdrop-filter:blur(20px) saturate(1.5); -webkit-backdrop-filter:blur(20px) saturate(1.5);
+    background:var(--glass); border-bottom:1px solid var(--glass-border);}
+  .topbar .back{width:30px; height:30px; border-radius:50%; background:var(--surface-muted); display:grid; place-items:center; color:var(--ink-2); font-size:15px;}
+  .topbar .titles{flex:1; line-height:1.2;}
+  .topbar .titles b{font-size:16px; color:var(--ink-1); font-weight:700;}
+  .topbar .titles span{display:block; font-size:10.5px; color:var(--ink-3); margin-top:1px;}
+  .topbar .acts{display:flex; gap:8px;}
+  .topbar .acts a{font-size:12px; color:var(--brand); font-weight:600; text-decoration:none; padding:5px 10px; border-radius:999px; background:var(--brand-soft);}
+
+  /* scroller */
+  .scroller{position:absolute; top:110px; left:0; right:0; bottom:0; overflow-y:auto; z-index:10; padding:0 14px 96px;
+    -webkit-overflow-scrolling:touch; scrollbar-width:none;}
+  .scroller::-webkit-scrollbar{display:none;}
+
+  .sec-label{display:flex; align-items:baseline; gap:8px; margin:22px 2px 10px;}
+  .sec-label b{font-size:13px; color:var(--ink-1); font-weight:700;}
+  .sec-label span{font-size:10.5px; color:var(--ink-3);}
+
+  /* glass panel base */
+  .glass{background:var(--glass); backdrop-filter:blur(20px) saturate(1.5); -webkit-backdrop-filter:blur(20px) saturate(1.5);
+    border:1px solid var(--glass-border); box-shadow:var(--glass-shadow); border-radius:18px;}
+
+  /* A. mood hero (floating, overlaps backdrop) */
+  .hero{margin-top:-18px; position:relative; z-index:20; padding:18px 18px 16px;}
+  .hero .mood{display:flex; align-items:flex-end; gap:14px;}
+  .hero .mood .score{font-size:40px; font-weight:800; color:var(--ink-1); line-height:.9; font-variant-numeric:tabular-nums; letter-spacing:-1px;}
+  .hero .mood .meta{padding-bottom:5px;}
+  .hero .mood .meta .tag{font-size:11px; color:var(--rise); font-weight:700;}
+  .hero .mood .meta .sub{font-size:10.5px; color:var(--ink-3);}
+  .gauge{height:8px; border-radius:4px; background:var(--surface-muted); margin-top:14px; overflow:hidden;}
+  .gauge i{display:block; height:100%; width:62%; border-radius:4px; background:linear-gradient(90deg,var(--fall),var(--rise));}
+  .hero .explain{font-size:12.5px; line-height:1.55; color:var(--ink-2); margin-top:12px;}
+  .hero .stamp{display:flex; align-items:center; gap:7px; margin-top:12px; font-size:10.5px; color:var(--ink-3);}
+  .pulse{width:7px; height:7px; border-radius:50%; background:var(--rise); position:relative;}
+  .pulse::after{content:""; position:absolute; inset:0; border-radius:50%; background:var(--rise); animation:ping 1.6s linear infinite;}
+  @keyframes ping{0%{transform:scale(1); opacity:.6} 100%{transform:scale(2.6); opacity:0}}
+  .hero .ask{margin-top:13px; display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--brand);
+    background:var(--brand-soft); padding:7px 13px; border-radius:999px; cursor:pointer;}
+
+  /* B. indices — primary floats, secondary sits behind */
+  .indices{position:relative; margin-top:6px;}
+  .idx-primary{padding:16px 16px 14px; position:relative; z-index:15;}
+  .idx-primary .name{font-size:13px; color:var(--ink-2); font-weight:600;}
+  .idx-primary .row{display:flex; align-items:flex-end; justify-content:space-between; margin-top:6px;}
+  .idx-primary .price{font-size:34px; font-weight:800; color:var(--ink-1); font-variant-numeric:tabular-nums; letter-spacing:-1px;}
+  .chip{font-size:12px; font-weight:700; padding:4px 9px; border-radius:999px; font-variant-numeric:tabular-nums;}
+  .chip.r{color:var(--rise); background:var(--rise-soft);}
+  .chip.f{color:var(--fall); background:var(--fall-soft);}
+  .spark{margin-top:10px; height:26px;}
+  .idx-secondary{display:flex; gap:10px; margin:-10px 6px 0; position:relative; z-index:12;}
+  .idx-secondary .s{flex:1; background:var(--surface); border:1px solid var(--divider); border-radius:14px; padding:11px 12px; opacity:.94;}
+  .idx-secondary .s .n{font-size:11px; color:var(--ink-3); font-weight:600;}
+  .idx-secondary .s .p{font-size:16px; font-weight:700; color:var(--ink-1); font-variant-numeric:tabular-nums; margin-top:3px;}
+  .idx-secondary .s .c{font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:2px;}
+
+  /* C. breadth — single proportion bar */
+  .breadth .bar{display:flex; height:14px; border-radius:7px; overflow:hidden; margin:2px 2px 0;}
+  .breadth .bar i{height:100%;}
+  .breadth .bar .b-limit-up{background:var(--rise);}
+  .breadth .bar .b-up{background:rgba(217,46,46,.45);}
+  .breadth .bar .b-down{background:rgba(12,122,69,.42);}
+  .breadth .bar .b-limit-down{background:var(--fall);}
+  .breadth .ticks{display:flex; justify-content:space-between; font-size:9.5px; color:var(--ink-3); margin:6px 2px 0;}
+  .breadth .nums{display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:11px; padding:0 2px;}
+  .breadth .nums div{font-size:12px; color:var(--ink-2);}
+  .breadth .nums b{color:var(--ink-1); font-weight:700; font-variant-numeric:tabular-nums;}
+  .breadth .nums .diff{color:var(--ink-1);}
+
+  /* D. sectors — layered leaderboard */
+  .sector-1{padding:15px 15px 13px; position:relative; z-index:15; margin-top:4px;}
+  .sector-1 .top{display:flex; align-items:center; justify-content:space-between;}
+  .sector-1 .nm{font-size:16px; font-weight:700; color:var(--ink-1);}
+  .sector-1 .mid{font-size:11px; color:var(--ink-3); margin-top:5px;}
+  .sector-1 .mid b{color:var(--brand); font-weight:600;}
+  .sector-1 .spark2{margin-top:9px; height:24px;}
+  .sector-1 .ask2{margin-top:10px; display:inline-flex; font-size:11px; color:var(--brand); background:var(--brand-soft); padding:5px 11px; border-radius:999px; font-weight:600;}
+  .rank{margin-top:8px;}
+  .rank .r{display:flex; align-items:center; gap:11px; padding:11px 2px; border-top:1px solid var(--divider);}
+  .rank .r .bar-x{width:3px; border-radius:2px; background:var(--brand); opacity:.85;}
+  .rank .r .no{width:18px; font-size:12px; color:var(--ink-3); font-weight:700; font-variant-numeric:tabular-nums;}
+  .rank .r .nm2{flex:1; font-size:13.5px; color:var(--ink-1); font-weight:600;}
+  .rank .r .flow{font-size:11px; color:var(--ink-3); font-variant-numeric:tabular-nums;}
+  .rank .r .pct{font-size:13.5px; font-weight:700; font-variant-numeric:tabular-nums; min-width:62px; text-align:right;}
+
+  /* E. capital slim strip */
+  .capital{padding:13px 15px; display:flex; gap:0; margin-top:4px;}
+  .capital .c{flex:1; text-align:center; position:relative;}
+  .capital .c+.c::before{content:""; position:absolute; left:0; top:14%; bottom:14%; width:1px; background:var(--divider);}
+  .capital .c .l{font-size:10px; color:var(--ink-3);}
+  .capital .c .v{font-size:15px; font-weight:700; color:var(--ink-1); font-variant-numeric:tabular-nums; margin-top:4px;}
+  .capital .c .d{font-size:10px; color:var(--ink-3); margin-top:2px;}
+
+  /* F. anomaly (reuse rank language) */
+  .anomaly .rank .r .nm2 .lock{font-size:11px; color:var(--ink-3); font-weight:500;}
+
+  /* G. explain note */
+  .note{font-size:10.5px; line-height:1.6; color:var(--ink-3); border-top:1px solid var(--divider); margin:18px 2px 0; padding-top:12px;}
+
+  /* ask-ai fab */
+  .fab{position:absolute; right:16px; bottom:22px; z-index:40; display:flex; align-items:center; gap:6px;
+    padding:11px 16px; border-radius:999px; font-size:13px; font-weight:700; color:#fff; background:var(--brand);
+    box-shadow:0 10px 24px rgba(30,91,214,.35); border:1px solid var(--glass-border);}
+  [data-theme="dark"] .fab{box-shadow:0 10px 24px rgba(130,168,255,.3);}
+
+  /* entrance */
+  .reveal{opacity:0; transform:translateY(10px); transition:opacity .5s cubic-bezier(.16,1,.3,1), transform .5s cubic-bezier(.16,1,.3,1);}
+  .reveal.in{opacity:1; transform:none;}
+
+  /* ---- home · market mode view ---- */
+  .home-seg{position:absolute; top:62px; left:50%; transform:translateX(-50%); z-index:50; display:flex;
+    background:var(--surface-muted); border-radius:999px; padding:3px; width:188px;}
+  .home-seg button{flex:1; appearance:none; border:0; background:transparent; color:var(--ink-2); font-size:13px; font-weight:700;
+    padding:7px 0; border-radius:999px; cursor:pointer; transition:.25s; position:relative;}
+  .home-seg button.on{color:#fff;}
+  .home-seg .glider{position:absolute; top:3px; left:3px; width:calc(50% - 3px); height:calc(100% - 6px); background:var(--brand);
+    border-radius:999px; transition:transform .28s cubic-bezier(.34,1.56,.64,1); z-index:-0;}
+  .home-seg button.on ~ .glider{} /* glider moves via JS */
+  .home-body{position:absolute; top:118px; left:0; right:0; bottom:0; overflow-y:auto; padding:0 14px 30px; z-index:10; scrollbar-width:none;}
+  .home-body::-webkit-scrollbar{display:none;}
+  .hello{padding:18px 4px 6px;}
+  .hello .hi{font-size:20px; font-weight:800; color:var(--ink-1);}
+  .hello .sl{font-size:13px; color:var(--ink-2); margin-top:4px;}
+  .home-ask{margin:14px 0 4px; display:inline-flex; align-items:center; gap:6px; font-size:12.5px; font-weight:700; color:var(--brand); background:var(--brand-soft); padding:9px 14px; border-radius:999px;}
+  .hidden{display:none !important;}
+  .compact-hero{padding:14px 15px;}
+  .compact-hero .score{font-size:30px; font-weight:800; color:var(--ink-1); font-variant-numeric:tabular-nums; letter-spacing:-1px;}
+  .compact-hero .tag{font-size:11px; color:var(--rise); font-weight:700; margin-left:8px;}
+  .compact-hero .ex{font-size:11.5px; color:var(--ink-2); margin-top:8px; line-height:1.5;}
+  .view-tag{position:absolute; top:64px; left:16px; z-index:58; font-size:10px; color:var(--ink-3);}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div class="seg" id="viewSeg">
+    <button class="on" data-view="market">市场页</button>
+    <button data-view="home">首页 · 市场模式</button>
+  </div>
+  <div class="seg" id="themeSeg">
+    <button class="on" data-theme="light">浅色</button>
+    <button data-theme="dark">深色</button>
+  </div>
+  <div class="hint">玻璃层叠 · 非卡片堆叠：上证主卡浮起、深证/创业板衬后造景深；市场宽度是比例条而非 4 张 tile；领涨榜 #1 浮起、#2–5 用等级条编码名次。</div>
+</div>
+
+<!-- ============ 市场页 ============ -->
+<div class="phone" id="phoneMarket" data-theme="light">
+  <div class="notch"></div>
+  <div class="statusbar"><span>9:41</span><span class="side">●●● Wi-Fi 100%</span></div>
+  <div class="backdrop" id="backdrop"></div>
+
+  <div class="topbar">
+    <div class="back">‹</div>
+    <div class="titles"><b>市场</b><span>数字之后，解释今天发生了什么</span></div>
+    <div class="acts"><a>热点</a><a>日历</a></div>
+  </div>
+
+  <div class="scroller" id="scroller">
+    <!-- A 情绪 Hero -->
+    <section class="hero glass reveal">
+      <div class="mood">
+        <div class="score">62</div>
+        <div class="meta"><div class="tag">偏暖</div><div class="sub">市场情绪（0–100）</div></div>
+      </div>
+      <div class="gauge"><i></i></div>
+      <div class="explain">三大指数集体红盘，半导体带动科技线普涨；涨跌家数比约 1.5:1，赚钱效应温和扩散，但连板高度仍在低位，属于修复而非亢奋。</div>
+      <div class="stamp"><span class="pulse"></span> 数据源：腾讯证券 · 更新于 16:14</div>
+      <div class="ask">问 AI 今天情绪 ▸</div>
+    </section>
+
+    <!-- B 三大指数 -->
+    <div class="sec-label reveal"><b>三大指数</b><span>只呈现方向，不替代个股判断</span></div>
+    <section class="indices reveal">
+      <div class="idx-primary glass">
+        <div class="name">上证指数</div>
+        <div class="row">
+          <div class="price">3,218.74</div>
+          <div class="chip r">▲ +0.62%</div>
+        </div>
+        <svg class="spark" viewBox="0 0 320 26" preserveAspectRatio="none">
+          <polyline points="0,18 40,16 80,19 120,12 160,14 200,9 240,11 280,6 320,8" fill="none" stroke="var(--brand)" stroke-width="1.6" opacity=".55"/>
+        </svg>
+      </div>
+      <div class="idx-secondary">
+        <div class="s"><div class="n">深证成指</div><div class="p">10,156.30</div><div class="c" style="color:var(--rise)">▲ +0.31%</div></div>
+        <div class="s"><div class="n">创业板指</div><div class="p">2,034.56</div><div class="c" style="color:var(--fall)">▼ −0.41%</div></div>
+      </div>
+    </section>
+
+    <!-- C 市场宽度 -->
+    <div class="sec-label reveal"><b>市场宽度</b><span>看多少股票真正参与上涨</span></div>
+    <section class="breadth glass reveal" style="padding:14px 15px;">
+      <div class="bar">
+        <i class="b-limit-up" style="width:1.3%"></i>
+        <i class="b-up" style="width:58.6%"></i>
+        <i class="b-down" style="width:39.8%"></i>
+        <i class="b-limit-down" style="width:.3%"></i>
+      </div>
+      <div class="ticks"><span>涨停</span><span>上涨</span><span>下跌</span><span>跌停</span></div>
+      <div class="nums">
+        <div>上涨 <b>2,841</b> 家</div><div>下跌 <b>1,932</b> 家</div>
+        <div>涨停 <b>63</b> 只</div><div>跌停 <b>12</b> 只</div>
+        <div class="diff">涨跌差 <b>+909</b></div>
+      </div>
+    </section>
+
+    <!-- D 领涨板块 -->
+    <div class="sec-label reveal"><b>领涨板块</b><span>涨幅 + 主力净额 + 涨跌家数</span></div>
+    <section class="sector-1 glass reveal">
+      <div class="top"><div class="nm">半导体</div><div class="chip r">▲ +3.82%</div></div>
+      <div class="mid">主力净流入 <b>+28.6 亿</b> · 板块内 118 涨 / 9 跌</div>
+      <svg class="spark2" viewBox="0 0 320 24" preserveAspectRatio="none">
+        <polyline points="0,20 32,17 64,18 96,11 128,13 160,7 192,9 224,5 256,6 288,3 320,4" fill="none" stroke="var(--rise)" stroke-width="1.6" opacity=".5"/>
+      </svg>
+      <div class="ask2">问 AI 半导体为何领涨 ▸</div>
+    </section>
+    <div class="rank reveal">
+      <div class="r"><span class="bar-x" style="height:30px"></span><span class="no">2</span><span class="nm2">计算机</span><span class="flow">主力 +14.2亿</span><span class="pct" style="color:var(--rise)">▲ +2.91%</span></div>
+      <div class="r"><span class="bar-x" style="height:26px"></span><span class="no">3</span><span class="nm2">汽车</span><span class="flow">主力 +9.8亿</span><span class="pct" style="color:var(--rise)">▲ +2.04%</span></div>
+      <div class="r"><span class="bar-x" style="height:22px"></span><span class="no">4</span><span class="nm2">医药</span><span class="flow">主力 +6.1亿</span><span class="pct" style="color:var(--rise)">▲ +1.77%</span></div>
+      <div class="r"><span class="bar-x" style="height:18px"></span><span class="no">5</span><span class="nm2">军工</span><span class="flow">主力 +3.3亿</span><span class="pct" style="color:var(--rise)">▲ +1.32%</span></div>
+    </div>
+
+    <!-- E 资金视角 -->
+    <div class="sec-label reveal"><b>资金视角</b><span>钱从哪来，不替你下结论</span></div>
+    <section class="capital glass reveal">
+      <div class="c"><div class="l">北向资金</div><div class="v" style="color:var(--rise)">+42.6亿</div><div class="d">净流入</div></div>
+      <div class="c"><div class="l">主力净流入</div><div class="v" style="color:var(--rise)">+186亿</div><div class="d">全市场</div></div>
+      <div class="c"><div class="l">成交额</div><div class="v">1.12万亿</div><div class="d">较 20 日 +8%</div></div>
+    </section>
+
+    <!-- F 异动聚焦 -->
+    <div class="sec-label reveal"><b>异动聚焦</b><span>连板高度 · 封单额（只陈事实）</span></div>
+    <section class="sector-1 glass reveal" style="padding:13px 15px;">
+      <div class="top"><div class="nm">连板高度 7 板</div><div class="chip r">封单 12.3亿</div></div>
+      <div class="mid">全市场最高连板；封单额居前，打开概率低 <b>· 仅陈述，不暗示追入</b></div>
+    </section>
+    <div class="rank anomaly reveal">
+      <div class="r"><span class="bar-x" style="height:28px"></span><span class="no">2</span><span class="nm2">连板高度 5 板<span class="lock"> · 封单 8.1亿</span></span><span class="pct" style="color:var(--ink-2)">—</span></div>
+      <div class="r"><span class="bar-x" style="height:22px"></span><span class="no">3</span><span class="nm2">连板高度 4 板<span class="lock"> · 封单 5.4亿</span></span><span class="pct" style="color:var(--ink-2)">—</span></div>
+    </div>
+
+    <!-- G 解释条 -->
+    <div class="note reveal">领涨不代表适合追入。板块页会继续拆解涨停集中度和连板高度，帮助区分普涨、局部题材与情绪拥挤。以上数据来自交易所实时行情与公开财报，结论仅为解释，不构成投资建议。</div>
+  </div>
+
+  <div class="fab">问 AI ↗</div>
+</div>
+
+<!-- ============ 首页 · 市场模式 ============ -->
+<div class="phone hidden" id="phoneHome" data-theme="light">
+  <div class="notch"></div>
+  <div class="statusbar"><span>9:41</span><span class="side">●●● Wi-Fi 100%</span></div>
+  <div class="backdrop" id="backdropHome"></div>
+
+  <div class="topbar" style="justify-content:center;">
+    <div class="titles" style="text-align:center; flex:none;"><b>股问</b><span>做股民的解释器，不做荐股机</span></div>
+  </div>
+  <div class="home-seg" id="homeSeg">
+    <button class="on" data-mode="ai">AI</button>
+    <button data-mode="market">市场</button>
+    <span class="glider" id="homeGlider"></span>
+  </div>
+
+  <!-- AI 模式 -->
+  <div class="home-body" id="homeAi">
+    <div class="hello"><div class="hi">你好，我是股问</div><div class="sl">看不懂的行情、术语和财报，我讲给你听。</div></div>
+    <div class="home-ask">问 AI 今天市场怎么看？ ▸</div>
+    <div class="sec-label"><b>试试这样问</b><span>只解释发生了什么</span></div>
+    <section class="sector-1 glass" style="padding:13px 15px;">
+      <div class="top"><div class="nm" style="font-size:14px">贵州茅台今天为什么跌？</div></div>
+      <div class="mid">消息面 · 资金面 · 板块联动</div>
+    </section>
+    <div class="rank">
+      <div class="r"><span class="bar-x" style="height:20px"></span><span class="no" style="width:auto;font-size:11px;color:var(--brand)">术语</span><span class="nm2" style="font-size:13.5px">MACD 金叉是什么意思？</span></div>
+      <div class="r"><span class="bar-x" style="height:20px"></span><span class="no" style="width:auto;font-size:11px;color:var(--brand)">财报</span><span class="nm2" style="font-size:13.5px">用三句话讲下贵州茅台的中报</span></div>
+      <div class="r"><span class="bar-x" style="height:20px"></span><span class="no" style="width:auto;font-size:11px;color:var(--brand)">对比</span><span class="nm2" style="font-size:13.5px">对比茅台和五粮液的营收与净利润</span></div>
+    </div>
+    <div class="note">🔒 行情来自交易所实时数据 · 每条结论都标了出处和时间</div>
+  </div>
+
+  <!-- 市场模式（复用 MarketSnapshot：A+B+C + 领涨前3） -->
+  <div class="home-body hidden" id="homeMarket">
+    <div class="hello"><div class="hi">今天市场</div><div class="sl">切换市场模式，AI 入口不丢失。</div></div>
+    <div class="home-ask">问 AI 今天市场怎么看？ ▸</div>
+
+    <section class="hero glass compact-hero" style="margin-top:8px;">
+      <div><span class="score">62</span><span class="tag">偏暖</span></div>
+      <div class="ex">三大指数集体红盘，半导体带动科技线普涨；涨跌家数比约 1.5:1，赚钱效应温和扩散。</div>
+    </section>
+
+    <div class="sec-label"><b>三大指数</b><span>只呈现方向</span></div>
+    <section class="indices">
+      <div class="idx-primary glass" style="padding:14px 15px;">
+        <div class="name">上证指数</div>
+        <div class="row"><div class="price" style="font-size:30px">3,218.74</div><div class="chip r">▲ +0.62%</div></div>
+      </div>
+      <div class="idx-secondary">
+        <div class="s"><div class="n">深证成指</div><div class="p">10,156.30</div><div class="c" style="color:var(--rise)">▲ +0.31%</div></div>
+        <div class="s"><div class="n">创业板指</div><div class="p">2,034.56</div><div class="c" style="color:var(--fall)">▼ −0.41%</div></div>
+      </div>
+    </section>
+
+    <div class="sec-label"><b>市场宽度</b><span>看多少股票参与上涨</span></div>
+    <section class="breadth glass" style="padding:13px 15px;">
+      <div class="bar"><i class="b-limit-up" style="width:1.3%"></i><i class="b-up" style="width:58.6%"></i><i class="b-down" style="width:39.8%"></i><i class="b-limit-down" style="width:.3%"></i></div>
+      <div class="ticks"><span>涨停</span><span>上涨</span><span>下跌</span><span>跌停</span></div>
+      <div class="nums"><div>上涨 <b>2,841</b></div><div>下跌 <b>1,932</b></div><div class="diff">差 <b>+909</b></div></div>
+    </section>
+
+    <div class="sec-label"><b>领涨板块</b><span>查看完整市场 ›</span></div>
+    <div class="rank">
+      <div class="r"><span class="bar-x" style="height:28px"></span><span class="no">1</span><span class="nm2">半导体</span><span class="flow">+28.6亿</span><span class="pct" style="color:var(--rise)">▲ +3.82%</span></div>
+      <div class="r"><span class="bar-x" style="height:24px"></span><span class="no">2</span><span class="nm2">计算机</span><span class="flow">+14.2亿</span><span class="pct" style="color:var(--rise)">▲ +2.91%</span></div>
+      <div class="r"><span class="bar-x" style="height:20px"></span><span class="no">3</span><span class="nm2">汽车</span><span class="flow">+9.8亿</span><span class="pct" style="color:var(--rise)">▲ +2.04%</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 视图切换
+  const viewSeg = document.getElementById('viewSeg');
+  const phoneMarket = document.getElementById('phoneMarket');
+  const phoneHome = document.getElementById('phoneHome');
+  viewSeg.addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    [...viewSeg.children].forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    const v = b.dataset.view;
+    phoneMarket.classList.toggle('hidden', v!=='market');
+    phoneHome.classList.toggle('hidden', v!=='home');
+  });
+
+  // 主题切换（同步两个 phone）
+  const themeSeg = document.getElementById('themeSeg');
+  themeSeg.addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    [...themeSeg.children].forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    const t = b.dataset.theme;
+    phoneMarket.dataset.theme = t; phoneHome.dataset.theme = t;
+  });
+
+  // 首页 AI / 市场 双模
+  const homeSeg = document.getElementById('homeSeg');
+  const glider = document.getElementById('homeGlider');
+  const homeAi = document.getElementById('homeAi');
+  const homeMarket = document.getElementById('homeMarket');
+  homeSeg.addEventListener('click', e=>{
+    const b = e.target.closest('button'); if(!b) return;
+    [...homeSeg.querySelectorAll('button')].forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    const m = b.dataset.mode;
+    glider.style.transform = m==='market' ? 'translateX(100%)' : 'translateX(0)';
+    homeAi.classList.toggle('hidden', m!=='ai');
+    homeMarket.classList.toggle('hidden', m!=='market');
+  });
+
+  // 视差（氛围底随滚动 0.4x）
+  const scroller = document.getElementById('scroller');
+  const backdrop = document.getElementById('backdrop');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(!reduce){
+    let ticking=false;
+    scroller.addEventListener('scroll', ()=>{
+      if(ticking) return; ticking=true;
+      requestAnimationFrame(()=>{ backdrop.style.transform = 'translateY('+(scroller.scrollTop*0.4)+'px)'; ticking=false; });
+    });
+    const scHome = phoneHome.querySelector('.home-body');
+    const bdH = document.getElementById('backdropHome');
+    scHome.addEventListener('scroll', ()=>{ bdH.style.transform='translateY('+(scHome.scrollTop*0.4)+'px)'; });
+  }
+
+  // 入场 stagger
+  if(!reduce){
+    const els = document.querySelectorAll('#phoneMarket .reveal');
+    els.forEach((el,i)=> setTimeout(()=> el.classList.add('in'), 80 + i*55));
+  } else {
+    document.querySelectorAll('.reveal').forEach(el=>el.classList.add('in'));
+  }
+</script>
+</body>
+</html>

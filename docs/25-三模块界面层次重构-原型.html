@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>25 · 三模块界面层次重构 · 原型</title>
+<style>
+:root{
+  --page:#F5F6F8; --surface:#FFFFFF; --muted:#EEF1F5;
+  --t1:#1A1D23; --t2:#5B6573; --t3:#5F6B82;
+  --brand:#1E5BD6; --brandSoft:#EAF1FD;
+  --rise:#D92E2E; --riseSoft:#FCEDED;
+  --fall:#0C7A45; --fallSoft:#E9F4EE;
+  --flat:#8A93A3; --divider:#E2E8F0;
+  --glass:rgba(255,255,255,.82); --glassEdge:rgba(255,255,255,.72);
+  --sh1:0 1px 2px rgba(24,34,56,.05);
+  --sh2:0 4px 14px rgba(24,34,56,.07);
+  --sh3:0 10px 30px rgba(24,34,56,.12);
+  --mono:'SF Mono',ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-font-smoothing:antialiased}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;
+  background:#EDEFF3; color:var(--t1); padding:0 0 60px;
+}
+.wrap{max-width:1440px;margin:0 auto;padding:0 24px}
+
+/* ── 页头 ── */
+header{padding:28px 0 20px;border-bottom:1px solid #DDE1E8;margin-bottom:24px}
+.kicker{font-size:11px;letter-spacing:.14em;color:var(--t3);text-transform:uppercase;margin-bottom:8px}
+h1{font-size:24px;font-weight:700;letter-spacing:-.01em}
+.sub{font-size:13px;color:var(--t2);margin-top:6px;line-height:1.6}
+.sub b{color:var(--brand);font-weight:600}
+
+/* ── 视图切换 ── */
+.tabs{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap}
+.tab{
+  padding:8px 16px;border-radius:9px;border:1px solid #DDE1E8;background:#fff;
+  font-size:13px;font-weight:500;color:var(--t2);cursor:pointer;transition:.18s;font-family:inherit;
+}
+.tab:hover{border-color:#C3CBDA;color:var(--t1)}
+.tab.on{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 2px 8px rgba(30,91,214,.28)}
+.tab .score{font-family:var(--mono);font-size:11px;opacity:.72;margin-left:6px}
+
+.view{display:none;animation:fade .32s ease}
+.view.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* ── 舞台 ── */
+.stage{display:flex;gap:34px;justify-content:center;align-items:flex-start;flex-wrap:wrap;margin-top:8px}
+.cell{width:392px;flex:0 0 auto}
+.cell-label{
+  display:flex;align-items:center;gap:8px;margin-bottom:12px;
+  font-size:12px;font-weight:600;color:var(--t2);letter-spacing:.02em;
+}
+.dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.dot.bad{background:var(--rise)}
+.dot.good{background:var(--fall)}
+.cell-note{font-size:11.5px;color:var(--t3);line-height:1.65;margin-top:12px;padding-left:15px;border-left:2px solid var(--divider)}
+.cell-note b{color:var(--t1);font-weight:600}
+
+.vs{
+  align-self:center;width:44px;height:44px;border-radius:50%;flex:0 0 auto;
+  background:#fff;border:1px solid var(--divider);display:flex;align-items:center;justify-content:center;
+  color:var(--brand);font-size:17px;box-shadow:var(--sh1);margin-top:-40px;
+}
+
+/* ── 手机 ── */
+.phone{
+  width:360px;height:760px;border-radius:34px;background:var(--page);margin:0 auto;
+  border:1px solid #D9DEE7;box-shadow:var(--sh3),0 0 0 6px #E4E7EE;
+  position:relative;overflow:hidden;
+}
+.pbar{
+  position:absolute;top:0;left:0;right:0;height:44px;z-index:60;
+  display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 7px;
+  font-size:12px;font-weight:600;color:var(--t1);
+}
+.pbar .time{font-family:var(--mono);font-size:12px;letter-spacing:.02em}
+.pbar .icons{display:flex;gap:4px;font-size:9px;color:var(--t1);letter-spacing:.02em}
+.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding-bottom:24px}
+.screen::-webkit-scrollbar{width:0}
+
+/* 通用 AppTopBar */
+.atb{
+  position:sticky;top:0;z-index:50;padding:46px 16px 10px;
+  background:linear-gradient(180deg,var(--page) 62%,rgba(245,246,248,0));
+}
+.atb-t{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.atb-s{font-size:11px;color:var(--t3);margin-top:3px;line-height:1.45}
+.atb-back{font-size:11.5px;color:var(--brand);font-weight:500;margin-bottom:5px}
+
+/* 氛围底 z0 */
+.amb{position:relative;margin:-8px -1px 0;padding:0 16px 20px;overflow:visible}
+.amb.rise{background:radial-gradient(120% 100% at 18% 0%,rgba(217,46,46,.075) 0%,rgba(245,246,248,0) 62%)}
+.amb.fall{background:radial-gradient(120% 100% at 18% 0%,rgba(12,122,69,.075) 0%,rgba(245,246,248,0) 62%)}
+.amb.brand{background:radial-gradient(120% 100% at 22% 0%,rgba(30,91,214,.075) 0%,rgba(245,246,248,0) 62%)}
+.amb.neutral{background:radial-gradient(120% 100% at 20% 0%,rgba(90,100,120,.07) 0%,rgba(245,246,248,0) 62%)}
+
+/* z 层 */
+.z3{
+  background:var(--glass);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border-radius:16px;box-shadow:var(--sh3);border:1px solid var(--glassEdge);
+  position:relative;z-index:30;
+}
+.z2{background:var(--surface);border-radius:14px;box-shadow:var(--sh1);border:1px solid var(--divider);position:relative;z-index:20}
+.z1{background:var(--surface);opacity:.9;border-radius:14px;position:relative;z-index:10}
+.z1n{background:var(--surface);opacity:.9;border-radius:14px;position:relative;z-index:10}
+
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+
+/* ── 自选：改前 ── */
+.sbox{display:flex;align-items:center;gap:6px;height:38px;background:var(--muted);border-radius:10px;padding:0 11px;margin-bottom:10px}
+.sbox .ic{color:var(--t3);font-size:14px}
+.sbox .ph{font-size:13px;color:var(--t3)}
+.chips{display:flex;gap:7px;margin-bottom:12px;flex-wrap:wrap}
+.chip{padding:0 11px;height:30px;display:inline-flex;align-items:center;border-radius:9px;background:var(--muted);font-size:11px;color:var(--t2)}
+.chip.act{background:var(--brandSoft);color:var(--brand);font-weight:600}
+.row-old{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.mini{flex:1;background:var(--surface);border-radius:14px;padding:12px 13px;box-shadow:var(--sh1);border:1px solid var(--divider)}
+.mrow{display:flex;align-items:baseline;justify-content:space-between}
+.mname{font-size:14px;font-weight:600}
+.mprice{font-size:14px;font-weight:600}
+.mcode{font-size:10px;color:var(--t3);margin-top:2px;font-family:var(--mono)}
+.mchg{font-size:12px;font-weight:600;margin-top:5px}
+.btn-old{padding:0 10px;height:30px;display:inline-flex;align-items:center;border-radius:8px;background:var(--muted);font-size:11px;color:var(--t2)}
+.hint{font-size:11px;color:var(--term,var(--t3));margin:10px 0}
+
+/* ── 自选：改后 ── */
+.hero-lbl{font-size:11px;color:var(--t3);letter-spacing:.04em;font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.hero-lbl .go{font-size:11px;color:var(--brand);font-weight:600}
+.hero-num{font-size:34px;font-weight:800;line-height:1.06;letter-spacing:-.03em;margin:2px 0 6px}
+.hero-c{font-size:13px;color:var(--t2);line-height:1.5;margin-bottom:14px}
+.dbar{display:flex;height:7px;border-radius:4px;overflow:hidden;background:var(--muted)}
+.dbar i{display:block;height:100%}
+.legend{display:flex;gap:12px;margin-top:9px;font-size:10.5px;color:var(--t3);font-family:var(--mono)}
+.legend b{font-weight:600}
+.gonext{
+  margin:-18px 0 14px;padding:9px 13px;background:var(--surface);border:1px solid var(--divider);
+  border-radius:14px;box-shadow:var(--sh1);display:flex;justify-content:space-between;align-items:center;
+  font-size:12px;color:var(--t2);position:relative;z-index:20;
+}
+.gonext .r{color:var(--brand);font-weight:600;font-size:11.5px}
+.row-new{display:flex;align-items:center;gap:8px;margin-bottom:8px;position:relative}
+.row-new .mini{flex:1}
+.badge{
+  padding:0 6px;height:16px;display:inline-flex;align-items:center;border-radius:4px;
+  background:var(--muted);font-size:9px;font-weight:600;color:var(--t3);letter-spacing:.02em;
+}
+.badge.ev{background:var(--brandSoft);color:var(--brand)}
+.badge.hot{background:var(--riseSoft);color:var(--rise)}
+.badge.halt{background:var(--muted);color:var(--flat)}
+.row-new.gl .mini{
+  background:var(--glass);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+  border:1px solid var(--glassEdge);box-shadow:var(--sh3);
+}
+.swipe{font-size:9.5px;color:var(--t3);font-style:normal;margin-top:9px;text-align:center;letter-spacing:.02em}
+
+/* ── 风险地图 ── */
+.tag-cal{display:inline-flex;align-items:center;height:18px;padding:0 7px;border-radius:5px;background:var(--muted);font-size:9.5px;color:var(--t3);font-weight:600}
+.dim{padding:14px 15px;margin-bottom:10px}
+.dim-h{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px}
+.dim-t{font-size:12.5px;font-weight:700;letter-spacing:.01em}
+.dim-t em{font-style:normal;color:var(--brand);border-bottom:1px dashed rgba(30,91,214,.45);cursor:pointer;padding-bottom:1px}
+.dim-r{font-size:10px;color:var(--t3);font-family:var(--mono)}
+.dim-c{font-size:13px;color:var(--t1);line-height:1.5;margin-bottom:11px}
+.dim-c b{font-weight:700;font-family:var(--mono)}
+.dim.z3{margin-bottom:12px}
+.ai{
+  margin-top:11px;padding-left:9px;border-left:2px solid var(--brand);
+  font-size:11.5px;line-height:1.6;color:var(--t2);
+}
+.sbar{display:flex;height:28px;border-radius:7px;overflow:hidden;background:var(--muted);margin-bottom:9px}
+.sbar i{display:flex;align-items:center;justify-content:center;font-size:9.5px;font-weight:600;color:#fff;overflow:hidden;white-space:nowrap}
+.mchip{display:inline-flex;align-items:center;height:19px;padding:0 6px;border-radius:5px;background:var(--muted);font-size:9.5px;color:var(--t2);margin:0 4px 4px 0}
+.mchip.hi{background:var(--brandSoft);color:var(--brand);font-weight:600}
+.lbar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.lbar .n{font-size:11px;color:var(--t2);width:52px;flex:0 0 auto}
+.lbar .t{flex:1;height:6px;border-radius:3px;background:var(--muted);overflow:hidden}
+.lbar .t i{display:block;height:100%;background:var(--brand);border-radius:3px}
+.lbar .v{font-size:10.5px;font-family:var(--mono);color:var(--t3);width:34px;text-align:right;flex:0 0 auto}
+.matrix{display:grid;grid-template-columns:repeat(8,1fr);gap:1px;margin-bottom:8px}
+.mx{aspect-ratio:1;border-radius:2px;background:var(--muted);cursor:pointer;transition:.15s}
+.mx:hover{transform:scale(1.14);z-index:5;position:relative;box-shadow:var(--sh2)}
+.mx.d{background:var(--brand)}
+.mxlab{display:flex;justify-content:space-between;font-size:9px;color:var(--t3);font-family:var(--mono);margin-top:5px}
+.tl{position:relative;padding-left:16px}
+.tl:before{content:'';position:absolute;left:4px;top:5px;bottom:5px;width:1px;background:var(--divider)}
+.tli{position:relative;padding:0 0 12px}
+.tli:before{content:'';position:absolute;left:-15px;top:5px;width:7px;height:7px;border-radius:50%;background:var(--surface);border:2px solid var(--brand)}
+.tli .d{font-size:10px;font-family:var(--mono);color:var(--t3);font-weight:600}
+.tli .e{font-size:11.5px;color:var(--t1);margin-top:2px}
+.tli .s{font-size:10px;color:var(--t3);margin-top:1px}
+.cmpbar{display:flex;align-items:center;gap:9px;margin-bottom:5px}
+.cmpbar .n{font-size:11px;color:var(--t2);width:60px;flex:0 0 auto}
+.cmpbar .t{flex:1;height:8px;border-radius:4px;background:var(--muted);overflow:hidden}
+.cmpbar .t i{display:block;height:100%;border-radius:4px}
+.cmpbar .v{font-size:10.5px;font-family:var(--mono);color:var(--t3);width:42px;text-align:right;flex:0 0 auto}
+
+/* ── 知识库 ── */
+.next{padding:15px 16px}
+.next-k{font-size:9.5px;letter-spacing:.1em;color:var(--brand);font-weight:700;margin-bottom:8px}
+.next-t{font-size:19px;font-weight:700;letter-spacing:-.01em;margin-bottom:6px}
+.next-d{font-size:12px;color:var(--t2);line-height:1.6;margin-bottom:12px}
+.dep{display:flex;gap:6px;align-items:center;font-size:11px;color:var(--t2);padding-top:11px;border-top:1px solid var(--divider);flex-wrap:wrap}
+.dep .a{color:var(--brand);font-weight:600}
+.dep .w{color:var(--t3);font-size:10.5px;line-height:1.5;width:100%;margin-top:7px}
+.dom{padding:12px 14px;margin-bottom:8px}
+.dom-h{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:9px}
+.dom-n{font-size:12.5px;font-weight:600}
+.dom-c{font-size:10.5px;color:var(--t3);font-family:var(--mono)}
+.seg{display:flex;height:6px;border-radius:3px;overflow:hidden;gap:1px;background:var(--muted);margin-bottom:7px}
+.seg i{display:block;height:100%}
+.seg-l{display:flex;gap:10px;font-size:9.5px;color:var(--t3);font-family:var(--mono)}
+.seg-l span b{font-weight:600;color:var(--t2)}
+.rec{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+.rec .r{padding:0 8px;height:22px;display:inline-flex;align-items:center;border-radius:6px;background:var(--surface);border:1px solid var(--divider);font-size:10px;color:var(--t2)}
+.rec .r b{font-family:var(--mono);color:var(--brand);margin-left:3px;font-size:9.5px}
+.allentry{padding:11px 14px;display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--t2)}
+.allentry .r{color:var(--brand);font-size:11px;font-weight:600}
+
+/* 术语卡（改前用） */
+.gcard{background:var(--surface);border-radius:14px;padding:12px 13px;margin-bottom:8px;box-shadow:var(--sh1);border:1px solid var(--divider)}
+.gcard .t{font-size:13.5px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.gcard .t .cat{font-size:9px;color:var(--t3);background:var(--muted);padding:2px 6px;border-radius:4px;font-weight:500}
+.gcard .d{font-size:11.5px;color:var(--t2);line-height:1.55;margin-top:6px}
+.gsec{font-size:11.5px;font-weight:700;color:var(--t3);margin:12px 0 3px}
+
+/* ── 评分视图 ── */
+.score-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:8px}
+.sc{background:var(--surface);border:1px solid var(--divider);border-radius:14px;padding:16px;box-shadow:var(--sh1)}
+.sc-h{font-size:13px;font-weight:700;margin-bottom:3px}
+.sc-s{font-size:11px;color:var(--t3);margin-bottom:13px}
+.sc-rows{display:flex;flex-direction:column;gap:9px}
+.sr{display:flex;align-items:center;gap:9px}
+.sr .l{font-size:10.5px;font-weight:700;color:var(--t2);width:14px;flex:0 0 auto;font-family:var(--mono)}
+.sr .b{flex:1;height:5px;border-radius:3px;background:var(--muted);overflow:hidden}
+.sr .b i{display:block;height:100%;border-radius:3px}
+.sr .v{font-size:10.5px;font-family:var(--mono);color:var(--t3);width:34px;text-align:right}
+.sc-total{margin-top:13px;padding-top:11px;border-top:1px solid var(--divider);display:flex;justify-content:space-between;align-items:baseline}
+.sc-total .k{font-size:11px;color:var(--t3)}
+.sc-total .v{font-size:19px;font-weight:800;font-family:var(--mono)}
+.panel{margin-top:22px;background:var(--surface);border:1px solid var(--divider);border-radius:14px;padding:18px 20px;box-shadow:var(--sh1)}
+.panel h3{font-size:13px;font-weight:700;margin-bottom:12px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+.bl{display:flex;flex-direction:column;gap:8px}
+.bl-i{display:flex;gap:9px;font-size:11.5px;line-height:1.55;color:var(--t2)}
+.bl-i .n{font-family:var(--mono);font-size:10px;color:var(--t3);font-weight:700;flex:0 0 auto;width:16px;padding-top:1px}
+table{width:100%;border-collapse:collapse;font-size:11.5px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--divider)}
+th{font-size:10px;color:var(--t3);font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+td{color:var(--t2);line-height:1.5}
+td b{color:var(--t1);font-weight:600}
+td code{font-family:var(--mono);font-size:10.5px;background:var(--muted);padding:1px 4px;border-radius:3px;color:var(--t1)}
+.foot{margin-top:26px;font-size:11px;color:var(--t3);line-height:1.75;padding-top:16px;border-top:1px solid #DDE1E8}
+.foot b{color:var(--t2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">StockChat · doc 24 LDRS · 原型</div>
+  <h1>三模块界面层次重构 —— 改前 / 改后对照</h1>
+  <div class="sub">
+    自选库（改造）· 风险地图（新建）· 知识库（改造）。
+    左列为<b>当前实装</b>，右列为<b>LDRS 分析法重构后</b>。
+    色彩严格沿用 <code style="font-family:var(--mono);font-size:11px">StockChatTheme.Light</code>，零新增饱和色。
+  </div>
+  <div class="tabs">
+    <button class="tab on" data-v="w">自选库 <span class="score">3 → 12</span></button>
+    <button class="tab" data-v="r">风险地图 <span class="score">新建 11</span></button>
+    <button class="tab" data-v="k">知识库 <span class="score">2 → 12</span></button>
+    <button class="tab" data-v="s">LDRS 评分与黑名单</button>
+  </div>
+</header>
+
+<!-- ══════════ 自选库 ══════════ -->
+<section class="view on" id="v-w">
+<div class="stage">
+
+  <div class="cell">
+    <div class="cell-label"><span class="dot bad"></span>改前 · WatchlistPage.kt（现网）</div>
+    <div class="phone">
+      <div class="pbar"><span class="time">15:36</span><span class="icons">●●● ▮</span></div>
+      <div class="screen">
+        <div class="atb">
+          <div class="atb-back">‹ 返回</div>
+          <div class="atb-t">自选股</div>
+          <div class="atb-s">已关注 50 只上限内的标的，点进详情可继续追问</div>
+        </div>
+        <div style="padding:0 14px">
+          <div class="sbox"><span class="ic">＋</span><span class="ph">搜索股票加入自选：贵州茅台 / 600519</span></div>
+          <div class="chips">
+            <span class="chip act">全部</span><span class="chip">核心观察</span><span class="chip">待研究</span>
+          </div>
+          <div class="hint">已移除 亿纬锂能，点此撤销</div>
+
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">宁德时代</span><span class="mprice num" style="color:var(--fall)">182.40</span></div>
+              <div class="mcode">300750.SZ</div>
+              <div class="mchg num" style="color:var(--fall)">−3.12%</div>
+            </div>
+            <span class="btn-old">核心</span><span class="btn-old">移除</span>
+          </div>
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">亿纬锂能</span><span class="mprice num" style="color:var(--fall)">41.86</span></div>
+              <div class="mcode">300014.SZ</div>
+              <div class="mchg num" style="color:var(--fall)">−2.88%</div>
+            </div>
+            <span class="btn-old">核心</span><span class="btn-old">移除</span>
+          </div>
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">国轩高科</span><span class="mprice num" style="color:var(--fall)">22.15</span></div>
+              <div class="mcode">002074.SZ</div>
+              <div class="mchg num" style="color:var(--fall)">−2.41%</div>
+            </div>
+            <span class="btn-old">未分组</span><span class="btn-old">移除</span>
+          </div>
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">贵州茅台</span><span class="mprice num" style="color:var(--rise)">1468.00</span></div>
+              <div class="mcode">600519.SH</div>
+              <div class="mchg num" style="color:var(--rise)">+0.62%</div>
+            </div>
+            <span class="btn-old">核心</span><span class="btn-old">移除</span>
+          </div>
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">招商银行</span><span class="mprice num" style="color:var(--rise)">39.72</span></div>
+              <div class="mcode">600036.SH</div>
+              <div class="mchg num" style="color:var(--rise)">+0.31%</div>
+            </div>
+            <span class="btn-old">未分组</span><span class="btn-old">移除</span>
+          </div>
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">紫金矿业</span><span class="mprice num" style="color:var(--rise)">17.94</span></div>
+              <div class="mcode">601899.SH</div>
+              <div class="mchg num" style="color:var(--rise)">+1.05%</div>
+            </div>
+            <span class="btn-old">研究</span><span class="btn-old">移除</span>
+          </div>
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">立讯精密</span><span class="mprice num" style="color:var(--flat)">31.08</span></div>
+              <div class="mcode">002475.SZ</div>
+              <div class="mchg num" style="color:var(--flat)">0.00%</div>
+            </div>
+            <span class="btn-old">未分组</span><span class="btn-old">移除</span>
+          </div>
+          <div class="row-old">
+            <div class="mini">
+              <div class="mrow"><span class="mname">中国船舶</span><span class="mprice num" style="color:var(--flat)">—</span></div>
+              <div class="mcode">600150.SH</div>
+              <div class="mchg num" style="color:var(--flat)">停牌</div>
+            </div>
+            <span class="btn-old">研究</span><span class="btn-old">移除</span>
+          </div>
+          <div style="font-size:10.5px;color:var(--t3);line-height:16px;margin-top:12px">实时行情 · 腾讯财经 15:00 收盘</div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note">
+      <b>L=1</b> 顶部是功能描述不是结论（L-3 失败）　<b>D=0</b> z 轴仅 1 层，8 行等高同构，行右侧两枚同构按钮并列（黑名单 #2/#5），分组为三态循环隐藏状态机（#7）<br>
+      <b>R=1</b> 涨跌家数、集中度、行业分布全是关系，无一可视化<br>
+      <b>S=1</b> 顶部 200px 是搜索框，拇指遮挡测试失败
+    </div>
+  </div>
+
+  <div class="vs">→</div>
+
+  <div class="cell">
+    <div class="cell-label"><span class="dot good"></span>改后 · LDRS 重构（目标 12/12）</div>
+    <div class="phone">
+      <div class="pbar"><span class="time">15:36</span><span class="icons">●●● ▮</span></div>
+      <div class="screen">
+        <div class="atb">
+          <div class="atb-back">‹ 返回</div>
+          <div class="atb-t">自选</div>
+          <div class="atb-s">关注理由会在风险地图里回看 · 搜索 ⌕</div>
+        </div>
+
+        <!-- z0 氛围底 + L1 结论 -->
+        <div class="amb fall">
+          <div class="hero-lbl">
+            <span>8 只自选 · 今日</span>
+            <span class="go">风险地图 ›</span>
+          </div>
+          <div class="hero-num num" style="color:var(--fall)">−1.24%</div>
+          <div class="hero-c">多数回落，跌势集中在电池产业链</div>
+          <div class="dbar">
+            <i style="width:37.5%;background:var(--rise)"></i>
+            <i style="width:12.5%;background:var(--flat)"></i>
+            <i style="width:50%;background:var(--fall)"></i>
+          </div>
+          <div class="legend">
+            <span>涨 <b style="color:var(--rise)">3</b></span>
+            <span>平 <b style="color:var(--flat)">1</b></span>
+            <span>跌 <b style="color:var(--fall)">4</b></span>
+          </div>
+        </div>
+
+        <!-- z1 衬后：筛选 -->
+        <div style="padding:0 14px">
+          <div class="gonext">
+            <span>我押注了什么？5 只在同一条链上</span>
+            <span class="r">查看 ›</span>
+          </div>
+          <div class="chips" style="margin-bottom:7px">
+            <span class="chip act">全部 8</span><span class="chip">异动 3</span><span class="chip">事件待办 2</span>
+          </div>
+          <div class="chips" style="margin-bottom:12px">
+            <span class="chip">核心观察</span><span class="chip">待研究</span><span class="chip">未分组</span>
+          </div>
+
+          <!-- z3 上浮：最异常的一行 -->
+          <div class="row-new gl">
+            <div class="mini">
+              <div class="mrow">
+                <span class="mname">宁德时代</span>
+                <span class="mprice num" style="color:var(--fall)">182.40</span>
+              </div>
+              <div class="mcode">300750.SZ</div>
+              <div class="mchg num" style="color:var(--fall)">−3.12%</div>
+            </div>
+            <span class="badge hot">异动</span>
+          </div>
+
+          <div class="row-new">
+            <div class="mini">
+              <div class="mrow"><span class="mname">亿纬锂能</span><span class="mprice num" style="color:var(--fall)">41.86</span></div>
+              <div class="mcode">300014.SZ</div>
+              <div class="mchg num" style="color:var(--fall)">−2.88%</div>
+            </div>
+            <span class="badge ev">解禁</span>
+          </div>
+          <div class="row-new">
+            <div class="mini">
+              <div class="mrow"><span class="mname">国轩高科</span><span class="mprice num" style="color:var(--fall)">22.15</span></div>
+              <div class="mcode">002074.SZ</div>
+              <div class="mchg num" style="color:var(--fall)">−2.41%</div>
+            </div>
+            <span class="badge hot">异动</span>
+          </div>
+          <div class="row-new">
+            <div class="mini">
+              <div class="mrow"><span class="mname">贵州茅台</span><span class="mprice num" style="color:var(--rise)">1468.00</span></div>
+              <div class="mcode">600519.SH</div>
+              <div class="mchg num" style="color:var(--rise)">+0.62%</div>
+            </div>
+          </div>
+          <div class="row-new">
+            <div class="mini">
+              <div class="mrow"><span class="mname">招商银行</span><span class="mprice num" style="color:var(--rise)">39.72</span></div>
+              <div class="mcode">600036.SH</div>
+              <div class="mchg num" style="color:var(--rise)">+0.31%</div>
+            </div>
+            <span class="badge ev">财报</span>
+          </div>
+          <div class="row-new">
+            <div class="mini">
+              <div class="mrow"><span class="mname">紫金矿业</span><span class="mprice num" style="color:var(--rise)">17.94</span></div>
+              <div class="mcode">601899.SH</div>
+              <div class="mchg num" style="color:var(--rise)">+1.05%</div>
+            </div>
+          </div>
+          <div class="row-new">
+            <div class="mini">
+              <div class="mrow"><span class="mname">立讯精密</span><span class="mprice num" style="color:var(--flat)">31.08</span></div>
+              <div class="mcode">002475.SZ</div>
+              <div class="mchg num" style="color:var(--flat)">0.00%</div>
+            </div>
+          </div>
+          <div class="row-new">
+            <div class="mini">
+              <div class="mrow"><span class="mname">中国船舶</span><span class="mprice num" style="color:var(--flat)">—</span></div>
+              <div class="mcode">600150.SH</div>
+              <div class="mchg num" style="color:var(--flat)">停牌</div>
+            </div>
+            <span class="badge halt">停牌</span>
+          </div>
+
+          <div class="swipe">← 左滑移除 ｜ 长按看关注理由 · 置顶 · 改分组</div>
+          <div style="font-size:10.5px;color:var(--t3);line-height:16px;margin-top:10px;padding-bottom:6px">
+            实时行情 · 腾讯财经 15:00 收盘<br>
+            涨跌幅为等权估算，未录入仓位
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note">
+      <b>L=3</b> 顶部 200px 是「−1.24% + 一句结论 + 比例条」，通过 L-1/L-2/L-3<br>
+      <b>D=3</b> z0 氛围底 / z1 筛选衬后 / z2 行 / z3 异动行上浮，共 4 层；操作全部移入左滑与长按（黑名单清零）<br>
+      <b>R=3</b> 涨跌家数 → 中心分界比例条<br>
+      <b>S=3</b> 拇指遮挡通过；自选 → 风险地图 1 次点击
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- ══════════ 风险地图 ══════════ -->
+<section class="view" id="v-r">
+<div class="stage">
+
+  <div class="cell" style="width:392px">
+    <div class="cell-label"><span class="dot good"></span>风险地图页（新建 · 目标 11/12）</div>
+    <div class="phone">
+      <div class="pbar"><span class="time">15:36</span><span class="icons">●●● ▮</span></div>
+      <div class="screen">
+        <div class="atb">
+          <div class="atb-back">‹ 自选</div>
+          <div class="atb-t">风险地图</div>
+          <div class="atb-s">只解释你正在承担什么，不判定你该承担什么</div>
+        </div>
+
+        <!-- z0 氛围底：中性色 -->
+        <div class="amb neutral">
+          <div style="font-size:11px;color:var(--t3);margin-bottom:7px">你关注的 8 只</div>
+          <div style="font-size:15px;font-weight:700;line-height:1.45;margin-bottom:10px">
+            有 <span class="num" style="color:var(--brand)">5</span> 只押在<br>同一条产业链上
+          </div>
+          <span class="tag-cal">等权估算 · 非真实仓位</span>
+        </div>
+
+        <div style="padding:0 14px">
+
+          <!-- z3 主卡：最显著维度 -->
+          <div class="dim z3">
+            <div class="dim-h">
+              <span class="dim-t">① 行业重叠 <em>相关系数 ⓘ</em></span>
+              <span class="dim-r">CR3 76%</span>
+            </div>
+            <div class="dim-c">5 只同属<b>电池</b>产业链，占权重 <b>62%</b></div>
+            <div class="sbar">
+              <i style="width:62%;background:var(--brand)">电池 62%</i>
+              <i style="width:18%;background:#7E97CC">白酒 18%</i>
+              <i style="width:20%;background:#AEBBD4;color:var(--t2)">其他 20%</i>
+            </div>
+            <div style="margin-top:2px">
+              <span class="mchip hi">宁德时代</span><span class="mchip hi">亿纬锂能</span>
+              <span class="mchip hi">国轩高科</span><span class="mchip">欣旺达</span><span class="mchip">孚能科技</span>
+            </div>
+            <div class="ai">上游碳酸锂降价，5 只同跌 —— 你以为分散了，其实押注了同一个变量。</div>
+          </div>
+
+          <!-- z2 -->
+          <div class="dim z2">
+            <div class="dim-h"><span class="dim-t">② 集中度 <em>HHI ⓘ</em></span><span class="dim-r">Top3 71%</span></div>
+            <div class="dim-c">前 3 只占 <b>71%</b>，你的盈亏主要由它们决定</div>
+            <div class="lbar"><span class="n">宁德时代</span><span class="t"><i style="width:100%"></i></span><span class="v">34%</span></div>
+            <div class="lbar"><span class="n">贵州茅台</span><span class="t"><i style="width:65%;background:#5B85E0"></i></span><span class="v">22%</span></div>
+            <div class="lbar"><span class="n">招商银行</span><span class="t"><i style="width:44%;background:#8FA9E4"></i></span><span class="v">15%</span></div>
+          </div>
+
+          <div class="dim z2">
+            <div class="dim-h"><span class="dim-t">③ 相关性 <em>相关系数 ⓘ</em></span><span class="dim-r">20 日 · N=8</span></div>
+            <div class="dim-c">这 3 只近 20 天有 <b>16 天</b>同向，几乎等于一只票</div>
+            <div class="matrix">
+              <div class="mx d"></div><div class="mx d" style="opacity:.92"></div><div class="mx d" style="opacity:.84"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div>
+              <div class="mx d" style="opacity:.92"></div><div class="mx d"></div><div class="mx d" style="opacity:.88"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div>
+              <div class="mx d" style="opacity:.84"></div><div class="mx d" style="opacity:.88"></div><div class="mx d"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div>
+              <div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx d" style="opacity:.6"></div><div class="mx" ></div><div class="mx"></div><div class="mx"></div><div class="mx"></div>
+              <div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx d" style="opacity:.6"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div>
+              <div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx d" style="opacity:.6"></div><div class="mx"></div><div class="mx"></div>
+              <div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx d" style="opacity:.6"></div><div class="mx"></div>
+              <div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div><div class="mx"></div>
+            </div>
+            <div class="mxlab"><span>低</span><span>明度编码 · 点击看走势对照</span><span>高</span></div>
+            <div class="ai" style="margin-top:9px">相关系数 &gt;0.8 的配对有 3 组，分散效果被抵消。</div>
+          </div>
+
+          <!-- z1 下沉 -->
+          <div class="dim z1n">
+            <div class="dim-h"><span class="dim-t">④ 波动暴露 <em>波动率 ⓘ</em></span><span class="dim-r">1.8×</span></div>
+            <div class="dim-c">组合波动是大盘的 <b>1.8</b> 倍</div>
+            <div class="cmpbar"><span class="n">你的组合</span><span class="t"><i style="width:100%;background:var(--brand)"></i></span><span class="v">28.4%</span></div>
+            <div class="cmpbar"><span class="n">沪深300</span><span class="t"><i style="width:56%;background:var(--flat)"></i></span><span class="v">15.8%</span></div>
+          </div>
+
+          <div class="dim z1n">
+            <div class="dim-h"><span class="dim-t">⑤ 未来 30 天事件</span><span class="dim-r">3 项</span></div>
+            <div class="tl" style="margin-top:10px">
+              <div class="tli"><div class="d">09-12</div><div class="e">亿纬锂能 · 限售解禁 3.2%</div><div class="s">来源：东方财富公告</div></div>
+              <div class="tli"><div class="d">09-18</div><div class="e">招商银行 · 财报预约披露</div><div class="s">来源：东财 datacenter-web</div></div>
+              <div class="tli"><div class="d">09-25</div><div class="e">国轩高科 · 股东减持计划届满</div><div class="s">来源：东方财富公告</div></div>
+            </div>
+          </div>
+
+          <div class="dim z1n">
+            <div class="dim-h"><span class="dim-t">⑥ 情绪暴露 <em>换手率 ⓘ</em></span><span class="dim-r">3 / 8</span></div>
+            <div class="dim-c">自选中有 <b>3</b> 只处于连板梯队，波动会明显放大</div>
+            <div class="dbar" style="height:6px">
+              <i style="width:37.5%;background:var(--rise)"></i>
+              <i style="width:62.5%;background:var(--muted)"></i>
+            </div>
+          </div>
+
+          <div style="font-size:10px;color:var(--t3);line-height:16px;margin-top:14px;padding-bottom:6px">
+            暴露指标为确定性计算，非 AI 生成 · 行情来自腾讯财经与东方财富 15:00 收盘<br>
+            本页面只解释风险暴露，不做风险测评、不给出投资建议
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note">
+      <b>L=3</b> 顶部给总览结论 + 口径角标；每维度 = 结论 + 关系图 + 可选一行注释<br>
+      <b>D=3</b> z0 氛围底 / z1 低显著维度 / z2 中 / z3 最异常维度（唯一）<br>
+      <b>R=3</b> 权重→堆叠条、名次→等级条、相关→共现矩阵、对比→同轴条、时间→竖向时间线<br>
+      <b>S=2</b> 拇指遮挡通过；下钻维度详情需 1 次点击（设计取舍）
+    </div>
+  </div>
+
+  <div class="cell" style="width:430px">
+    <div class="cell-label">合规红线自检（评审一票否决）</div>
+    <div class="panel" style="margin-top:0">
+      <h3>《适当性管理办法》硬红线 —— 本页零命中</h3>
+      <table>
+        <thead><tr><th style="width:64px">条款</th><th>禁止内容</th></tr></thead>
+        <tbody>
+          <tr><td><code>第三条</code></td><td>义务主体为<b>持牌经营机构</b>，非持牌不得行使</td></tr>
+          <tr><td><code>第六条</code></td><td>不采集收入、资产、债务、可承受损失</td></tr>
+          <tr><td><code>第十条</code></td><td>不做 C1–C5 投资者分级</td></tr>
+          <tr><td><code>第十六条</code></td><td>不做 R1–R5 产品风险等级</td></tr>
+          <tr><td><code>第二十二条</code></td><td>不基于风险偏好推介标的</td></tr>
+          <tr><td><code>第二十九条</code></td><td>不输出任何「适合你 / 不适合你」匹配意见</td></tr>
+          <tr><td><code>—</code></td><td>不出现「风险承受力 / 匹配 / 适配 / 评分 / 健康分」</td></tr>
+          <tr><td><code>—</code></td><td>不给仓位建议、止损位、调仓方案</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h3>中证协 2026-06 分级准入 —— 定位落点</h3>
+      <table>
+        <thead><tr><th>场景</th><th style="width:82px">定性</th><th style="width:70px">我们</th></tr></thead>
+        <tbody>
+          <tr><td><b>持仓分析</b>、ETF 推荐</td><td>低风险</td><td style="color:var(--brand);font-weight:700">✅ 在此</td></tr>
+          <tr><td>资产配置 / 组合调仓</td><td>中高 · 沙盒</td><td style="color:var(--t3)">❌</td></tr>
+          <tr><td>个股推荐 / 估值</td><td>高风险</td><td style="color:var(--t3)">❌</td></tr>
+        </tbody>
+      </table>
+      <div style="font-size:11px;color:var(--t2);line-height:1.7;margin-top:12px">
+        <b style="color:var(--t1)">定位一句话</b>：不做<b>风险的裁判</b>（不给等级、不做匹配），做<b>风险的翻译器</b>（解释暴露、讲清机制）。
+      </div>
+    </div>
+    <div class="panel">
+      <h3>「一行 AI 注释」阈值（全页 ≤3，平静时 = 0）</h3>
+      <table>
+        <tbody>
+          <tr><td>行业重叠</td><td><code>CR3 &gt; 60%</code></td></tr>
+          <tr><td>集中度</td><td><code>Top3 &gt; 70%</code></td></tr>
+          <tr><td>相关性</td><td><code>ρ&gt;0.8 的配对 ≥3</code></td></tr>
+          <tr><td>波动暴露</td><td><code>组合/大盘 &gt; 1.5</code></td></tr>
+          <tr><td>事件风险</td><td><code>30 天内有减持或解禁</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- ══════════ 知识库 ══════════ -->
+<section class="view" id="v-k">
+<div class="stage">
+
+  <div class="cell">
+    <div class="cell-label"><span class="dot bad"></span>改前 · GlossaryPage.kt（现网）</div>
+    <div class="phone">
+      <div class="pbar"><span class="time">15:36</span><span class="icons">●●● ▮</span></div>
+      <div class="screen">
+        <div class="atb">
+          <div class="atb-back">‹ 返回</div>
+          <div class="atb-t">术语表</div>
+          <div class="atb-s">共 61 个常用概念，点击展开例子与进阶解释</div>
+        </div>
+        <div style="padding:0 14px">
+          <div class="sbox"><span class="ic">⌕</span><span class="ph">搜索术语：市盈率 / PE / 换手</span></div>
+          <div class="chips" style="margin-bottom:8px">
+            <span class="chip" style="height:28px;border-radius:14px">一句话</span>
+            <span class="chip act" style="height:28px;border-radius:14px">段落</span>
+            <span class="chip" style="height:28px;border-radius:14px">进阶</span>
+          </div>
+          <div class="chips">
+            <span class="chip act">全部</span><span class="chip">技术指标</span><span class="chip">估值指标</span>
+            <span class="chip">交易机制</span><span class="chip">资金与情绪</span><span class="chip">财报概念</span>
+          </div>
+
+          <div class="gsec">技术指标 · 16</div>
+          <div class="gcard"><div class="t">MACD <span class="cat">技术指标</span></div><div class="d">用两条均线的远近判断涨跌动力的强弱，比单看均线更早给出方向变化。</div></div>
+          <div class="gcard"><div class="t">KDJ <span class="cat">技术指标</span></div><div class="d">看当前价格在最近一段时间高低区间里的位置，判断是涨过头还是跌过头。</div></div>
+          <div class="gcard"><div class="t">RSI <span class="cat">技术指标</span></div><div class="d">把一段时间里涨的幅度和跌的幅度放在一起比，衡量买卖力量谁更强。</div></div>
+          <div class="gcard"><div class="t">均线 MA <span class="cat">技术指标</span></div><div class="d">把最近若干天的收盘价平均后连成的线，用来抹平日常波动、看清方向。</div></div>
+          <div class="gcard"><div class="t">布林带 BOLL <span class="cat">技术指标</span></div><div class="d">在均线上下各画一条波动带，价格贴上轨算偏热、贴下轨算偏冷。</div></div>
+          <div class="gsec">估值指标 · 10</div>
+          <div class="gcard"><div class="t">市盈率 PE <span class="cat">估值指标</span></div><div class="d">股价相对于每股收益的倍数，用来观察估值水平。</div></div>
+          <div class="gcard"><div class="t">市净率 PB <span class="cat">估值指标</span></div><div class="d">股价相对于每股净资产的价格，重资产行业常看这个。</div></div>
+          <div class="gcard"><div class="t">ROE <span class="cat">估值指标</span></div><div class="d">净资产收益率，衡量公司用股东的钱赚钱的效率。</div></div>
+          <div style="font-size:10.5px;color:var(--t3);line-height:16px;margin-top:14px">术语解释由股问整理，仅用于理解概念，不构成投资建议。</div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note">
+      <b>L=1</b> 无结论层，subtitle 是操作说明（L-3 失败）<br>
+      <b>D=0</b> z 轴 1 层；8 张等高术语卡（黑名单 #2）+ 纯文字组头（#6）<br>
+      <b>R=0</b> 分类是层级、依赖是有向、状态是部分-整体 —— 三种关系全部零可视化<br>
+      <b>S=1</b> 顶部是搜索框；且入口在抽屉 2 层深，用户「天天找不到」
+    </div>
+  </div>
+
+  <div class="vs">→</div>
+
+  <div class="cell">
+    <div class="cell-label"><span class="dot good"></span>改后 · 知识库（目标 12/12）</div>
+    <div class="phone">
+      <div class="pbar"><span class="time">15:36</span><span class="icons">●●● ▮</span></div>
+      <div class="screen">
+        <div class="atb">
+          <div class="atb-back">‹ 返回</div>
+          <div class="atb-t">知识库</div>
+          <div class="atb-s">你已经能读懂什么，下一步该懂什么</div>
+        </div>
+
+        <div class="amb brand">
+          <div class="next z3">
+            <div class="next-k">下一步该懂什么</div>
+            <div class="next-t">相关系数</div>
+            <div class="next-d">两个东西涨跌的同步程度。<b style="font-family:var(--mono)">1</b> 是完全同步，<b style="font-family:var(--mono)">0</b> 是各走各的。</div>
+            <div class="dep">
+              <span>先懂</span><span class="a">均线 ›</span>
+              <span style="color:var(--t3)">·</span>
+              <span>看懂后</span><span class="a">波动率 ›</span>
+              <span class="w">为什么现在推给你：你在风险地图遇到过「相关系数」2 次</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="padding:0 14px;margin-top:-14px">
+          <div class="rec">
+            <span class="r">相关系数<b>×3</b></span><span class="r">换手率<b>×2</b></span>
+            <span class="r">商誉<b>×1</b></span><span class="r">解禁<b>×1</b></span><span class="r">HHI<b>×1</b></span>
+          </div>
+
+          <div class="dom z1n">
+            <div class="dom-h"><span class="dom-n">技术指标</span><span class="dom-c">已遇 9 / 共 16</span></div>
+            <div class="seg">
+              <i style="width:12.5%;background:var(--muted)"></i>
+              <i style="width:25%;background:#C9D3E4"></i>
+              <i style="width:18.75%;background:var(--brandSoft)"></i>
+              <i style="width:43.75%;background:var(--brand)"></i>
+            </div>
+            <div class="seg-l">
+              <span>未遇到 <b>2</b></span><span>见过 <b>4</b></span><span>常见 <b>3</b></span><span>已读 <b>7</b></span>
+            </div>
+          </div>
+
+          <div class="dom z1n">
+            <div class="dom-h"><span class="dom-n">交易机制</span><span class="dom-c">已遇 6 / 共 11</span></div>
+            <div class="seg">
+              <i style="width:45.5%;background:var(--muted)"></i>
+              <i style="width:27%;background:#C9D3E4"></i>
+              <i style="width:18%;background:var(--brandSoft)"></i>
+              <i style="width:9.5%;background:var(--brand)"></i>
+            </div>
+            <div class="seg-l"><span>未遇到 <b>5</b></span><span>见过 <b>3</b></span><span>常见 <b>2</b></span><span>已读 <b>1</b></span></div>
+          </div>
+
+          <div class="dom z1n">
+            <div class="dom-h"><span class="dom-n">估值指标</span><span class="dom-c">已遇 5 / 共 10</span></div>
+            <div class="seg">
+              <i style="width:50%;background:var(--muted)"></i>
+              <i style="width:20%;background:#C9D3E4"></i>
+              <i style="width:10%;background:var(--brandSoft)"></i>
+              <i style="width:20%;background:var(--brand)"></i>
+            </div>
+            <div class="seg-l"><span>未遇到 <b>5</b></span><span>见过 <b>2</b></span><span>常见 <b>1</b></span><span>已读 <b>2</b></span></div>
+          </div>
+
+          <div class="dom z1n">
+            <div class="dom-h"><span class="dom-n">资金与情绪</span><span class="dom-c">已遇 3 / 共 10</span></div>
+            <div class="seg">
+              <i style="width:70%;background:var(--muted)"></i>
+              <i style="width:20%;background:#C9D3E4"></i>
+              <i style="width:10%;background:var(--brandSoft)"></i>
+            </div>
+            <div class="seg-l"><span>未遇到 <b>7</b></span><span>见过 <b>2</b></span><span>常见 <b>1</b></span><span>已读 <b>0</b></span></div>
+          </div>
+
+          <div class="dom z1n">
+            <div class="dom-h"><span class="dom-n">财报概念</span><span class="dom-c">已遇 2 / 共 14</span></div>
+            <div class="seg">
+              <i style="width:85.7%;background:var(--muted)"></i>
+              <i style="width:14.3%;background:#C9D3E4"></i>
+            </div>
+            <div class="seg-l"><span>未遇到 <b>12</b></span><span>见过 <b>2</b></span><span>常见 <b>0</b></span><span>已读 <b>0</b></span></div>
+          </div>
+
+          <div class="allentry z2" style="margin-top:12px">
+            <span>浏览全部 61 个概念</span><span class="r">搜索与分类 ›</span>
+          </div>
+
+          <div style="font-size:10px;color:var(--t3);line-height:16px;margin-top:12px;padding-bottom:6px">
+            状态只影响推荐顺序，不做任何能力评价 · 记录仅存本地
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note">
+      <b>L=3</b> 顶部 200px = 「下一步该懂什么」玻璃卡（结论而非标签）<br>
+      <b>D=3</b> z0 氛围底 / z1 五域面板衬后 / z2 词表入口 / z3 推荐卡，共 4 层<br>
+      <b>R=3</b> 状态→四段分段条（部分-整体）、依赖→有向路径、频次→chip 密度<br>
+      <b>S=3</b> 完整词表降级为二级；just-in-case 浏览不再是主路径
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- ══════════ 评分 ══════════ -->
+<section class="view" id="v-s">
+  <div class="score-grid">
+    <div class="sc">
+      <div class="sc-h">自选库 · WatchlistPage</div>
+      <div class="sc-s">361 行 · 现网实装</div>
+      <div class="sc-rows">
+        <div class="sr"><span class="l">L</span><span class="b"><i style="width:33%;background:var(--rise)"></i></span><span class="v">1 / 3</span></div>
+        <div class="sr"><span class="l">D</span><span class="b"><i style="width:0%"></i></span><span class="v">0 / 3</span></div>
+        <div class="sr"><span class="l">R</span><span class="b"><i style="width:33%;background:var(--rise)"></i></span><span class="v">1 / 3</span></div>
+        <div class="sr"><span class="l">S</span><span class="b"><i style="width:33%;background:var(--rise)"></i></span><span class="v">1 / 3</span></div>
+      </div>
+      <div class="sc-total"><span class="k">现网合计</span><span class="v" style="color:var(--rise)">3 / 12</span></div>
+      <div class="sc-total" style="border:0;padding-top:4px"><span class="k">重构后目标</span><span class="v" style="color:var(--fall)">12 / 12</span></div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h">风险地图 · RiskMapPage</div>
+      <div class="sc-s">新建 · 零实现</div>
+      <div class="sc-rows">
+        <div class="sr"><span class="l">L</span><span class="b"><i style="width:100%;background:var(--fall)"></i></span><span class="v">3 / 3</span></div>
+        <div class="sr"><span class="l">D</span><span class="b"><i style="width:100%;background:var(--fall)"></i></span><span class="v">3 / 3</span></div>
+        <div class="sr"><span class="l">R</span><span class="b"><i style="width:100%;background:var(--fall)"></i></span><span class="v">3 / 3</span></div>
+        <div class="sr"><span class="l">S</span><span class="b"><i style="width:67%;background:#D9A441"></i></span><span class="v">2 / 3</span></div>
+      </div>
+      <div class="sc-total"><span class="k">目标合计</span><span class="v" style="color:var(--fall)">11 / 12</span></div>
+      <div class="sc-total" style="border:0;padding-top:4px"><span class="k">S 扣 1 分</span><span class="v" style="font-size:11px;font-weight:600;color:var(--t3)">维度下钻需 1 次点击（取舍）</span></div>
+    </div>
+
+    <div class="sc">
+      <div class="sc-h">知识库 · GlossaryPage</div>
+      <div class="sc-s">269 行 · 61 词条</div>
+      <div class="sc-rows">
+        <div class="sr"><span class="l">L</span><span class="b"><i style="width:33%;background:var(--rise)"></i></span><span class="v">1 / 3</span></div>
+        <div class="sr"><span class="l">D</span><span class="b"><i style="width:0%"></i></span><span class="v">0 / 3</span></div>
+        <div class="sr"><span class="l">R</span><span class="b"><i style="width:0%"></i></span><span class="v">0 / 3</span></div>
+        <div class="sr"><span class="l">S</span><span class="b"><i style="width:33%;background:var(--rise)"></i></span><span class="v">1 / 3</span></div>
+      </div>
+      <div class="sc-total"><span class="k">现网合计</span><span class="v" style="color:var(--rise)">2 / 12</span></div>
+      <div class="sc-total" style="border:0;padding-top:4px"><span class="k">重构后目标</span><span class="v" style="color:var(--fall)">12 / 12</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>三页共同失败点（LDRS 诊断结论）</h3>
+    <table>
+      <thead><tr><th style="width:150px">失效点</th><th>表现</th><th style="width:110px">涉及</th></tr></thead>
+      <tbody>
+        <tr><td><b>顶部 200px 被控件占据</b></td><td>搜索框、筛选器占据首屏，结论缺失 → S-1 双双失败</td><td>自选 / 知识库</td></tr>
+        <tr><td><b>z 轴只有 1 层</b></td><td>信息全部平权，无焦点 —— 用户自己找重点</td><td>自选 / 知识库</td></tr>
+        <tr><td><b>关系型数据全部罗列</b></td><td>涨跌家数、掌握度、依赖、权重 —— 本是关系，全用文字/卡表达</td><td>三页</td></tr>
+      </tbody>
+    </table>
+    <div style="font-size:11.5px;color:var(--t2);line-height:1.75;margin-top:13px">
+      三页合计 <b class="num" style="color:var(--rise);font-size:13px">5 / 24</b>。共同失败点高度一致，说明问题不是「某次设计没注意」，而是<b style="color:var(--t1)">缺少强制的判定流程</b>。LDRS 的作用就是把这三点变成每次评审必过的检查项。
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>堆叠黑名单 9 项（与 doc 21「AI 味黑名单」分别走查）</h3>
+    <div class="two">
+      <div class="bl">
+        <div class="bl-i"><span class="n">01</span><span><b>tile 方阵</b> —— 等宽等高网格 ≥4 格，完全放弃信息分级</span></div>
+        <div class="bl-i"><span class="n">02</span><span><b>3 个以上等高同构卡</b> —— 同构即同权重，等于没有层次</span></div>
+        <div class="bl-i"><span class="n">03</span><span>用<b>边框粗细</b>表达层级 —— 是加盒子，不是造深度</span></div>
+        <div class="bl-i"><span class="n">04</span><span>用<b>饱和色数量</b>表达层级 —— 破坏 doc 19 色彩语义</span></div>
+        <div class="bl-i"><span class="n">05</span><span><b>列表行右侧多个同构按钮并列</b> —— 主次不分，操作与信息等权重</span></div>
+      </div>
+      <div class="bl">
+        <div class="bl-i"><span class="n">06</span><span><b>纯文字组头 + 每条一卡</b> —— 层级靠分组而非深度</span></div>
+        <div class="bl-i"><span class="n">07</span><span><b>隐藏状态机</b> —— 点击循环切换多态，用户看不到全部选项</span></div>
+        <div class="bl-i"><span class="n">08</span><span>数字用<b>非等宽字体</b> —— tick 时布局抖动</span></div>
+        <div class="bl-i"><span class="n">09</span><span>平盘 / 停牌 / 非交易时段<b>不用 flat 灰</b> —— 违背 A 股官方语义</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>关系 → 图形映射表（R 层判定工具）</h3>
+    <table>
+      <thead><tr><th style="width:118px">关系类型</th><th style="width:170px">图形</th><th>本文用法</th></tr></thead>
+      <tbody>
+        <tr><td>部分-整体</td><td>分段比例条 / 堆叠条</td><td>自选涨跌家数、掌握状态、行业权重</td></tr>
+        <tr><td>排序 / 名次</td><td>等级条（条宽编码）</td><td>集中度 Top3、相关性 Top5 配对</td></tr>
+        <tr><td>对比</td><td>中心分界条 / 同轴双条</td><td>涨 vs 跌、组合波动 vs 大盘</td></tr>
+        <tr><td>分布</td><td>直方图 / 热力格</td><td>共现矩阵</td></tr>
+        <tr><td>相关 / 重叠</td><td>共现矩阵热力（明度编码）</td><td>自选票两两相关性</td></tr>
+        <tr><td>变化 / 趋势</td><td>折线 / 残影对照</td><td>暴露历史快照</td></tr>
+        <tr><td>依赖 / 先后</td><td>有向路径 / 阶梯链</td><td><b>术语前置依赖</b></td></tr>
+        <tr><td>时间轴</td><td>竖向时间线</td><td>未来 30 天事件（解禁 / 财报 / 减持）</td></tr>
+      </tbody>
+    </table>
+    <div style="font-size:11.5px;color:var(--t2);line-height:1.75;margin-top:13px">
+      <b style="color:var(--t1)">R-1 三元测试</b>：凡 ≥3 个并列数字，必须能说出一个关系名（8 选 1）。说不出 → 信息组织有问题，应合并或删除。
+      <br><b style="color:var(--t1)">明度编码原则</b>：强度类（相关性、热度、掌握度）只用明度阶梯，不加饱和色 —— rise / fall / brand / term 已被 doc 19 占满，挪用会破坏语义。
+    </div>
+  </div>
+
+  <div class="foot">
+    <b>数据来源</b>：自选与风险页行情为原型示意值，字段口径与真实接口一致（腾讯 <code>qt.gtimg.cn</code> / <code>web.ifzq.gtimg.cn</code>，GBK 解码；东财 <code>push2</code> / <code>push2ex</code> / <code>datacenter-web</code> / <code>np-anotice-stock</code>，UTF-8，请求间隔 ≥200ms）。
+    术语词条为项目实装数据（61 条）。合规条款引自《证券期货投资者适当性管理办法》（2022 修正）与中证协 2026-06 AI 投顾专项研究报告。
+  </div>
+</section>
+
+</div>
+
+<script>
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click', function(){
+    document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('on')});
+    document.querySelectorAll('.view').forEach(function(x){x.classList.remove('on')});
+    t.classList.add('on');
+    document.getElementById('v-'+t.dataset.v).classList.add('on');
+    window.scrollTo({top:0,behavior:'smooth'});
+  });
+});
+</script>
+</body>
+</html>
