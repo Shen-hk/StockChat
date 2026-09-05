@@ -8,6 +8,8 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
+import com.tencent.kuikly.core.base.BoxShadow
+import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
 import com.tencent.kuikly.core.base.Translate
@@ -27,6 +29,7 @@ internal data class WelcomeStarter(
     val detail: String,
 )
 
+/** 用于 used-kinds 去重逻辑的全集（BRIEF 档恢复时才会真正消费）。 */
 internal fun defaultWelcomeStarters(): List<WelcomeStarter> = listOf(
     WelcomeStarter(WelcomeStarterKind.MOVE, "贵州茅台今天为什么跌？", "消息面 · 资金面 · 板块联动"),
     WelcomeStarter(WelcomeStarterKind.TERM, "MACD 金叉是什么意思？", "一句话讲清，再举个例子"),
@@ -34,10 +37,19 @@ internal fun defaultWelcomeStarters(): List<WelcomeStarter> = listOf(
     WelcomeStarter(WelcomeStarterKind.COMPARE, "对比茅台和五粮液的营收与净利润", "只陈事实，不做选择建议"),
 )
 
+/** 问AI 分区的示例卡（看市场分区是跳转入口，不占推荐位）。 */
+internal fun aiWelcomeStarters(): List<WelcomeStarter> = listOf(
+    WelcomeStarter(WelcomeStarterKind.TERM, "MACD 金叉是什么意思？", "一句话讲清，再举个例子"),
+    WelcomeStarter(WelcomeStarterKind.TERM, "市盈率（PE）多少算高？", "给区间，再举个实际例子"),
+)
+
 /**
- * 动效状态一律以取值闭包传入，并且只能在 `attr {}` 内部调用。
+ * 欢迎区（2026-09-05 三轮）：图标 + 主题句 + 问AI/看市场 胶囊 + 示例卡。
+ * 问AI 常选中（滑块固定在左），管下方推荐语；看市场是入口，点击跳市场页。
  *
- * Kuikly 的响应式依赖是按 attr/event 闭包收集的：只有在闭包**里面**读到 observable，
+ * 动效状态一律以取值闭包传入，并且只能在 `attr {}` / `vif {}` 内部调用。
+ *
+ * Kuikly 的响应式依赖是按 attr/event/vif 闭包收集的：只有在闭包**里面**读到 observable，
  * 该闭包才会在属性变化时重跑。在 `vif { }` 体里把 `page.xxx` 当函数实参读掉，拿到的
  * 只是建视图那一刻的快照——attr 永远不会重跑，文案不动、光标不闪。
  * 更隐蔽的是 `Attr.animate()`：它靠 ReactiveObserver 当前的 observablePropertyKey
@@ -46,21 +58,20 @@ internal fun defaultWelcomeStarters(): List<WelcomeStarter> = listOf(
  */
 internal fun ViewContainer<*, *>.WelcomeSection(
     theme: StockChatTheme,
-    mode: WelcomeMode,
-    greeting: String,
     rotatingKeyword: () -> String,
     cursorVisible: () -> Boolean,
     entranceVisible: () -> Boolean,
+    /** 「看市场」胶囊选中态（取值闭包）：驱动滑块滑到右半格并高亮文案。 */
+    marketTabSelected: () -> Boolean,
     onMounted: () -> Unit,
+    onOpenMarket: () -> Unit,
     reduceMotion: Boolean = false,
-    starters: List<WelcomeStarter> = defaultWelcomeStarters(),
     onChoose: (WelcomeStarter) -> Unit,
 ) {
-    val full = mode == WelcomeMode.FULL
     View {
         attr {
             alignSelfStretch()
-            paddingTop(if (full) 18f else theme.spacing.md)
+            paddingTop(1f)
             paddingLeft(6f)
             paddingRight(6f)
             paddingBottom(theme.spacing.lg)
@@ -71,52 +82,154 @@ internal fun ViewContainer<*, *>.WelcomeSection(
         // 入场只能从实际挂载点启动。pageDidAppear 可能早于 body/子视图构建，
         // 在那里触发会令一次性的 presented 变化发生在 attr 注册依赖之前。
         ref { onMounted() }
-//        WelcomeBackdrop(theme, full)
-        Text {
+        // 顶部呼吸位：固定 50dp（用户决策 2026-09-05）。必须用固定值而不是屏高
+        // 比例——0.22×屏高档（≈176dp）曾把底部示例卡推出首屏，导致"进去要先上
+        // 划才能看全"。50dp 档内容总高仍留有余量，任何机型首屏完整可见。
+        View { attr { height(50f) } }
+        WelcomeBadge(theme)
+        // 主题句：StockChat帮你看 + 轮播词 + 打字光标（22 号）
+        View {
             attr {
-                text(greeting)
-                fontSize(theme.type.label)
-                fontWeightMedium()
-                color(theme.textSecondary)
+                flexDirectionRow()
+                alignItemsCenter()
+                justifyContentCenter()
             }
-        }
-        // 精简档隐去 Logo（规范 §3「36×36 或隐去」）。这是唯一能把首屏高度压到规范
-        // 承诺的 40% 的杠杆——4 张示例卡是两档共有的 264dp 地板，光调间距挤不出来。
-        if (full) WelcomeHero(theme, full)
-        if (full) {
             Text {
                 attr {
-                    text("你好，我是股问")
-                    marginTop(theme.spacing.lg)
-                    fontSize(theme.type.h1)
+                    text("StockChat帮你看")
+                    fontSize(22f)
                     fontWeightBold()
                     color(theme.textPrimary)
                 }
             }
             Text {
                 attr {
-                    text("做股民的解释器，不做荐股机")
-                    marginTop(6f)
-                    fontSize(theme.type.sm)
-                    color(theme.textSecondary)
+                    // 必须在 attr 内部调用取值闭包，否则打字机文案不会重绘。
+                    text(rotatingKeyword())
+                    fontSize(22f)
+                    fontWeightBold()
+                    color(theme.brand)
                 }
             }
-            WelcomeCapabilityRow(theme)
-            WelcomeIntroCopy(theme, rotatingKeyword, cursorVisible)
+            View {
+                attr {
+                    width(2.5f)
+                    height(24f)
+                    marginLeft(3f)
+                    backgroundColor(theme.brand)
+                    // step-end 闪烁：直接切 opacity，不注册 animate()。
+                    opacity(if (cursorVisible()) 1f else 0f)
+                }
+            }
         }
-        WelcomeTrustRow(theme, full)
+        WelcomeTabRow(theme, marketTabSelected, onOpenMarket)
         Text {
             attr {
                 text("可以这样问")
                 alignSelfFlexStart()
-                marginTop(if (full) theme.spacing.xl else theme.spacing.md)
+                marginTop(theme.spacing.xl)
                 fontSize(theme.type.meta)
                 fontWeightSemiBold()
                 color(theme.textTertiary)
             }
         }
-        starters.forEachIndexed { index, starter ->
+        defaultWelcomeStarters().forEachIndexed { index, starter ->
             QuestionStarterCard(starter, theme, index, entranceVisible, reduceMotion, onChoose)
+        }
+    }
+}
+
+/** 主题句上方的品牌图标（58dp brand 圆角方块 + 趋势线）。装饰元素，读屏跳过。 */
+private fun ViewContainer<*, *>.WelcomeBadge(theme: StockChatTheme) {
+    View {
+        attr {
+            size(68f, 68f)
+            marginBottom(16f)
+            allCenter()
+            borderRadius(17f)
+            backgroundColor(theme.brand)
+            accessibilityRole(AccessibilityRole.NONE)
+        }
+        LineIconTrendUp(color = theme.onBrand, size = 37f)
+    }
+}
+
+/**
+ * 问AI / 看市场 切换（圆角长方形 190×45 / 字号 15，用户决策 2026-09-05；
+ * 不再是全圆胶囊）。
+ * 问AI 常选中；看市场是跳转入口：点击后滑块滑到右半格，滑动结束由调用方
+ * 震动并跳转市场页（时序在 ChatPage.handleWelcomeMarketTap）。
+ */
+private fun ViewContainer<*, *>.WelcomeTabRow(
+    theme: StockChatTheme,
+    marketTabSelected: () -> Boolean,
+    onOpenMarket: () -> Unit,
+) {
+    View {
+        attr {
+            marginTop(24f)
+            size(190f, 45f)
+            flexDirectionRow()
+            alignItemsCenter()
+            backgroundColor(theme.surfaceMuted)
+            borderRadius(12f)
+        }
+        // 滑块：默认停在「问AI」半格（(190-6)/2 = 92），选中看市场时滑到右半格。
+        View {
+            attr {
+                absolutePosition(left = 3f, top = 3f)
+                size(92f, 39f)
+                borderRadius(10f)
+                backgroundColor(theme.surface)
+                touchEnable(false)
+                // 取值闭包必须在 attr 内现场调用才建立依赖；translate 用 offsetX=px。
+                val marketSelected = marketTabSelected()
+                transform(translate = Translate(0f, 0f, offsetX = if (marketSelected) 92f else 0f))
+                // 无条件注册（R2/R5）：animate 绑定最后读到的 marketTabSelected()，
+                // 翻转周期消费上轮注册的 easeOut，滑动先快后慢。
+                animate(Animation.easeOut(0.22f), marketTabSelected())
+            }
+        }
+        View {
+            attr {
+                height(34f)
+                flex(1f)
+                allCenter()
+                borderRadius(17f)
+                // 读屏：按钮语义 + 朗读。
+                accessibility("问AI，当前选中")
+                accessibilityRole(AccessibilityRole.BUTTON)
+                accessibilityInfo(clickable = true, longClickable = false)
+            }
+            Text {
+                attr {
+                    text("问AI")
+                    fontSize(15f)
+                    fontWeightSemiBold()
+                    color(theme.textPrimary)
+                }
+            }
+        }
+        View {
+            attr {
+                height(34f)
+                flex(1f)
+                allCenter()
+                borderRadius(17f)
+                accessibility("看市场，打开市场总览")
+                accessibilityRole(AccessibilityRole.BUTTON)
+                accessibilityInfo(clickable = true, longClickable = false)
+            }
+            Text {
+                attr {
+                    text("看行情")
+                    fontSize(15f)
+                    fontWeightSemiBold()
+                    // 滑块滑到右半格时同步高亮，与滑块动画共用同一驱动。
+                    color(if (marketTabSelected()) theme.textPrimary else theme.textSecondary)
+                }
+            }
+            event { click { onOpenMarket() } }
         }
     }
 }
@@ -147,10 +260,10 @@ private fun ViewContainer<*, *>.WelcomeBackdrop(theme: StockChatTheme, full: Boo
     } else {
         listOf(0.018f, 0.020f, 0.020f, 0.017f)
     }
-    // 光束中心对齐「Logo 与标题之间」：
-    // 完整档 Logo 占 44~96dp、主标题 112~136dp → 取 98dp；
-    // 精简档无 Logo 无标题，上部内容（问候语 12~26 + 信任条 38~72）→ 取 44dp。
-    val center = if (full) 98f else 44f
+    // 光束中心对齐「Logo 与标题之间」（含 50dp 顶部呼吸位，见 WelcomeSection）：
+    // 完整档 Logo 占 94~162dp、主标题 162~192dp → 取 148dp；
+    // 精简档无 Logo 无标题，上部内容（问候语 12~26 + 信任条 38~72）→ 取 94dp。
+    val center = if (full) 148f else 94f
     View {
         attr {
             absolutePosition(top = 0f, left = 0f, right = 0f)
@@ -177,157 +290,6 @@ private fun ViewContainer<*, *>.WelcomeBackdrop(theme: StockChatTheme, full: Boo
                         ColorStop(theme.brand.opacity(0f), 1f),
                     )
                 }
-            }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.WelcomeHero(theme: StockChatTheme, full: Boolean) {
-    View {
-        attr {
-            size(if (full) 52f else 36f, if (full) 52f else 36f)
-            marginTop(10f)
-            allCenter()
-            borderRadius(if (full) 16f else 12f)
-            backgroundColor(theme.brand)
-            // 装饰元素，读屏跳过（规范 §6.5）
-            accessibilityRole(AccessibilityRole.NONE)
-        }
-        LineIconTrendDown(color = theme.onBrand, size = if (full) 25f else 19f)
-    }
-}
-
-private fun ViewContainer<*, *>.WelcomeCapabilityRow(theme: StockChatTheme) {
-    View {
-        attr {
-            flexDirectionRow()
-            alignItemsCenter()
-            marginTop(theme.spacing.lg)
-        }
-        listOf("解释涨跌", "讲清术语", "读懂财报").forEachIndexed { index, label ->
-            View {
-                attr {
-                    height(24f)
-                    if (index > 0) marginLeft(theme.spacing.sm)
-                    paddingLeft(9f)
-                    paddingRight(9f)
-                    allCenter()
-                    borderRadius(12f)
-                    backgroundColor(theme.surfaceMuted)
-                }
-                Text {
-                    attr {
-                        text(label)
-                        fontSize(theme.type.meta)
-                        color(theme.textSecondary)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 一句话说明（仅完整档）。轮播关键词按原型处理：brand 色半粗，尾部跟
- * 2px brand 光标（1.1s step-end 闪烁由 ChatPage 驱动 cursorVisible）。
- */
-private fun ViewContainer<*, *>.WelcomeIntroCopy(
-    theme: StockChatTheme,
-    rotatingKeyword: () -> String,
-    cursorVisible: () -> Boolean,
-) {
-    View {
-        attr {
-            marginTop(theme.spacing.lg)
-            alignSelfStretch()
-            alignItemsCenter()
-        }
-        View {
-            attr {
-                flexDirectionRow()
-                alignItemsCenter()
-                justifyContentCenter()
-            }
-            Text {
-                attr {
-                    text("看不懂的")
-                    fontSize(theme.type.body)
-                    lineHeight(27f)
-                    color(theme.textSecondary)
-                }
-            }
-            Text {
-                attr {
-                    // 必须在 attr 内部调用取值闭包，否则打字机文案不会重绘。
-                    text(rotatingKeyword())
-                    fontSize(theme.type.body)
-                    lineHeight(27f)
-                    fontWeightSemiBold()
-                    color(theme.brand)
-                }
-            }
-            View {
-                attr {
-                    width(2f)
-                    height(16f)
-                    marginLeft(2f)
-                    backgroundColor(theme.brand)
-                    // step-end 闪烁：直接切 opacity，不注册 animate()。
-                    opacity(if (cursorVisible()) 1f else 0f)
-                }
-            }
-            Text {
-                attr {
-                    text("，我讲给你听。")
-                    fontSize(theme.type.body)
-                    lineHeight(27f)
-                    color(theme.textSecondary)
-                }
-            }
-        }
-        Text {
-            attr {
-                text("只解释发生了什么，不预测该买什么。")
-                fontSize(theme.type.body)
-                lineHeight(27f)
-                color(theme.textSecondary)
-            }
-        }
-    }
-}
-
-private fun ViewContainer<*, *>.WelcomeTrustRow(theme: StockChatTheme, full: Boolean) {
-    View {
-        attr {
-            alignSelfStretch()
-            minHeight(34f)
-            marginTop(if (full) theme.spacing.x2 else theme.spacing.md)
-            paddingLeft(11f)
-            paddingRight(11f)
-            paddingTop(8f)
-            paddingBottom(8f)
-            flexDirectionRow()
-            alignItemsCenter()
-            backgroundColor(theme.surfaceMuted)
-            borderRadius(13f)
-        }
-        View {
-            attr {
-                size(22f, 22f)
-                marginRight(8f)
-                allCenter()
-                borderRadius(11f)
-                backgroundColor(theme.brandSoft)
-            }
-            LineIconShieldCheck(color = theme.brand, size = 15f)
-        }
-        Text {
-            attr {
-                text("行情来自交易所实时数据 · 每条结论都标了出处和时间")
-                fontSize(theme.type.meta)
-                lineHeight(15f)
-                color(theme.textTertiary)
-                flex(1f)
             }
         }
     }
@@ -372,8 +334,10 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
             accessibility("示例问题：${starter.question}。${starter.detail}")
             accessibilityRole(AccessibilityRole.BUTTON)
             accessibilityInfo(clickable = true, longClickable = false)
-            // 入场：上滑 + 淡入，40ms 阶梯延迟（规范 7 · 动效）。
+            // 入场：上滑 + 淡入，阶梯式延迟（规范 7 · 动效）。
             // percentageY = 0.28 → 卡片自身高度的 28%（58dp 卡约 16dp 上滑）。
+            // 节奏（2026-09-05）：时长 0.375s（0.30 × 1.25，整体放慢 25%）；
+            // 下一张在前一张进行到 25% 时启动 → 步长 = 0.375 × 0.25 ≈ 0.094s。
             if (reduceMotion) {
                 // 减弱动态效果：直接落终态，且不读取动画 observable、不注册 animate()。
                 opacity(1f)
@@ -396,7 +360,7 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
                 // 入场退化为 0 时长瞬移——这正是本次入场动效失效的根因。
                 // 与 CardSheet 无条件注册 easeOut 是同一范式。
                 animate(
-                    Animation.easeOut(0.30f).delay(0.08f + 0.04f * index),
+                    Animation.easeOut(0.375f).delay(0.08f + 0.094f * index),
                     entranceVisible(),
                 )
             }
@@ -455,7 +419,8 @@ internal fun ViewContainer<*, *>.RecentSymbolRow(theme: StockChatTheme, onSelect
         attr { height(28f); flexDirectionRow() }
         listOf("📍 贵州茅台", "五粮液", "上证指数", "+ 添加关注").forEach { label ->
             View {
-                attr { height(26f); marginRight(7f); paddingLeft(10f); paddingRight(10f); justifyContentCenter(); backgroundColor(theme.surfaceMuted); borderRadius(13f) }
+                // 白色背景胶囊（2026-09-05），细描边保证落在玻璃胶囊上仍可辨。
+                attr { height(26f); marginRight(7f); paddingLeft(10f); paddingRight(10f); justifyContentCenter(); backgroundColor(Color(0xFFFFFFFF)); borderRadius(13f); border(Border(0.5f, BorderStyle.SOLID, theme.divider)) }
                 Text { attr { text(label); fontSize(11f); color(if (label.startsWith("+")) theme.brand else theme.textSecondary) } }
                 event { click { if (!label.startsWith("+")) onSelect(label.removePrefix("📍 ")) } }
             }
@@ -527,6 +492,8 @@ internal fun ViewContainer<*, *>.ActiveComparePanel(
             padding(10f)
             backgroundColor(theme.surface)
             borderRadius(theme.cardRadius)
+            // 蒙层之上的浮层投影：让弹窗从压暗的背景里"浮"出来。
+            boxShadow(BoxShadow(0f, 8f, 28f, Color(0x000000, 0.22f)))
         }
         View {
             attr { flexDirectionRow(); alignItemsCenter() }

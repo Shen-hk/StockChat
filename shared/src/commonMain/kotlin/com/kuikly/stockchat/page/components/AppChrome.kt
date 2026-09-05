@@ -32,6 +32,23 @@ enum class IslandGesturePhase {
     OPENING_DETAIL,
 }
 
+enum class DrawerGesturePhase {
+    IDLE,
+    DRAGGING,
+    SETTLING,
+}
+
+/**
+ * 侧边栏横滑手势运动量。phase 与 offsetX 必须封装在同一个 observable 值里：
+ * 归位时一次原子写入（SETTLING + 目标偏移），Kuikly 就能从手指最后一帧
+ * 动画到精确端点（灵动岛 IslandGestureMotion 的同款约束）。
+ */
+data class DrawerGestureMotion(
+    val phase: DrawerGesturePhase = DrawerGesturePhase.IDLE,
+    /** 面板相对打开位的横向偏移：0 = 全开，-292 = 全关。DRAGGING 时为跟手值，SETTLING 时为目标值。 */
+    val offsetX: Float = 0f,
+)
+
 /** A dense, value-first top-bar state for pages whose Hero has scrolled away. */
 data class AppTopBarMetric(
     val label: String,
@@ -69,7 +86,11 @@ internal const val ISLAND_ANIMATION_DETAIL = "island-gesture-detail"
 fun ViewContainer<*, *>.ChatTopNav(
     statusBarHeight: Float,
     theme: StockChatTheme,
-    drawerOpen: Boolean,
+    // Lambda, not Boolean: attr closures must call this in place so the
+    // observable read happens inside the reactive closure (island-button
+    // pattern, R1).  A Boolean snapshot captured by a wrapping lambda goes
+    // stale — the island would keep reading the pre-open drawer state.
+    drawerOpen: () -> Boolean,
     liveData: () -> Boolean,
     renderer: GlassRenderer = GlassRenderer.Default,
     contextTitle: String? = null,
@@ -133,26 +154,51 @@ fun ViewContainer<*, *>.ChatTopNav(
             }
             View {
                 attr {
-                    size(40f, 40f); allCenter(); borderRadius(20f)
-                    // While the island morphs into the quote card, both side
-                    // controls retreat outward and fade so the card owns the
-                    // header.  Exit is short and accelerating (easeIn 0.21s)
-                    // so the button always stays ahead of the expanding
-                    // island edge — a longer fade would read as the button
-                    // being swallowed by the card.  The return is slower and
-                    // slightly delayed (easeOut 0.30s + 0.06s) so the card
-                    // settles before the controls come back.
+                    size(44f, 44f); allCenter(); borderRadius(22f)
+                    backgroundColor(Color(0xFFFFFFFF))
+                    border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
+                    boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
+                    // 收起联动 + 跟手（用户反馈 2026-09-05 二轮）：按钮不再只挂
+                    // expanded 翻转做独立补间，而是跟随卡片收缩的同一进度 p
+                    // （1=完全归位可见，0=完全滑出隐藏）：
+                    //   · 上滑拖拽收起 → p=closeProgress，随卡片缩小渐渐滑入；
+                    //   · 松手 RETURNING/CLOSING → 与卡片共用 0.20s settle 补间；
+                    //   · 点按开合 → easeIn 0.27 / easeOut 0.39（+30% 节奏）。
                     val e = islandPresented()
-                    opacity(if (e) 0f else 1f)
+                    val motion = islandGestureMotion()
+                    val closeProgress = (-motion.offsetY / 104f).coerceIn(0f, 1f)
+                    val p = when {
+                        motion.phase == IslandGesturePhase.CLOSING -> 1f
+                        motion.phase == IslandGesturePhase.RETURNING -> closeProgress
+                        motion.phase == IslandGesturePhase.DRAGGING && motion.offsetY < 0f -> closeProgress
+                        !e -> 1f
+                        else -> 0f
+                    }
+                    opacity(p)
                     transform(
-                        scale = Scale(if (e) 0.84f else 1f, if (e) 0.84f else 1f),
-                        translate = Translate(0f, 0f, offsetX = if (e) -32f else 0f),
+                        scale = Scale(0.84f + 0.16f * p, 0.84f + 0.16f * p),
+                        translate = Translate(0f, 0f, offsetX = -32f * (1f - p)),
                     )
                     touchEnable(!e)
-                    animate(if (e) Animation.easeIn(0.21f) else Animation.easeOut(0.30f).delay(0.06f), e)
+                    if (motion.phase == IslandGesturePhase.CLOSING ||
+                        motion.phase == IslandGesturePhase.RETURNING
+                    ) {
+                        val motionAnimationKey = islandGestureMotion()
+                        val animationKey = if (motion.phase == IslandGesturePhase.CLOSING) {
+                            ISLAND_ANIMATION_CLOSE
+                        } else {
+                            ISLAND_ANIMATION_RETURN
+                        }
+                        animate(Animation.easeOut(0.20f, key = animationKey), motionAnimationKey)
+                    } else {
+                        val expandedAnimationKey = islandPresented()
+                        animate(
+                            if (expandedAnimationKey) Animation.easeIn(0.27f) else Animation.easeOut(0.39f),
+                            expandedAnimationKey,
+                        )
+                    }
                 }
-                GlassBackdrop(theme.glass.peek, renderer)
-                Text { attr { text(if (drawerOpen) "×" else "☰"); fontSize(22f); color(theme.textPrimary) } }
+                Text { attr { text(if (drawerOpen()) "×" else "☰"); fontSize(22f); color(theme.textPrimary) } }
                 event { click { onMenu() } }
             }
             // The middle slot stays empty: the floating title island below is
@@ -161,19 +207,45 @@ fun ViewContainer<*, *>.ChatTopNav(
             View { attr { flex(1f) } }
             View {
                 attr {
-                    size(40f, 40f); allCenter(); borderRadius(20f)
-                    // Mirror of the menu button above: same retreat motion,
-                    // pushed to the right instead of the left.
+                    size(44f, 44f); allCenter(); borderRadius(22f)
+                    backgroundColor(Color(0xFFFFFFFF))
+                    border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
+                    boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
+                    // Mirror of the menu button above：同款进度联动 p，向右滑出。
                     val e = islandPresented()
-                    opacity(if (e) 0f else 1f)
+                    val motion = islandGestureMotion()
+                    val closeProgress = (-motion.offsetY / 104f).coerceIn(0f, 1f)
+                    val p = when {
+                        motion.phase == IslandGesturePhase.CLOSING -> 1f
+                        motion.phase == IslandGesturePhase.RETURNING -> closeProgress
+                        motion.phase == IslandGesturePhase.DRAGGING && motion.offsetY < 0f -> closeProgress
+                        !e -> 1f
+                        else -> 0f
+                    }
+                    opacity(p)
                     transform(
-                        scale = Scale(if (e) 0.84f else 1f, if (e) 0.84f else 1f),
-                        translate = Translate(0f, 0f, offsetX = if (e) 32f else 0f),
+                        scale = Scale(0.84f + 0.16f * p, 0.84f + 0.16f * p),
+                        translate = Translate(0f, 0f, offsetX = 32f * (1f - p)),
                     )
                     touchEnable(!e)
-                    animate(if (e) Animation.easeIn(0.21f) else Animation.easeOut(0.30f).delay(0.06f), e)
+                    if (motion.phase == IslandGesturePhase.CLOSING ||
+                        motion.phase == IslandGesturePhase.RETURNING
+                    ) {
+                        val motionAnimationKey = islandGestureMotion()
+                        val animationKey = if (motion.phase == IslandGesturePhase.CLOSING) {
+                            ISLAND_ANIMATION_CLOSE
+                        } else {
+                            ISLAND_ANIMATION_RETURN
+                        }
+                        animate(Animation.easeOut(0.20f, key = animationKey), motionAnimationKey)
+                    } else {
+                        val expandedAnimationKey = islandPresented()
+                        animate(
+                            if (expandedAnimationKey) Animation.easeIn(0.27f) else Animation.easeOut(0.39f),
+                            expandedAnimationKey,
+                        )
+                    }
                 }
-                GlassBackdrop(theme.glass.peek, renderer)
                 Text { attr { text("＋"); fontSize(23f); color(theme.brand) } }
                 event { click { onNewChat() } }
             }
@@ -251,22 +323,43 @@ private fun ViewContainer<*, *>.StockIsland(
     onOpenCompare: () -> Unit,
     onClearCompare: () -> Unit,
 ) {
-    val collapsedWidth = if (title == null) 128f else 200f
-    val expandedWidth = (pageWidth - 28f).coerceAtLeast(collapsedWidth)
+    // Two horizontal insets for the two morph endpoints.  The collapsed pill
+    // sits 60dp from the left edge (mirroring the side-button column so the
+    // header reads as a balanced row of three capsules); the expanded card
+    // snaps back to a 14dp gutter so it still reads as "almost full width".
+    // 用户决策 2026-09-05：胶囊锚点常驻 60dp，侧边栏展开时不再横移让位——
+    // 抽屉盖住它即可，收起后原位出现，全程没有横向跳动。
+    val expandedIslandInset = 14f
+    val collapsedIslandLeft = 60f
+    // Collapsed pill width is fitted to the title text: a per-character advance
+    // (bold weight, default font) plus a small side padding.  This keeps the
+    // capsule tight around "StockChat" and stretches naturally when a longer
+    // context title (e.g. "贵州茅台 600519.SH") is supplied.  Tuning notes:
+    // 15pt bold ≈ 10dp/char on Kuikly default font, 13pt bold ≈ 8dp/char;
+    // padding keeps the glyphs from touching the pill edge.
+    val charAdvance = if (title == null) 10f else 8f
+    val charCount = (title ?: "StockChat").length
+    // Collapsed geometry scaled +10% (2026-09-05) to match the enlarged
+    // 44dp side buttons; expanded card geometry is untouched.
+    val collapsedWidth = ((charCount * charAdvance + 20f) * 1.1f).coerceAtLeast(88f)
+    val collapsedHeight = 39.6f
+    val collapsedRadius = 19.8f
+    val expandedWidth = (pageWidth - expandedIslandInset * 2f).coerceAtLeast(collapsedWidth)
     val quoteHeight = 140f
     val fullScreenHeight = pageHeight.coerceAtLeast(quoteHeight)
-    // Full-width transparent strip centres the island via flex.  It has no
-    // event handler, so taps outside the island fall through to the nav
-    // buttons and the scroller underneath; only the morphing child below
-    // consumes touches.  Animating width/height/radius on the child (instead
-    // of absolute left) keeps layout and touch bounds in sync.
+    // Full-width transparent strip lays the island out from the left edge so
+    // the pill keeps its 60dp offset in the collapsed state.  It has no event
+    // handler, so taps outside the island fall through to the nav buttons and
+    // the scroller underneath; only the morphing child below consumes
+    // touches.  Animating width/height/radius on the child (instead of
+    // absolute left) keeps layout and touch bounds in sync.
     View {
         attr {
             val motion = gestureMotion()
             val navigating = motion.phase == IslandGesturePhase.OPENING_DETAIL
             absolutePosition(top = if (navigating) 0f else statusBarHeight + 4f, left = 0f, right = 0f)
             flexDirectionRow()
-            justifyContentCenter()
+            justifyContentFlexStart()
             if (motion.phase == IslandGesturePhase.OPENING_DETAIL) {
                 animate(Animation.easeOut(0.18f), gestureMotion())
             } else if (motion.snap) {
@@ -294,22 +387,42 @@ private fun ViewContainer<*, *>.StockIsland(
                 }
                 val targetHeight = when {
                     navigating -> fullScreenHeight
-                    gestureEnabled -> (quoteHeight + dragY).coerceIn(36f, fullScreenHeight)
-                    e && dropTextOnly -> 36f
+                    gestureEnabled -> (quoteHeight + dragY).coerceIn(collapsedHeight, fullScreenHeight)
+                    e && dropTextOnly -> collapsedHeight
                     e && compareVisible() -> 146f
                     e -> quoteHeight
-                    else -> 36f
+                    else -> collapsedHeight
                 }
                 val targetRadius = when {
                     navigating -> 0f
                     gestureEnabled && dragY < 0f -> 24f - 6f * closeProgress
                     gestureEnabled && dragY > 0f -> 24f - 12f * spreadProgress
                     e -> 24f
-                    else -> 18f
+                    else -> collapsedRadius
                 }
                 width(targetWidth)
                 height(targetHeight)
                 borderRadius(targetRadius)
+                // The horizontal anchor must interpolate on the SAME branches
+                // as targetWidth.  If the collapsed dock is only applied after
+                // expanded() flips false, the pill's left edge stays pinned at
+                // the 14dp gutter while the width shrinks (drag-to-close), and
+                // the dock offset teleports in one frame at release — the
+                // "anchor is wrong" effect.  Mirroring the width branches keeps
+                // left edge and right edge shrinking in lockstep.
+                val collapsedLeft = collapsedIslandLeft
+                val targetLeft = when {
+                    navigating -> expandedIslandInset
+                    gestureEnabled && dragY < 0f ->
+                        expandedIslandInset -
+                            (expandedIslandInset - collapsedLeft) * closeProgress
+                    e && !dropTextOnly -> expandedIslandInset
+                    else -> collapsedLeft
+                }
+                marginLeft(targetLeft)
+                backgroundColor(Color(0xFFFFFFFF))
+                border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
+                boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
                 transform(
                     translate = Translate(
                         0f,
@@ -341,8 +454,10 @@ private fun ViewContainer<*, *>.StockIsland(
                     )
                 } else {
                     val expandedAnimationKey = expanded()
+                    // 0.34 → 0.44（用户决策 2026-09-05 放慢 30%）：与两侧按钮
+                    // 的滑入/滑出保持同一节奏，整组开合联动。
                     animate(
-                        if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.34f),
+                        if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.44f),
                         expandedAnimationKey,
                     )
                 }
@@ -352,11 +467,8 @@ private fun ViewContainer<*, *>.StockIsland(
                     if (params.animationKey.isNotEmpty()) onMotionComplete(params.animationKey)
                 }
             }
-            vif({ (!textOnly() || expanded() || compareVisible()) && (!dropActive() || firstCompareDrop()) }) {
-                GlassBackdrop(theme.glass.peek, renderer)
-            }
 
-            // Collapsed identity layer: title + live dot.  It owns taps only
+            // Collapsed identity layer: title only.  It owns taps only
             // while visible so the card beneath never swallows the toggle.
             View {
                 attr {
@@ -365,24 +477,42 @@ private fun ViewContainer<*, *>.StockIsland(
                     flexDirectionRow()
                     alignItemsCenter()
                     justifyContentCenter()
-                    opacity(if (e) 0f else 1f)
+                    // 与两侧按钮同款进度联动 p（用户反馈 2026-09-05 二轮）：
+                    // "StockChat" 随卡片收缩进度渐渐显现——拖拽收起时跟手淡入、
+                    // 松手与卡片共用 0.20s settle 归位、点按收起用 0.44s 补间
+                    // 与形变同长，全程没有空白期。
+                    val motion = gestureMotion()
+                    val closeProgress = (-motion.offsetY / 104f).coerceIn(0f, 1f)
+                    val p = when {
+                        motion.phase == IslandGesturePhase.CLOSING -> 1f
+                        motion.phase == IslandGesturePhase.RETURNING -> closeProgress
+                        motion.phase == IslandGesturePhase.DRAGGING && motion.offsetY < 0f -> closeProgress
+                        !e -> 1f
+                        else -> 0f
+                    }
+                    opacity(p)
                     touchEnable(!e)
-                    animate(Animation.easeOut(0.18f), e)
+                    if (motion.phase == IslandGesturePhase.CLOSING ||
+                        motion.phase == IslandGesturePhase.RETURNING
+                    ) {
+                        val motionAnimationKey = gestureMotion()
+                        val animationKey = if (motion.phase == IslandGesturePhase.CLOSING) {
+                            ISLAND_ANIMATION_CLOSE
+                        } else {
+                            ISLAND_ANIMATION_RETURN
+                        }
+                        animate(Animation.easeOut(0.20f, key = animationKey), motionAnimationKey)
+                    } else {
+                        val expandedAnimationKey = expanded()
+                        animate(Animation.easeOut(0.44f), expandedAnimationKey)
+                    }
                 }
                 Text {
                     attr {
-                        text(title ?: "StockChat.")
+                        text(title ?: "StockChat")
                         fontSize(if (title == null) 15f else 13f)
                         fontWeightBold()
                         color(if (title == null) theme.textPrimary else theme.textSecondary)
-                    }
-                }
-                View {
-                    attr {
-                        size(5f, 5f)
-                        marginLeft(7f)
-                        borderRadius(3f)
-                        backgroundColor(if (liveData()) Color(0xFF34C759) else theme.textTertiary)
                     }
                 }
                 event { click { if (!expanded()) onToggle() } }
@@ -532,11 +662,14 @@ private fun ViewContainer<*, *>.StockIsland(
                 // The visible handle stays intentionally small, while its
                 // capture area is large enough for a reliable one-thumb swipe.
                 // Up dismisses; down continues into the current stock detail.
+                // Capture area is 44dp tall (stats row sits ~49dp above the
+                // card bottom, so it stays clear of the hit zone).  pan uses
+                // pageY, so a taller capture area costs nothing in tracking.
                 View {
                     attr {
                         val motion = gestureMotion()
                         absolutePosition(left = 0f, right = 0f, bottom = 0f)
-                        height(27f)
+                        height(44f)
                         alignItemsCenter()
                         capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
                         touchEnable(motion.phase != IslandGesturePhase.OPENING_DETAIL)
@@ -548,9 +681,14 @@ private fun ViewContainer<*, *>.StockIsland(
                             val dragging = motion.phase == IslandGesturePhase.DRAGGING
                             width(44f)
                             height(4f)
-                            marginTop(10f)
+                            // 44 - 4 - 13 = 27: keeps the visible bar 13dp above
+                            // the card bottom, exactly where it was with the
+                            // old 27dp capture area.
+                            marginTop(27f)
                             borderRadius(2f)
-                            backgroundColor(Color(0xFFFFFFFF, 0.92f))
+                            // Grey grabber (iOS style): on the pure-white card
+                            // the old white@0.92 bar was invisible.
+                            backgroundColor(Color(0x000000, 0.18f))
                             opacity(if (openingDetail) 0f else 1f)
                             transform(
                                 scale = Scale(
@@ -612,13 +750,30 @@ private fun ViewContainer<*, *>.StockIsland(
             // second drop fills the other slot and creates the full comparison panel.
             View {
                 attr {
-                    val visible = expanded() && !dropActive() && compareVisible() && compareLeftSymbol().isNotEmpty()
+                    // R5 修复（用户反馈 2026-09-05 退出对比残留文字）：可见性条件
+                    // 必须全部无条件读取。原写法 `a && b && c && d` 短路求值，使
+                    // animate() 绑定的最后一个 observable 随状态漂移（开态绑
+                    // compareLeftSymbol、收起态绑 expanded），退出对比时上一周期
+                    // 的注册与本次变更的 driver 错位，淡出丢失 → 文字残留原生层。
+                    val e = expanded()
+                    val dropping = dropActive()
+                    val inCompare = compareVisible()
+                    val hasLeft = compareLeftSymbol().isNotEmpty()
+                    val visible = e && !dropping && inCompare && hasLeft
                     absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
                     padding(12f)
                     opacity(if (visible) 1f else 0f)
                     touchEnable(visible)
                     animate(Animation.easeOut(0.2f), visible)
                 }
+                // 硬清理兜底：退出对比时 vif 直接卸载全部内容——即使容器透明度
+                // 动画注册再被竞态吃掉，也不可能残留任何对比文字。入场淡入不受
+                // R4 影响：容器常驻挂载，只有内容随 visible 挂/卸，透明度渐变
+                // 作用在容器上。
+                vif({
+                    expanded() && !dropActive() && compareVisible() &&
+                        compareLeftSymbol().isNotEmpty()
+                }) {
                 View {
                     attr { height(24f); flexDirectionRow(); alignItemsCenter() }
                     Text { attr { text("股票对比"); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
@@ -701,6 +856,7 @@ private fun ViewContainer<*, *>.StockIsland(
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -782,6 +938,9 @@ fun ViewContainer<*, *>.ChatDrawer(
     // panel never slides in.
     presented: () -> Boolean = { true },
     interactive: () -> Boolean = presented,
+    // 侧边栏横滑手势状态（取值闭包，不能传快照，理由同 presented）。
+    gestureMotion: () -> DrawerGestureMotion = { DrawerGestureMotion() },
+    onPan: (String, Float) -> Unit = { _, _ -> },
     onClose: () -> Unit,
     onToggleDataMode: () -> Unit,
     onCycleVisualMode: () -> Unit = {},
@@ -803,11 +962,25 @@ fun ViewContainer<*, *>.ChatDrawer(
             backgroundColor(Color(0x59000000))
             val shown = presented()
             val active = interactive()
-            opacity(if (shown) 1f else 0f)
+            val motion = gestureMotion()
+            // 跟手阶段遮罩随拖动进度渐显，松手后交给端点值 + 常规过渡。
+            opacity(
+                when (motion.phase) {
+                    DrawerGesturePhase.DRAGGING ->
+                        ((motion.offsetX + 292f) / 292f).coerceIn(0f, 1f)
+                    else -> if (shown) 1f else 0f
+                }
+            )
             touchEnable(active)
-            animate(Animation.easeOut(0.24f), shown)
+            // 横向 pan 捕获：遮罩上左拖可跟手收起面板，纵向滚动与点击不受影响。
+            capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
+            // 时长 +25%（用户决策 2026-09-05）：0.24 → 0.30，与面板同速。
+            animate(Animation.easeOut(0.30f), presented())
         }
-        event { click { onClose() } }
+        event {
+            click { onClose() }
+            pan { params -> onPan(params.state, params.pageX) }
+        }
     }
     View {
         attr {
@@ -821,14 +994,44 @@ fun ViewContainer<*, *>.ChatDrawer(
             // Android reads muddy at this size, a flat surface keeps rows legible.
             backgroundColor(Color(0xFFFFFFFF))
             boxShadow(BoxShadow(-2f, 0f, 14f, Color(0x000000, 0.12f)))
-            // Slide from the left edge; open eases out, close eases in faster
-            // so dismissal feels lighter than presentation (doc 22 L2).
-            // shown must be read in place: see the island-button pattern note.
+            val motion = gestureMotion()
             val shown = presented()
             val active = interactive()
-            transform(translate = Translate(0f, 0f, offsetX = if (shown) 0f else -292f))
-            touchEnable(active)
-            animate(if (shown) Animation.easeOut(0.30f) else Animation.easeIn(0.22f), shown)
+            // 手势接管期间偏移量由 DrawerGestureMotion 驱动（跟手值或归位目标值）；
+            // 常规态沿用 presented 双状态端点。
+            val targetX =
+                if (motion.phase == DrawerGesturePhase.IDLE) {
+                    if (shown) 0f else -292f
+                } else {
+                    motion.offsetX
+                }
+            transform(translate = Translate(0f, 0f, offsetX = targetX))
+            // 跟手拖拽发生在面板上，此阶段必须可触（即便 drawerOpen 还没翻转）。
+            touchEnable(active || motion.phase != DrawerGesturePhase.IDLE)
+            // R2/R3：每个分支恰好一次 animate，且分支互斥；实参位置现场再读一次
+            // observable，保证 animate 绑定到正确的驱动 key（SwipeActionRow 范式）。
+            when (motion.phase) {
+                DrawerGesturePhase.IDLE ->
+                    // 菜单按钮开合：开先快后慢（easeOut），关先慢后快（easeIn）。
+                    // 时长 +25%（用户决策 2026-09-05）：0.30→0.375 / 0.22→0.275。
+                    animate(
+                        if (shown) Animation.easeOut(0.375f) else Animation.easeIn(0.275f),
+                        presented(),
+                    )
+                DrawerGesturePhase.DRAGGING -> Unit // 跟手：直接落位，不注册动画
+                DrawerGesturePhase.SETTLING ->
+                    // 手势归位：展开先快后慢（easeOut），收起先慢后快（easeIn）。
+                    // 时长 +25%：0.30→0.375 / 0.24→0.30。
+                    animate(
+                        if (motion.offsetX > -146f) Animation.easeOut(0.375f) else Animation.easeIn(0.30f),
+                        gestureMotion(),
+                    )
+            }
+            // 横向 pan 捕获：在面板任意位置左拖即可收起；内部纵向列表滚动不受影响。
+            capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
+        }
+        event {
+            pan { params -> onPan(params.state, params.pageX) }
         }
 
         // Brand header: gradient logo mark, wordmark and close button.
@@ -850,7 +1053,6 @@ fun ViewContainer<*, *>.ChatDrawer(
             View {
                 attr { flex(1f); marginLeft(10f) }
                 Text { attr { text("StockChat"); fontSize(17f); fontWeightBold(); color(theme.textPrimary) } }
-                Text { attr { text("AI 投资助手"); marginTop(1f); fontSize(10f); color(theme.textTertiary) } }
             }
             View {
                 attr { size(30f, 30f); allCenter(); borderRadius(15f); backgroundColor(theme.surfaceMuted) }
@@ -929,10 +1131,10 @@ fun ViewContainer<*, *>.ChatDrawer(
         // Quick entries with tinted icon tiles, grouped by intent so the white
         // sheet reads as sections instead of one flat 8-row stack (LDRS-R).
         DrawerGroupTitle("行情与工具", theme)
-        DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛行情", theme) { onClose(); onToggleIsland() }
-        DrawerMenuItem("⌕", theme.brand, theme.brandSoft, "全局搜索", theme) { onClose(); onOpenSearch() }
+        DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛行情-测试开关", theme) { onClose(); onToggleIsland() }
+        DrawerMenuItem("⌕", theme.brand, theme.brandSoft, "全局搜索-测试入口", theme) { onClose(); onOpenSearch() }
         DrawerMenuItem("▥", theme.term, theme.brandSoft, "市场总览", theme) { onClose(); onOpenMarket() }
-        DrawerMenuItem("⌁", theme.term, theme.brandSoft, "异动预警", theme) { onClose(); onOpenAlerts() }
+        DrawerMenuItem("⌁", theme.term, theme.brandSoft, "异动预警-功能预览", theme) { onClose(); onOpenAlerts() }
         // doc 23 信息架构：自选 → 风险地图 → 知识库是一条闭环，成组呈现
         DrawerGroupTitle("投资闭环", theme)
         DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme) { onClose(); onOpenWatchlist() }

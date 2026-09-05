@@ -36,7 +36,6 @@ import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.LocalAlertProvider
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
-import com.kuikly.stockchat.data.provider.platformCurrentHour
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.kuikly.stockchat.data.entity.Glossary
@@ -57,11 +56,14 @@ import com.kuikly.stockchat.page.components.WelcomeSection
 import com.kuikly.stockchat.page.components.WelcomeStarter
 import com.kuikly.stockchat.page.components.defaultWelcomeStarters
 import com.kuikly.stockchat.page.components.ChatTopNav
+import com.kuikly.stockchat.page.components.DrawerGestureMotion
+import com.kuikly.stockchat.page.components.DrawerGesturePhase
 import com.kuikly.stockchat.page.components.IslandGestureMotion
 import com.kuikly.stockchat.page.components.IslandGesturePhase
 import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_CLOSE
 import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_DETAIL
 import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_RETURN
+import com.kuikly.stockchat.page.components.LineIconAudioLines
 import com.kuikly.stockchat.page.components.LineIconPlus
 import com.kuikly.stockchat.page.components.LineIconMicWithFill
 import com.kuikly.stockchat.page.components.LineIconCamera
@@ -142,6 +144,8 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.pow
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 @Page(Routes.CHAT, supportInLocal = true)
 internal class ChatPage : BasePager() {
@@ -188,6 +192,12 @@ internal class ChatPage : BasePager() {
     private var drawerMounted: Boolean by observable(false)
     private var drawerPresented: Boolean by observable(false)
     private var drawerPresentationVersion = 0
+    // 侧边栏横滑手势：phase 与 offsetX 同值原子化，跟手阶段直接落位，
+    // 归位一次原子写入播放收敛动画（灵动岛手势同款模式）。
+    private var drawerGesture: DrawerGestureMotion by observable(DrawerGestureMotion())
+    private var drawerGestureStartX = 0f
+    // 最近一次 move 的单步位移（非 observable）：快速短划（flick）判定的速度代理。
+    private var drawerGestureLastDX = 0f
     private var liveDataMode: Boolean by observable(true)
     // Dynamic island: the top title capsule morphs into a live quote card.
     private var islandExpanded: Boolean by observable(false)
@@ -202,6 +212,8 @@ internal class ChatPage : BasePager() {
     private var islandCompareLeftSymbol: String by observable("")
     private var islandCompareRightSymbol: String by observable("")
     private var islandCompareVisible: Boolean by observable(false)
+    // 对比会话代数：退出/重建对比时自增，使在途的收起兜底定时器失效。
+    private var compareExperienceVersion = 0
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
@@ -317,6 +329,11 @@ internal class ChatPage : BasePager() {
     private var welcomeEntranceSafetyTimer: Timer? = null
     private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
     private var pendingRouteQuestion: String = ""
+    // 输入框渐变描边流动相位（0..2π）：composerRimFlowTimer 以 20fps 推进，
+    // renderComposerGradientRim 的 Canvas draw 闭包内读取本值驱动重绘
+    // （VoiceBar 同款 ReactiveObserver 范式）。页面不可见即停，省电。
+    private var composerRimPhase: Float by observable(0f)
+    private var composerRimFlowTimer: Timer? = null
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
     /** The document caps simultaneously visible real-time blur surfaces at two. */
     private val glassRenderer: GlassRenderer
@@ -353,6 +370,7 @@ internal class ChatPage : BasePager() {
         // 会被首行的 stopped 判断直接挡掉，轮播再也不会恢复。
         // 上锁只留给「用户已经开始对话」的路径（提交输入、选示例卡、打开历史会话）。
         stopWelcomeKeywordLoop(lock = false)
+        stopComposerRimFlow()
         // If the stock detail route is covering this page, JS state may
         // already read as idle while the native view is still waiting for the
         // collapsed-frame write. Force the write unconditionally.
@@ -371,6 +389,7 @@ internal class ChatPage : BasePager() {
         requestQuote(islandSymbol)
         startAlertPolling()
         startWelcomeKeywordLoopIfNeeded()
+        startComposerRimFlow()
         scheduleWelcomeEntranceSafety()
         consumeRouteQuestionIfNeeded()
     }
@@ -387,7 +406,11 @@ internal class ChatPage : BasePager() {
                     // allowing content to travel underneath it as it scrolls.
                     paddingTop(page.pagerData.statusBarHeight + 52f)
                     paddingLeft(14f)
-                    paddingRight(14f)
+                    // Kuikly 竖向 Scroller 测量子项宽 = 视宽 - 2×(左+右 padding)，
+                    // 右 padding 被双倍扣除：14/14 时聊天内容右侧实测多出 28dp 留白
+                    // （真机 1440px 宽，卡片右缘 1271px ≈ 预测的 w-2×28 位置）。
+                    // 右侧留 0，留白交由子项自身 margin 补齐，实测左右各 20dp 对齐。
+                    paddingRight(0f)
                     paddingBottom(190f + page.pagerData.safeAreaInsets.bottom)
                 }
                 event {
@@ -400,11 +423,8 @@ internal class ChatPage : BasePager() {
                     click { page.handleOutsideTap() }
                 }
                 vif({ page.viewModel.messages.isEmpty() && page.welcomeEntranceMounted }) {
-                    val welcomeMode = page.welcomeMode()
                     WelcomeSection(
                         theme = page.theme,
-                        mode = welcomeMode,
-                        greeting = page.welcomeGreeting(welcomeMode),
                         // 取值闭包，不能在这里直接读 observable：vif 体只执行一次，
                         // 读到的快照不会建立依赖，attr 不重跑、animate() 也拿不到
                         // observablePropertyKey，整块动效会静默失效。
@@ -412,8 +432,9 @@ internal class ChatPage : BasePager() {
                         cursorVisible = { page.welcomeCursorVisible },
                         entranceVisible = { page.welcomeEntranceVisible },
                         onMounted = page::welcomeDidMount,
+                        marketTabSelected = { page.welcomeMarketTabSelected },
+                        onOpenMarket = { page.handleWelcomeMarketTap() },
                         reduceMotion = page.welcomeReducedMotion,
-                        starters = page.welcomeStarters(welcomeMode),
                     ) { starter ->
                         page.chooseWelcomeStarter(starter)
                     }
@@ -471,7 +492,7 @@ internal class ChatPage : BasePager() {
             ChatTopNav(
                 statusBarHeight = page.pagerData.statusBarHeight,
                 theme = page.theme,
-                drawerOpen = page.drawerOpen,
+                drawerOpen = { page.drawerOpen },
                 liveData = { page.liveDataMode },
                 renderer = page.glassRenderer,
                 contextTitle = if (page.drilledKeys.isNotEmpty()) "归因链 · 资金面 ›" else null,
@@ -581,20 +602,6 @@ internal class ChatPage : BasePager() {
                     }
                 }
             }
-            vif({ page.compareCard != null }) {
-                page.compareCard?.let { compareModel ->
-                    ActiveComparePanel(
-                        model = compareModel,
-                        theme = page.theme,
-                        insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
-                        insightText = { page.compareInsightText },
-                        insightError = { page.compareInsightError },
-                        onRetryInsight = { page.retryCompareInsight() },
-                        onOpenStock = { page.openStockDetail(it) },
-                        onClose = { page.clearCompare() },
-                    )
-                }
-            }
             View {
                 attr {
                     // Floating capsule composer on a solid page-coloured base:
@@ -690,6 +697,8 @@ internal class ChatPage : BasePager() {
                                 alignItemsCenter()
                                 marginTop(if (page.isComposerExpanded()) 0f else 8f)
                             }
+                            // 折叠态只保留左侧 + 与右侧语音两个操作位：纯黑线条、
+                            // 透明背景（2026-09-05 设计调整）。
                             vif({ !page.isComposerExpanded() }) {
                                 View {
                                     attr {
@@ -697,11 +706,8 @@ internal class ChatPage : BasePager() {
                                         marginRight(7f)
                                         allCenter()
                                         borderRadius(16f)
-                                        backgroundColor(page.theme.surfaceMuted)
-                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                        touchEnable(!page.isVoiceBusy())
                                     }
-                                    LineIconPlus(color = page.theme.textSecondary, size = 16f)
+                                    LineIconPlus(color = Color(0xFF000000), size = 16f)
                                 }
                             }
                             View {
@@ -732,37 +738,16 @@ internal class ChatPage : BasePager() {
                                         marginLeft(7f)
                                         allCenter()
                                         borderRadius(16f)
-                                        backgroundColor(page.theme.surfaceMuted)
                                         transform(scale = if (page.voiceState == VoiceState.RECORDING) Scale(1.12f, 1.12f) else Scale.DEFAULT)
                                         animate(Animation.easeOut(0.12f), page.voiceState == VoiceState.RECORDING)
                                     }
-                                    LineIconMicWithFill(
-                                        color = page.theme.textSecondary,
-                                        fillColor = if (page.voiceCancelArmed) page.theme.textTertiary else page.theme.rise,
-                                        size = 17f,
-                                        fill01 = { page.voiceMicFill },
-                                    )
+                                    // 声波线条（Lucide audio-lines 对齐），替代旧麦克风图标。
+                                    LineIconAudioLines(color = Color(0xFF000000), size = 18f)
                                     event {
                                         touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
                                         touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
                                         touchUp { page.handleVoiceTouchUp() }
                                     }
-                                }
-                                View {
-                                    attr {
-                                        size(32f, 32f)
-                                        marginLeft(7f)
-                                        allCenter()
-                                        borderRadius(16f)
-                                        backgroundColor(if (page.inputPanel == InputPanel.MEDIA) page.theme.brandSoft else page.theme.surfaceMuted)
-                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                        touchEnable(!page.isVoiceBusy())
-                                    }
-                                    LineIconCamera(
-                                        color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
-                                        size = 17f,
-                                    )
-                                    event { click { page.toggleMediaPanel() } }
                                 }
                             }
                         }
@@ -831,6 +816,7 @@ internal class ChatPage : BasePager() {
                                         touchUp { page.handleVoiceTouchUp() }
                                     }
                                 }
+                                // 展开态右侧媒体入口：拍照图标改为 + 号（2026-09-05）。
                                 View {
                                     attr {
                                         size(40f, 40f)
@@ -841,7 +827,7 @@ internal class ChatPage : BasePager() {
                                         opacity(if (page.isVoiceBusy()) 0.4f else 1f)
                                         touchEnable(!page.isVoiceBusy())
                                     }
-                                    LineIconCamera(
+                                    LineIconPlus(
                                         color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
                                         size = 19f,
                                     )
@@ -884,6 +870,34 @@ internal class ChatPage : BasePager() {
                     page.renderComposerGradientRim(this)
                 }
             }
+            vif({ page.compareCard != null }) {
+                // 对比结果弹窗 + 蒙层（用户决策 2026-09-05，二轮修正）：整个块
+                // 声明在输入栏之后——蒙层必须绘制在输入栏（含渐变高光边）之上，
+                // 否则输入栏高光会从压暗的背景里"漏"出来。聊天区、灵动岛、
+                // 输入栏一起被压暗并吞掉点击；只有弹窗面板本身（块内后绘制）
+                // 和更上层的拖拽 overlay/CardSheet/抽屉不受影响。
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        backgroundColor(Color(0x59000000))
+                        touchEnable(true)
+                        animate(Animation.easeOut(0.2f), page.compareCard != null)
+                    }
+                    event { click { } }
+                }
+                page.compareCard?.let { compareModel ->
+                    ActiveComparePanel(
+                        model = compareModel,
+                        theme = page.theme,
+                        insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
+                        insightText = { page.compareInsightText },
+                        insightError = { page.compareInsightError },
+                        onRetryInsight = { page.retryCompareInsight() },
+                        onOpenStock = { page.openStockDetail(it) },
+                        onClose = { page.clearCompare() },
+                    )
+                }
+            }
             vif({ page.entityDragActive }) {
                 page.renderEntityDragOverlay(this)
             }
@@ -915,6 +929,23 @@ internal class ChatPage : BasePager() {
                     )
                 }
             }
+            // 左缘手势条：抽屉关闭时贴左缘右滑可跟手展开。放在 CardSheetHost 之后、
+            // ChatDrawer 之前——卡片与抽屉呈现时自然被上层视图盖住；灵动岛展开卡
+            // （左缘 14dp 起）与实体拖拽期间让位，避免抢走横向手势。
+            View {
+                attr {
+                    absolutePosition(top = 0f, left = 0f, bottom = 0f)
+                    width(20f)
+                    capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
+                    touchEnable(
+                        !page.drawerOpen && !page.drawerMounted &&
+                            !page.sheetMounted && !page.islandExpanded && !page.entityDragActive
+                    )
+                }
+                event {
+                    pan { params -> page.handleDrawerPan(params.state, params.pageX) }
+                }
+            }
             vif({ page.drawerMounted }) {
                 ChatDrawer(
                     statusBarHeight = page.pagerData.statusBarHeight,
@@ -927,6 +958,8 @@ internal class ChatPage : BasePager() {
                     activeSessionId = page.viewModel.activeSessionId,
                     presented = { page.drawerPresented },
                     interactive = { page.drawerOpen },
+                    gestureMotion = { page.drawerGesture },
+                    onPan = { state, x -> page.handleDrawerPan(state, x) },
                     onClose = { page.updateDrawerOpen(false) },
                     onToggleDataMode = { page.toggleDataMode() },
                     onCycleVisualMode = { page.cycleGlassMode() },
@@ -953,6 +986,10 @@ internal class ChatPage : BasePager() {
      * a version counter so rapid toggles never leave a stale timer behind.
      */
     private fun updateDrawerOpen(open: Boolean) {
+        // 程序化开合终结任何进行中的手势态，避免 SETTLING 分支抢走 transform 控制权
+        // （已是 IDLE 缺省值时等值写入不触发通知，无副作用）。
+        drawerGesture = DrawerGestureMotion()
+        val wasOpen = drawerOpen
         val version = ++drawerPresentationVersion
         drawerOpen = open
         if (open) {
@@ -961,12 +998,122 @@ internal class ChatPage : BasePager() {
             setTimeout(0) {
                 if (drawerPresentationVersion == version) drawerPresented = true
             }
+            // 点按展开：震动在**完全展开那一刻**（easeOut 0.375s + buffer），
+            // version + 状态双守卫，被抢占时静默退出。
+            if (!wasOpen) {
+                setTimeout(395) {
+                    if (version == drawerPresentationVersion && drawerOpen && drawerPresented) {
+                        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                    }
+                }
+            }
         } else {
             drawerPresented = false
-            setTimeout(280) {
+            // 卸载定时随动画时长 +25%：0.28 → 0.35s。
+            setTimeout(350) {
                 if (drawerPresentationVersion == version && !drawerPresented) {
                     drawerMounted = false
                 }
+            }
+            // 点按收起：震动在**完全收起那一刻**（easeIn 0.275s + buffer）。
+            if (wasOpen) {
+                setTimeout(300) {
+                    if (version == drawerPresentationVersion && !drawerOpen && !drawerPresented) {
+                        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 侧边栏横滑手势：开→左拖跟手收起，关→左缘右拖跟手展开。
+     * pageX 为页面坐标——面板自身随 transform 平移，local x 会抵消手指位移
+     * （灵动岛 handle 注释同款坑）。
+     */
+    private fun handleDrawerPan(state: String, x: Float) {
+        when (state) {
+            "start" -> {
+                if (drawerGesture.phase != DrawerGesturePhase.IDLE) return
+                drawerGestureStartX = x
+                drawerGestureLastDX = 0f
+                val base = if (drawerOpen) 0f else -292f
+                if (!drawerOpen) drawerMounted = true // 关→开：先挂载，让面板从指下跟手滑出
+                drawerGesture = DrawerGestureMotion(DrawerGesturePhase.DRAGGING, base)
+            }
+            "move" -> {
+                if (drawerGesture.phase != DrawerGesturePhase.DRAGGING) return
+                val raw =
+                    if (drawerOpen) x - drawerGestureStartX else -292f + (x - drawerGestureStartX)
+                val next = raw.coerceIn(-292f, 0f)
+                // 单步位移作速度代理：pan 不带 velocity，move 事件帧间隔近似恒定，
+                // 最后一步位移量大 = 手指正在快速滑动（SwipeActionRow 同款约束下的替代方案）。
+                drawerGestureLastDX = next - drawerGesture.offsetX
+                drawerGesture = DrawerGestureMotion(DrawerGesturePhase.DRAGGING, next)
+            }
+            "end", "cancel" -> {
+                if (drawerGesture.phase != DrawerGesturePhase.DRAGGING) return
+                val base = if (drawerOpen) 0f else -292f
+                val travel = drawerGesture.offsetX - base
+                // 快速短划判定：朝收起（左）/展开（右）方向猛一划，单步 ≥9dp
+                // 即翻越，不必拖过半程——松手判定要敏捷，轻扫就能收起。
+                val flickTowardClose = drawerOpen && drawerGestureLastDX <= -9f
+                val flickTowardOpen = !drawerOpen && drawerGestureLastDX >= 9f
+                when {
+                    // 手势被打断：回原位也要归位（有动画 + 震感）。
+                    state == "cancel" -> settleDrawerGesture(open = drawerOpen)
+                    // 死区内（≤8dp）且非快速划的误触：静默还原，不播动画不震动。
+                    kotlin.math.abs(travel) < 8f && !flickTowardClose && !flickTowardOpen ->
+                        cancelDrawerGesture()
+                    else -> {
+                        val progress = (drawerGesture.offsetX + 292f) / 292f
+                        val settleOpen = if (drawerOpen) {
+                            progress >= 0.5f && !flickTowardClose
+                        } else {
+                            progress >= 0.5f || flickTowardOpen
+                        }
+                        settleDrawerGesture(open = settleOpen)
+                    }
+                }
+            }
+        }
+    }
+
+    /** 误触还原：不播收敛动画、不震动。 */
+    private fun cancelDrawerGesture() {
+        drawerGesture = DrawerGestureMotion()
+        if (!drawerOpen) drawerMounted = false // 关态下手势只临时挂载了面板，直接卸载
+    }
+
+    /**
+     * 手势归位：一次原子写入（SETTLING + 目标偏移）让面板从手指最后一帧动画到端点。
+     * 展开先快后慢（easeOut 0.375s），收起先慢后快（easeIn 0.30s）——时长 +25%
+     * （用户决策 2026-09-05）。震动在**松手瞬间**触发（动画终点触发收起时震感太晚）。
+     */
+    private fun settleDrawerGesture(open: Boolean) {
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+        drawerGesture = DrawerGestureMotion(
+            DrawerGesturePhase.SETTLING,
+            if (open) 0f else -292f,
+        )
+        val version = ++drawerPresentationVersion
+        drawerOpen = open
+        drawerMounted = true
+        // 面板挂载发生在手势 start，这里无需 setTimeout(0) 预挂载延迟。
+        drawerPresented = open
+        if (!open) {
+            // 卸载定时随动画时长 +25%：0.30 → 0.375s。
+            setTimeout(375) {
+                if (version == drawerPresentationVersion && !drawerPresented) {
+                    drawerMounted = false
+                }
+            }
+        }
+        // 收敛动画结束后回到常规态，后续菜单按钮开合走原 presented 路径。
+        // phase 守卫保证被程序化开合（updateDrawerOpen 清手势态）抢占时静默退出。
+        setTimeout(440) {
+            if (drawerGesture.phase == DrawerGesturePhase.SETTLING) {
+                drawerGesture = DrawerGestureMotion()
             }
         }
     }
@@ -989,26 +1136,6 @@ internal class ChatPage : BasePager() {
 
     private fun welcomeMode(): WelcomeMode =
         if (welcomeBriefEnabled && viewModel.hasSessionHistory) WelcomeMode.BRIEF else WelcomeMode.FULL
-
-    private fun welcomeGreeting(mode: WelcomeMode): String {
-        val base = when (platformCurrentHour().coerceIn(0, 23)) {
-            in 6..10 -> "早上好"
-            in 11..12 -> "中午好"
-            in 13..17 -> "下午好"
-            in 18..23 -> "晚上好"
-            else -> "夜深了"
-        }
-        return if (mode == WelcomeMode.BRIEF) "$base，聊点新的" else base
-    }
-
-    private fun welcomeStarters(mode: WelcomeMode): List<WelcomeStarter> {
-        val defaults = defaultWelcomeStarters()
-        if (mode == WelcomeMode.FULL) return defaults
-        val used = readWelcomeUsedStarterKinds()
-        val allKinds = defaults.map { it.kind.name }.toSet()
-        if (used.containsAll(allKinds)) return defaults
-        return (defaults.filter { it.kind.name !in used } + defaults.filter { it.kind.name in used }).take(defaults.size)
-    }
 
     private fun chooseWelcomeStarter(starter: WelcomeStarter) {
         markWelcomeStarterUsed(starter)
@@ -1126,7 +1253,7 @@ internal class ChatPage : BasePager() {
     }
 
     /**
-     * 首屏入场：示例卡 40ms 阶梯上滑。
+     * 首屏入场：示例卡 94ms 阶梯上滑（时长 0.375s，下一张在前一张 25% 进度时启动）。
      * 每个空会话实例只播一次；从详情页返回不重播；减弱动态时直接落到终态。
      */
     private fun welcomeDidMount() {
@@ -1145,6 +1272,23 @@ internal class ChatPage : BasePager() {
             if (welcomeEntranceArmed) {
                 welcomeEntranceVisible = true
             }
+        }
+    }
+
+    // 欢迎区「看市场」胶囊：点击后滑块滑到右半格，动画结束震动再跳转市场页
+    // （R4/R5：滑块常驻挂载，attr 内无条件注册 easeOut，翻转周期消费上轮注册）。
+    private var welcomeMarketTabSelected: Boolean by observable(false)
+
+    private fun handleWelcomeMarketTap() {
+        if (welcomeMarketTabSelected) return // 动画/跳转期间防重复触发
+        welcomeMarketTabSelected = true
+        // 滑动 220ms → 到位震动 → 市场页才淡入；跳转后复位滑块供返回时显示默认态。
+        setTimeout(240) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+            openPage(Routes.MARKET)
+        }
+        setTimeout(420) {
+            welcomeMarketTabSelected = false
         }
     }
 
@@ -1695,6 +1839,22 @@ internal class ChatPage : BasePager() {
         voiceSourceExpanded = false
     }
 
+    /** 渐变描边流动：20fps 推进相位，一圈约 5s；幂等，页面出现时启动。 */
+    private fun startComposerRimFlow() {
+        if (composerRimFlowTimer != null) return
+        val timer = Timer()
+        composerRimFlowTimer = timer
+        timer.schedule(50, 50) {
+            if (composerRimFlowTimer !== timer) return@schedule
+            composerRimPhase = (composerRimPhase + 0.063f) % (PI * 2f).toFloat()
+        }
+    }
+
+    private fun stopComposerRimFlow() {
+        composerRimFlowTimer?.cancel()
+        composerRimFlowTimer = null
+    }
+
     private fun renderComposerGradientRim(container: ViewContainer<*, *>) {
         container.Canvas(
             init = {
@@ -1705,7 +1865,17 @@ internal class ChatPage : BasePager() {
                 }
             },
             draw = { context, width, height ->
-                val gradient = context.createLinearGradient(0f, 0f, width, 0f)
+                // 流动渐变：渐变轴绕中心旋转（相位由页侧定时器推进，draw 闭包内
+                // 读取 observable，ReactiveObserver 驱动重绘）。轴长取对角线，
+                // 任意角度下渐变都完整覆盖画布，不会露边角断色。
+                context.batchDraw = true
+                val phase = composerRimPhase
+                val cx = width / 2f
+                val cy = height / 2f
+                val half = sqrt(width * width + height * height) / 2f
+                val dx = cos(phase) * half
+                val dy = sin(phase) * half
+                val gradient = context.createLinearGradient(cx - dx, cy - dy, cx + dx, cy + dy)
                 gradient.addColorStop(0f, Color(0xFF2563EB, 0.72f))
                 gradient.addColorStop(0.45f, Color(0xFF7C3AED, 0.50f))
                 gradient.addColorStop(1f, Color(0xFF2DD4BF, 0.68f))
@@ -1808,7 +1978,9 @@ internal class ChatPage : BasePager() {
                 inputFocus {
                     // 键盘自己弹起（系统输入法回调 / 原生点击）也算进入输入态。
                     KLog.i(COMPOSER_LOG_TAG, "EV inputFocus len=${it.text.length}")
-                    this@ChatPage.stopWelcomeKeywordLoop(lock = true)
+                    // 轮循打字不因键盘弹起而停止（用户决策 2026-09-05：动效持久）。
+                    // 上锁停止只保留给真正开始对话的场景：发送消息 / 选示例卡 /
+                    // 打开历史会话（各自的调用点已有 stopWelcomeKeywordLoop(lock=true)）。
                     this@ChatPage.composerFocusLocked = true
                     // 已展开后的恢复 focus 必须是纯事件：不要再次进入任何布局函数。
                     // 即使函数内部最终没有改值，Kuikly 的事件/依赖追踪也可能安排
@@ -2204,6 +2376,8 @@ internal class ChatPage : BasePager() {
 
     private fun addDraggedStockToIsland(symbol: String) {
         resetIslandMotion()
+        // 新对比会话开始：使上一次退出对比留下的收起兜底定时器失效。
+        compareExperienceVersion++
         compareCandidateKey = ""
         compareCandidateSymbol = ""
         if (islandCompareLeftSymbol.isEmpty()) {
@@ -2269,6 +2443,19 @@ internal class ChatPage : BasePager() {
         compareCandidateSymbol = ""
         resetCompareInsight()
         islandExpanded = false
+        // 对比 × 详情竞态仲裁（用户决策 2026-09-05）：
+        // 1) 使在途的详情路由复位定时器失效，防止退出对比后旧复位帧与收起
+        //    动画交错，把对比几何重新写回原生层（残留对比样式的根源）；
+        // 2) 收起兜底：若收起写入被动画注册竞争/页面覆盖吃掉，360ms 后以
+        //    snap 强制贴回收起几何（R5 version-guarded fallback 模式）。
+        islandDetailRouteResetVersion++
+        islandDetailRouteActive = false
+        val version = ++compareExperienceVersion
+        setTimeout(360) {
+            if (version == compareExperienceVersion && !islandExpanded && !isIslandCompareLobbyVisible()) {
+                forceIslandCollapsedForDetailRoute()
+            }
+        }
     }
 
     private fun openIslandComparePanel() {
@@ -2457,6 +2644,13 @@ internal class ChatPage : BasePager() {
         // A tap can be re-delivered to stacked layers while the morph
         // re-layouts; ignore toggles until the animation settles.
         if (islandAnimating || islandGestureMotion.phase != IslandGesturePhase.IDLE) return
+        // 对比 lobby 在场时 expanded() 恒为真，单纯翻转 islandExpanded 会被
+        // compareVisible 架空（点了没反应，还把两个状态拧成不一致）。
+        // 用户决策 2026-09-05：此时点击 = 退出整个对比体验。
+        if (isIslandCompareLobbyVisible()) {
+            clearCompareExperience()
+            return
+        }
         cancelIslandDetailRouteReset()
         islandAnimating = true
         islandExpanded = !islandExpanded
@@ -2496,8 +2690,11 @@ internal class ChatPage : BasePager() {
                     (pagerData.pageViewHeight * 0.42f).coerceAtLeast(180f),
                 )
                 when {
-                    state == "end" && deltaY <= -24f -> settleIslandClosedFromGesture()
-                    state == "end" && deltaY >= 28f -> openIslandDetailFromGesture(islandSymbol)
+                    // Trigger thresholds kept low so a short flick is enough
+                    // (16dp close / 20dp detail); the pan already streams raw
+                    // pageY so lowering them costs nothing in tracking.
+                    state == "end" && deltaY <= -16f -> settleIslandClosedFromGesture()
+                    state == "end" && deltaY >= 20f -> openIslandDetailFromGesture(islandSymbol)
                     else -> settleIslandGestureBack()
                 }
             }
@@ -2555,6 +2752,11 @@ internal class ChatPage : BasePager() {
                 islandGestureMotion.phase == IslandGesturePhase.OPENING_DETAIL -> {
                 val symbol = islandSymbol
                 islandExpanded = false
+                // 详情与对比互斥（用户决策 2026-09-05）：进详情路由时清掉灵动岛
+                // 对比会话，避免返回后对比 lobby 借着 compareVisible 复活。
+                islandCompareVisible = false
+                islandCompareLeftSymbol = ""
+                islandCompareRightSymbol = ""
                 islandDetailRouteActive = true
                 islandDetailRouteResetVersion++
                 openStockDetail(symbol)
