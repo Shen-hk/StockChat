@@ -23,7 +23,7 @@ class GlassMaterial private constructor(
             id = "glass.sheet",
             blurRadius = 48f,
             tint = tint,
-            tintAlpha = 0.80f,
+            tintAlpha = 0.60f, // 0.80 - 25%，更透亮
             saturationBoost = 1.25f,
             strokeWidth = 1f,
             strokeAlpha = 0.30f,
