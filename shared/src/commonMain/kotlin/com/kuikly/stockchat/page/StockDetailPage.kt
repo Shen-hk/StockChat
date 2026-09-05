@@ -50,6 +50,7 @@ import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.Scroller
@@ -173,15 +174,15 @@ internal class StockDetailPage : BasePager() {
                         View {
                             attr { flex(1f); flexDirectionRow(); alignItemsCenter(); flexWrapWrap() }
                             TickerText(
-                                text = Format.price(page.quote.price),
-                                previousText = page.previousPriceText,
-                                loading = page.quoteLoading,
+                                text = { Format.price(page.quote.price) },
+                                previousText = { page.previousPriceText },
+                                loading = { page.quoteLoading },
                                 fontSize = page.theme.type.display,
                                 width = 142f,
-                                color = page.toneColor(),
+                                color = { page.toneColor() },
                                 theme = page.theme,
-                                lift = page.tickerLift,
-                                directionUp = page.tickerDirectionUp,
+                                lift = { page.tickerLift },
+                                directionUp = { page.tickerDirectionUp },
                                 reduceMotion = page.reduceMotion,
                             )
                             View {
@@ -193,33 +194,36 @@ internal class StockDetailPage : BasePager() {
                                     alignItemsCenter(); justifyContentCenter()
                                 }
                                 TickerText(
-                                    text = Format.percent(page.quote.changePercent),
-                                    previousText = page.previousPercentText,
-                                    loading = page.quoteLoading,
+                                    text = { Format.percent(page.quote.changePercent) },
+                                    previousText = { page.previousPercentText },
+                                    loading = { page.quoteLoading },
                                     fontSize = page.theme.type.sm,
                                     width = 70f,
-                                    color = page.toneColor(),
+                                    color = { page.toneColor() },
                                     theme = page.theme,
-                                    lift = page.tickerLift,
-                                    directionUp = page.tickerDirectionUp,
+                                    lift = { page.tickerLift },
+                                    directionUp = { page.tickerDirectionUp },
                                     reduceMotion = page.reduceMotion,
                                 )
                             }
                         }
-                        DataModeBadge(page.theme, page.dataModeLabel, page.hostGlassRenderer)
+                        // dataModeLabel 为 observable：vbind 包一层使其随标签变化重建
+                        vbind({ page.dataModeLabel }) {
+                            DataModeBadge(page.theme, page.dataModeLabel, page.hostGlassRenderer)
+                        }
                     }
                     View {
                         attr { marginTop(4f) }
                         TickerText(
-                            text = "${Format.signed(page.quote.change)}  ${Format.percent(page.quote.changePercent)}",
-                            previousText = page.previousChangeText,
-                            loading = page.quoteLoading,
+                            text = { "${Format.signed(page.quote.change)}  ${Format.percent(page.quote.changePercent)}" },
+                            previousText = { page.previousChangeText },
+                            loading = { page.quoteLoading },
                             fontSize = page.theme.type.body,
                             width = 168f,
-                            color = page.toneColor(),
+                            color = { page.toneColor() },
                             theme = page.theme,
-                            lift = page.tickerLift,
-                            directionUp = page.tickerDirectionUp,
+                            lift = { page.tickerLift },
+                            directionUp = { page.tickerDirectionUp },
                             reduceMotion = page.reduceMotion,
                         )
                     }
@@ -231,7 +235,7 @@ internal class StockDetailPage : BasePager() {
                             color(page.theme.textTertiary)
                         }
                     }
-                    LiveDot(page.theme, page.livePulse, page.reduceMotion)
+                    LiveDot(page.theme, { page.livePulse }, page.reduceMotion)
                     View {
                         attr {
                             marginTop(page.theme.spacing.md)
@@ -258,7 +262,7 @@ internal class StockDetailPage : BasePager() {
                                 color(if (page.watchlisted) page.theme.textSecondary else page.theme.brand)
                             }
                         }
-                        FocusHairline(page.watchlistFeedback, page.theme, page.reduceMotion)
+                        FocusHairline({ page.watchlistFeedback }, page.theme, page.reduceMotion)
                         event { click { page.toggleWatchlist() } }
                     }
                     vif({ page.watchlistHint.isNotEmpty() }) {
@@ -293,29 +297,32 @@ internal class StockDetailPage : BasePager() {
                         backgroundColor(page.theme.surfaceMuted)
                         borderRadius(page.theme.cardRadius)
                     }
-                    MetricGrid(
-                        listOf(
-                            DetailMetric("今开", Format.price(page.quote.open), page.marketColor(page.quote.open)),
-                            DetailMetric("最高", Format.price(page.quote.high), page.marketColor(page.quote.high)),
-                            DetailMetric("最低", Format.price(page.quote.low), page.marketColor(page.quote.low)),
-                            DetailMetric("昨收", Format.price(page.quote.previousClose), page.theme.textSecondary),
-                            DetailMetric("成交量", Format.compactAmount(page.quote.volume)),
-                            DetailMetric("成交额", Format.compactAmount(page.quote.amount)),
-                            DetailMetric("换手率", "${Format.decimal(page.quote.turnoverRate, 2)}%"),
-                            DetailMetric("总市值", Format.compactAmount(page.quote.marketCap)),
-                        ),
-                        page.theme,
-                    )
+                    // 指标值随行情刷新：数据驱动重建，vbind 范式（MarketPage 同款）
+                    vbind({ page.quote }) {
+                        MetricGrid(
+                            listOf(
+                                DetailMetric("今开", Format.price(page.quote.open), page.marketColor(page.quote.open)),
+                                DetailMetric("最高", Format.price(page.quote.high), page.marketColor(page.quote.high)),
+                                DetailMetric("最低", Format.price(page.quote.low), page.marketColor(page.quote.low)),
+                                DetailMetric("昨收", Format.price(page.quote.previousClose), page.theme.textSecondary),
+                                DetailMetric("成交量", Format.compactAmount(page.quote.volume)),
+                                DetailMetric("成交额", Format.compactAmount(page.quote.amount)),
+                                DetailMetric("换手率", "${Format.decimal(page.quote.turnoverRate, 2)}%"),
+                                DetailMetric("总市值", Format.compactAmount(page.quote.marketCap)),
+                            ),
+                            page.theme,
+                        )
+                    }
                 }
 
                 // ---- 走势：去卡片，满宽绘制 + 分段控件 ----
                 SectionLabel("走势", page.theme)
-                ChartSegment(page.theme, page.chartMode, page.chartPeriod, page.reduceMotion) { m, p ->
+                ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
                     page.chartMode = m
                     page.chartPeriod = p
                     page.selectedKLineIndex = -1
                 }
-                DetailChart(page.theme, page.chartMode, page.chartPeriod, page.quote, ctx, page.selectedKLineIndex) {
+                DetailChart(page.theme, { page.chartMode }, { page.chartPeriod }, page.quote, ctx, { page.selectedKLineIndex }) {
                     page.selectedKLineIndex = it
                 }
 
@@ -352,7 +359,7 @@ internal class StockDetailPage : BasePager() {
                     context = ctx,
                     theme = page.theme,
                     wide = wide,
-                    entranceVisible = page.entranceVisible,
+                    entranceVisible = { page.entranceVisible },
                     reduceMotion = page.reduceMotion,
                 )
 
@@ -362,9 +369,9 @@ internal class StockDetailPage : BasePager() {
                 // ---- AI 解读：要点卡片（方案 C） ----
                 SectionLabel("AI 解读", page.theme)
                 AiInsightBlock(
-                    summary = if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource,
-                    revealLimit = page.aiRevealLimit,
-                    retryActive = page.aiRetryActive,
+                    summary = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
+                    revealLimit = { page.aiRevealLimit },
+                    retryActive = { page.aiRetryActive },
                     theme = page.theme,
                     reduceMotion = page.reduceMotion,
                     onRetry = { page.retryAiReveal() },
@@ -374,8 +381,8 @@ internal class StockDetailPage : BasePager() {
                 AttributionBlock(
                     AttributionCardModel(page.quote, attribution.direction, attribution.factors),
                     page.theme,
-                    page.expandedAttributionKey,
-                    page.reduceMotion,
+                    expandedKey = { page.expandedAttributionKey },
+                    reduceMotion = page.reduceMotion,
                 ) { key ->
                     page.expandedAttributionKey = if (page.expandedAttributionKey == key) "" else key
                 }
@@ -404,8 +411,8 @@ internal class StockDetailPage : BasePager() {
                 theme = page.theme,
                 renderer = page.hostGlassRenderer,
                 bottomInset = page.pagerData.safeAreaInsets.bottom,
-                watchlisted = page.watchlisted,
-                feedback = page.watchlistFeedback,
+                watchlisted = { page.watchlisted },
+                feedback = { page.watchlistFeedback },
                 reduceMotion = page.reduceMotion,
                 onToggleWatchlist = { page.toggleWatchlist() },
                 onBackToChat = { page.closePage() },
@@ -572,18 +579,20 @@ private fun ViewContainer<*, *>.SectionLabel(text: String, theme: StockChatTheme
 }
 
 private fun ViewContainer<*, *>.TickerText(
-    text: String,
-    previousText: String,
-    loading: Boolean,
+    // 可变状态一律传 lambda：observable 读取延迟到 attr/vif 闭包内（R1），
+    // 行情 tick 时文本/颜色随 attr 重跑刷新，lift 动画才有驱动 key（R2）。
+    text: () -> String,
+    previousText: () -> String,
+    loading: () -> Boolean,
     fontSize: Float,
     width: Float,
-    color: Color,
+    color: () -> Color,
     theme: StockChatTheme,
-    lift: Boolean,
-    directionUp: Boolean,
+    lift: () -> Boolean,
+    directionUp: () -> Boolean,
     reduceMotion: Boolean,
 ) {
-    if (loading) {
+    vif({ loading() }) {
         View {
             attr {
                 width(width)
@@ -592,62 +601,63 @@ private fun ViewContainer<*, *>.TickerText(
                 backgroundColor(theme.surfaceMuted)
             }
         }
-        return
     }
+    vif({ !loading() }) {
     View {
         attr {
             width(width)
             height(fontSize * 1.12f)
             overflow(true)
         }
-        if (previousText.isNotEmpty() && lift && !reduceMotion) {
+        vif({ !reduceMotion && lift() && previousText().isNotEmpty() }) {
             Text {
                 attr {
                     absolutePosition(top = 0f, left = 0f)
-                    text(previousText)
+                    text(previousText())
                     fontSize(fontSize)
                     fontWeightBold()
-                    color(color.opacity(0.72f))
-                    transform(Translate(0f, if (directionUp) -0.86f else 0.86f))
+                    color(color().opacity(0.72f))
+                    transform(Translate(0f, if (directionUp()) -0.86f else 0.86f))
                     opacity(0f)
-                    animate(Animation.springEaseOut(0.30f, 0.78f, 0.18f), lift)
+                    animate(Animation.springEaseOut(0.30f, 0.78f, 0.18f), lift())
                 }
             }
         }
         Text {
             attr {
                 absolutePosition(top = 0f, left = 0f)
-                text(text)
+                text(text())
                 fontSize(fontSize)
                 fontWeightBold()
-                color(color)
-                opacity(if (lift && !reduceMotion) 0.18f else 1f)
+                color(color())
+                opacity(if (lift()) 0.18f else 1f)
                 if (!reduceMotion) {
-                    transform(Translate(0f, if (lift) {
-                        if (directionUp) 0.72f else -0.72f
+                    transform(Translate(0f, if (lift()) {
+                        if (directionUp()) 0.72f else -0.72f
                     } else {
                         0f
                     }))
-                    animate(Animation.springEaseOut(0.32f, 0.80f, 0.16f), lift)
+                    animate(Animation.springEaseOut(0.32f, 0.80f, 0.16f), lift())
                 }
             }
         }
-        if (lift && !reduceMotion) {
+        vif({ !reduceMotion && lift() }) {
             View {
                 attr {
                     absolutePosition(left = 0f, right = 0f, bottom = 0f)
                     height(1f)
-                    backgroundColor(color.opacity(0.24f))
+                    backgroundColor(color().opacity(0.24f))
                     opacity(0.6f)
-                    animate(Animation.easeOut(0.20f), lift)
+                    animate(Animation.easeOut(0.20f), lift())
                 }
             }
         }
     }
+    }
 }
 
 private fun ViewContainer<*, *>.FocusHairline(
-    visible: Boolean,
+    visible: () -> Boolean,
     theme: StockChatTheme,
     reduceMotion: Boolean,
 ) {
@@ -655,11 +665,11 @@ private fun ViewContainer<*, *>.FocusHairline(
         attr {
             absolutePositionAllZero()
             borderRadius(theme.inputRadius)
-            border(Border(1.5f, BorderStyle.SOLID, if (visible) theme.brand.opacity(0.50f) else theme.brand.opacity(0f)))
+            border(Border(1.5f, BorderStyle.SOLID, if (visible()) theme.brand.opacity(0.50f) else theme.brand.opacity(0f)))
             touchEnable(false)
             if (!reduceMotion) {
-                opacity(if (visible) 1f else 0f)
-                animate(Animation.easeOut(0.20f), visible)
+                opacity(if (visible()) 1f else 0f)
+                animate(Animation.easeOut(0.20f), visible())
             }
         }
     }
@@ -700,7 +710,9 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
     context: CardContext,
     theme: StockChatTheme,
     wide: Boolean,
-    entranceVisible: Boolean,
+    // 传 lambda 而非 Boolean：闭包实参是建视图时的首帧快照（R1），
+    // observable 的读取必须延迟到 RevealBlock 的 attr 闭包内才建立依赖。
+    entranceVisible: () -> Boolean,
     reduceMotion: Boolean,
 ) {
     if (items.isEmpty()) {
@@ -759,19 +771,23 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
 
 private fun ViewContainer<*, *>.RevealBlock(
     index: Int,
-    visible: Boolean,
+    visible: () -> Boolean,
     reduceMotion: Boolean,
     content: ViewContainer<*, *>.() -> Unit,
 ) {
     View {
         attr {
-            opacity(if (visible) 1f else 0f)
+            // 驱动 observable 必须在 attr 闭包内读取（R1），并置于其他读取之后、
+            // 紧邻 animate()（R2）。此前以普通 Boolean 快照传入：attr 不重跑、
+            // animate() 绑定不到 key，入场链路整体失效。
+            val shown = visible()
+            opacity(if (shown) 1f else 0f)
             if (!reduceMotion) {
-                transform(Translate(0f, if (visible) 0f else 0.16f))
-                animate(
-                    if (visible) Animation.easeOut(0.28f).delay(0.04f * index) else Animation.linear(0f),
-                    visible,
-                )
+                transform(Translate(0f, if (shown) 0f else 0.16f))
+                // 无条件注册 easeOut（含未呈现态）：flip 周期消费的正是上一周期
+                // 注册的这份动画（R5）。此前 else 分支注册 linear(0)，入场被
+                // 消费成 0 时长瞬移——与 CardSheet/ChatScaffolding 同一范式。
+                animate(Animation.easeOut(0.28f).delay(0.04f * index), shown)
             }
         }
         content()
@@ -780,8 +796,8 @@ private fun ViewContainer<*, *>.RevealBlock(
 
 private fun ViewContainer<*, *>.ChartSegment(
     theme: StockChatTheme,
-    chartMode: StockChartMode,
-    chartPeriod: StockChartPeriod,
+    chartMode: () -> StockChartMode,
+    chartPeriod: () -> StockChartPeriod,
     reduceMotion: Boolean,
     onSelect: (StockChartMode, StockChartPeriod) -> Unit,
 ) {
@@ -791,10 +807,11 @@ private fun ViewContainer<*, *>.ChartSegment(
         StockChartMode.K_LINE to "周K",
         StockChartMode.K_LINE to "月K",
     )
-    val activeIndex = when {
-        chartMode == StockChartMode.TIMELINE -> 0
-        chartPeriod == StockChartPeriod.WEEK -> 2
-        chartPeriod == StockChartPeriod.MONTH -> 3
+    // activeIndex 在闭包内实时派生（R1）：捕获计算结果会让 tab 高亮/滑块全部冻结。
+    fun activeIdx(): Int = when {
+        chartMode() == StockChartMode.TIMELINE -> 0
+        chartPeriod() == StockChartPeriod.WEEK -> 2
+        chartPeriod() == StockChartPeriod.MONTH -> 3
         else -> 1
     }
     View {
@@ -808,28 +825,31 @@ private fun ViewContainer<*, *>.ChartSegment(
                 border(Border(1f, BorderStyle.SOLID, theme.divider))
                 overflow(true)
             }
-            View {
-                attr {
-                    absolutePositionAllZero()
-                    padding(3f)
-                    flexDirectionRow()
-                    touchEnable(false)
-                }
-                repeat(activeIndex) { View { attr { flex(1f) } } }
+            // 滑块位置由占位 view 数量决定（数量型变化）：vbind 随 activeIndex 重建，
+            // 重建即瞬移到位（R4：新挂载首帧不播动画）。原 spring 滑动动画绑定的
+            // 是捕获的 Int、从未生效，属死代码，已随本次修正移除；若要滑动过渡
+            // 需改为 transform 驱动的单滑块方案（独立任务）。
+            vbind({ activeIdx() }) {
                 View {
                     attr {
-                        flex(1f)
-                        height(32f)
-                        borderRadius(theme.inputRadius)
-                        backgroundColor(theme.brandSoft)
-                        border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.24f)))
-                        boxShadow(BoxShadow(0f, 2f, 8f, theme.brand.opacity(0.08f)))
-                        if (!reduceMotion) {
-                            animate(Animation.springEaseOut(0.28f, 0.72f, 0.20f), activeIndex)
+                        absolutePositionAllZero()
+                        padding(3f)
+                        flexDirectionRow()
+                        touchEnable(false)
+                    }
+                    repeat(activeIdx()) { View { attr { flex(1f) } } }
+                    View {
+                        attr {
+                            flex(1f)
+                            height(32f)
+                            borderRadius(theme.inputRadius)
+                            backgroundColor(theme.brandSoft)
+                            border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.24f)))
+                            boxShadow(BoxShadow(0f, 2f, 8f, theme.brand.opacity(0.08f)))
                         }
                     }
+                    repeat(3 - activeIdx()) { View { attr { flex(1f) } } }
                 }
-                repeat(3 - activeIndex) { View { attr { flex(1f) } } }
             }
             View {
                 attr {
@@ -842,21 +862,21 @@ private fun ViewContainer<*, *>.ChartSegment(
                         3 -> StockChartPeriod.MONTH
                         else -> StockChartPeriod.DAY
                     }
-                    val active = index == activeIndex
+                    fun active(): Boolean = index == activeIdx()
                     View {
                         attr {
                             flex(1f)
                             height(32f)
                             allCenter()
                             borderRadius(theme.inputRadius)
-                            if (!reduceMotion) animate(Animation.easeOut(0.16f), active)
+                            if (!reduceMotion) animate(Animation.easeOut(0.16f), active())
                         }
                         Text {
                             attr {
                                 text(label)
                                 fontSize(theme.type.label)
                                 fontWeightSemiBold()
-                                color(if (active) theme.brand else theme.textSecondary)
+                                color(if (active()) theme.brand else theme.textSecondary)
                             }
                         }
                         event { click { onSelect(mode, period) } }
@@ -869,14 +889,14 @@ private fun ViewContainer<*, *>.ChartSegment(
 
 private fun ViewContainer<*, *>.DetailChart(
     theme: StockChatTheme,
-    chartMode: StockChartMode,
-    chartPeriod: StockChartPeriod,
+    chartMode: () -> StockChartMode,
+    chartPeriod: () -> StockChartPeriod,
     quote: Quote,
     ctx: CardContext,
-    selectedKLineIndex: Int,
+    selectedKLineIndex: () -> Int,
     onSelectKLine: (Int) -> Unit,
 ) {
-    vif({ chartMode == StockChartMode.TIMELINE }) {
+    vif({ chartMode() == StockChartMode.TIMELINE }) {
         KuiklyTimelineChart(this, quote, ctx, height = 132f)
         Text {
             attr {
@@ -885,18 +905,18 @@ private fun ViewContainer<*, *>.DetailChart(
             }
         }
     }
-    vif({ chartMode == StockChartMode.K_LINE && chartPeriod == StockChartPeriod.DAY }) {
-        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx, selectedKLineIndex, onSelectKLine)
+    vif({ chartMode() == StockChartMode.K_LINE && chartPeriod() == StockChartPeriod.DAY }) {
+        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx, selectedKLineIndex(), onSelectKLine)
     }
-    vif({ chartMode == StockChartMode.K_LINE && chartPeriod == StockChartPeriod.WEEK }) {
-        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx, selectedKLineIndex, onSelectKLine)
+    vif({ chartMode() == StockChartMode.K_LINE && chartPeriod() == StockChartPeriod.WEEK }) {
+        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx, selectedKLineIndex(), onSelectKLine)
     }
-    vif({ chartMode == StockChartMode.K_LINE && chartPeriod == StockChartPeriod.MONTH }) {
-        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx, selectedKLineIndex, onSelectKLine)
+    vif({ chartMode() == StockChartMode.K_LINE && chartPeriod() == StockChartPeriod.MONTH }) {
+        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx, selectedKLineIndex(), onSelectKLine)
     }
 }
 
-private fun ViewContainer<*, *>.LiveDot(theme: StockChatTheme, pulse: Boolean, reduceMotion: Boolean) {
+private fun ViewContainer<*, *>.LiveDot(theme: StockChatTheme, pulse: () -> Boolean, reduceMotion: Boolean) {
     View {
         attr {
             marginTop(theme.spacing.sm)
@@ -913,11 +933,12 @@ private fun ViewContainer<*, *>.LiveDot(theme: StockChatTheme, pulse: Boolean, r
             View {
                 attr {
                     absolutePosition(top = 1f, left = 1f)
-                    size(if (pulse) 16f else 10f, if (pulse) 16f else 10f)
-                    borderRadius(if (pulse) 8f else 5f)
-                    backgroundColor(theme.brand.opacity(if (pulse) 0f else 0.18f))
-                    border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(if (pulse) 0f else 0.28f)))
-                    if (!reduceMotion) animate(Animation.linear(0.68f), pulse)
+                    val p = pulse()
+                    size(if (p) 16f else 10f, if (p) 16f else 10f)
+                    borderRadius(if (p) 8f else 5f)
+                    backgroundColor(theme.brand.opacity(if (p) 0f else 0.18f))
+                    border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(if (p) 0f else 0.28f)))
+                    if (!reduceMotion) animate(Animation.linear(0.68f), pulse())
                     touchEnable(false)
                 }
             }
@@ -926,11 +947,11 @@ private fun ViewContainer<*, *>.LiveDot(theme: StockChatTheme, pulse: Boolean, r
                     size(8f, 8f)
                     borderRadius(4f)
                     backgroundColor(theme.brand)
-                    opacity(if (pulse) 0.82f else 1f)
+                    opacity(if (pulse()) 0.82f else 1f)
                     boxShadow(BoxShadow(0f, 0f, 8f, theme.brand.opacity(0.24f)))
                     if (!reduceMotion) {
-                        transform(scale = if (pulse) Scale(1.08f, 1.08f) else Scale.DEFAULT)
-                        animate(Animation.easeOut(0.34f), pulse)
+                        transform(scale = if (pulse()) Scale(1.08f, 1.08f) else Scale.DEFAULT)
+                        animate(Animation.easeOut(0.34f), pulse())
                     }
                 }
             }
@@ -950,8 +971,8 @@ private fun ViewContainer<*, *>.DetailBottomBar(
     theme: StockChatTheme,
     renderer: GlassRenderer,
     bottomInset: Float,
-    watchlisted: Boolean,
-    feedback: Boolean,
+    watchlisted: () -> Boolean,
+    feedback: () -> Boolean,
     reduceMotion: Boolean,
     onToggleWatchlist: () -> Unit,
     onBackToChat: () -> Unit,
@@ -972,7 +993,7 @@ private fun ViewContainer<*, *>.DetailBottomBar(
         }
         GlassBackdrop(theme.glass.peek, renderer)
         DetailBottomAction(
-            label = if (watchlisted) "已自选" else "加自选",
+            label = { if (watchlisted()) "已自选" else "加自选" },
             primary = false,
             theme = theme,
             feedback = feedback,
@@ -981,19 +1002,19 @@ private fun ViewContainer<*, *>.DetailBottomBar(
             onToggleWatchlist()
         }
         DetailBottomAction(
-            label = "回到对话",
+            label = { "回到对话" },
             primary = true,
             theme = theme,
-            feedback = false,
+            feedback = { false },
             reduceMotion = reduceMotion,
         ) {
             onBackToChat()
         }
         DetailBottomAction(
-            label = "问 AI",
+            label = { "问 AI" },
             primary = false,
             theme = theme,
-            feedback = false,
+            feedback = { false },
             reduceMotion = reduceMotion,
         ) {
             onAskAi()
@@ -1002,10 +1023,10 @@ private fun ViewContainer<*, *>.DetailBottomBar(
 }
 
 private fun ViewContainer<*, *>.DetailBottomAction(
-    label: String,
+    label: () -> String,
     primary: Boolean,
     theme: StockChatTheme,
-    feedback: Boolean,
+    feedback: () -> Boolean,
     reduceMotion: Boolean,
     onClick: () -> Unit,
 ) {
@@ -1018,39 +1039,37 @@ private fun ViewContainer<*, *>.DetailBottomAction(
             allCenter()
             borderRadius(21f)
             backgroundColor(if (primary) theme.brand else theme.surface.opacity(0.52f))
-            border(Border(1f, BorderStyle.SOLID, if (feedback) theme.brand else theme.divider.opacity(if (primary) 0f else 0.55f)))
+            border(Border(1f, BorderStyle.SOLID, if (feedback()) theme.brand else theme.divider.opacity(if (primary) 0f else 0.55f)))
             boxShadow(
-                if (feedback) BoxShadow(0f, 3f, 12f, theme.brand.opacity(0.18f))
+                if (feedback()) BoxShadow(0f, 3f, 12f, theme.brand.opacity(0.18f))
                 else BoxShadow(0f, 0f, 0f, theme.brand.opacity(0f))
             )
             if (!reduceMotion) {
-                transform(scale = if (feedback) Scale(1.03f, 1.03f) else Scale.DEFAULT)
-                animate(Animation.easeOut(0.18f), feedback)
+                transform(scale = if (feedback()) Scale(1.03f, 1.03f) else Scale.DEFAULT)
+                animate(Animation.easeOut(0.18f), feedback())
             }
         }
         Text {
             attr {
-                text(label)
+                text(label())
                 fontSize(theme.type.sm)
                 fontWeightSemiBold()
                 color(if (primary) theme.onBrand else theme.textPrimary)
             }
         }
-        FocusHairline(feedback || primary, theme, reduceMotion)
+        FocusHairline({ feedback() || primary }, theme, reduceMotion)
         event { click { onClick() } }
     }
 }
 
 private fun ViewContainer<*, *>.AiInsightBlock(
-    summary: String,
-    revealLimit: Int,
-    retryActive: Boolean,
+    summary: () -> String,
+    revealLimit: () -> Int,
+    retryActive: () -> Boolean,
     theme: StockChatTheme,
     reduceMotion: Boolean,
     onRetry: () -> Unit,
 ) {
-    val revealed = if (revealLimit <= 0) "" else summary.take(revealLimit.coerceAtMost(summary.length))
-    val sentences = revealed.split(Regex("[。，]")).map { it.trim() }.filter { it.isNotEmpty() }
     View {
         attr {
             marginTop(theme.spacing.lg)
@@ -1082,8 +1101,8 @@ private fun ViewContainer<*, *>.AiInsightBlock(
                         backgroundColor(theme.surface)
                         border(Border(1f, BorderStyle.SOLID, theme.divider))
                         if (!reduceMotion) {
-                            transform(Rotate(if (retryActive) 360f else 0f, 0f, 0f))
-                            animate(Animation.easeOut(0.60f), retryActive)
+                            transform(Rotate(if (retryActive()) 360f else 0f, 0f, 0f))
+                            animate(Animation.easeOut(0.60f), retryActive())
                         }
                     }
                     Text {
@@ -1097,55 +1116,61 @@ private fun ViewContainer<*, *>.AiInsightBlock(
                     event { click { onRetry() } }
                 }
             }
-            if (sentences.isNotEmpty()) {
-                Text {
-                    attr {
-                        text(sentences.first() + "。")
-                        marginTop(theme.spacing.sm)
-                        fontSize(theme.type.body)
-                        fontWeightSemiBold()
-                        color(theme.textPrimary)
-                        lineHeight(21f)
-                    }
-                }
-            }
-            if (sentences.isEmpty()) {
-                View {
-                    attr {
-                        marginTop(theme.spacing.md)
-                        width(180f)
-                        height(18f)
-                        borderRadius(5f)
-                        backgroundColor(theme.surface.opacity(0.72f))
-                    }
-                }
-                View {
-                    attr {
-                        marginTop(theme.spacing.sm)
-                        width(240f)
-                        height(12f)
-                        borderRadius(4f)
-                        backgroundColor(theme.surface.opacity(0.62f))
-                    }
-                }
-            }
-            sentences.drop(1).forEach { s ->
-                View {
-                    attr { flexDirectionRow(); marginTop(theme.spacing.sm); alignItemsFlexStart() }
-                    View {
-                        attr {
-                            width(6f); height(6f); borderRadius(3f)
-                            backgroundColor(theme.brand)
-                            marginTop(6f); marginRight(theme.spacing.sm)
-                        }
-                    }
+            // 逐句揭示：内容随 revealLimit 逐字增长，属数据驱动重建（MarketPage
+            // vbind 同款范式），无注册动画，重建不会丢动画状态。
+            vbind({ revealLimit() }) {
+                val revealed = if (revealLimit() <= 0) "" else summary().take(revealLimit().coerceAtMost(summary().length))
+                val sentences = revealed.split(Regex("[。，]")).map { it.trim() }.filter { it.isNotEmpty() }
+                if (sentences.isNotEmpty()) {
                     Text {
                         attr {
-                            flex(1f)
-                            text(s + "。")
-                            fontSize(theme.type.sm)
-                            lineHeight(19f)
-                            color(theme.textSecondary)
+                            text(sentences.first() + "。")
+                            marginTop(theme.spacing.sm)
+                            fontSize(theme.type.body)
+                            fontWeightSemiBold()
+                            color(theme.textPrimary)
+                            lineHeight(21f)
+                        }
+                    }
+                }
+                if (sentences.isEmpty()) {
+                    View {
+                        attr {
+                            marginTop(theme.spacing.md)
+                            width(180f)
+                            height(18f)
+                            borderRadius(5f)
+                            backgroundColor(theme.surface.opacity(0.72f))
+                        }
+                    }
+                    View {
+                        attr {
+                            marginTop(theme.spacing.sm)
+                            width(240f)
+                            height(12f)
+                            borderRadius(4f)
+                            backgroundColor(theme.surface.opacity(0.62f))
+                        }
+                    }
+                }
+                sentences.drop(1).forEach { s ->
+                    View {
+                        attr { flexDirectionRow(); marginTop(theme.spacing.sm); alignItemsFlexStart() }
+                        View {
+                            attr {
+                                width(6f); height(6f); borderRadius(3f)
+                                backgroundColor(theme.brand)
+                                marginTop(6f); marginRight(theme.spacing.sm)
+                            }
+                        }
+                        Text {
+                            attr {
+                                flex(1f)
+                                text(s + "。")
+                                fontSize(theme.type.sm)
+                                lineHeight(19f)
+                                color(theme.textSecondary)
+                            }
                         }
                     }
                 }
@@ -1165,7 +1190,7 @@ private fun ViewContainer<*, *>.AiInsightBlock(
 private fun ViewContainer<*, *>.AttributionBlock(
     model: AttributionCardModel,
     theme: StockChatTheme,
-    expandedKey: String,
+    expandedKey: () -> String,
     reduceMotion: Boolean,
     onToggle: (String) -> Unit,
 ) {
@@ -1181,12 +1206,14 @@ private fun ViewContainer<*, *>.AttributionBlock(
     }
     factors.forEachIndexed { index, factor ->
         val key = "$index:${factor.name}"
-        val expanded = expandedKey == key
+        // expanded 必须在闭包内实时求值：expandedKey() 读 observable（R1），
+        // 捕获成 Boolean 会让 vif 永不重跑、animate 绑不到 key。
+        fun expanded(): Boolean = expandedKey() == key
         View {
             attr {
                 marginTop(theme.spacing.md); paddingTop(theme.spacing.md)
                 if (index > 0) borderTop(Border(0.5f, BorderStyle.SOLID, theme.divider))
-                if (!reduceMotion) animate(Animation.easeOut(0.18f), expanded)
+                if (!reduceMotion) animate(Animation.easeOut(0.18f), expanded())
             }
             View {
                 attr { flexDirectionRow(); alignItemsCenter() }
@@ -1208,7 +1235,7 @@ private fun ViewContainer<*, *>.AttributionBlock(
                 }
                 Text {
                     attr {
-                        text(if (expanded) "⌄" else "›")
+                        text(if (expanded()) "⌄" else "›")
                         marginLeft(8f)
                         fontSize(theme.type.body)
                         color(theme.brand)
@@ -1241,7 +1268,7 @@ private fun ViewContainer<*, *>.AttributionBlock(
                 }
                 View { attr { flex((1f - factor.weight.toFloat()).coerceAtLeast(0.001f)) } }
             }
-            vif({ expanded }) {
+            vif({ expanded() }) {
                 View {
                     attr {
                         marginTop(theme.spacing.sm)
@@ -1249,10 +1276,10 @@ private fun ViewContainer<*, *>.AttributionBlock(
                         borderRadius(theme.inputRadius)
                         backgroundColor(theme.surfaceMuted)
                         border(Border(1f, BorderStyle.SOLID, theme.divider))
-                        opacity(if (expanded) 1f else 0f)
+                        opacity(if (expanded()) 1f else 0f)
                         if (!reduceMotion) {
-                            transform(Translate(0f, if (expanded) 0f else 0.10f))
-                            animate(Animation.easeOut(0.20f), expanded)
+                            transform(Translate(0f, if (expanded()) 0f else 0.10f))
+                            animate(Animation.easeOut(0.20f), expanded())
                         }
                     }
                     Text {
