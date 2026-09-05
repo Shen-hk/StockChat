@@ -86,7 +86,7 @@
 - (void)fetchContextCodeWithPageName:(NSString *)pageName resultCallback:(KuiklyContextCodeCallback)callback {
     if (callback) {
         // 返回对应framework名字
-        callback(@"shared", nil);
+        callback(@"stockchat", nil);
     }
 }
 

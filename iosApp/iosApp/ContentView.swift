@@ -1,6 +1,6 @@
 import SwiftUI
 import UIKit
-import shared
+import stockchat
 
 struct ContentView: View {
 

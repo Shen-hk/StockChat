@@ -2,6 +2,13 @@
 
 #import "KuiklyRenderViewController.h"
 #import <OpenKuiklyIOSRender/NSObject+KR.h>
+#include <stdbool.h>
+
+// Kuikly 2.25.0 exposes this OHOS-only symbol from its iOS framework.
+// The iOS renderer already serializes these callbacks on its UI context.
+bool com_tencent_kuikly_IsCurrentOnContextThread(const char *pagerId) {
+    return true;
+}
 
 #define REQ_PARAM_KEY @"reqParam"
 #define CMD_KEY @"cmd"
@@ -88,6 +95,13 @@
 }
 
 - (void)cancelVoiceRecording:(NSDictionary *)args {
+}
+
+- (NSString *)getGlassMode:(NSDictionary *)args {
+    if (UIAccessibilityIsReduceTransparencyEnabled() || UIAccessibilityIsReduceMotionEnabled()) {
+        return @"simplified";
+    }
+    return @"realtime";
 }
 
 @end
