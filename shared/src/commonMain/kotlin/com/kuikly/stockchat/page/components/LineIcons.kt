@@ -21,6 +21,7 @@ private const val STROKE = 1.8f
 private fun ViewContainer<*, *>.lineIcon(
     color: Color,
     size: Float,
+    strokeWidth: Float = STROKE,
     draw: CanvasContext.(k: Float) -> Unit,
 ) {
     Canvas({
@@ -31,7 +32,7 @@ private fun ViewContainer<*, *>.lineIcon(
         ctx.scale(k, k)
         ctx.strokeStyle(color)
         ctx.fillStyle(color)
-        ctx.lineWidth(STROKE)
+        ctx.lineWidth(strokeWidth)
         ctx.lineCapRound()
         ctx.draw(k)
     }
@@ -173,6 +174,28 @@ fun ViewContainer<*, *>.LineIconCamera(color: Color, size: Float) {
     }
 }
 
+/**
+ * Soundwave（Lucide `audio-lines` 对齐）：语音输入入口。
+ * 5 根圆头竖线、中轴对称的波形高度。
+ */
+fun ViewContainer<*, *>.LineIconAudioLines(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        // x=4, 8, 12, 16, 20；高度 6 / 12 / 18 / 10 / 4。
+        moveTo(4f, 9f)
+        lineTo(4f, 15f)
+        moveTo(8f, 6f)
+        lineTo(8f, 18f)
+        moveTo(12f, 3f)
+        lineTo(12f, 21f)
+        moveTo(16f, 7f)
+        lineTo(16f, 17f)
+        moveTo(20f, 10f)
+        lineTo(20f, 14f)
+        stroke()
+    }
+}
+
 /** Photo: pick from album. */
 fun ViewContainer<*, *>.LineIconPhoto(color: Color, size: Float) {
     lineIcon(color, size) {
@@ -228,90 +251,108 @@ fun ViewContainer<*, *>.LineIconRecordingDot(color: Color, size: Float) {
     }
 }
 
-/** Trend down: market movement explanation. */
+/** Trend down (Lucide `trending-down`): market movement explanation. */
 fun ViewContainer<*, *>.LineIconTrendDown(color: Color, size: Float) {
-    lineIcon(color, size) {
+    lineIcon(color, size, strokeWidth = 2f) {
         beginPath()
-        moveTo(4f, 7f)
-        lineTo(9f, 12f)
-        lineTo(13f, 9f)
-        lineTo(20f, 16f)
+        moveTo(22f, 17f)
+        lineTo(13.5f, 8.5f)
+        lineTo(8.5f, 13.5f)
+        lineTo(2f, 7f)
         stroke()
         beginPath()
-        moveTo(20f, 10f)
-        lineTo(20f, 16f)
-        lineTo(14f, 16f)
+        moveTo(16f, 17f)
+        lineTo(22f, 17f)
+        lineTo(22f, 11f)
         stroke()
     }
 }
 
-/** Book: terminology learning. */
+/** Trend up (Lucide `trending-up`): mirrored from [LineIconTrendDown] along the horizontal axis. */
+fun ViewContainer<*, *>.LineIconTrendUp(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        moveTo(22f, 7f)
+        lineTo(13.5f, 15.5f)
+        lineTo(8.5f, 10.5f)
+        lineTo(2f, 17f)
+        stroke()
+        beginPath()
+        moveTo(16f, 7f)
+        lineTo(22f, 7f)
+        lineTo(22f, 13f)
+        stroke()
+    }
+}
+
+/** Open book (Lucide `book-open`): terminology learning. */
 fun ViewContainer<*, *>.LineIconBook(color: Color, size: Float) {
-    lineIcon(color, size) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // Left page.
         beginPath()
-        moveTo(5f, 5f)
-        lineTo(10.5f, 5f)
-        arc(12f, 7f, 2f, PI.toFloat(), 0f, false)
-        lineTo(12f, 20f)
-        arc(10.5f, 18f, 2f, 0f, PI.toFloat(), false)
-        lineTo(5f, 18f)
+        moveTo(2f, 3f)
+        lineTo(8f, 3f)
+        arc(8f, 7f, 4f, (-PI / 2).toFloat(), 0f, false)
+        lineTo(12f, 21f)
+        arc(9f, 21f, 3f, 0f, (-PI / 2).toFloat(), true)
+        lineTo(2f, 18f)
         closePath()
         stroke()
+        // Right page (mirror of the left one).
         beginPath()
-        moveTo(19f, 5f)
-        lineTo(13.5f, 5f)
-        arc(12f, 7f, 2f, 0f, PI.toFloat(), true)
-        moveTo(12f, 20f)
-        arc(13.5f, 18f, 2f, PI.toFloat(), 0f, true)
-        lineTo(19f, 18f)
+        moveTo(22f, 3f)
+        lineTo(16f, 3f)
+        arc(16f, 7f, 4f, (-PI / 2).toFloat(), PI.toFloat(), true)
+        lineTo(12f, 21f)
+        arc(15f, 21f, 3f, PI.toFloat(), (PI * 1.5).toFloat(), false)
+        lineTo(22f, 18f)
         closePath()
         stroke()
     }
 }
 
-/** File text: financial report reading. */
+/** File text (Lucide `file-text`): financial report reading. */
 fun ViewContainer<*, *>.LineIconFileText(color: Color, size: Float) {
-    lineIcon(color, size) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // Body: rounded 2 corners, folded corner closed with a diagonal edge.
         beginPath()
-        moveTo(7f, 3.5f)
-        lineTo(14f, 3.5f)
-        lineTo(18f, 7.5f)
-        lineTo(18f, 20.5f)
-        lineTo(7f, 20.5f)
+        moveTo(15f, 2f)
+        lineTo(8f, 2f)
+        arc(8f, 4f, 2f, (-PI / 2).toFloat(), PI.toFloat(), true)
+        lineTo(6f, 20f)
+        arc(8f, 20f, 2f, PI.toFloat(), (PI / 2).toFloat(), true)
+        lineTo(18f, 22f)
+        arc(18f, 20f, 2f, (PI / 2).toFloat(), 0f, true)
+        lineTo(20f, 7f)
         closePath()
         stroke()
+        // Fold.
         beginPath()
-        moveTo(14f, 3.5f)
-        lineTo(14f, 8f)
-        lineTo(18f, 8f)
+        moveTo(14f, 2f)
+        lineTo(14f, 6f)
+        arc(16f, 6f, 2f, PI.toFloat(), (PI / 2).toFloat(), true)
+        lineTo(20f, 8f)
         stroke()
+        // Text lines.
         beginPath()
-        moveTo(9f, 12f)
-        lineTo(15f, 12f)
-        moveTo(9f, 15f)
-        lineTo(15f, 15f)
-        moveTo(9f, 18f)
-        lineTo(13f, 18f)
+        moveTo(16f, 13f)
+        lineTo(8f, 13f)
+        moveTo(16f, 17f)
+        lineTo(8f, 17f)
+        moveTo(10f, 9f)
+        lineTo(8f, 9f)
         stroke()
     }
 }
 
-/** Columns: factual side-by-side comparison. */
+/** Columns 2 (Lucide `columns-2`): factual side-by-side comparison. */
 fun ViewContainer<*, *>.LineIconColumns(color: Color, size: Float) {
-    lineIcon(color, size) {
-        roundRectPath(4f, 5f, 16f, 14f, 3f)
+    lineIcon(color, size, strokeWidth = 2f) {
+        roundRectPath(3f, 3f, 18f, 18f, 2f)
         stroke()
         beginPath()
-        moveTo(12f, 5f)
-        lineTo(12f, 19f)
-        moveTo(7f, 9f)
-        lineTo(9.5f, 9f)
-        moveTo(14.5f, 9f)
-        lineTo(17f, 9f)
-        moveTo(7f, 13f)
-        lineTo(9.5f, 13f)
-        moveTo(14.5f, 13f)
-        lineTo(17f, 13f)
+        moveTo(12f, 3f)
+        lineTo(12f, 21f)
         stroke()
     }
 }
