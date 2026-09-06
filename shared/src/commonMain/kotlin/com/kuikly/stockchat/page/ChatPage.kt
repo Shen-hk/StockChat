@@ -22,6 +22,7 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.kuikly.stockchat.glass.GlassRenderingMode
+import com.kuikly.stockchat.glass.applyGlassSurfaceSkin
 import com.kuikly.stockchat.chat.ChatMessage
 import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatViewModel
@@ -64,11 +65,11 @@ import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_CLOSE
 import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_DETAIL
 import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_RETURN
 import com.kuikly.stockchat.page.components.LineIconAudioLines
+import com.kuikly.stockchat.page.components.LineIconKeyboard
+import com.kuikly.stockchat.page.components.LineIconChevronUp
 import com.kuikly.stockchat.page.components.LineIconPlus
-import com.kuikly.stockchat.page.components.LineIconMicWithFill
 import com.kuikly.stockchat.page.components.LineIconCamera
 import com.kuikly.stockchat.page.components.LineIconPhoto
-import com.kuikly.stockchat.page.components.LineIconSend
 import com.kuikly.stockchat.page.components.LineIconStop
 import com.kuikly.stockchat.page.components.VoiceBar
 import com.kuikly.stockchat.voice.NativeBridgeVoiceRecorder
@@ -110,7 +111,10 @@ import com.kuikly.stockchat.composer.TriggerDetector
 import com.kuikly.stockchat.composer.TriggerSession
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
+import com.tencent.kuikly.core.base.Border
+import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.BoxShadow
+import com.tencent.kuikly.core.base.attr.AccessibilityRole
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
@@ -136,6 +140,7 @@ import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.CanvasContext
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.ScrollerView
+import com.tencent.kuikly.core.views.ScrollParams
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
@@ -153,6 +158,14 @@ internal class ChatPage : BasePager() {
     private companion object {
         const val COMPOSER_LOG_TAG = "Composer"
         const val WELCOME_USED_KIND_KEY = "stockchat_welcome_used_starter_kinds_v1"
+        // 焦点隔离诊断开关；正常交付必须关闭。完整输入栏使用无 Blur 的静态
+        // 玻璃表皮，避免原生 Blur 覆盖层遮住 EditText 光标。
+        const val COMPOSER_ISOLATION_TEST = false
+        // 意外 blur 自动恢复的连续尝试上限。
+        const val COMPOSER_BLUR_RECOVER_MAX_ATTEMPTS = 3
+        // 滚动声波条数：新采样从右缘进入、历史整体左移（60ms/格），
+        // 40 条 × (3+3) ≈ 240dp，铺满中段波形区。
+        const val VOICE_AMP_BARS = 56
     }
     private val dependencies by lazy { ChatDependencies.forPager(pagerId) }
     private val viewModel by lazy { ChatViewModel(pagerId, dependencies) }
@@ -163,6 +176,9 @@ internal class ChatPage : BasePager() {
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
     private var chatContentHeight = 0f
     private var keepChatAtBottomVersion = 0
+    // 流式跟随开关：内容增长时自动贴底。用户上滑/按住（isDragging 且不在底部）
+    // 即暂停，拖回底部或重新发消息时恢复。
+    private var chatFollowStream = true
     private var peekSymbol: String by observable("")
     private var peekVisible: Boolean by observable(false)
     // Symbol whose long press was recognised but whose gesture has not ended.
@@ -261,6 +277,14 @@ internal class ChatPage : BasePager() {
     // RecyclerView/键盘避让布局造成的 inputBlur 都视为意外失焦并自动恢复。
     private var composerFocusLocked = false
     private var composerUnexpectedBlurVersion = 0
+    // 意外 blur 自动恢复的预算机制。真机（HyperOS）上存在「refocus 成功 →
+    // showSoftInput 被客户端取消（ImeTracker: onCancelled at
+    // PHASE_CLIENT_APPLY_ANIMATION）→ 约 2ms 后焦点又被清掉」的场景，若无限制
+    // 地 96ms 重试会形成约 5Hz 的 focus/blur 死循环：键盘收起即弹出、光标跳闪、
+    // InputConnection 被反复打断导致退格失效。预算只在拿到「焦点真正稳定」的
+    // 证据时清零：一次 grant 后在稳定窗口内未被 blur 打断（见 inputFocus），
+    // 或键盘真实弹出，或用户开始输入。
+    private var composerBlurRecoverAttempts = 0
     // 键盘当前是否在屏上，由 TextArea 的 keyboardHeightChange 上报。
     private var keyboardVisible: Boolean by observable(false)
     // Voice input is the composer's third state (docs/11): hold to record,
@@ -268,8 +292,13 @@ internal class ChatPage : BasePager() {
     private var voiceState: VoiceState by observable(VoiceState.IDLE)
     private var voiceCancelArmed: Boolean by observable(false)
     private var voiceElapsedSec: Float by observable(0f)
-    private var voiceAmps: FloatArray by observable(FloatArray(24) { 4f })
+    // 滚动声波历史：初始全 0（空白），录音开始后新采样从右缘进入、
+    // 向左生长——视觉上"声波从后面长出来"，而不是一开始就有基线条。
+    private var voiceAmps: FloatArray by observable(FloatArray(VOICE_AMP_BARS) { 0f })
     private var voiceMicFill: Float by observable(0f)
+    // 语音模式（豆包式交互，2026-09-06）：折叠栏右侧图标在"声波/键盘"间切换；
+    // 开启后中间文本区整体变成"按住说话"按钮，录音不再强制展开输入栏。
+    private var voiceInputMode: Boolean by observable(false)
     private var voiceTouchDownPageY = 0f
     private var voiceSourceExpanded = false
     private var voiceClockTimer: Timer? = null
@@ -299,6 +328,14 @@ internal class ChatPage : BasePager() {
     private var subThreads: ObservableList<SubThreadState> by observableList()
     private var suppressNextStockClickSymbol = ""
     private var peekVersion = 0
+    // 回到顶部悬浮按钮：mounted/presented 双态机（同 drawer 模式，R4——vif 挂载
+    // 的视图首帧不播动画，挂载后一拍再翻 presented）；version 使过期回调失效。
+    private var chatBackToTopMounted: Boolean by observable(false)
+    private var chatBackToTopPresented: Boolean by observable(false)
+    private var chatBackToTopVersion = 0
+    // 程序化动画回顶进行中：暂停按钮显隐判定，避免动画过程中的中间 scroll
+    // 事件（offsetY 仍很大）把按钮又弹出来。
+    private var chatTopScrollAnimationVersion = 0
     private val quoteRepository get() = dependencies.quoteRepository
     private val watchlistStore get() = dependencies.watchlistStore
     private val alertStore get() = dependencies.alertStore
@@ -334,6 +371,14 @@ internal class ChatPage : BasePager() {
     // （VoiceBar 同款 ReactiveObserver 范式）。页面不可见即停，省电。
     private var composerRimPhase: Float by observable(0f)
     private var composerRimFlowTimer: Timer? = null
+    // 输入栏折叠/展开的图标入场（R4）：vif 新挂载的视图首帧不播动画，展开态与
+    // 折叠态图标的显隐经 mounted→presented 两帧翻转驱动（drawer 同款范式）。
+    // 展开态图标以 presented 为入场驱动；折叠态图标以 !presented 为入场驱动，
+    // 收起时对称回放。同值赋值不通知，翻转失败时也不会留下中间态。
+    private var composerChromePresented: Boolean by observable(false)
+    private var composerChromeVersion = 0
+    private var composerChromeTimer: Timer? = null
+    private val composerReducedMotion by lazy { platformPrefersReducedMotion() }
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
     /** The document caps simultaneously visible real-time blur surfaces at two. */
     private val glassRenderer: GlassRenderer
@@ -374,7 +419,9 @@ internal class ChatPage : BasePager() {
         // If the stock detail route is covering this page, JS state may
         // already read as idle while the native view is still waiting for the
         // collapsed-frame write. Force the write unconditionally.
-        if (islandDetailRouteActive) {
+        // 交接遮罩期间例外：详情页整页淡入还没完成，全屏玻璃帧是它的底，
+        // 提前归位会在淡入的前半段透出聊天页。
+        if (islandDetailRouteActive && !islandHandoffMaskActive) {
             islandMounted = false
             forceIslandCollapsedForDetailRoute()
         }
@@ -416,10 +463,17 @@ internal class ChatPage : BasePager() {
                 event {
                     contentSizeChanged { _, height ->
                         page.chatContentHeight = height
-                        if (page.shouldKeepChatAtBottom()) page.scheduleScrollChatToBottom()
+                        // 流式期间内容每 100ms flush 长高一次：非动画贴底最顺滑，
+                        // animated 连续重启动画会互相打断造成抖动
+                        if (page.shouldKeepChatAtBottom()) page.scheduleScrollChatToBottom(animated = false)
                     }
-                    // 输入栏以外的任何点击都走这里（气泡/卡片上有自己的点击处理，
-                    // 会把事件消费掉，不会冒泡上来）：这是输入态 → 默认态的唯一出口。
+                    scroll { params ->
+                        page.handleChatStreamScroll(params)
+                    }
+                    // 按住非交互区域（气泡/卡片自己的长按会被消费、不冒泡上来）
+                    // 也视为用户接管列表，暂停跟随
+                    longPress { page.chatFollowStream = false }
+                    // 点击列表非输入栏区域：展开态先收键盘，键盘已收起才回到默认态
                     click { page.handleOutsideTap() }
                 }
                 vif({ page.viewModel.messages.isEmpty() && page.welcomeEntranceMounted }) {
@@ -448,7 +502,6 @@ internal class ChatPage : BasePager() {
                         theme = page.theme,
                         contextSymbols = page.contextSymbolsBefore(message.id),
                         suggestionsActive = page.suggestionsAreActive(message),
-                        understoodQuery = page.questionBefore(message.id),
                         state = ChatMessageRenderState(
                             repairingCardKey = page.repairingCardKey,
                             drilledKeys = page.drilledKeys.toSet(),
@@ -481,7 +534,6 @@ internal class ChatPage : BasePager() {
                             onFocusChanged = page::setFocusedCard,
                             onCompareCandidate = page::handleCompareCandidate,
                             onCardEvent = page::handleCardEvent,
-                            onCorrectUnderstanding = page::beginUnderstandingCorrection,
                             onShareInterpretation = page::copyShareCard,
                         ),
                     )
@@ -602,6 +654,46 @@ internal class ChatPage : BasePager() {
                     }
                 }
             }
+            // 回到顶部悬浮按钮：会话不在顶部时浮现于输入栏右上方，液态玻璃表皮
+            // + ^ 图标；点击平滑滚回顶部（animated，而非闪现）。
+            vif({
+                page.chatBackToTopMounted &&
+                    page.viewModel.messages.isNotEmpty() &&
+                    page.keyboardHeight == 0f &&
+                    !page.isComposerExpanded()
+            }) {
+                View {
+                    attr {
+                        absolutePosition(
+                            right = 14f,
+                            bottom = 86f + page.pagerData.safeAreaInsets.bottom,
+                        )
+                        size(40f, 40f)
+                        allCenter()
+                        // 玻璃高光描边：GlassBackdrop 不带描边，细 rim 由容器补
+                        // （与 peek 胶囊 resolved.stroke 对齐）。
+                        border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
+                        // 与输入栏胶囊同款悬浮投影，让按钮浮在列表上方。
+                        boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
+                        // 无障碍属性属于 attr 方法，必须写在 attr 块内（写在
+                        // builder 作用域会因解析不到而编译失败）。
+                        accessibility("回到顶部")
+                        accessibilityRole(AccessibilityRole.BUTTON)
+                        accessibilityInfo(clickable = true, longClickable = false)
+                        // R4/R5：mount 周期无条件注册，presented 翻转周期消费。
+                        val presented = page.chatBackToTopPresented
+                        opacity(if (presented) 1f else 0f)
+                        transform(scale = if (presented) Scale(1f, 1f) else Scale(0.5f, 0.5f))
+                        animate(Animation.easeOut(0.22f), page.chatBackToTopPresented)
+                    }
+                    GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
+                    LineIconChevronUp(color = page.theme.textSecondary, size = 18f)
+                    event { click { page.scrollChatToTopAnimated() } }
+                }
+            }
+            val composerSheetMaterial = page.theme.glass.sheet
+            val composerGlassRenderer = page.glassRenderer
+            val composerDragBackground = page.theme.brandSoft
             View {
                 attr {
                     // Floating capsule composer on a solid page-coloured base:
@@ -610,11 +702,27 @@ internal class ChatPage : BasePager() {
                     // hosts a feather strip that softens the junction,
                     // mirroring the top chrome.
                     absolutePosition(bottom = 0f, left = 0f, right = 0f)
-                    paddingTop(3f)
-                    paddingLeft(12f)
-                    paddingRight(12f)
-                    paddingBottom(10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
+                    paddingTop(if (COMPOSER_ISOLATION_TEST) 0f else 3f)
+                    paddingLeft(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
+                    paddingRight(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
+                    paddingBottom(
+                        if (COMPOSER_ISOLATION_TEST) 0f
+                        else 10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight,
+                    )
                 }
+                if (COMPOSER_ISOLATION_TEST) {
+                    // 使用玻璃的静态表皮（色彩、描边、阴影），不能调用
+                    // GlassBackdrop：其 Blur 原生覆盖层会盖住 EditText 光标。
+                    View {
+                        attr {
+                            height(42f)
+                            paddingLeft(12f)
+                            paddingRight(12f)
+                            applyGlassSurfaceSkin(composerSheetMaterial, composerGlassRenderer)
+                        }
+                        page.renderComposerTextArea(this, isolated = true)
+                    }
+                } else {
                 // 吞掉落在输入栏自身范围内的点击（羽毛条/左右留白/底部留白），
                 // 否则它们会穿透到聊天列表，被误判成"点击非输入栏区域"而收起输入栏。
                 event { click { } }
@@ -654,9 +762,14 @@ internal class ChatPage : BasePager() {
                         paddingBottom(9f)
                         paddingLeft(10f)
                         paddingRight(10f)
+                        // 悬浮感：与顶部灵动岛胶囊同款阴影（AppChrome 灵动岛
+                        // 0/8/22/0.16），让输入栏像浮在列表上方而不是贴底。
+                        boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
+                        // 对比试验：输入栏使用纯白背景，不叠加玻璃表皮或 Blur。
+                        // entityDragActive 仍是本 attr 的唯一动画驱动。
                         backgroundColor(
-                            if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) page.theme.brandSoft
-                            else Color(0xFFFFFFFF, 0f)
+                            if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) composerDragBackground
+                            else Color(0xFFFFFFFF)
                         )
                         transform(
                             scale = if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) {
@@ -670,22 +783,21 @@ internal class ChatPage : BasePager() {
                             page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER,
                         )
                     }
-                    GlassBackdrop(page.theme.glass.sheet, page.glassRenderer)
                         // 联想面板打开时收起"最近标的"横条：面板本身已含"最近"数据源候选，
                         // 两条叠着显示既重复又顶高输入栏。
-                        vif({ page.isComposerExpanded() && page.assistantPanel == AssistantPanel.NONE }) {
+                        vif({ page.isComposerVisuallyExpanded() && page.assistantPanel == AssistantPanel.NONE }) {
                             RecentSymbolRow(page.theme) { text -> page.injectQuestion(text) }
                         }
-                        vif({ page.isComposerExpanded() && page.deepContextVersion >= 0 && page.deepContextNotes.isNotEmpty() }) {
+                        vif({ page.isComposerVisuallyExpanded() && page.deepContextVersion >= 0 && page.deepContextNotes.isNotEmpty() }) {
                             page.renderContextNoteBar(this)
                         }
-                        vif({ page.isComposerExpanded() && page.commandValidationMessage.isNotEmpty() }) {
+                        vif({ page.isComposerVisuallyExpanded() && page.commandValidationMessage.isNotEmpty() }) {
                             page.renderCommandValidationBar(this)
                         }
-                        vif({ page.isComposerExpanded() && page.assistantPanel != AssistantPanel.NONE }) {
+                        vif({ page.isComposerVisuallyExpanded() && page.assistantPanel != AssistantPanel.NONE }) {
                             page.renderAssistantPanel(this)
                         }
-                        vif({ page.isComposerExpanded() && page.inputPanel == InputPanel.MEDIA }) {
+                        vif({ page.isComposerVisuallyExpanded() && page.inputPanel == InputPanel.MEDIA }) {
                             MediaInputRow(page.theme) { action -> page.handleMediaAction(action) }
                         }
                         // TextArea 必须永远挂在同一个父节点下。折叠/展开只改布局和
@@ -695,179 +807,276 @@ internal class ChatPage : BasePager() {
                             attr {
                                 flexDirectionRow()
                                 alignItemsCenter()
-                                marginTop(if (page.isComposerExpanded()) 0f else 8f)
                             }
                             // 折叠态只保留左侧 + 与右侧语音两个操作位：纯黑线条、
-                            // 透明背景（2026-09-05 设计调整）。
-                            vif({ !page.isComposerExpanded() }) {
+                            // 透明背景（2026-09-05 设计调整）。2026-09-06 放大 50%：
+                            // 32→48（图标 16→24 / 18→27），与文本区同高垂直居中。
+                            vif({ !page.isComposerVisuallyExpanded() }) {
+                                // 收起回放壳：折叠态图标以 !presented 为入场驱动，
+                                // 收起翻转时由挂载周期注册的 easeOut 消费（R2/R5）。
                                 View {
                                     attr {
-                                        size(32f, 32f)
-                                        marginRight(7f)
-                                        allCenter()
-                                        borderRadius(16f)
+                                        opacity(if (!page.composerChromePresented) 1f else 0f)
+                                        transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
+                                        animate(Animation.easeOut(0.2f), !page.composerChromePresented)
                                     }
-                                    LineIconPlus(color = Color(0xFF000000), size = 16f)
+                                    View {
+                                        attr {
+                                            size(48f, 48f)
+                                            marginRight(7f)
+                                            allCenter()
+                                            borderRadius(24f)
+                                        }
+                                        LineIconPlus(color = Color(0xFF000000), size = 24f)
+                                    }
                                 }
                             }
                             View {
                                 attr {
                                     flex(1f)
-                                    minHeight(44f)
+                                    minHeight(if (page.isComposerVisuallyExpanded()) 44f else 48f)
                                     paddingLeft(12f)
                                     paddingRight(12f)
                                     justifyContentCenter()
                                     borderRadius(16f)
                                     backgroundColor(Color(0xFFFFFFFF, 0f))
                                 }
+                                // 点击兜底：空文本时原生 TextArea 可能收缩到极小高，
+                                // 点击落不到 EditText 上。整条中段可点，任何测量
+                                // 异常下都能进入输入态；已展开/语音模式下守卫直接跳过
+                                // （语音模式下中段是"按住说话"，触摸由覆盖层处理）。
+                                event {
+                                    click {
+                                        if (!page.voiceInputMode && !page.isComposerExpanded() && page.voiceState == VoiceState.IDLE) {
+                                            KLog.i(COMPOSER_LOG_TAG, "composerMiddleTap expand")
+                                            page.expandComposer(requestFocus = true)
+                                        }
+                                    }
+                                }
                                 page.renderComposerTextArea(this)
+                                // 语音模式（豆包式）："按住说话"是普通 flex 子项，
+                                // 恰好替代文字位置（语音模式下 TextArea 被压到 0 高，
+                                // 见 renderComposerTextArea）。不用 absolutePosition——
+                                // 实测在中段（纵向 column + justifyContentCenter）里
+                                // 定位偏下被遮挡。白底；录音期间保持挂载（vif 卸载
+                                // 会丢 touchUp，录音卡到 60s 超时），"按住说话"文案仅
+                                // 在 IDLE 显示，录音 UI 由其上层的 VoiceBar 呈现。
+                                // 2026-09-06 定稿：不做任何光晕（全屏圆顶与按钮级
+                                // boxShadow 均已移除），视觉反馈只有滚动声波与变红提示。
+                                vif({ page.voiceInputMode }) {
+                                    View {
+                                        attr {
+                                            height(48f)
+                                            allCenter()
+                                            borderRadius(16f)
+                                            backgroundColor(Color(0xFFFFFFFF))
+                                        }
+                                        vif({ page.voiceState == VoiceState.IDLE }) {
+                                            Text {
+                                                attr {
+                                                    text("按住 说话")
+                                                    fontSize(15f)
+                                                    color(page.theme.textSecondary)
+                                                }
+                                            }
+                                        }
+                                        event {
+                                            touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
+                                            touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
+                                            touchUp { page.handleVoiceTouchUp() }
+                                        }
+                                    }
+                                }
                                 vif({ page.voiceState != VoiceState.IDLE }) {
                                     VoiceBar(
                                         theme = page.theme,
                                         transcribing = { page.voiceState == VoiceState.TRANSCRIBING },
                                         cancelArmed = { page.voiceCancelArmed },
-                                        elapsedSec = { page.voiceElapsedSec },
                                         amps = { page.voiceAmps },
                                     )
                                 }
                             }
-                            vif({ !page.isComposerExpanded() }) {
+                            vif({ !page.isComposerVisuallyExpanded() }) {
+                                // 外层：收起回放入场（驱动 presented）；
+                                // 内层：录音缩放（驱动 voiceState）。双驱动必须拆
+                                // 父子视图，同 attr 双 animate 违反 R3。
                                 View {
                                     attr {
-                                        size(32f, 32f)
-                                        marginLeft(7f)
-                                        allCenter()
-                                        borderRadius(16f)
-                                        transform(scale = if (page.voiceState == VoiceState.RECORDING) Scale(1.12f, 1.12f) else Scale.DEFAULT)
-                                        animate(Animation.easeOut(0.12f), page.voiceState == VoiceState.RECORDING)
+                                        opacity(if (!page.composerChromePresented) 1f else 0f)
+                                        transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
+                                        animate(Animation.easeOut(0.2f), !page.composerChromePresented)
                                     }
-                                    // 声波线条（Lucide audio-lines 对齐），替代旧麦克风图标。
-                                    LineIconAudioLines(color = Color(0xFF000000), size = 18f)
-                                    event {
-                                        touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
-                                        touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
-                                        touchUp { page.handleVoiceTouchUp() }
+                                    View {
+                                        attr {
+                                            size(48f, 48f)
+                                            marginLeft(7f)
+                                            allCenter()
+                                            borderRadius(24f)
+                                        }
+                                        // 语音模式开关（豆包式）：文字态显示声波线条
+                                        // （Lucide audio-lines 对齐），语音模式显示键盘
+                                        // （Lucide keyboard 对齐），点击互相切换；按住
+                                        // 说话手势已移至中段覆盖层。
+                                        vif({ !page.voiceInputMode }) {
+                                            LineIconAudioLines(color = Color(0xFF000000), size = 27f)
+                                        }
+                                        vif({ page.voiceInputMode }) {
+                                            LineIconKeyboard(color = Color(0xFF000000), size = 27f)
+                                        }
+                                        event { click { page.toggleVoiceInputMode() } }
                                     }
                                 }
                             }
                         }
-                        vif({ page.isComposerExpanded() }) {
-                            View {
-                                attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
+                        vif({ page.isComposerVisuallyExpanded() }) {
+                            View { attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
+                                // 展开态图标入场壳（R4：vif 挂载首帧不播动画，由
+                                // presented 两帧翻转驱动；R2：attr 内读 observable、
+                                // animate 最后注册）。按左→右 30ms 错峰浮入。
                                 View {
                                     attr {
-                                        size(40f, 40f)
-                                        allCenter()
-                                        borderRadius(20f)
-                                        backgroundColor(if (page.assistantPanel == AssistantPanel.AT_MENTION) page.theme.brand else page.theme.brandSoft)
-                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                        touchEnable(!page.isVoiceBusy())
+                                        opacity(if (page.composerChromePresented) 1f else 0f)
+                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                        animate(Animation.easeOut(0.24f), page.composerChromePresented)
                                     }
-                                    Text {
+                                    View {
                                         attr {
-                                            text("@")
-                                            fontSize(16f)
-                                            fontWeightSemiBold()
-                                            color(if (page.assistantPanel == AssistantPanel.AT_MENTION) page.theme.onBrand else page.theme.brand)
+                                            size(46f, 46f)
+                                            allCenter()
+                                            borderRadius(23f)
+                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                            touchEnable(!page.isVoiceBusy())
                                         }
+                                        Text {
+                                            attr {
+                                                text("@")
+                                                fontSize(18f)
+                                                fontWeightSemiBold()
+                                                color(page.theme.brand)
+                                            }
+                                        }
+                                        event { click { page.onTriggerButtonTapped('@') } }
                                     }
-                                    event { click { page.onTriggerButtonTapped('@') } }
                                 }
                                 View {
                                     attr {
-                                        size(40f, 40f)
-                                        marginLeft(8f)
-                                        allCenter()
-                                        borderRadius(20f)
-                                        backgroundColor(if (page.assistantPanel == AssistantPanel.SLASH || page.assistantPanel == AssistantPanel.COMMAND_PARAMS) page.theme.brand else page.theme.brandSoft)
-                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                        touchEnable(!page.isVoiceBusy())
+                                        opacity(if (page.composerChromePresented) 1f else 0f)
+                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                        animate(Animation.easeOut(0.24f).delay(0.03f), page.composerChromePresented)
                                     }
-                                    Text {
+                                    View {
                                         attr {
-                                            text("/")
-                                            fontSize(16f)
-                                            fontWeightSemiBold()
-                                            color(if (page.assistantPanel == AssistantPanel.SLASH || page.assistantPanel == AssistantPanel.COMMAND_PARAMS) page.theme.onBrand else page.theme.brand)
+                                            size(46f, 46f)
+                                            marginLeft(8f)
+                                            allCenter()
+                                            borderRadius(23f)
+                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                            touchEnable(!page.isVoiceBusy())
                                         }
+                                        Text {
+                                            attr {
+                                                text("/")
+                                                fontSize(18f)
+                                                fontWeightSemiBold()
+                                                color(page.theme.brand)
+                                            }
+                                        }
+                                        event { click { page.onTriggerButtonTapped('/') } }
                                     }
-                                    event { click { page.onTriggerButtonTapped('/') } }
                                 }
                                 View { attr { flex(1f) } }
                                 View {
                                     attr {
-                                        size(40f, 40f)
-                                        marginRight(6f)
-                                        allCenter()
-                                        borderRadius(20f)
-                                        backgroundColor(page.theme.surfaceMuted)
-                                        transform(scale = if (page.voiceState == VoiceState.RECORDING) Scale(1.12f, 1.12f) else Scale.DEFAULT)
-                                        animate(Animation.easeOut(0.12f), page.voiceState == VoiceState.RECORDING)
+                                        opacity(if (page.composerChromePresented) 1f else 0f)
+                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                        animate(Animation.easeOut(0.24f).delay(0.06f), page.composerChromePresented)
                                     }
-                                    LineIconMicWithFill(
-                                        color = page.theme.textSecondary,
-                                        fillColor = if (page.voiceCancelArmed) page.theme.textTertiary else page.theme.rise,
-                                        size = 19f,
-                                        fill01 = { page.voiceMicFill },
-                                    )
-                                    event {
-                                        touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
-                                        touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
-                                        touchUp { page.handleVoiceTouchUp() }
+                                    View {
+                                        attr {
+                                            size(46f, 46f)
+                                            marginRight(6f)
+                                            allCenter()
+                                            borderRadius(23f)
+                                        }
+                                        // 与折叠态语音开关同款声波图标（Lucide
+                                        // audio-lines），白底输入栏下同折叠态用黑色。
+                                        LineIconAudioLines(color = Color(0xFF000000), size = 26f)
+                                        // 展开态点击语音（豆包式）：直接折叠并进入语音
+                                        // 模式，一步呈现折叠态"按住说话"样式；不再在
+                                        // 展开态按住录音。
+                                        event { click { page.enterVoiceModeFromExpanded() } }
                                     }
                                 }
                                 // 展开态右侧媒体入口：拍照图标改为 + 号（2026-09-05）。
                                 View {
                                     attr {
-                                        size(40f, 40f)
-                                        marginRight(4f)
-                                        allCenter()
-                                        borderRadius(20f)
-                                        backgroundColor(if (page.inputPanel == InputPanel.MEDIA) page.theme.brandSoft else page.theme.surfaceMuted)
-                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                        touchEnable(!page.isVoiceBusy())
+                                        opacity(if (page.composerChromePresented) 1f else 0f)
+                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                        animate(Animation.easeOut(0.24f).delay(0.09f), page.composerChromePresented)
                                     }
-                                    LineIconPlus(
-                                        color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
-                                        size = 19f,
-                                    )
-                                    event { click { page.toggleMediaPanel() } }
+                                    View {
+                                        attr {
+                                            size(46f, 46f)
+                                            marginRight(4f)
+                                            allCenter()
+                                            borderRadius(23f)
+                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                            touchEnable(!page.isVoiceBusy())
+                                        }
+                                        LineIconPlus(
+                                            color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
+                                            size = 22f,
+                                        )
+                                        event { click { page.toggleMediaPanel() } }
+                                    }
                                 }
                                 View {
                                     attr {
-                                        size(44f, 44f)
-                                        allCenter()
-                                        borderRadius(22f)
-                                        backgroundColor(
-                                            when {
-                                                page.viewModel.streamState == StreamState.STREAMING -> page.theme.divider
-                                                page.isCommandSendBlocked() -> page.theme.surfaceMuted
-                                                else -> page.theme.brand
+                                        opacity(if (page.composerChromePresented) 1f else 0f)
+                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                        animate(Animation.easeOut(0.24f).delay(0.12f), page.composerChromePresented)
+                                    }
+                                    View {
+                                        attr {
+                                            size(44f, 44f)
+                                            allCenter()
+                                            borderRadius(22f)
+                                            backgroundColor(
+                                                when {
+                                                    page.viewModel.streamState == StreamState.STREAMING -> page.theme.divider
+                                                    page.isCommandSendBlocked() -> page.theme.surfaceMuted
+                                                    else -> page.theme.brand
+                                                }
+                                            )
+                                            boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
+                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                            touchEnable(!page.isVoiceBusy())
+                                        }
+                                        vif({ page.viewModel.streamState == StreamState.STREAMING }) {
+                                            LineIconStop(color = page.theme.onBrand, size = 18f)
+                                        }
+                                        vif({ page.viewModel.streamState != StreamState.STREAMING }) {
+                                            Text {
+                                                attr {
+                                                    text("↑")
+                                                    fontSize(18f)
+                                                    fontWeightSemiBold()
+                                                    color(if (page.isCommandSendBlocked()) page.theme.textTertiary else page.theme.onBrand)
+                                                }
                                             }
-                                        )
-                                        boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
-                                        opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                        touchEnable(!page.isVoiceBusy())
-                                    }
-                                    vif({ page.viewModel.streamState == StreamState.STREAMING }) {
-                                        LineIconStop(color = page.theme.onBrand, size = 18f)
-                                    }
-                                    vif({ page.viewModel.streamState != StreamState.STREAMING }) {
-                                        LineIconSend(
-                                            color = if (page.isCommandSendBlocked()) page.theme.textTertiary else page.theme.onBrand,
-                                            size = 22f,
-                                        )
-                                    }
-                                    event {
-                                        click {
-                                            if (page.viewModel.streamState == StreamState.STREAMING) page.viewModel.stop()
-                                            else page.submitInput()
+                                        }
+                                        event {
+                                            click {
+                                                if (page.viewModel.streamState == StreamState.STREAMING) page.viewModel.stop()
+                                                else page.submitInput()
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     page.renderComposerGradientRim(this)
+                }
                 }
             }
             vif({ page.compareCard != null }) {
@@ -1123,6 +1332,7 @@ internal class ChatPage : BasePager() {
         stopWelcomeKeywordLoop(lock = false)
         keepChatAtBottomVersion = 0
         chatContentHeight = 0f
+        chatFollowStream = true
         viewModel.startNewChat()
         resetSessionUiState()
         setComposerText("")
@@ -1273,6 +1483,10 @@ internal class ChatPage : BasePager() {
                 welcomeEntranceVisible = true
             }
         }
+        // ref 回调已递增版本号，reset 时挂的兜底按旧版本失效了；这里按新版本重挂，
+        // 补上「ref 已回调但 32ms 呈现 Timer 丢失」的窗口，否则 visible 永远停在
+        // false、示例卡全部停在 opacity 0（聊天中新建会话偶发无欢迎语的根因之一）。
+        scheduleWelcomeEntranceSafety()
     }
 
     // 欢迎区「看市场」胶囊：点击后滑块滑到右半格，动画结束震动再跳转市场页
@@ -1310,9 +1524,13 @@ internal class ChatPage : BasePager() {
     }
 
     /**
-     * 入场兜底：挂载后 600ms 仍不可见则强制落到终态。
-     * 覆盖冷启动与新会话两条路径；正常链路（ref → 32ms 呈现）先完成时，
-     * 版本号已前移，本回调按版本号守卫静默退出。
+     * 入场兜底：600ms 后欢迎区仍未呈现则直接落终态。
+     * 覆盖冷启动与新会话两条路径下断链的任意一环：
+     * - 16ms 挂载 Timer 丢失 → mounted 仍为 false，这里补挂载（旧实现要求
+     *   mounted == true 才动作，断在这一环时兜底会静默退出，欢迎区永远不出现）；
+     * - ref 未回调 / 32ms 呈现 Timer 丢失 → 已挂载但 visible 停在 false，这里翻转
+     *   呈现；此时卡片 attr 已注册 easeOut，翻转仍走正常入场动画。
+     * 正常链路（ref → 32ms 呈现）先完成时，版本号已前移，本回调静默退出。
      */
     private fun scheduleWelcomeEntranceSafety() {
         welcomeEntranceSafetyTimer?.cancel()
@@ -1323,8 +1541,13 @@ internal class ChatPage : BasePager() {
             timer.cancel()
             if (welcomeEntranceSafetyTimer === timer) welcomeEntranceSafetyTimer = null
             if (version == welcomeEntranceVersion && !isWillDestroy() &&
-                viewModel.messages.isEmpty() && welcomeEntranceMounted && !welcomeEntranceVisible
+                viewModel.messages.isEmpty() && !welcomeEntranceVisible
             ) {
+                // 终态三件套一起落：armed 防 ref 迟到后把 visible 打回 false；
+                // mounted 补挂载；visible 呈现。若未挂载则卡片直接以终态出现
+                // （无入场动画），内容可见优先于动效。
+                welcomeEntranceArmed = true
+                welcomeEntranceMounted = true
                 welcomeEntranceVisible = true
             }
         }
@@ -1558,6 +1781,41 @@ internal class ChatPage : BasePager() {
             .forEach(::requestQuote)
     }
 
+    /**
+     * 输入栏图标入场的两帧调度（R4/R5）：挂载周期先把 presented 落在与目标相反
+     * 的值（新挂载的图标渲染为隐藏态并注册 easeOut），32ms 后翻转到目标态，
+     * 翻转周期消费上一轮注册的动画。各图标的错峰由自带 delay 实现。
+     * 版本号守卫保证快速开合时旧回调静默退出；600ms 兜底确保调度链路任一环
+     * 丢失时图标不会停留在 opacity 0（scheduleWelcomeEntranceSafety 同款思路）。
+     */
+    private fun scheduleComposerChromePresentation(target: Boolean) {
+        val version = ++composerChromeVersion
+        composerChromeTimer?.cancel()
+        composerChromeTimer = null
+        if (composerReducedMotion) {
+            composerChromePresented = target
+            return
+        }
+        val timer = Timer()
+        composerChromeTimer = timer
+        timer.schedule(32, 32) {
+            timer.cancel()
+            if (composerChromeTimer === timer) composerChromeTimer = null
+            if (version == composerChromeVersion && !isWillDestroy()) {
+                composerChromePresented = target
+            }
+        }
+        val safetyVersion = version
+        val safety = Timer()
+        safety.schedule(600, 600) {
+            safety.cancel()
+            if (safetyVersion == composerChromeVersion && !isWillDestroy() && composerChromePresented != target) {
+                KLog.i(COMPOSER_LOG_TAG, "chromePresentationSafety target=$target")
+                composerChromePresented = target
+            }
+        }
+    }
+
     /** 默认态 → 输入态。requestFocus 为真时同时把键盘拉起来。 */
     private fun expandComposer(requestFocus: Boolean = false) {
         val wasExpanded = composerExpanded
@@ -1565,7 +1823,13 @@ internal class ChatPage : BasePager() {
         // Kuikly observable 的同值赋值仍可能触发一次 render/layout commit；而
         // EditText 的 focus 回调会再次进入这里。状态转换必须幂等，否则恢复焦点
         // 后的第二次同值提交仍会把原生焦点清掉。
-        if (!composerExpanded) composerExpanded = true
+        if (!composerExpanded) {
+            composerExpanded = true
+            // 进入文字输入即退出语音模式：键盘图标切回声波图标。
+            voiceInputMode = false
+            // 展开态图标经两帧翻转错峰入场（R4）。
+            scheduleComposerChromePresentation(true)
+        }
         if (voiceState != VoiceState.IDLE) cancelVoiceSession()
         if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
         if (requestFocus) {
@@ -1618,6 +1882,13 @@ internal class ChatPage : BasePager() {
             voiceState != VoiceState.IDLE ||
             inputPanel == InputPanel.MEDIA
         ) return
+        // 预算检查：连续恢复次数用尽前不再自动 refocus，防止 focus/blur 死循环。
+        // 预算由一次未被 blur 打断的稳定焦点会话重置（见 inputFocus），不能用
+        // 墙钟时间判断：commonMain 在各运行端没有统一、可靠的单调时钟。
+        if (composerBlurRecoverAttempts >= COMPOSER_BLUR_RECOVER_MAX_ATTEMPTS) {
+            KLog.i(COMPOSER_LOG_TAG, "blurRecoverBudgetExhausted attempts=$composerBlurRecoverAttempts")
+            return
+        }
         val blurVersion = ++composerUnexpectedBlurVersion
         val requestVersion = composerFocusRequestVersion
         setTimeout(96) {
@@ -1629,7 +1900,8 @@ internal class ChatPage : BasePager() {
                 voiceState != VoiceState.IDLE ||
                 inputPanel == InputPanel.MEDIA
             ) return@setTimeout
-            KLog.i(COMPOSER_LOG_TAG, "recoverUnexpectedBlur version=$blurVersion")
+            composerBlurRecoverAttempts++
+            KLog.i(COMPOSER_LOG_TAG, "recoverUnexpectedBlur version=$blurVersion attempts=$composerBlurRecoverAttempts")
             inputRef?.view?.focus()
         }
     }
@@ -1651,16 +1923,32 @@ internal class ChatPage : BasePager() {
         composerFocusRecoveryPending = false
         composerFocusLocked = false
         composerUnexpectedBlurVersion++
+        composerBlurRecoverAttempts = 0
         composerExpanded = false
+        // 折叠态图标此刻挂载：先保持 presented=true 让它们落到隐藏态并注册
+        // 入场动画，翻转回 false 后对称回放（R4/R5）。
+        scheduleComposerChromePresentation(false)
         inputPanel = InputPanel.NONE
         clearActiveCommand()
         closeAssistantPanel()
         cancelVoiceSession()
     }
 
+    /** Reads observable state inside each vif predicate so Kuikly can re-render it. */
+    private fun isComposerExpanded(): Boolean =
+        composerExpanded || inputPanel != InputPanel.NONE || keyboardVisible || keyboardHeight > 0f || voiceState != VoiceState.IDLE
+
     /**
-     * 点击输入栏以外的区域（Kimi 规则）：
-     * - 键盘在屏上：这一次点击只收键盘，输入栏保持输入态；
+     * 输入栏的"视觉展开"态：与 [isComposerExpanded] 的唯一区别是排除录音态。
+     * 语音模式下按住说话发生在折叠栏上（豆包式），录音期间折叠图标必须保持
+     * 挂载、展开态图标行不得插入，否则中段布局会在按住瞬间跳高。
+     */
+    private fun isComposerVisuallyExpanded(): Boolean =
+        composerExpanded || inputPanel != InputPanel.NONE || keyboardVisible || keyboardHeight > 0f
+
+    /**
+     * 点击非输入栏区域的两段式收起（用户要求恢复的原逻辑）：
+     * - 键盘在屏：这一次点击只 blur 收起键盘，输入栏保持展开；
      * - 键盘已收起：这一次点击才把输入栏收回默认态。
      */
     private fun handleOutsideTap() {
@@ -1674,11 +1962,32 @@ internal class ChatPage : BasePager() {
         blurComposer()
     }
 
-    /** Reads observable state inside each vif predicate so Kuikly can re-render it. */
-    private fun isComposerExpanded(): Boolean =
-        composerExpanded || inputPanel != InputPanel.NONE || keyboardVisible || keyboardHeight > 0f || voiceState != VoiceState.IDLE
-
     private fun isVoiceBusy(): Boolean = voiceState != VoiceState.IDLE
+
+    /**
+     * 折叠栏右侧语音/键盘切换（豆包式）。开启后中间文本区变成"按住说话"；
+     * 只在折叠态可达（图标仅折叠态挂载），录音中不可切。
+     */
+    private fun toggleVoiceInputMode() {
+        if (voiceState != VoiceState.IDLE) return
+        voiceInputMode = !voiceInputMode
+        KLog.i(COMPOSER_LOG_TAG, "toggleVoiceInputMode -> $voiceInputMode")
+        if (voiceInputMode) blurComposer()
+    }
+
+    /**
+     * 展开态点击语音图标：直接折叠并进入语音模式，一步呈现"按住说话"样式。
+     * collapseComposer 内部会补 presented false 翻转（R4），折叠图标正常入场。
+     */
+    private fun enterVoiceModeFromExpanded() {
+        if (voiceState != VoiceState.IDLE) return
+        voiceInputMode = true
+        KLog.i(COMPOSER_LOG_TAG, "enterVoiceModeFromExpanded")
+        // 先 blur 收键盘再折叠：否则键盘仍挂着（keyboardHeight>0），
+        // isComposerVisuallyExpanded 保持 true，输入栏看起来没有收起。
+        blurComposer()
+        collapseComposer()
+    }
 
     private fun handleVoiceTouchDown(pageY: Float) {
         if (voiceState != VoiceState.IDLE) return
@@ -1704,13 +2013,19 @@ internal class ChatPage : BasePager() {
     private fun startVoiceSession() {
         val version = ++voiceSessionVersion
         blurComposer()
-        composerExpanded = true
+        if (!voiceInputMode) {
+            // 语音模式下录音发生在折叠栏，不再强制展开（豆包式）。此分支仅为
+            // 兜底保留：录音入口现全部位于语音模式中段按钮上。
+            composerExpanded = true
+            // 从折叠态长按语音时展开态图标为新挂载，同样走两帧入场（R4）。
+            if (!voiceSourceExpanded) scheduleComposerChromePresentation(true)
+        }
         inputPanel = InputPanel.NONE
         closeAssistantPanel()
         commandValidationMessage = ""
         voiceCancelArmed = false
         voiceElapsedSec = 0f
-        voiceAmps = FloatArray(24) { 4f }
+        voiceAmps = FloatArray(VOICE_AMP_BARS) { 0f }
         voiceMicFill = 0.02f
         voiceState = VoiceState.RECORDING
         startVoiceClock(version)
@@ -1750,16 +2065,16 @@ internal class ChatPage : BasePager() {
         val fillRate = if (shaped > prevFill) 0.6f else 0.25f
         voiceMicFill = prevFill + (shaped - prevFill) * fillRate
 
+        // 滚动声波（豆包式）：新采样从右缘进入，历史样本整体左移一格
+        // （节奏由桥接层上报频率决定，安卓侧 ~35ms/格），绘制上即"声波
+        // 从右向左走过"。无 4f 基线：静音样本高度为 0（空白），只有真实
+        // 声音才长出条目；新入条目做非对称平滑防抖。
         val previous = voiceAmps
-        val next = FloatArray(24)
-        val mid = (next.size - 1) / 2f
-        for (i in next.indices) {
-            val envelope = 0.55f + 0.45f * abs(cos((i - mid) / next.size * PI.toFloat()))
-            val target = 4f + 24f * shaped * envelope
-            val prev = previous.getOrNull(i) ?: 4f
-            val rate = if (target > prev) 0.6f else 0.25f
-            next[i] = (prev + (target - prev) * rate).coerceIn(4f, 28f)
-        }
+        val next = FloatArray(previous.size)
+        for (i in 0 until next.size - 1) next[i] = previous[i + 1]
+        val target = 28f * shaped
+        val last = previous.getOrNull(next.size - 1) ?: 0f
+        next[next.size - 1] = (last + (target - last) * 0.6f).coerceIn(0f, 26f)
         voiceAmps = next
     }
 
@@ -1769,7 +2084,7 @@ internal class ChatPage : BasePager() {
         voiceClockTimer = null
         voiceCancelArmed = false
         voiceState = VoiceState.TRANSCRIBING
-        voiceAmps = FloatArray(24) { 4f }
+        voiceAmps = FloatArray(VOICE_AMP_BARS) { 0f }
         voiceMicFill = 0f
         voiceRecorder.stop()
     }
@@ -1825,14 +2140,26 @@ internal class ChatPage : BasePager() {
         voiceState = VoiceState.IDLE
         voiceCancelArmed = false
         voiceElapsedSec = 0f
-        voiceAmps = FloatArray(24) { 4f }
+        voiceAmps = FloatArray(VOICE_AMP_BARS) { 0f }
         voiceMicFill = 0f
     }
 
     private fun restoreAfterVoiceSession() {
         stopVoiceUi()
+        if (voiceInputMode) {
+            // 语音模式：录音全程发生在折叠栏，收尾保持折叠 + 语音模式即可
+            // （松手发送后停留在"按住说话"，与豆包一致）。presented 本就是
+            // false，无需 chrome 翻转。
+            composerExpanded = false
+            voiceSourceExpanded = false
+            return
+        }
         if (!voiceSourceExpanded && viewModel.inputText.isBlank()) {
             composerExpanded = false
+            // 语音收起路径不走 collapseComposer，必须在这里补两帧翻转：此刻
+            // presented 仍是录音展开时的 true，折叠态图标以隐藏态挂载并注册了
+            // 入场动画，缺了这次翻转它们会永远停在 opacity 0（R4/R5）。
+            scheduleComposerChromePresentation(false)
         } else {
             composerExpanded = true
         }
@@ -1917,7 +2244,31 @@ internal class ChatPage : BasePager() {
         context.closePath()
     }
 
-    private fun renderComposerTextArea(container: ViewContainer<*, *>) {
+    private fun renderComposerTextArea(container: ViewContainer<*, *>, isolated: Boolean = false) {
+        if (isolated) {
+            // 与 GlobalSearchPage 保持同一类原生 TextArea 配置：不持有 ref、
+            // 不命令式回写编辑态、不监听焦点/选区/键盘高度，也不修改父级布局。
+            container.TextArea {
+                attr {
+                    flex(1f)
+                    height(40f)
+                    fontSize(14f)
+                    color(this@ChatPage.theme.textPrimary)
+                    backgroundColor(Color(0xFFFFFFFF, 0f))
+                    placeholder("问一只股票或一个术语")
+                    placeholderColor(this@ChatPage.theme.textTertiary)
+                    tintColor(this@ChatPage.theme.brand)
+                    selectionColor(this@ChatPage.theme.brand)
+                }
+                event {
+                    textDidChange(isSyncEdit = true) {
+                        this@ChatPage.handleComposerTextChanged(it.text)
+                    }
+                    inputReturn { this@ChatPage.submitInput() }
+                }
+            }
+            return
+        }
         // 非受控铁律（光标消失/退格错乱的根因是回声循环）：
         // 原生上报 textDidChange → 业务把 observable 草稿 + 估算光标 + 清空组合态
         // 写回 → textInputState 响应式绑定重放 setProp → 原生在 IME 组合态进行中
@@ -1948,82 +2299,70 @@ internal class ChatPage : BasePager() {
             // 跟 maxHeight 等动态属性一起重放，会在展开布局时重启刚建立的连接，
             // 形成“键盘有反应、正文无光标”的僵尸 InputConnection。
             attr {
-                minHeight(40f)
                 fontSize(14f)
                 lineHeight(21f)
                 backgroundColor(Color(0xFFFFFFFF, 0f))
                 placeholder("问一只股票或一个术语")
                 returnKeyTypeSend()
                 enablePinyinCallback(true)
-                // Android 端由外部属性处理器把这个标记映射成 EditText 的
-                // isCursorVisible。焦点锁在意外 blur 后恢复，原生光标标记也不会
-                // 因布局刷新被关闭。
-                "stockChatKeepCursorVisible" with 1
             }
             attr {
                 // 折叠态和联想面板展开时收紧到单行。这里只更新尺寸 prop，
                 // 持久 TextArea 本身不移除、不重建。
+                // 垂直居中关键：原生 TextArea 是 TOP|START 顶对齐（KRTextAreaView
+                // setGravity(51)，DSL 无垂直对齐属性）。折叠态不能让 minHeight 把
+                // 盒子撑到 40——那样文本贴在 40 高盒子的顶部，视觉上比旁边按钮偏上。
+                // 折叠态让盒子收缩到单行内容高度，顶对齐即等于居中，再由外层
+                // justifyContentCenter 把盒子放进 48 高的行里。
+                // 但折叠态必须保留单行高度下限（21f = lineHeight）：空文本时原生
+                // 内容高度为 0，盒子归零会导致占位符不可见、点击完全落不到
+                // EditText 上（冒泡到输入栏根节点被吞）。有文字时 intrinsic 高度
+                // 优先，minHeight 只兜空态，单行视觉不变。
+                minHeight(
+                    when {
+                        // 语音模式：压到 0 高给"按住说话"让位（opacity 0 已隐藏，
+                        // 原生 EditText z 序在 Kuikly 视图之上，白底覆盖层盖不住，
+                        // 只有整个盒子退出布局流才能让文字位完全让出来）。
+                        this@ChatPage.voiceInputMode -> 0f
+                        !this@ChatPage.isComposerExpanded() -> 21f
+                        this@ChatPage.assistantPanel != AssistantPanel.NONE -> 0f
+                        else -> 40f
+                    }
+                )
                 maxHeight(
-                    if (!this@ChatPage.isComposerExpanded() || this@ChatPage.assistantPanel != AssistantPanel.NONE) 44f
-                    else 80f
+                    when {
+                        this@ChatPage.voiceInputMode -> 0f
+                        !this@ChatPage.isComposerExpanded() || this@ChatPage.assistantPanel != AssistantPanel.NONE -> 44f
+                        else -> 80f
+                    }
                 )
                 color(this@ChatPage.theme.textPrimary)
-                opacity(if (this@ChatPage.voiceState == VoiceState.IDLE) 1f else 0f)
-                touchEnable(this@ChatPage.voiceState == VoiceState.IDLE)
+                // 语音模式整个周期（含待机"按住说话"）隐藏：安卓原生 EditText
+                // 的 z 序在 Kuikly 视图之上，白底覆盖层盖不住它，只有 opacity 0
+                // 才干净；touch 一并关掉，避免按住说话时被 EditText 截走手势。
+                opacity(if (this@ChatPage.voiceState == VoiceState.IDLE && !this@ChatPage.voiceInputMode) 1f else 0f)
+                touchEnable(this@ChatPage.voiceState == VoiceState.IDLE && !this@ChatPage.voiceInputMode)
                 placeholderColor(this@ChatPage.theme.textTertiary)
                 tintColor(this@ChatPage.theme.brand)
                 selectionColor(this@ChatPage.theme.brand)
             }
             event {
+                // 只恢复输入态布局；不再触发 focus()/blur() 或焦点恢复定时器。
+                // 原生 TextArea 因而持续拥有系统管理的正常输入光标。
                 inputFocus {
-                    // 键盘自己弹起（系统输入法回调 / 原生点击）也算进入输入态。
-                    KLog.i(COMPOSER_LOG_TAG, "EV inputFocus len=${it.text.length}")
-                    // 轮循打字不因键盘弹起而停止（用户决策 2026-09-05：动效持久）。
-                    // 上锁停止只保留给真正开始对话的场景：发送消息 / 选示例卡 /
-                    // 打开历史会话（各自的调用点已有 stopWelcomeKeywordLoop(lock=true)）。
-                    this@ChatPage.composerFocusLocked = true
-                    // 已展开后的恢复 focus 必须是纯事件：不要再次进入任何布局函数。
-                    // 即使函数内部最终没有改值，Kuikly 的事件/依赖追踪也可能安排
-                    // 一次提交，并在 RecyclerView 中再次 clearFocus。
-                    if (!this@ChatPage.composerExpanded) {
-                        this@ChatPage.expandComposer()
-                        this@ChatPage.scheduleComposerFocusAfterExpansion()
-                    }
-                }
-                inputBlur {
-                    // 失焦本身绝不收起输入栏：输入态是"粘"的，只有"键盘已收起时点击
-                    // 非输入栏区域"这一次点击才回默认态（见 handleOutsideTap）。
-                    KLog.i(COMPOSER_LOG_TAG, "EV inputBlur len=${it.text.length}")
-                    this@ChatPage.recoverUnexpectedComposerBlur()
+                    if (!this@ChatPage.composerExpanded) this@ChatPage.expandComposer()
                 }
                 textDidChange(isSyncEdit = true) {
                     KLog.d(COMPOSER_LOG_TAG, "EV textDidChange len=${it.text.length}")
                     this@ChatPage.handleComposerTextChanged(it.text)
-                }
-                textInputStateChange { state ->
-                    KLog.d(
-                        COMPOSER_LOG_TAG,
-                        "EV textInputStateChange len=${state.text.length}" +
-                            " sel=${state.selectionStart}..${state.selectionEnd}" +
-                            " comp=${state.compositionStart}..${state.compositionEnd}"
-                    )
-                    this@ChatPage.updateComposerEditingState(state)
-                    val composing = state.compositionStart != TextInputState.NO_COMPOSITION
-                    this@ChatPage.updateTriggerSession(state.text, state.selectionEnd, composing)
-                }
-                selectionChange { state ->
-                    KLog.d(
-                        COMPOSER_LOG_TAG,
-                        "EV selectionChange len=${state.text.length}" +
-                            " sel=${state.selectionStart}..${state.selectionEnd}"
-                    )
-                    this@ChatPage.updateComposerSelectionState(state)
                 }
                 keyboardHeightChange {
                     KLog.i(COMPOSER_LOG_TAG, "EV keyboardHeightChange h=${it.height} dur=${it.duration}")
                     this@ChatPage.keyboardHeight = it.height
                     this@ChatPage.keyboardVisible = it.height > 0f
                     if (it.height > 0f) {
+                        // 键盘真实弹出 = 焦点会话稳定，重置意外 blur 恢复预算。
+                        this@ChatPage.composerBlurRecoverAttempts = 0
                         this@ChatPage.scheduleComposerFocusAfterKeyboardLayout(it.duration)
                     }
                     this@ChatPage.scheduleScrollChatToBottom()
@@ -2094,9 +2433,59 @@ internal class ChatPage : BasePager() {
     }
 
     private fun shouldKeepChatAtBottom(): Boolean =
-        keepChatAtBottomVersion > 0 || viewModel.streamState == StreamState.STREAMING
+        keepChatAtBottomVersion > 0 ||
+            (viewModel.streamState == StreamState.STREAMING && chatFollowStream)
+
+    /**
+     * 流式跟随手势仲裁：用户手指拖拽中（isDragging）且不在底部 → 暂停跟随；
+     * 拖回底部 → 自动恢复。程序化 setContentOffset 的 isDragging 为 false，
+     * 不会误判为用户接管。
+     */
+    private fun handleChatStreamScroll(params: ScrollParams) {
+        // 回到顶部按钮显隐：所有 scroll 事件都判定（含惯性滚动），仅程序化
+        // 动画回顶期间挂起，避免动画中间帧（offsetY 仍很大）把按钮弹回来。
+        if (chatTopScrollAnimationVersion == 0) {
+            val away = params.offsetY > params.viewHeight * 0.25f
+            if (away != chatBackToTopMounted) setChatBackToTopVisible(away)
+        }
+        if (!params.isDragging) return
+        chatFollowStream = params.offsetY >= params.contentHeight - params.viewHeight - 80f
+    }
+
+    /**
+     * 回到顶部按钮双态机：进入 = 先挂载、一拍后呈现（vif 挂载的首帧不播动画，
+     * R4）；退出 = 先收起、动画结束后卸载。version 使过期回调失效。
+     */
+    private fun setChatBackToTopVisible(visible: Boolean) {
+        val version = ++chatBackToTopVersion
+        if (visible) {
+            chatBackToTopMounted = true
+            setTimeout(16) {
+                if (chatBackToTopVersion == version) chatBackToTopPresented = true
+            }
+        } else {
+            chatBackToTopPresented = false
+            setTimeout(240) {
+                if (chatBackToTopVersion == version) chatBackToTopMounted = false
+            }
+        }
+    }
+
+    /**
+     * 平滑滚回顶部：animated=true 走系统滚动动画（区别于 resetChatScrollToTop
+     * 的 animated=false 闪现）。动画期间暂停按钮显隐判定，结束后兜底解锁。
+     */
+    private fun scrollChatToTopAnimated() {
+        val version = ++chatTopScrollAnimationVersion
+        setChatBackToTopVisible(false)
+        chatScrollerRef?.view?.setContentOffset(0f, 0f, true)
+        setTimeout(900) {
+            if (chatTopScrollAnimationVersion == version) chatTopScrollAnimationVersion = 0
+        }
+    }
 
     private fun keepChatAtBottomTemporarily() {
+        chatFollowStream = true
         val version = ++keepChatAtBottomVersion
         scheduleScrollChatToBottom()
         setTimeout(1200) {
@@ -2537,20 +2926,6 @@ internal class ChatPage : BasePager() {
         setTimeout(60_000) { pollAlerts(generation) }
     }
 
-    private fun questionBefore(messageId: String): String =
-        viewModel.messages
-            .takeWhile { it.id != messageId }
-            .lastOrNull { it.role == MessageRole.USER }
-            ?.content
-            .orEmpty()
-
-    private fun beginUnderstandingCorrection(question: String) {
-        val text = "请纠正你对这个问题的理解：$question。我的真实意思是："
-        setComposerText(text)
-        inputRef?.view?.focus()
-        keepChatAtBottomTemporarily()
-    }
-
     private fun copyShareCard(content: String) {
         val plain = AiResponseLexer.lex(content, finished = true)
             .filterIsInstance<TextBlock>()
@@ -2592,6 +2967,12 @@ internal class ChatPage : BasePager() {
     }
 
     private var islandAnimating = false
+    // 容器变换交接：路由触发（160ms 主触发 + 420ms 兜底 + 动画完成事件）
+    // 三路竞争，用幂等门保证只跑一次。
+    private var islandDetailHandoffDone = false
+    // 交接遮罩：原生整页淡入期间 push 会立即触发本页 pageDidDisappear，
+    // 此时全屏玻璃帧还要作淡入的底，不能提前归位。
+    private var islandHandoffMaskActive = false
 
     private fun resetIslandMotion(snap: Boolean = false) {
         islandGestureMotion = IslandGestureMotion(revision = ++islandMotionRevision, snap = snap)
@@ -2614,6 +2995,9 @@ internal class ChatPage : BasePager() {
 
     private fun scheduleIslandDetailReturnReset() {
         val resetVersion = ++islandDetailRouteResetVersion
+        // 交接早已结束（详情页盖住期间淡入必已完成），清掉可能因渲染暂停
+        // 而延迟的遮罩，避免 pageDidDisappear 的兜底归位被误拦。
+        islandHandoffMaskActive = false
         remountIslandCollapsedForDetailRoute()
         val writeCollapsedFrame: () -> Unit = {
             if (islandDetailRouteActive && resetVersion == islandDetailRouteResetVersion) {
@@ -2637,6 +3021,7 @@ internal class ChatPage : BasePager() {
         if (!islandDetailRouteActive) return
         islandDetailRouteActive = false
         islandDetailRouteResetVersion++
+        islandHandoffMaskActive = false
         islandMounted = true
     }
 
@@ -2726,15 +3111,19 @@ internal class ChatPage : BasePager() {
             islandGestureMotion.phase != IslandGesturePhase.DRAGGING ||
             symbol.isEmpty()
         ) return
+        islandDetailHandoffDone = false
         islandGestureMotion = islandGestureMotion.copy(
             phase = IslandGesturePhase.OPENING_DETAIL,
             offsetY = 0f,
         )
         islandAnimating = true
 
-        // The native route starts only after the glass has actually covered
-        // the viewport. This timeout is a phase-gated renderer fallback.
-        setTimeout(280) { completeIslandMotion(ISLAND_ANIMATION_DETAIL) }
+        // 容器变换交接：形变进行到 ~90%（0.18s 形变的 160ms 处）就启动路由，
+        // 原生无动画 push + 整页淡入与剩余形变重叠，详情页在卡片收尾时就已
+        // 开始渐显，消除"全屏白幕等页面启动"的停顿。420ms 是渲染器兜底
+        //（与 160ms 主触发都走 phase-gated + islandDetailHandoffDone 幂等门）。
+        setTimeout(160) { completeIslandMotion(ISLAND_ANIMATION_DETAIL) }
+        setTimeout(420) { completeIslandMotion(ISLAND_ANIMATION_DETAIL) }
     }
 
     private fun completeIslandMotion(animationKey: String) {
@@ -2749,25 +3138,28 @@ internal class ChatPage : BasePager() {
                 resetIslandMotion()
             }
             animationKey == ISLAND_ANIMATION_DETAIL &&
-                islandGestureMotion.phase == IslandGesturePhase.OPENING_DETAIL -> {
+                islandGestureMotion.phase == IslandGesturePhase.OPENING_DETAIL &&
+                !islandDetailHandoffDone -> {
+                islandDetailHandoffDone = true
                 val symbol = islandSymbol
-                islandExpanded = false
-                // 详情与对比互斥（用户决策 2026-09-05）：进详情路由时清掉灵动岛
-                // 对比会话，避免返回后对比 lobby 借着 compareVisible 复活。
-                islandCompareVisible = false
-                islandCompareLeftSymbol = ""
-                islandCompareRightSymbol = ""
                 islandDetailRouteActive = true
                 islandDetailRouteResetVersion++
-                openStockDetail(symbol)
-                // openPage is synchronous. Reset the covered ChatPage now so
-                // the full-screen transform cannot survive until navigation
-                // returns; pageDidAppear repeats this as a lifecycle fallback.
-                // Snap (no tween): this reset can end up committing right as
-                // the page is covered or uncovered, and animating from the
-                // full-screen frame at that moment is what reads as the
-                // island jumping to the top of the screen.
-                remountIslandCollapsedForDetailRoute()
+                // 详情与对比互斥（用户决策 2026-09-05）：进详情路由时清掉灵动岛
+                // 对比会话，避免返回后对比 lobby 借着 compareVisible 复活。
+                // （清态随归位一起延后到交接淡入结束，期间玻璃帧是淡入的底。）
+                // 交接遮罩：无动画 push 会立即触发本页 pageDidDisappear（其中
+                // 会强制归位灵动岛），但全屏玻璃帧还要作原生整页淡入的底，
+                // 先捂住归位，等详情页完全不透明后再原地 snap 归位（用户不可见）。
+                islandHandoffMaskActive = true
+                openStockDetail(symbol, islandExpand = true)
+                setTimeout(550) {
+                    islandHandoffMaskActive = false
+                    islandExpanded = false
+                    islandCompareVisible = false
+                    islandCompareLeftSymbol = ""
+                    islandCompareRightSymbol = ""
+                    remountIslandCollapsedForDetailRoute()
+                }
             }
         }
     }

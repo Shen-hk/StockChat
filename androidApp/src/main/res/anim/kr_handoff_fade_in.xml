@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 容器变换交接（灵动岛下拉 → 详情）：详情 Activity 整页淡入，
+     与发送页卡片形变收尾重叠；发送页不退场（exit=0）保持玻璃帧作底。 -->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:fromAlpha="0.0"
+    android:toAlpha="1.0"
+    android:duration="240"
+    android:interpolator="@android:interpolator/decelerate_quad" />

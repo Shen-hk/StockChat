@@ -20,12 +20,20 @@ object Routes {
     const val LEGACY_ROUTER = "router"
 }
 
-fun PagerScope.openStockDetail(symbol: String, from: String = Routes.CHAT) {
+fun PagerScope.openStockDetail(
+    symbol: String,
+    from: String = Routes.CHAT,
+    islandExpand: Boolean = false,
+) {
     getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
         Routes.STOCK_DETAIL,
         JSONObject().apply {
             put("symbol", symbol)
             put("from", from)
+            // 容器变换交接：灵动岛玻璃卡片刚好铺满全屏，原生侧对该路由做
+            // 无动画 push（去掉系统右侧推入），详情页内容再就地淡入接管
+            // 这一帧，读起来就是"卡片长成了详情页"。
+            if (islandExpand) put("krTransition", "islandExpand")
         },
     )
 }

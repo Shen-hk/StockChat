@@ -143,7 +143,9 @@ class DeepSeekAiProvider(
     companion object {
         private val SYSTEM_PROMPT = """
             你是面向中文个人投资者的股票解释助手。只做信息解释，不预测收益，不给出买入、卖出或仓位建议。
-            回答前必须先确认用户问题的对象、时间范围和方向词（尤其是“最适合/最不适合”“上涨/下跌”）。客户端会把这份理解显示为“我把你的问题理解为”纠正 chip，正文无需重复固定句式；如果问题有歧义，要明确列出采用的理解，不能悄悄改写成单一指标排序。
+            回答前先在心里确认用户问题的对象、时间范围和方向词（尤其是“最适合/最不适合”“上涨/下跌”）；如果问题有歧义，要在正文中自然说明你采用的理解，不能悄悄改写成单一指标排序。
+            正文必须结构化排版：用「## 一级结论标题」和「### 小节标题」组织层级（##/### 后加空格），标题要短、能概括段落；关键数字、结论和风险提示用 **加粗** 突出。全文 2~4 个标题为宜，不要逐句加粗。
+            其余内容用自然短段落和简短要点；不要输出 Markdown 分隔线（---、——）或过多空行，只有确实需要横向对比时才使用表格。
             回答要简洁、可核验；区分事实、推断与不确定性。需要结构化内容时，在自然语言后输出卡片块：
             ```card:stock-quote
             {"symbol":"600519.SH"}
@@ -151,7 +153,6 @@ class DeepSeekAiProvider(
             可用类型：stock-quote、stock-chart、attribution、insight、definition、news、stock-compare、suggestions。
             suggestions 的 JSON 格式是 {"chips":[{"text":"继续追问","type":"drill"}]}。不要在 JSON 中编造实时价格，行情由客户端数据层填充。
             每个卡片 JSON 可带 source 与 asOf；只有你确实掌握来源和截止时间时才填写，否则留空，让客户端注入真实数据源。不得伪造时间戳或把模型知识截止时间冒充行情时间。
-            正文请使用自然短段落，必要时使用简短要点；不要输出 Markdown 分隔线（---、——）或过多空行，只有确实需要横向对比时才使用表格。
         """.trimIndent()
     }
 }
@@ -191,7 +192,9 @@ class MockAiProvider(override val pagerId: String) : AiProvider, PagerScope {
     }
 
     private fun overviewAnswer() = """
-        贵州茅台当前处于偏弱震荡。价格变化本身只是结果，更值得关注的是成交、板块联动和后续公告。
+        ## 当前状态
+
+        贵州茅台当前处于**偏弱震荡**。价格变化本身只是结果，更值得关注的是成交、板块联动和后续公告。
 
         ```card:stock-quote
         {"symbol":"600519.SH"}
@@ -207,7 +210,9 @@ class MockAiProvider(override val pagerId: String) : AiProvider, PagerScope {
     """.trimIndent()
 
     private fun attributionAnswer() = """
-        这次波动更像是多因素叠加，资金面贡献最大，板块联动次之。以下是解释框架，不是买卖建议。
+        ## 波动归因
+
+        这次波动更像是多因素叠加，**资金面贡献最大**，板块联动次之。以下是解释框架，不是买卖建议。
 
         ```card:attribution
         {"symbol":"600519.SH","direction":"fall","factors":[{"name":"资金面","weight":0.42,"confidence":"high","desc":"成交放大且价格承压，主动卖压偏强。","source":"行情数据推断"},{"name":"板块联动","weight":0.28,"confidence":"medium","desc":"白酒板块同步走弱，对个股形成拖累。","source":"板块行情"},{"name":"消息面","weight":0.18,"confidence":"medium","desc":"暂未发现足以单独解释波动的重大公告。","source":"公开信息"},{"name":"情绪面","weight":0.12,"confidence":"low","desc":"短线风险偏好回落，放大了价格波动。","source":"市场宽度"}]}

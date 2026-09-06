@@ -1052,7 +1052,7 @@ fun ViewContainer<*, *>.ChatDrawer(
             }
             View {
                 attr { flex(1f); marginLeft(10f) }
-                Text { attr { text("StockChat"); fontSize(17f); fontWeightBold(); color(theme.textPrimary) } }
+                Text { attr { text("StockChat"); fontSize(18f); fontWeightBold(); color(theme.textPrimary) } }
             }
             View {
                 attr { size(30f, 30f); allCenter(); borderRadius(15f); backgroundColor(theme.surfaceMuted) }
@@ -1076,7 +1076,7 @@ fun ViewContainer<*, *>.ChatDrawer(
                 )
             }
             Text { attr { text("＋"); fontSize(20f); fontWeightSemiBold(); color(Color(0xFFFFFFFF)) } }
-            Text { attr { text("新会话"); marginLeft(6f); fontSize(15f); fontWeightSemiBold(); color(Color(0xFFFFFFFF)) } }
+            Text { attr { text("新会话"); marginLeft(6f); fontSize(16f); fontWeightSemiBold(); color(Color(0xFFFFFFFF)) } }
             event { click { onClose(); onNewChat() } }
         }
 
@@ -1096,7 +1096,7 @@ fun ViewContainer<*, *>.ChatDrawer(
                 attr {
                     text(if (sessions.isEmpty()) "暂无历史会话" else "历史会话 · ${sessions.size}")
                     marginLeft(6f)
-                    fontSize(12f)
+                    fontSize(14f)
                     color(theme.textTertiary)
                 }
             }
@@ -1146,7 +1146,7 @@ fun ViewContainer<*, *>.ChatDrawer(
             attr {
                 text("StockChat v1.0 · 数据仅供参考")
                 marginTop(10f)
-                fontSize(9f)
+                fontSize(10f)
                 color(theme.textTertiary)
                 textAlignCenter()
             }
@@ -1155,7 +1155,7 @@ fun ViewContainer<*, *>.ChatDrawer(
 }
 
 private fun ViewContainer<*, *>.DrawerGroupTitle(text: String, theme: StockChatTheme) {
-    Text { attr { text(text); marginTop(14f); marginBottom(4f); marginLeft(4f); fontSize(10f); fontWeightSemiBold(); color(theme.textTertiary) } }
+    Text { attr { text(text); marginTop(14f); marginBottom(4f); marginLeft(4f); fontSize(11f); fontWeightSemiBold(); color(theme.textTertiary) } }
 }
 
 private fun ViewContainer<*, *>.DrawerSessionItem(
@@ -1182,7 +1182,7 @@ private fun ViewContainer<*, *>.DrawerSessionItem(
             Text {
                 attr {
                     text(title)
-                    fontSize(13f)
+                    fontSize(15f)
                     if (active) fontWeightMedium()
                     color(if (active) theme.brand else theme.textPrimary)
                 }
@@ -1191,7 +1191,7 @@ private fun ViewContainer<*, *>.DrawerSessionItem(
                 attr {
                     text(preview)
                     marginTop(3f)
-                    fontSize(10f)
+                    fontSize(12f)
                     color(theme.textTertiary)
                 }
             }
@@ -1211,8 +1211,8 @@ private fun ViewContainer<*, *>.DrawerEmptyHistory(theme: StockChatTheme) {
             borderRadius(12f)
             backgroundColor(theme.surfaceMuted)
         }
-        Text { attr { text("还没有历史记录"); fontSize(13f); fontWeightMedium(); color(theme.textSecondary); textAlignCenter() } }
-        Text { attr { text("开始提问后会自动保存"); marginTop(5f); fontSize(10f); color(theme.textTertiary); textAlignCenter() } }
+        Text { attr { text("还没有历史记录"); fontSize(14f); fontWeightMedium(); color(theme.textSecondary); textAlignCenter() } }
+        Text { attr { text("开始提问后会自动保存"); marginTop(5f); fontSize(11f); color(theme.textTertiary); textAlignCenter() } }
     }
 }
 
@@ -1223,7 +1223,7 @@ private fun ViewContainer<*, *>.DrawerMenuItem(glyph: String, glyphColor: Color,
             attr { size(28f, 28f); marginLeft(6f); allCenter(); borderRadius(8f); backgroundColor(glyphBg) }
             Text { attr { text(glyph); fontSize(14f); color(glyphColor) } }
         }
-        Text { attr { text(label); marginLeft(10f); fontSize(13f); color(theme.textPrimary); flex(1f) } }
+        Text { attr { text(label); marginLeft(10f); fontSize(15f); color(theme.textPrimary); flex(1f) } }
         Text { attr { text("›"); marginRight(10f); fontSize(15f); color(theme.textTertiary) } }
         event { click { onClick() } }
     }

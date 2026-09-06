@@ -196,6 +196,34 @@ fun ViewContainer<*, *>.LineIconAudioLines(color: Color, size: Float) {
     }
 }
 
+/**
+ * 键盘（Lucide `keyboard` 对齐）：语音模式下"返回文字输入"的切换图标。
+ * 圆角外框 + 三行按键点 + 底部空格条。
+ */
+fun ViewContainer<*, *>.LineIconKeyboard(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // 外框：x=2 y=4 w=20 h=16 rx=2。
+        roundRectPath(2f, 4f, 20f, 16f, 2f)
+        stroke()
+        // 按键点（圆头短段渲染为圆点）：第一行 y=8，第二行 y=12。
+        beginPath()
+        for (x in listOf(6f, 10f, 14f, 18f)) {
+            moveTo(x - 0.2f, 8f)
+            lineTo(x + 0.2f, 8f)
+        }
+        for (x in listOf(8f, 12f, 16f)) {
+            moveTo(x - 0.2f, 12f)
+            lineTo(x + 0.2f, 12f)
+        }
+        stroke()
+        // 空格条。
+        beginPath()
+        moveTo(7f, 16f)
+        lineTo(17f, 16f)
+        stroke()
+    }
+}
+
 /** Photo: pick from album. */
 fun ViewContainer<*, *>.LineIconPhoto(color: Color, size: Float) {
     lineIcon(color, size) {
@@ -383,6 +411,17 @@ fun ViewContainer<*, *>.LineIconChevronRight(color: Color, size: Float) {
         moveTo(9f, 6f)
         lineTo(15f, 12f)
         lineTo(9f, 18f)
+        stroke()
+    }
+}
+
+/** Chevron up: back-to-top. Geometry aligned with Lucide `chevron-up` (m18 15-6-6-6 6). */
+fun ViewContainer<*, *>.LineIconChevronUp(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        moveTo(18f, 15f)
+        lineTo(12f, 9f)
+        lineTo(6f, 15f)
         stroke()
     }
 }

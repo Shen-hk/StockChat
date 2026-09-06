@@ -16,7 +16,11 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.net.Uri
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
+import android.os.SystemClock
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -37,6 +41,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.sqrt
 
 class KRBridgeModule : KuiklyRenderBaseModule() {
 
@@ -402,7 +407,18 @@ private class AndroidSpeechRecognitionSession(
     private var latestPartial = ""
     private var finished = false
 
+    // 真实音量监听：onRmsChanged 依赖 OEM 语音服务实现（小米等大量机型不回调），
+    // 波形会停在基线。这里独立开一路 AudioRecord（16kHz 单声道）按 25ms 块
+    // 计算真实 PCM RMS，≥35ms 一拍上报（与页侧波形滚动节奏一致）；与 onRmsChanged 的取值做 max 合并，
+    // 哪路报告了真实声音就用哪路。回调统一 post 回主线程（与 RecognitionListener
+    // 一致），避免 Kuikly 桥接跨线程问题。
+    @Volatile private var meterRunning = false
+    @Volatile private var meterAvailable = false
+    @Volatile private var recognizerRms = 0f
+    private var meterThread: Thread? = null
+
     fun start(): Boolean {
+        startAmplitudeMeter()
         mainHandler.post {
             try {
                 val speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context)
@@ -457,7 +473,11 @@ private class AndroidSpeechRecognitionSession(
 
     override fun onRmsChanged(rmsdB: Float) {
         val normalized = ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
-        callback.invoke(mapOf("type" to "amplitude", "rms" to normalized))
+        recognizerRms = normalized
+        if (!meterAvailable) {
+            // AudioRecord 监听初始化失败的兜底：直接透传识别器的 RMS。
+            callback.invoke(amplitudePayload(normalized))
+        }
     }
 
     override fun onBufferReceived(buffer: ByteArray?) {
@@ -527,6 +547,7 @@ private class AndroidSpeechRecognitionSession(
     }
 
     private fun destroyRecognizer() {
+        stopAmplitudeMeter()
         if (!finished) {
             finished = true
             onFinish(this)
@@ -538,6 +559,89 @@ private class AndroidSpeechRecognitionSession(
         } catch (_: Throwable) {
         }
         recognizer = null
+    }
+
+    private fun amplitudePayload(rms: Float): Map<String, Any> =
+        mapOf("type" to "amplitude", "rms" to rms)
+
+    /** 录音会话期间开启的真实麦克风音量监听（幂等）。 */
+    private fun startAmplitudeMeter() {
+        if (meterThread != null) return
+        meterRunning = true
+        val thread = Thread {
+            var record: AudioRecord? = null
+            try {
+                val sampleRate = 16000
+                // 25ms 一块；上报节流到 ≥35ms（与页侧波形滚动节奏一致，
+                // 原为 60ms，用户要求加快滚动）。
+                val chunk = ShortArray(sampleRate / 40)
+                val minBuf = AudioRecord.getMinBufferSize(
+                    sampleRate,
+                    AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT,
+                )
+                if (minBuf > 0) {
+                    val r = AudioRecord(
+                        MediaRecorder.AudioSource.MIC,
+                        sampleRate,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        maxOf(minBuf, chunk.size * 2),
+                    )
+                    if (r.state == AudioRecord.STATE_INITIALIZED) {
+                        record = r
+                        r.startRecording()
+                        meterAvailable = true
+                        var lastPost = 0L
+                        while (meterRunning) {
+                            val n = r.read(chunk, 0, chunk.size)
+                            if (n <= 0) continue
+                            var sum = 0.0
+                            for (i in 0 until n) {
+                                val s = chunk[i].toDouble()
+                                sum += s * s
+                            }
+                            val rms = sqrt(sum / n)
+                            // 线性归一：正常说话距离 PCM RMS 约 300–6000，
+                            // 2500 作为满刻度偏保守，页侧还有 ×2.5 增益。
+                            val own = (rms / 2500.0).coerceIn(0.0, 1.0).toFloat()
+                            // 识别器 RMS 衰减合并：哪路报告了真实声音用哪路，
+                            // 识别器静默后其旧值按 0.8/拍 衰减避免托底虚高。
+                            recognizerRms *= 0.8f
+                            val merged = maxOf(own, recognizerRms)
+                            val now = SystemClock.elapsedRealtime()
+                            if (now - lastPost >= 35) {
+                                lastPost = now
+                                mainHandler.post {
+                                    if (meterRunning) callback.invoke(amplitudePayload(merged))
+                                }
+                            }
+                        }
+                    } else {
+                        r.release()
+                    }
+                }
+            } catch (_: Throwable) {
+            } finally {
+                try {
+                    record?.stop()
+                } catch (_: Throwable) {
+                }
+                try {
+                    record?.release()
+                } catch (_: Throwable) {
+                }
+                meterAvailable = false
+            }
+        }
+        thread.isDaemon = true
+        meterThread = thread
+        thread.start()
+    }
+
+    private fun stopAmplitudeMeter() {
+        meterRunning = false
+        meterThread = null
     }
 
     private fun errorPayload(error: String, message: String): Map<String, Any> =

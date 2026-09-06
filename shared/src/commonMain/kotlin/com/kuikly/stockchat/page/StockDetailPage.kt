@@ -82,6 +82,10 @@ internal class StockDetailPage : BasePager() {
     private var watchlistFeedback: Boolean by observable(false)
     private var livePulse: Boolean by observable(false)
     private var entranceVisible: Boolean by observable(false)
+    // 容器变换交接（灵动岛下拉 → 详情）：无动画 push 让本页原地接管全屏
+    // 玻璃帧，随后整页内容淡入，读起来是"卡片长成了详情页"。
+    private var handoffPresented: Boolean by observable(true)
+    private var handoffFadeActive = false
     private var aiRevealLimit: Int by observable(0)
     private var aiRevealSource = ""
     private var aiRetryActive: Boolean by observable(false)
@@ -98,6 +102,8 @@ internal class StockDetailPage : BasePager() {
         StockCardRenderers.ensureRegistered()
         MarketCardRenderers.ensureRegistered()
         symbol = pagerData.params.optString("symbol").ifEmpty { "600519.SH" }
+        handoffFadeActive = pagerData.params.optString("krTransition") == "islandExpand"
+        handoffPresented = !handoffFadeActive || reduceMotion
         quoteRepository.cachedOrOffline(symbol)?.let {
             quote = it
             quoteLoading = false
@@ -121,6 +127,13 @@ internal class StockDetailPage : BasePager() {
         entranceVisible = reduceMotion
         if (!reduceMotion) {
             setTimeout(0) { entranceVisible = true }
+        }
+        // 交接淡入 R4 两帧翻转：首帧 opacity 0 挂载（对齐全屏玻璃帧），
+        // 下一帧翻转为可见触发淡入。500ms 兜底防 ref→setTimeout 链路丢失
+        // 导致页面停在透明态（同值写入不通知，幂等安全）。
+        if (handoffFadeActive) {
+            setTimeout(0) { handoffPresented = true }
+            setTimeout(500) { handoffPresented = true }
         }
         startLivePulse()
         startAiReveal()
@@ -149,277 +162,290 @@ internal class StockDetailPage : BasePager() {
         )
         return {
             attr { backgroundColor(page.theme.page) }
-            Scroller {
+            // 交接容器：灵动岛无动画 push 后原地接管全屏玻璃帧，
+            // 整页内容（含顶栏/底栏）在容器上统一淡入（R4 两帧翻转）。
+            View {
                 attr {
                     flex(1f)
-                    paddingLeft(14f)
-                    paddingRight(14f)
-                    paddingTop(page.pagerData.statusBarHeight + 73f)
-                    paddingBottom(100f)
-                }
-                event {
-                    scroll { params ->
-                        page.updateTopProgress(params.offsetX, params.contentHeight, params.viewHeight)
-                    }
-                    contentSizeChanged { _, contentHeight ->
-                        page.updateTopProgress(0f, contentHeight, page.pagerData.pageViewHeight)
+                    opacity(if (page.handoffPresented) 1f else 0f)
+                    if (!page.reduceMotion) {
+                        // 原生整页淡入（0.24s）已承载与形变的重叠渐显，
+                        // 页内这层只负责平滑首帧内容落位，略短不拖总时长。
+                        animate(Animation.easeOut(0.22f), "stock-detail-handoff")
                     }
                 }
+                Scroller {
+                    attr {
+                        flex(1f)
+                        paddingLeft(14f)
+                        paddingRight(14f)
+                        paddingTop(page.pagerData.statusBarHeight + 73f)
+                        paddingBottom(100f)
+                    }
+                    event {
+                        scroll { params ->
+                            page.updateTopProgress(params.offsetX, params.contentHeight, params.viewHeight)
+                        }
+                        contentSizeChanged { _, contentHeight ->
+                            page.updateTopProgress(0f, contentHeight, page.pagerData.pageViewHeight)
+                        }
+                    }
 
-                // ---- Hero 行情（去卡片，直接铺底） ----
-                View {
-                    attr { marginTop(page.theme.spacing.xl) }
+                    // ---- Hero 行情（去卡片，直接铺底） ----
                     View {
-                        attr { flexDirectionRow(); alignItemsCenter() }
+                        attr { marginTop(page.theme.spacing.xl) }
                         View {
-                            attr { flex(1f); flexDirectionRow(); alignItemsCenter(); flexWrapWrap() }
-                            TickerText(
-                                text = { Format.price(page.quote.price) },
-                                previousText = { page.previousPriceText },
-                                loading = { page.quoteLoading },
-                                fontSize = page.theme.type.display,
-                                width = 142f,
-                                color = { page.toneColor() },
-                                theme = page.theme,
-                                lift = { page.tickerLift },
-                                directionUp = { page.tickerDirectionUp },
-                                reduceMotion = page.reduceMotion,
-                            )
+                            attr { flexDirectionRow(); alignItemsCenter() }
                             View {
-                                attr {
-                                    marginLeft(page.theme.spacing.sm)
-                                    paddingTop(3f); paddingBottom(3f); paddingLeft(10f); paddingRight(10f)
-                                    backgroundColor(page.toneSoftColor())
-                                    borderRadius(page.theme.inputRadius)
-                                    alignItemsCenter(); justifyContentCenter()
-                                }
+                                attr { flex(1f); flexDirectionRow(); alignItemsCenter(); flexWrapWrap() }
                                 TickerText(
-                                    text = { Format.percent(page.quote.changePercent) },
-                                    previousText = { page.previousPercentText },
+                                    text = { Format.price(page.quote.price) },
+                                    previousText = { page.previousPriceText },
                                     loading = { page.quoteLoading },
-                                    fontSize = page.theme.type.sm,
-                                    width = 70f,
+                                    fontSize = page.theme.type.display,
+                                    width = 142f,
                                     color = { page.toneColor() },
                                     theme = page.theme,
                                     lift = { page.tickerLift },
                                     directionUp = { page.tickerDirectionUp },
                                     reduceMotion = page.reduceMotion,
                                 )
+                                View {
+                                    attr {
+                                        marginLeft(page.theme.spacing.sm)
+                                        paddingTop(3f); paddingBottom(3f); paddingLeft(10f); paddingRight(10f)
+                                        backgroundColor(page.toneSoftColor())
+                                        borderRadius(page.theme.inputRadius)
+                                        alignItemsCenter(); justifyContentCenter()
+                                    }
+                                    TickerText(
+                                        text = { Format.percent(page.quote.changePercent) },
+                                        previousText = { page.previousPercentText },
+                                        loading = { page.quoteLoading },
+                                        fontSize = page.theme.type.sm,
+                                        width = 70f,
+                                        color = { page.toneColor() },
+                                        theme = page.theme,
+                                        lift = { page.tickerLift },
+                                        directionUp = { page.tickerDirectionUp },
+                                        reduceMotion = page.reduceMotion,
+                                    )
+                                }
+                            }
+                            // dataModeLabel 为 observable：vbind 包一层使其随标签变化重建
+                            vbind({ page.dataModeLabel }) {
+                                DataModeBadge(page.theme, page.dataModeLabel, page.hostGlassRenderer)
                             }
                         }
-                        // dataModeLabel 为 observable：vbind 包一层使其随标签变化重建
-                        vbind({ page.dataModeLabel }) {
-                            DataModeBadge(page.theme, page.dataModeLabel, page.hostGlassRenderer)
-                        }
-                    }
-                    View {
-                        attr { marginTop(4f) }
-                        TickerText(
-                            text = { "${Format.signed(page.quote.change)}  ${Format.percent(page.quote.changePercent)}" },
-                            previousText = { page.previousChangeText },
-                            loading = { page.quoteLoading },
-                            fontSize = page.theme.type.body,
-                            width = 168f,
-                            color = { page.toneColor() },
-                            theme = page.theme,
-                            lift = { page.tickerLift },
-                            directionUp = { page.tickerDirectionUp },
-                            reduceMotion = page.reduceMotion,
-                        )
-                    }
-                    Text {
-                        attr {
-                            text(page.quoteSourceLine())
-                            marginTop(page.theme.spacing.sm)
-                            fontSize(page.theme.type.meta)
-                            color(page.theme.textTertiary)
-                        }
-                    }
-                    LiveDot(page.theme, { page.livePulse }, page.reduceMotion)
-                    View {
-                        attr {
-                            marginTop(page.theme.spacing.md)
-                            height(36f)
-                            paddingLeft(14f)
-                            paddingRight(14f)
-                            alignSelfFlexStart()
-                            allCenter()
-                            borderRadius(page.theme.inputRadius)
-                            backgroundColor(if (page.watchlisted) page.theme.surfaceMuted else page.theme.brandSoft)
-                            border(Border(1f, BorderStyle.SOLID, if (page.watchlistFeedback) page.theme.brand else page.theme.divider))
-                            boxShadow(
-                                if (page.watchlistFeedback) BoxShadow(0f, 4f, 14f, page.theme.brand.opacity(0.18f))
-                                else BoxShadow(0f, 0f, 0f, page.theme.brand.opacity(0f))
+                        View {
+                            attr { marginTop(4f) }
+                            TickerText(
+                                text = { "${Format.signed(page.quote.change)}  ${Format.percent(page.quote.changePercent)}" },
+                                previousText = { page.previousChangeText },
+                                loading = { page.quoteLoading },
+                                fontSize = page.theme.type.body,
+                                width = 168f,
+                                color = { page.toneColor() },
+                                theme = page.theme,
+                                lift = { page.tickerLift },
+                                directionUp = { page.tickerDirectionUp },
+                                reduceMotion = page.reduceMotion,
                             )
-                            transform(scale = if (page.watchlistFeedback) Scale(1.04f, 1.04f) else Scale.DEFAULT)
-                            if (!page.reduceMotion) animate(Animation.easeOut(0.18f), page.watchlistFeedback)
                         }
                         Text {
                             attr {
-                                text(if (page.watchlisted) "已自选" else "加自选")
-                                fontSize(page.theme.type.label)
-                                fontWeightSemiBold()
-                                color(if (page.watchlisted) page.theme.textSecondary else page.theme.brand)
-                            }
-                        }
-                        FocusHairline({ page.watchlistFeedback }, page.theme, page.reduceMotion)
-                        event { click { page.toggleWatchlist() } }
-                    }
-                    vif({ page.watchlistHint.isNotEmpty() }) {
-                        Text {
-                            attr {
-                                text(page.watchlistHint)
-                                marginTop(6f)
+                                text(page.quoteSourceLine())
+                                marginTop(page.theme.spacing.sm)
                                 fontSize(page.theme.type.meta)
-                                color(page.theme.term)
+                                color(page.theme.textTertiary)
                             }
                         }
-                    }
-                    // FR-W2 对照物：详情页是「当前事实」一侧，当初理由在此对照
-                    vif({ page.watchlisted && page.watchlistReason().isNotEmpty() }) {
-                        Text {
+                        LiveDot(page.theme, { page.livePulse }, page.reduceMotion)
+                        View {
                             attr {
-                                text("当初理由：${page.watchlistReason()}")
-                                marginTop(4f)
-                                fontSize(page.theme.type.meta)
-                                lineHeight(16f)
-                                color(page.theme.textSecondary)
+                                marginTop(page.theme.spacing.md)
+                                height(36f)
+                                paddingLeft(14f)
+                                paddingRight(14f)
+                                alignSelfFlexStart()
+                                allCenter()
+                                borderRadius(page.theme.inputRadius)
+                                backgroundColor(if (page.watchlisted) page.theme.surfaceMuted else page.theme.brandSoft)
+                                border(Border(1f, BorderStyle.SOLID, if (page.watchlistFeedback) page.theme.brand else page.theme.divider))
+                                boxShadow(
+                                    if (page.watchlistFeedback) BoxShadow(0f, 4f, 14f, page.theme.brand.opacity(0.18f))
+                                    else BoxShadow(0f, 0f, 0f, page.theme.brand.opacity(0f))
+                                )
+                                transform(scale = if (page.watchlistFeedback) Scale(1.04f, 1.04f) else Scale.DEFAULT)
+                                if (!page.reduceMotion) animate(Animation.easeOut(0.18f), page.watchlistFeedback)
+                            }
+                            Text {
+                                attr {
+                                    text(if (page.watchlisted) "已自选" else "加自选")
+                                    fontSize(page.theme.type.label)
+                                    fontWeightSemiBold()
+                                    color(if (page.watchlisted) page.theme.textSecondary else page.theme.brand)
+                                }
+                            }
+                            FocusHairline({ page.watchlistFeedback }, page.theme, page.reduceMotion)
+                            event { click { page.toggleWatchlist() } }
+                        }
+                        vif({ page.watchlistHint.isNotEmpty() }) {
+                            Text {
+                                attr {
+                                    text(page.watchlistHint)
+                                    marginTop(6f)
+                                    fontSize(page.theme.type.meta)
+                                    color(page.theme.term)
+                                }
+                            }
+                        }
+                        // FR-W2 对照物：详情页是「当前事实」一侧，当初理由在此对照
+                        vif({ page.watchlisted && page.watchlistReason().isNotEmpty() }) {
+                            Text {
+                                attr {
+                                    text("当初理由：${page.watchlistReason()}")
+                                    marginTop(4f)
+                                    fontSize(page.theme.type.meta)
+                                    lineHeight(16f)
+                                    color(page.theme.textSecondary)
+                                }
                             }
                         }
                     }
-                }
 
-                // ---- 行情指标：细分隔线网格（替代白卡） ----
-                SectionLabel("行情数据", page.theme)
-                View {
-                    attr {
-                        marginTop(page.theme.spacing.lg)
-                        backgroundColor(page.theme.surfaceMuted)
-                        borderRadius(page.theme.cardRadius)
+                    // ---- 行情指标：细分隔线网格（替代白卡） ----
+                    SectionLabel("行情数据", page.theme)
+                    View {
+                        attr {
+                            marginTop(page.theme.spacing.lg)
+                            backgroundColor(page.theme.surfaceMuted)
+                            borderRadius(page.theme.cardRadius)
+                        }
+                        // 指标值随行情刷新：数据驱动重建，vbind 范式（MarketPage 同款）
+                        vbind({ page.quote }) {
+                            MetricGrid(
+                                listOf(
+                                    DetailMetric("今开", Format.price(page.quote.open), page.marketColor(page.quote.open)),
+                                    DetailMetric("最高", Format.price(page.quote.high), page.marketColor(page.quote.high)),
+                                    DetailMetric("最低", Format.price(page.quote.low), page.marketColor(page.quote.low)),
+                                    DetailMetric("昨收", Format.price(page.quote.previousClose), page.theme.textSecondary),
+                                    DetailMetric("成交量", Format.compactAmount(page.quote.volume)),
+                                    DetailMetric("成交额", Format.compactAmount(page.quote.amount)),
+                                    DetailMetric("换手率", "${Format.decimal(page.quote.turnoverRate, 2)}%"),
+                                    DetailMetric("总市值", Format.compactAmount(page.quote.marketCap)),
+                                ),
+                                page.theme,
+                            )
+                        }
                     }
-                    // 指标值随行情刷新：数据驱动重建，vbind 范式（MarketPage 同款）
-                    vbind({ page.quote }) {
+
+                    // ---- 走势：去卡片，满宽绘制 + 分段控件 ----
+                    SectionLabel("走势", page.theme)
+                    ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
+                        page.chartMode = m
+                        page.chartPeriod = p
+                        page.selectedKLineIndex = -1
+                    }
+                    DetailChart(page.theme, { page.chartMode }, { page.chartPeriod }, page.quote, ctx, { page.selectedKLineIndex }) {
+                        page.selectedKLineIndex = it
+                    }
+
+                    // ---- 关键指标：细分隔线网格 ----
+                    SectionLabel("关键指标", page.theme)
+                    View {
+                        attr {
+                            marginTop(page.theme.spacing.lg)
+                            backgroundColor(page.theme.surfaceMuted)
+                            borderRadius(page.theme.cardRadius)
+                        }
                         MetricGrid(
                             listOf(
-                                DetailMetric("今开", Format.price(page.quote.open), page.marketColor(page.quote.open)),
-                                DetailMetric("最高", Format.price(page.quote.high), page.marketColor(page.quote.high)),
-                                DetailMetric("最低", Format.price(page.quote.low), page.marketColor(page.quote.low)),
-                                DetailMetric("昨收", Format.price(page.quote.previousClose), page.theme.textSecondary),
-                                DetailMetric("成交量", Format.compactAmount(page.quote.volume)),
-                                DetailMetric("成交额", Format.compactAmount(page.quote.amount)),
-                                DetailMetric("换手率", "${Format.decimal(page.quote.turnoverRate, 2)}%"),
-                                DetailMetric("总市值", Format.compactAmount(page.quote.marketCap)),
+                                DetailMetric("PE(TTM)", Format.decimal(page.quote.peTtm, 2)),
+                                DetailMetric("PB", Format.decimal(page.quote.pb, 2)),
+                                DetailMetric("振幅", Format.decimal((page.quote.high - page.quote.low) / page.quote.previousClose * 100, 2) + "%"),
                             ),
                             page.theme,
                         )
                     }
-                }
-
-                // ---- 走势：去卡片，满宽绘制 + 分段控件 ----
-                SectionLabel("走势", page.theme)
-                ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
-                    page.chartMode = m
-                    page.chartPeriod = p
-                    page.selectedKLineIndex = -1
-                }
-                DetailChart(page.theme, { page.chartMode }, { page.chartPeriod }, page.quote, ctx, { page.selectedKLineIndex }) {
-                    page.selectedKLineIndex = it
-                }
-
-                // ---- 关键指标：细分隔线网格 ----
-                SectionLabel("关键指标", page.theme)
-                View {
-                    attr {
-                        marginTop(page.theme.spacing.lg)
-                        backgroundColor(page.theme.surfaceMuted)
-                        borderRadius(page.theme.cardRadius)
+                    Text {
+                        attr {
+                            text("指标要结合行业、增长与盈利质量一起看，单个数值不构成结论。")
+                            marginTop(page.theme.spacing.md)
+                            fontSize(page.theme.type.label)
+                            lineHeight(17f)
+                            color(page.theme.textTertiary)
+                        }
                     }
-                    MetricGrid(
-                        listOf(
-                            DetailMetric("PE(TTM)", Format.decimal(page.quote.peTtm, 2)),
-                            DetailMetric("PB", Format.decimal(page.quote.pb, 2)),
-                            DetailMetric("振幅", Format.decimal((page.quote.high - page.quote.low) / page.quote.previousClose * 100, 2) + "%"),
-                        ),
-                        page.theme,
+
+                    // ---- 真实业务数据：宽屏进入两列 Bento，窄屏保持线性阅读 ----
+                    BusinessInsightGrid(
+                        items = businessCards,
+                        context = ctx,
+                        theme = page.theme,
+                        wide = wide,
+                        entranceVisible = { page.entranceVisible },
+                        reduceMotion = page.reduceMotion,
                     )
-                }
-                Text {
-                    attr {
-                        text("指标要结合行业、增长与盈利质量一起看，单个数值不构成结论。")
-                        marginTop(page.theme.spacing.md)
-                        fontSize(page.theme.type.label)
-                        lineHeight(17f)
-                        color(page.theme.textTertiary)
+
+                    SectionLabel("公告与研报", page.theme)
+                    CardShell(DisclosureCardModel(page.insight.disclosures, "disclosures:${page.symbol}"), ctx)
+
+                    // ---- AI 解读：要点卡片（方案 C） ----
+                    SectionLabel("AI 解读", page.theme)
+                    AiInsightBlock(
+                        summary = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
+                        revealLimit = { page.aiRevealLimit },
+                        retryActive = { page.aiRetryActive },
+                        theme = page.theme,
+                        reduceMotion = page.reduceMotion,
+                        onRetry = { page.retryAiReveal() },
+                    )
+
+                    // ---- 涨跌归因：列表 + 分隔线 ----
+                    AttributionBlock(
+                        AttributionCardModel(page.quote, attribution.direction, attribution.factors),
+                        page.theme,
+                        expandedKey = { page.expandedAttributionKey },
+                        reduceMotion = page.reduceMotion,
+                    ) { key ->
+                        page.expandedAttributionKey = if (page.expandedAttributionKey == key) "" else key
                     }
+
                 }
 
-                // ---- 真实业务数据：宽屏进入两列 Bento，窄屏保持线性阅读 ----
-                BusinessInsightGrid(
-                    items = businessCards,
-                    context = ctx,
+                AppTopBar(
+                    title = page.quote.name,
+                    subtitle = page.quote.symbol,
+                    statusBarHeight = page.pagerData.statusBarHeight,
                     theme = page.theme,
-                    wide = wide,
-                    entranceVisible = { page.entranceVisible },
+                    renderer = page.hostGlassRenderer,
+                    backLabel = "返回",
+                    onBack = { page.closePage() },
+                    compactLine = { "${Format.price(page.quote.price)}  ${Format.percent(page.quote.changePercent)}" },
+                    compactLineColor = { page.toneColor() },
+                    compactVisible = { page.topCompactVisible },
+                    progress = { page.topProgress },
                     reduceMotion = page.reduceMotion,
+                    actions = listOf(
+                        (if (page.watchlisted) "✓" else "+") to { page.toggleWatchlist() },
+                        "⋯" to { page.watchlistHint = "更多操作稍后接入" },
+                    ),
                 )
-
-                SectionLabel("公告与研报", page.theme)
-                CardShell(DisclosureCardModel(page.insight.disclosures, "disclosures:${page.symbol}"), ctx)
-
-                // ---- AI 解读：要点卡片（方案 C） ----
-                SectionLabel("AI 解读", page.theme)
-                AiInsightBlock(
-                    summary = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
-                    revealLimit = { page.aiRevealLimit },
-                    retryActive = { page.aiRetryActive },
+                DetailBottomBar(
                     theme = page.theme,
+                    renderer = page.hostGlassRenderer,
+                    bottomInset = page.pagerData.safeAreaInsets.bottom,
+                    watchlisted = { page.watchlisted },
+                    feedback = { page.watchlistFeedback },
                     reduceMotion = page.reduceMotion,
-                    onRetry = { page.retryAiReveal() },
+                    onToggleWatchlist = { page.toggleWatchlist() },
+                    onBackToChat = { page.closePage() },
+                    onAskAi = {
+                        page.openChatWithQuestion(page.askAiQuestion())
+                    },
                 )
-
-                // ---- 涨跌归因：列表 + 分隔线 ----
-                AttributionBlock(
-                    AttributionCardModel(page.quote, attribution.direction, attribution.factors),
-                    page.theme,
-                    expandedKey = { page.expandedAttributionKey },
-                    reduceMotion = page.reduceMotion,
-                ) { key ->
-                    page.expandedAttributionKey = if (page.expandedAttributionKey == key) "" else key
-                }
-
             }
-
-            AppTopBar(
-                title = page.quote.name,
-                subtitle = page.quote.symbol,
-                statusBarHeight = page.pagerData.statusBarHeight,
-                theme = page.theme,
-                renderer = page.hostGlassRenderer,
-                backLabel = "返回",
-                onBack = { page.closePage() },
-                compactLine = { "${Format.price(page.quote.price)}  ${Format.percent(page.quote.changePercent)}" },
-                compactLineColor = { page.toneColor() },
-                compactVisible = { page.topCompactVisible },
-                progress = { page.topProgress },
-                reduceMotion = page.reduceMotion,
-                actions = listOf(
-                    (if (page.watchlisted) "✓" else "+") to { page.toggleWatchlist() },
-                    "⋯" to { page.watchlistHint = "更多操作稍后接入" },
-                ),
-            )
-            DetailBottomBar(
-                theme = page.theme,
-                renderer = page.hostGlassRenderer,
-                bottomInset = page.pagerData.safeAreaInsets.bottom,
-                watchlisted = { page.watchlisted },
-                feedback = { page.watchlistFeedback },
-                reduceMotion = page.reduceMotion,
-                onToggleWatchlist = { page.toggleWatchlist() },
-                onBackToChat = { page.closePage() },
-                onAskAi = {
-                    page.openChatWithQuestion(page.askAiQuestion())
-                },
-            )
         }
     }
 

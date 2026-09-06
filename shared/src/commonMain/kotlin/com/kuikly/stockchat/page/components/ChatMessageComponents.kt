@@ -73,7 +73,6 @@ internal class ChatMessageActions(
     val onFocusChanged: (String, Boolean) -> Unit,
     val onCompareCandidate: (String, String) -> Unit,
     val onCardEvent: (String, CardEvent) -> Unit,
-    val onCorrectUnderstanding: (String) -> Unit,
     val onShareInterpretation: (String) -> Unit,
 )
 
@@ -82,7 +81,6 @@ internal fun ViewContainer<*, *>.ChatMessageView(
     theme: StockChatTheme,
     contextSymbols: List<String>,
     suggestionsActive: Boolean,
-    understoodQuery: String,
     state: ChatMessageRenderState,
     actions: ChatMessageActions,
 ) {
@@ -111,17 +109,30 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                 }
             }
             if (user) {
-                Text { attr { text(message.content); fontSize(14f); lineHeight(21f); color(theme.onBrand) } }
+                Text { attr { text(message.content); fontSize(16f); lineHeight(24f); color(theme.onBrand) } }
             } else {
                 vif({ message.streaming }) {
                     View {
-                        EntityStreamingMarkdown(message.content, theme, contextSymbols, actions.onEntityStock, actions.onEntityStockLongPress, actions.onTerm)
+                        // 流式正文：持久 MarkdownStreamingState + 100ms 定时 flush +
+                        // 块级 diffUpdate（详见 EntityStreamingMarkdown 注释）。
+                        // 不能用 vbind({ message.content }) 整树重挂载——高频 delta
+                        // 下原生层会崩（shadow must not null / duplicate createFlexNode）。
+                        EntityStreamingMarkdown(
+                            textProvider = { message.content },
+                            isStreaming = { message.streaming },
+                            timerScope = message,
+                            theme = theme,
+                            contextSymbols = contextSymbols,
+                            onStockClick = actions.onEntityStock,
+                            onStockLongPress = actions.onEntityStockLongPress,
+                            onTermClick = actions.onTerm,
+                        )
                     }
                 }
                 vif({ !message.streaming }) {
                     View {
                     try {
-                        AssistantContent(message, theme, contextSymbols, suggestionsActive, understoodQuery, state, actions)
+                        AssistantContent(message, theme, contextSymbols, suggestionsActive, state, actions)
                     } catch (error: Throwable) {
                         Text {
                             attr {
@@ -144,21 +155,9 @@ private fun ViewContainer<*, *>.AssistantContent(
     theme: StockChatTheme,
     contextSymbols: List<String>,
     suggestionsActive: Boolean,
-    understoodQuery: String,
     state: ChatMessageRenderState,
     actions: ChatMessageActions,
 ) {
-    if (understoodQuery.isNotBlank() && !message.failed) {
-        View {
-            attr {
-                marginBottom(9f); paddingLeft(11f); paddingRight(11f); paddingTop(8f); paddingBottom(8f)
-                borderRadius(11f); backgroundColor(theme.brandSoft); flexDirectionRow(); alignItemsCenter()
-            }
-            Text { attr { text("我把你的问题理解为：${understoodQuery.take(62)}"); flex(1f); fontSize(11f); lineHeight(17f); color(theme.textSecondary) } }
-            Text { attr { text("纠正"); marginLeft(8f); fontSize(10.5f); fontWeightSemiBold(); color(theme.brand) } }
-            event { click { actions.onCorrectUnderstanding(understoodQuery) } }
-        }
-    }
     val blocks = AiResponseLexer.lex(message.content, finished = !message.streaming)
     blocks.forEach { block ->
         when (block) {
