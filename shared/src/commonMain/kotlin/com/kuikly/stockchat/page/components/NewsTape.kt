@@ -34,8 +34,15 @@ internal fun ViewContainer<*, *>.NewsTape(
     paused: () -> Boolean,
     reduceMotion: Boolean,
     containerWidth: Float,
+    softColor: () -> Color,
     onTapItem: (NewsItem) -> Unit,
     onPauseChange: (Boolean) -> Unit,
+    // ↓↓↓ 以下为板块组件开发新增（doc 28 §B1 长按先览 / 情绪点；向后兼容，仅追加可选参数） ↓↓↓
+    // 长按 400ms（移动 ≤8dp，由 Kuikly 内置 longPress 手势保证）回调；已有 onTapItem 行为不变。
+    // 长按期间复用既有 pan 的暂停逻辑（longPress start 亦置 paused=true，end/cancel 复位）。
+    onLongPressItem: ((NewsItem) -> Unit)? = null,
+    // 条目前 6dp 情绪圆点颜色；返回 null 不画。颜色由页面用 DetailRules.scoreNewsSentiment 结果传入。
+    itemDotColor: ((NewsItem) -> Color?)? = null,
 ) {
     vif({ items().isNotEmpty() }) {
         View {
@@ -47,9 +54,11 @@ internal fun ViewContainer<*, *>.NewsTape(
                 touchEnable(true)
             }
             GlassBackdrop(theme.glass.peek, renderer)
-            // 左右边缘渐隐（「过境」语义）：page 色 → 透明 横向渐变细条
-            TapeEdgeFade(theme, alignRight = false)
-            TapeEdgeFade(theme, alignRight = true)
+            // 左右边缘渐隐（「过境」语义）：遮罩色 = 氛围 wash 在弹幕行处的复合色，
+            // 而非 page 原色——弹幕带位于 wash 渐变（toneSoft→page）收束之前，
+            // 若遮罩画 page 原色，两端会出现与中段不一致的浅色块（高亮感）。
+            TapeEdgeFade(theme.page, softColor, alignRight = false)
+            TapeEdgeFade(theme.page, softColor, alignRight = true)
 
             vbind({ index() to items().size }) {
                 val list = items()
@@ -64,15 +73,41 @@ internal fun ViewContainer<*, *>.NewsTape(
                             height(TAPE_HEIGHT)
                             flexDirectionRow()
                             alignItemsCenter()
+                            paddingLeft(10f)
                             paddingRight(12f)
                             touchEnable(true)
                         }
                         event {
                             click { onTapItem(item) }
+                            // 长按先览（doc 28 §B1 / U5 400ms·8dp）：longPress start 即回调，
+                            // 同时暂停滚动（与 pan 暂停逻辑一致）；松手/取消复位，避免长按态下滚动卡住。
+                            longPress { params ->
+                                when (params.state) {
+                                    "start" -> {
+                                        onPauseChange(true)
+                                        onLongPressItem?.invoke(item)
+                                    }
+                                    "end", "cancel" -> onPauseChange(false)
+                                }
+                            }
                             pan { params ->
                                 when (params.state) {
                                     "start" -> onPauseChange(true)
                                     "end" -> onPauseChange(false)
+                                }
+                            }
+                        }
+                        // 条目前情绪圆点（doc 28 §B1）：6dp，颜色由页面经 scoreNewsSentiment 映射后传入；
+                        // 返回 null 不画。读色置于 vif 闭包内，确保情绪状态变化可驱动重绘（R1）。
+                        vif({ itemDotColor?.invoke(item) != null }) {
+                            val dot = itemDotColor!!.invoke(item)!!
+                            View {
+                                attr {
+                                    width(6f)
+                                    height(6f)
+                                    borderRadius(3f)
+                                    backgroundColor(dot)
+                                    marginRight(6f)
                                 }
                             }
                         }
@@ -216,7 +251,11 @@ internal fun ViewContainer<*, *>.NewsSummarySheet(
     }
 }
 
-private fun ViewContainer<*, *>.TapeEdgeFade(theme: StockChatTheme, alignRight: Boolean) {
+private fun ViewContainer<*, *>.TapeEdgeFade(
+    page: Color,
+    softColor: () -> Color,
+    alignRight: Boolean,
+) {
     Canvas({
         attr {
             if (alignRight) {
@@ -229,14 +268,16 @@ private fun ViewContainer<*, *>.TapeEdgeFade(theme: StockChatTheme, alignRight: 
             touchEnable(false)
         }
     }) { canvas, width, height ->
+        // draw 闭包内读 softColor() 建立响应式依赖（与 AtmosphereBackdrop 同款重绘机制）
+        val fadeColor = washColorAtTape(softColor(), page)
         val gradient = canvas.createLinearGradient(
             if (alignRight) width else 0f,
             0f,
             if (alignRight) 0f else width,
             0f,
         )
-        gradient.addColorStop(0f, theme.page.opacity(0.0f))
-        gradient.addColorStop(1f, theme.page.opacity(0.95f))
+        gradient.addColorStop(0f, fadeColor.opacity(0.0f))
+        gradient.addColorStop(1f, fadeColor.opacity(0.95f))
         canvas.fillStyle(gradient)
         canvas.beginPath()
         canvas.moveTo(0f, 0f)
@@ -246,6 +287,21 @@ private fun ViewContainer<*, *>.TapeEdgeFade(theme: StockChatTheme, alignRight: 
         canvas.closePath()
         canvas.fill()
     }
+}
+
+/**
+ * 氛围 wash（AtmosphereBackdrop：soft 0% → soft@0.45 18% → page 58%）在弹幕行
+ * （实测屏高 ~38%，即线性段中点）处的复合色 ≈ 0.36·toneSoft + 0.64·page。
+ * 弹幕行位置随 Hero 内容 ±20dp 漂移对应 ~6% 混色误差，肉眼不可辨。
+ */
+private fun washColorAtTape(soft: Color, page: Color): Color {
+    val softW = 0.36f
+    fun channel(shift: Int): Int {
+        val s = ((soft.hexColor shr shift) and 0xFFL).toInt()
+        val p = ((page.hexColor shr shift) and 0xFFL).toInt()
+        return (s * softW + p * (1f - softW)).toInt().coerceIn(0, 255)
+    }
+    return Color(channel(16), channel(8), channel(0), 1f)
 }
 
 /** 步进估算条宽：CJK ≈ 11f/字、拉丁 ≈ 6f/字 + 来源时间缀 + 余量。 */

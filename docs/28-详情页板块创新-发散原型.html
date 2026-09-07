@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="zho5ICH7nsH6ao09iwBeGL">
+<head data-page-node-id="AmXYs41USpnAz83jZMyeNd">
+<meta charset="UTF-8" data-page-node-id="l336hdduH75jDmcoXPeCFD">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="Cm1gW4qw7dgNqJP5mwks4a">
+<title>28 · 详情页板块创新 — 发散原型（图表之外）</title>
+<style>
+  :root {
+    --page:#F6F7F9; --card:#FFFFFF; --text:#1A1D26; --text2:#5C6470; --text3:#9AA1AC;
+    --brand:#2F6BFF; --brandSoft:#EAF0FF; --brandBorder:rgba(47,107,255,.28);
+    --rise:#E0433E; --fall:#1E9E5A; --riseSoft:rgba(224,67,62,.10); --fallSoft:rgba(30,158,90,.10);
+    --divider:rgba(0,0,0,.07); --radius:16px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;background:#E8EAEE;
+    display:flex;align-items:flex-start;justify-content:center;padding:28px 16px 60px;color:var(--text);user-select:none;}
+  .stage{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap;max-width:1180px;}
+
+  .phone{width:392px;background:var(--page);border-radius:34px;overflow:hidden;position:relative;
+    box-shadow:0 24px 60px rgba(20,30,60,.18),0 0 0 10px #14161c;height:820px;display:flex;flex-direction:column;}
+  .statusbar{height:34px;display:flex;align-items:center;justify-content:space-between;padding:0 22px;font-size:12px;font-weight:600;flex:none;}
+  .topbar{height:46px;display:flex;align-items:center;padding:0 16px;gap:10px;flex:none;border-bottom:.5px solid var(--divider);}
+  .topbar .back{width:28px;height:28px;border-radius:14px;background:var(--card);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--text2);box-shadow:0 1px 4px rgba(0,0,0,.06);}
+  .topbar .name{font-size:15px;font-weight:700;}
+  .topbar .sym{font-size:10px;color:var(--text3);}
+  .scroll{flex:1;overflow-y:auto;padding:12px 14px 120px;scrollbar-width:none;position:relative;}
+  .scroll::-webkit-scrollbar{display:none;}
+
+  /* Hero + A1 回访卡 */
+  .hero{padding:2px 2px 0;}
+  .price-line{display:flex;align-items:baseline;gap:10px;}
+  .price{font-size:32px;font-weight:800;color:var(--fall);letter-spacing:-.5px;}
+  .pct{font-size:12px;font-weight:700;color:#fff;background:var(--fall);border-radius:9px;padding:3px 9px;}
+  .revisit{margin-top:10px;background:var(--card);border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.06),0 0 0 .5px var(--divider);overflow:hidden;}
+  .revisit .row{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;}
+  .revisit .row .pin{font-size:11px;}
+  .revisit .row .t{flex:1;font-size:11px;color:var(--text2);}
+  .revisit .row .t b{color:var(--text);font-weight:700;}
+  .revisit .chev{font-size:10px;color:var(--text3);transition:transform .22s;}
+  .revisit.open .chev{transform:rotate(180deg);}
+  .revisit .body{max-height:0;overflow:hidden;transition:max-height .28s ease;}
+  .revisit.open .body{max-height:200px;}
+  .revisit .inner{padding:2px 12px 12px;border-top:.5px solid var(--divider);padding-top:10px;font-size:10.5px;color:var(--text2);line-height:1.7;}
+  .revisit .kpi{display:flex;gap:8px;margin:6px 0 8px;}
+  .revisit .kpi div{flex:1;background:var(--page);border-radius:10px;padding:7px 9px;}
+  .revisit .kpi .k{font-size:9px;color:var(--text3);}
+  .revisit .kpi .v{font-size:12px;font-weight:700;margin-top:2px;}
+  .status-tag{display:inline-block;font-size:9px;font-weight:700;border-radius:6px;padding:2px 8px;}
+  .status-tag.ok{color:var(--rise);background:var(--riseSoft);}
+  .status-tag.warn{color:var(--fall);background:var(--fallSoft);}
+
+  /* B1/B2 弹幕带 */
+  .tape{margin-top:12px;background:var(--card);border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.06),0 0 0 .5px var(--divider);overflow:hidden;}
+  .tape-head{display:flex;align-items:center;padding:8px 12px 4px;}
+  .tape-head .t{flex:1;font-size:10px;font-weight:700;color:var(--text2);}
+  .tape-head .hint{font-size:9px;color:var(--text3);}
+  .tape-row{display:flex;gap:8px;overflow-x:auto;padding:4px 12px 10px;scrollbar-width:none;scroll-behavior:smooth;}
+  .tape-row::-webkit-scrollbar{display:none;}
+  .tape-item{flex:none;max-width:220px;font-size:10.5px;color:var(--text2);background:var(--page);border-radius:9px;padding:6px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;border:.5px solid transparent;transition:all .15s;}
+  .tape-item.sel{border-color:var(--brandBorder);background:var(--brandSoft);color:var(--text);font-weight:600;}
+  .tape-item .dot{display:inline-block;width:6px;height:6px;border-radius:3px;margin-right:5px;vertical-align:1px;}
+  .dot.pos{background:var(--rise);} .dot.neg{background:var(--fall);} .dot.neu{background:#B7BDC7;}
+  .news-summary{max-height:0;overflow:hidden;transition:max-height .28s ease;background:var(--brandSoft);}
+  .news-summary.open{max-height:120px;}
+  .news-summary .inner{padding:10px 12px;font-size:10.5px;line-height:1.6;color:var(--text2);}
+  .news-summary .inner b{color:var(--text);}
+  .news-summary .go{display:inline-block;margin-top:7px;font-size:10px;font-weight:700;color:var(--brand);cursor:pointer;}
+
+  /* B2 图表 + 旗标 */
+  .chart-card{margin-top:12px;background:var(--card);border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.06),0 0 0 .5px var(--divider);padding:10px 12px 8px;position:relative;}
+  .chart-card .cap{font-size:10px;color:var(--text3);margin-bottom:4px;}
+  svg.mini{display:block;width:100%;height:118px;}
+  .flag{position:absolute;top:0;width:18px;margin-left:-9px;cursor:pointer;transition:top .55s cubic-bezier(.3,1.2,.4,1);z-index:5;}
+  .flag svg{display:block;}
+  .flag .react{font-size:8px;font-weight:700;border-radius:5px;padding:1px 4px;white-space:nowrap;position:absolute;left:14px;top:10px;opacity:0;transition:opacity .3s .3s;}
+  .flag.dropped .react{opacity:1;}
+  .chart-note{font-size:9px;color:var(--text3);margin-top:4px;}
+
+  /* E1/E2/E3 Bento */
+  .bento-sec{margin-top:14px;}
+  .sec-head{display:flex;align-items:center;margin:0 2px 8px;}
+  .sec-head .t{font-size:12px;font-weight:800;flex:1;}
+  .sec-head .replay{font-size:10px;color:var(--brand);font-weight:700;cursor:pointer;}
+  .bento{display:flex;flex-wrap:wrap;gap:8px;}
+  .bcard{background:var(--card);border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.05),0 0 0 .5px var(--divider);padding:10px 12px;width:calc(50% - 4px);position:relative;cursor:default;overflow:hidden;transition:box-shadow .25s;}
+  .bcard.wide{width:100%;}
+  .bcard .k{font-size:10px;color:var(--text3);}
+  .bcard .v{font-size:15px;font-weight:800;margin-top:3px;}
+  .bcard .sub{font-size:9.5px;color:var(--text2);margin-top:2px;}
+  .bcard .foot{margin-top:7px;padding-top:6px;border-top:.5px dashed var(--divider);font-size:9.5px;line-height:1.5;color:var(--brand);cursor:pointer;}
+  .bcard .foot .src{color:var(--text3);font-size:8.5px;}
+  .bcard.pinned{box-shadow:0 8px 22px rgba(47,107,255,.16),0 0 0 1.5px var(--brand);}
+  .badge{position:absolute;top:0;right:0;font-size:8.5px;font-weight:800;color:#fff;background:var(--brand);border-radius:0 12px 0 10px;padding:3px 8px;}
+  .bcard .presshint{position:absolute;bottom:6px;right:10px;font-size:8.5px;color:var(--text3);}
+  .compare{position:absolute;inset:0;background:var(--card);padding:10px 12px;opacity:0;pointer-events:none;transition:opacity .18s;}
+  .bcard.compare-on .compare{opacity:1;}
+  .compare .ct{font-size:10px;font-weight:800;color:var(--brand);}
+  .compare .cs{font-size:8.5px;color:var(--text3);margin:2px 0 8px;}
+  .cbar{display:flex;align-items:center;gap:6px;margin-bottom:5px;}
+  .cbar .n{width:44px;font-size:8.5px;color:var(--text2);flex:none;white-space:nowrap;overflow:hidden;}
+  .cbar .track{flex:1;height:8px;background:var(--page);border-radius:4px;overflow:hidden;}
+  .cbar .fill{height:100%;border-radius:4px;background:#C9D6F5;}
+  .cbar.me .fill{background:var(--brand);}
+  .cbar.me .n{color:var(--brand);font-weight:800;}
+  .cbar .val{width:34px;font-size:8.5px;color:var(--text2);text-align:right;flex:none;}
+
+  /* F1 公告 + F3 平衡器 */
+  .ann-sec{margin-top:14px;}
+  .ann-card{background:var(--card);border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.05),0 0 0 .5px var(--divider);padding:10px 12px;}
+  .ann{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:.5px solid var(--divider);}
+  .ann:last-child{border-bottom:none;}
+  .ann .ti{flex:1;font-size:10.5px;color:var(--text);line-height:1.4;}
+  .ann.hot .ti{font-weight:700;}
+  .ann .d{font-size:8.5px;color:var(--text3);flex:none;}
+  .mat{display:flex;gap:2px;flex:none;}
+  .mat i{width:5px;height:5px;border-radius:3px;background:#D9DDE3;}
+  .mat i.on{background:var(--rise);}
+  .mat.mid i.on{background:#E8A13C;}
+  .mat.low i.on{background:#B7BDC7;}
+  .balance{margin-top:12px;}
+  .balance .bt{display:flex;justify-content:space-between;font-size:9px;color:var(--text3);margin-bottom:5px;}
+  .bal-track{position:relative;height:16px;border-radius:8px;overflow:hidden;display:flex;}
+  .bal-track div{height:100%;}
+  .bal-track .b1{background:#E0433E;} .bal-track .b2{background:#EFA07E;} .bal-track .b3{background:#D9DDE3;} .bal-track .b4{background:#7FC79E;}
+  .bal-slider{position:relative;height:16px;margin-top:-16px;}
+  .bal-slider input{width:100%;height:16px;-webkit-appearance:none;background:transparent;position:relative;z-index:2;margin:0;}
+  .bal-slider input::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:9px;background:#fff;border:2.5px solid var(--brand);box-shadow:0 2px 8px rgba(0,0,0,.25);cursor:grab;}
+  .bal-num{display:flex;justify-content:space-between;font-size:9px;font-weight:700;color:var(--text2);margin-top:6px;}
+  .rating-quote{margin-top:8px;background:var(--page);border-radius:10px;padding:8px 10px;font-size:10px;line-height:1.6;color:var(--text2);min-height:44px;}
+  .rating-quote b{color:var(--text);}
+
+  /* G1 因子重放 */
+  .factor-sec{margin-top:14px;}
+  .fcard{background:var(--card);border-radius:14px;box-shadow:0 4px 14px rgba(0,0,0,.05),0 0 0 .5px var(--divider);padding:10px 12px;}
+  .fcard .note{font-size:8.5px;color:var(--text3);margin-bottom:8px;}
+  .frow{display:flex;align-items:center;gap:8px;margin-bottom:7px;}
+  .frow .n{width:52px;font-size:9.5px;color:var(--text2);flex:none;}
+  .frow input{flex:1;-webkit-appearance:none;height:3px;background:#E3E6EB;border-radius:2px;}
+  .frow input::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:7px;background:var(--brand);cursor:grab;box-shadow:0 1px 4px rgba(47,107,255,.4);}
+  .frow .w{width:26px;font-size:9px;color:var(--text3);text-align:right;flex:none;}
+  .fresult{display:flex;align-items:center;gap:10px;margin-top:9px;padding-top:9px;border-top:.5px solid var(--divider);}
+  .fresult .calc{font-size:12px;font-weight:800;}
+  .fresult .act{font-size:9.5px;color:var(--text3);}
+  .fresult .reset{margin-left:auto;font-size:9.5px;color:var(--brand);font-weight:700;cursor:pointer;}
+  .fbar-track{flex:1;height:6px;background:var(--page);border-radius:3px;position:relative;overflow:hidden;}
+  .fbar-track .zero{position:absolute;left:31%;top:0;bottom:0;width:1px;background:#B7BDC7;}
+
+  /* 底栏 + H1 */
+  .bottom{position:absolute;left:14px;right:14px;bottom:16px;z-index:30;}
+  .reason-chips{display:flex;gap:6px;justify-content:center;margin-bottom:8px;opacity:0;transform:translateY(8px);transition:all .25s cubic-bezier(.2,.8,.3,1);pointer-events:none;}
+  .reason-chips.show{opacity:1;transform:none;pointer-events:auto;}
+  .rchip{font-size:10px;font-weight:700;color:var(--brand);background:var(--card);border:1px solid var(--brandBorder);border-radius:14px;padding:6px 12px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.08);}
+  .bar{height:52px;background:var(--card);border-radius:26px;box-shadow:0 10px 30px rgba(20,30,60,.16),0 0 0 .5px var(--divider);display:flex;align-items:center;padding:5px;gap:5px;}
+  .bbtn{flex:1;text-align:center;font-size:11px;font-weight:700;border-radius:20px;padding:11px 0;cursor:pointer;color:var(--text2);}
+  .bbtn.primary{background:var(--brand);color:#fff;box-shadow:0 4px 12px rgba(47,107,255,.35);}
+  .bbtn.done{color:var(--text3);}
+  .toast{position:absolute;left:50%;bottom:86px;transform:translateX(-50%) translateY(8px);background:rgba(20,24,34,.88);color:#fff;font-size:11px;padding:8px 16px;border-radius:18px;opacity:0;transition:all .25s;z-index:40;pointer-events:none;white-space:nowrap;}
+  .toast.show{opacity:1;transform:translateX(-50%);}
+
+  /* 长按预览气泡（B1） */
+  .preview{position:fixed;z-index:99;width:200px;background:var(--card);border-radius:12px;box-shadow:0 10px 30px rgba(20,30,60,.2),0 0 0 .5px var(--brandBorder);padding:9px 11px;font-size:10px;line-height:1.55;color:var(--text2);opacity:0;transform:translateY(4px) scale(.97);transition:all .18s;pointer-events:none;}
+  .preview.show{opacity:1;transform:none;}
+  .preview b{color:var(--text);}
+  .grabbing{cursor:grabbing !important;}
+
+  /* 侧栏 */
+  .side{width:360px;}
+  .side h1{font-size:19px;font-weight:800;letter-spacing:-.3px;}
+  .side .sub{font-size:12px;color:var(--text2);margin:6px 0 18px;line-height:1.6;}
+  .guide{background:var(--card);border-radius:16px;padding:4px 0;box-shadow:0 6px 18px rgba(0,0,0,.05);}
+  .g-item{display:flex;gap:12px;padding:10px 16px;align-items:flex-start;}
+  .g-item+.g-item{border-top:.5px solid var(--divider);}
+  .g-num{width:22px;height:22px;border-radius:8px;background:var(--brandSoft);color:var(--brand);font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px;}
+  .g-item h3{font-size:12.5px;font-weight:700;}
+  .g-item p{font-size:11px;color:var(--text2);line-height:1.55;margin-top:2px;}
+  .g-item .try{font-size:10px;color:var(--brand);font-weight:700;margin-top:3px;}
+  .foot{font-size:10px;color:var(--text3);margin-top:14px;line-height:1.6;}
+</style>
+</head>
+<body data-page-node-id="eBMT8smK6UujBN03QKuLeK">
+<div class="stage" data-page-node-id="eFKjDclLuAq9BRm4mrt7nr">
+
+  <div class="phone" data-page-node-id="TI5K2c1GoFtmsLGdzj30Gu">
+    <div class="statusbar" data-page-node-id="MpoBR9XPG4FxRuiB8GbkZb"><span data-page-node-id="VFkdBsBfCFispDa7fD3aHa">9:41</span><span data-page-node-id="uZHljkgS9LoyyqoB4VhFkt">􀙇 􀛨</span></div>
+    <div class="topbar" data-page-node-id="gYn6YRRFLMuJ9ZEnbN9gvh">
+      <div class="back" data-page-node-id="cO6fpchQUYfodkXFRWifUr">‹</div>
+      <div style="flex:1" data-page-node-id="vgFOQX3SBGwLyjHzzeRSp0"><div class="name" data-page-node-id="2k3VA9PQEJKnFKNPnp4yGg">贵州茅台</div><div class="sym" data-page-node-id="nWsBQGUHQtvJejwkgkvxQI">600519.SH</div></div>
+      <div style="font-size:16px;color:var(--text3)" data-page-node-id="RtgwR7kroHOeISXA6kt6Q7">＋　⋯</div>
+    </div>
+
+    <div class="scroll" id="scroll" data-page-node-id="0BKGXsqHxNxxjBk0eJktRe">
+      <!-- Hero + A1 -->
+      <div class="hero" data-page-node-id="sU7TBwlnXYzTvKDchgi8yI">
+        <div class="price-line" data-page-node-id="ylz7j1u9Hc7rnEM9NS19Jr"><div class="price" data-page-node-id="1wT7pQdLijCl3MHV8NpuIu">1323.65</div><div class="pct" data-page-node-id="2i85H7o59i4ZQRTPQKXeBG">-0.62%</div></div>
+        <div class="revisit" id="revisit" data-page-node-id="Xm8Xsu4eTioZv9fmEjBFnf">
+          <div class="row" id="revisitRow" data-page-node-id="RtSqSAkXqwVCdniBdvbFSg">
+            <span class="pin" data-page-node-id="QeseAoABXjoYAYp2sUNVuB">★</span>
+            <span class="t" data-page-node-id="mnD0IyPK1Oi1VSvSxLEk6r"><b data-page-node-id="J3ydx0J01cBMLCbuZSDznJ">当初理由</b> · 8/12 加自选 · 1323.65 → 当时 1298.40</span>
+            <span class="chev" data-page-node-id="Icgk5Eoxh7yg01lkVv5F7h">▾</span>
+          </div>
+          <div class="body" data-page-node-id="F1uwxal6cEd4bLzSJSUc7E">
+            <div class="inner" data-page-node-id="QQEdxiSOBs6rm8FOv853Im">
+              <div class="kpi" data-page-node-id="UURwF9qUOaReZWpKffPVRB">
+                <div data-page-node-id="8EMMGPbjnAYbxO7ZHWjGOg"><div class="k" data-page-node-id="LBhqjEpxvaulOpzerd9hqd">加自选价</div><div class="v" data-page-node-id="EdrA0uMMagDWXn5utb0cis">1298.40</div></div>
+                <div data-page-node-id="Th4IckDIzO0KDWqOKrh7Tu"><div class="k" data-page-node-id="XTWacArk11vVCIbKaEcCeA">至今涨跌</div><div class="v" style="color:var(--rise)" data-page-node-id="o3K7EEZMRNiJZIdEn3qCjR">+1.95%</div></div>
+                <div data-page-node-id="6IkZOw7aMb972bwxdKY1Rh"><div class="k" data-page-node-id="aIDLi0PCyEuJHBVtnroJFN">期间最大回撤</div><div class="v" style="color:var(--fall)" data-page-node-id="3xDLPPVyRi0A83LzmKEDUk">-4.2%</div></div>
+              </div>
+              当初写下：等回调后布局。期间发生 <b data-page-node-id="9qV9FANXSx0MjrF9se2ZcG">2 件相关公告</b>（半年报、分红除权），今日龙虎榜上榜。
+              <div style="margin-top:6px" data-page-node-id="sQlHUeIEgEonaNNHrOWX7Q">状态 <span class="status-tag ok" data-page-node-id="Lt33FVfyp5fE9PrfpdZwz5">回调到位 · 理由兑现中</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- B1/B2 弹幕带 -->
+      <div class="tape" data-page-node-id="VZZ2CbEo1lfttMVV0Fn4zE">
+        <div class="tape-head" data-page-node-id="3EH44ZVLRFArtuisb2Sm4k"><div class="t" data-page-node-id="LgfHPmBWe1URWGY6Nsv8Qx">相关资讯</div><div class="hint" data-page-node-id="8qBOhLhqAF9dMN5nPBuO5C">长按先览 · 点按看行情反应</div></div>
+        <div class="tape-row" id="tapeRow" data-page-node-id="MDlvxOob0wPlQLIguL3RjQ"></div>
+        <div class="news-summary" id="newsSummary" data-page-node-id="AKmXQFxgeuLnxnQJGYERgN">
+          <div class="inner" id="nsInner" data-page-node-id="1ArwiJUJGdHfKOGJFV9Oj3"></div>
+        </div>
+      </div>
+
+      <!-- B2 图表 -->
+      <div class="chart-card" data-page-node-id="xS7ksApXL7ZoNIlsSchcQb">
+        <div class="cap" data-page-node-id="3Ulks8sab2TEfCB4ZqfHT0">分时 · 新闻旗标（点旗或点资讯条目落旗）</div>
+        <svg class="mini" id="chart" viewBox="0 0 340 118" data-page-node-id="WPC8mmjwgoKGn2rTan2GHJ"></svg>
+        <div class="chart-note" data-page-node-id="dHbwARu1wGJtG6YGcNlfjY">旗色 = 新闻发布后 1 小时的真实走势（事实着色，非因果）</div>
+      </div>
+
+      <!-- E1/E2/E3 Bento -->
+      <div class="bento-sec" data-page-node-id="KQgoQUZXPGwlmtcUFaJwm6">
+        <div class="sec-head" data-page-node-id="PtLKnwRHiLjPBeArFOi9gc"><div class="t" data-page-node-id="PfT2WFby62hZDQscHp5tCd">业务数据</div><div class="replay" id="replay" data-page-node-id="L2V1AaKdbJxN9qHEGMmEAE">↻ 重放今日相关置顶</div></div>
+        <div class="bento" id="bento" data-page-node-id="VgW1Jy04vGqwGGjkLYwJkb">
+          <div class="bcard" data-i="0" data-page-node-id="ZNaUWfq5TW6PdzSb54E7sa">
+            <div class="k" data-page-node-id="z05Gaw4bumN3nxbRF4JMUq">资金流向</div><div class="v" style="color:var(--fall)" data-page-node-id="MBHyqK50gdsLpjvgOydpHu">-3.2亿</div><div class="sub" data-page-node-id="GTFfil2cD9m6Z0P9eFw4bI">主力净流出 · 5 日累计 -8.1亿</div>
+            <div class="foot" data-r="判定依据：近 20 日逐日主力净额序列中，出现连续 ≥3 日同向。" data-page-node-id="fE66HDg940MdVpDKHUP08f">连续 3 日净流出，为近 20 日首次 <span class="src" data-page-node-id="AIfe7SiBv6LzY2xWsxuaLz">· 端侧规则</span></div>
+            <div class="presshint" data-page-node-id="wFExeoTzzE8G5nfR7XULG4">长按与行业比</div>
+            <div class="compare" data-page-node-id="BpxrQKWmOpctSyeKUl6W0B"></div>
+          </div>
+          <div class="bcard" data-i="1" data-page-node-id="bA2AAbv7MNwLF3bxY6Mudq">
+            <div class="k" data-page-node-id="2DH36O46ZVXMSS465yHdNL">财务</div><div class="v" data-page-node-id="HTemW38OP2uv2sbhZJMRbQ">营收 +9.2%</div><div class="sub" data-page-node-id="ySzMyHoLwE5UOJUuW8MHMm">净利 +6.8% · 毛利率 91.4%</div>
+            <div class="foot" data-r="判定依据：营收/净利增速与内置白酒行业分位表比对。" data-page-node-id="U7XoQIjOqOcRZCaELrupbO">增速高于行业 76% 分位 <span class="src" data-page-node-id="RjGOrKjcQfg8vKu9NQfJcw">· 端侧规则</span></div>
+            <div class="presshint" data-page-node-id="EyylbiXUPV58wLKMPfqfyC">长按与行业比</div>
+            <div class="compare" data-page-node-id="TwbOGtUdoh2VAKveEvOCB2"></div>
+          </div>
+          <div class="bcard" data-i="2" data-page-node-id="TOFg3Aa5uCVuPPHY1moH3G">
+            <div class="k" data-page-node-id="QrkdCowIJEp634CXUKOorT">股东户数</div><div class="v" data-page-node-id="IEEGEwCrPo7ANZKDCtzg7Z">-4.1%</div><div class="sub" data-page-node-id="lltkQstmVTuNvAetVvE6Df">环比上期 · 户均持股 +4.3%</div>
+            <div class="foot" data-r="判定依据：户数环比与户均持股同向变动组合规则。" data-page-node-id="PVQOhJIofTcP6OFlZ6bzkD">户数下降 + 户均上升 → 筹码集中 <span class="src" data-page-node-id="lyvwdGVlUQJddaIoIDCRFb">· 端侧规则</span></div>
+            <div class="presshint" data-page-node-id="TKFBOtN5lpn6oFyGoEPocZ">长按与行业比</div>
+            <div class="compare" data-page-node-id="ELp9PhkUTMsVUdBTUIyPFW"></div>
+          </div>
+          <div class="bcard wide" data-i="3" data-page-node-id="LBj2OffuDnqTHlS8qY75QU">
+            <div class="k" data-page-node-id="otk7bwlw9seaSHlHTt7CI1">龙虎榜</div><div class="v" data-page-node-id="KhfC29wPjIBlaSQNDvBNaU">机构席位净买入 1.2亿</div><div class="sub" data-page-node-id="El4W9GEs4K6YOsmtdpZrLR">上榜原因：日跌幅偏离值达 7% · 09-05</div>
+            <div class="foot" data-r="判定依据：上榜日期为今日 → 触发置顶规则。" data-page-node-id="RP1GAZE0EXn4jCGzSNBL3Q">近 30 日首次机构席位净买入 <span class="src" data-page-node-id="fLqF3oVpOK4bb7PuOFXFfQ">· 端侧规则</span></div>
+            <div class="presshint" data-page-node-id="eFffFU95ujH7sOdfCWMlwp">长按与行业比</div>
+            <div class="compare" data-page-node-id="LEyjZ1PRw10vKQ0g1HOIou"></div>
+          </div>
+          <div class="bcard wide" data-i="4" data-page-node-id="qzUv8DnCDkmHeR5ZFDxNz6">
+            <div class="k" data-page-node-id="KR4AiDAPaAjI0k7Od8ztYK">分红与解禁</div><div class="v" data-page-node-id="ceaq3biQElFq9DgNJ5CM9R">除权 09-25</div><div class="sub" data-page-node-id="fzERtK957K9CXyDLE0jaNX">每 10 股派 276.2 元 · 近 12 个月无解禁</div>
+            <div class="foot" data-r="判定依据：解禁日历查询结果为空。" data-page-node-id="9VcKMsYhSMWcpSazewj9w2">无近期解禁压力 <span class="src" data-page-node-id="u3pwbRDJtPEnDi89E3uUny">· 端侧规则</span></div>
+            <div class="presshint" data-page-node-id="llYsaqvnZLotrERyCg74Th">长按与行业比</div>
+            <div class="compare" data-page-node-id="mSv2Oul542M8YuDfz9ejTT"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- F1 + F3 -->
+      <div class="ann-sec" data-page-node-id="RWA5iSAsahzSWPZtcpwAxr">
+        <div class="sec-head" data-page-node-id="14sJhpbFiPwP0yyenCTzP9"><div class="t" data-page-node-id="CGe7xdbrlgUcjnE3QVjHDt">公告与研报</div></div>
+        <div class="ann-card" data-page-node-id="NdZW9Lqtc0iFxCo8xpAR1m">
+          <div class="ann hot" data-page-node-id="Hbc4qp78jdf87sIOrFwOkR"><div class="ti" data-page-node-id="5xqyIXEWjS6hPxxcrtHdDO">2026 年半年度报告：营收 +9.2%，净利 +6.8%</div><div class="mat" data-l="高" data-page-node-id="ETwaXKJCkv5nbDdnhieZzC"><i class="on" data-page-node-id="HxJG067D6dJ3SaWi3zNPju"></i><i class="on" data-page-node-id="iKRIRTxbfnVHN42EZGv3B6"></i><i class="on" data-page-node-id="38YfRoSQWzrxIuI1gXYurq"></i></div><div class="d" data-page-node-id="aeMrUVJXwl6QfRgj8WCRkr">08-28</div></div>
+          <div class="ann hot" data-page-node-id="b9fQswkw19ESaWgl1WLVyD"><div class="ti" data-page-node-id="v56PZwYgX5DIsE6x08btrz">控股股东计划减持不超过 1% 股份</div><div class="mat" data-l="高" data-page-node-id="8sflG81erxFthANokqoEBL"><i class="on" data-page-node-id="3NdJGVZwCdlSgAfXGR4OdJ"></i><i class="on" data-page-node-id="rhf2eZMWjlDCbmLWAQ4sD5"></i><i class="on" data-page-node-id="A8Y37GwQGpW9LKKjePIHmv"></i></div><div class="d" data-page-node-id="lsaKAicZHgMi7CYmsM3doU">08-15</div></div>
+          <div class="ann" data-page-node-id="bqFdaCdlowMLUW9wFWvn08"><div class="ti" data-page-node-id="himGWt4P02PLWGEkbEy4Na">2025 年中期权益分派实施公告</div><div class="mat mid" data-l="中" data-page-node-id="MCHk8GdxQxiy5yRCucfBJm"><i class="on" data-page-node-id="RBCoUhIKlDetaokhDzDktI"></i><i class="on" data-page-node-id="ft6BEKtqm2bwQWVwVxM0uG"></i><i data-page-node-id="mkHxKNqdpK7p6LlChxGVDY"></i></div><div class="d" data-page-node-id="BA4ABqSJ7eToXA4kr7Qhdf">09-01</div></div>
+          <div class="ann" data-page-node-id="3c4Om3LDCwEt0h6ezzY5b9"><div class="ti" data-page-node-id="Pf8GUInjp3b9Yc2JtAQ9y3">关于召开 2026 年第一次临时股东大会的通知</div><div class="mat low" data-l="低" data-page-node-id="6kNhYXDRfTCUXTuXDxxGYb"><i class="on" data-page-node-id="K1iFaGV1FElJKxCHAvnAwo"></i><i data-page-node-id="2EV2GieXXF6JnLeB5Q6Pl7"></i><i data-page-node-id="6MF4zdAjoPb45VM1q4ax3t"></i></div><div class="d" data-page-node-id="bTb0vcLlcbbBOxiSYMQsJ6">08-20</div></div>
+          <div class="balance" data-page-node-id="8vp63NxGGXfuC9wqULrmHR">
+            <div class="bt" data-page-node-id="eCuyCCgB3w9gfBvwdGGn88"><span data-page-node-id="IvrtGdDieuOGgDEyuzuvqA">研报评级光谱 · 拖动看观点</span><span data-page-node-id="jSm9sQ49inV5yx0i0rmNDH">近 90 天 10 份</span></div>
+            <div class="bal-track" data-page-node-id="1O6rTQX9e2IJUscr6GIyE8"><div class="b1" style="width:40%" data-page-node-id="r8fgtJagb0SKWAt88wCreK"></div><div class="b2" style="width:30%" data-page-node-id="LdQN9QEfiC6fzNUthO094j"></div><div class="b3" style="width:20%" data-page-node-id="hI7qhkTlHfChenhef0gMtt"></div><div class="b4" style="width:10%" data-page-node-id="k5SB63Dt6iIU1zel71LVrK"></div></div>
+            <div class="bal-slider" data-page-node-id="JxalWbuzYu0DWbUBofaPAW"><input type="range" id="balRange" min="0" max="3" step="1" value="0" data-page-node-id="ikPWdMzMuY3ewU9iAfFR93"></div>
+            <div class="bal-num" data-page-node-id="qdYC9C1QfSh2q91PUafUro"><span style="color:var(--rise)" data-page-node-id="ro6VvmJKHOz8IzrjBb63TG">多</span><span data-page-node-id="cOyFasPw8hOIivjCAeaRRt">买入 4 · 增持 3 · 中性 2 · 减持 1</span><span style="color:var(--fall)" data-page-node-id="BGdgrTKbRVQ18LJpe9JYmv">空</span></div>
+            <div class="rating-quote" id="ratingQuote" data-page-node-id="jHvcaEVUVE1mNN4IQss2h0"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- G1 因子重放 -->
+      <div class="factor-sec" data-page-node-id="xF1KbhLjPUDZIr5QPlMWWD">
+        <div class="sec-head" data-page-node-id="DnhVg0Elb9LBRVNBhBuBf0"><div class="t" data-page-node-id="gBDpXzw2vPt3URjg67aAGD">涨跌归因 · 因子权重重放</div></div>
+        <div class="fcard" data-page-node-id="XgqOJYhM5CEydkUYeClZVL">
+          <div class="note" data-page-node-id="mQPF8mvjM8yreztbpvDzCQ">拖动权重感受各因子的贡献敏感度 —— 这是数学重算，不是预测，松手可复原。</div>
+          <div id="frows" data-page-node-id="K4s9cdB3OAU7A4KuGIuFi2"></div>
+          <div class="fresult" data-page-node-id="xDbeXbxfe68yNIn60YgZ2M">
+            <div data-page-node-id="qDQIXPGrRPDtujBdJd42RK"><div class="calc" id="calcVal" data-page-node-id="AXt0HH9zuJ6PtjO9JeF3KL">-0.62%</div><div class="act" data-page-node-id="S2w4QoFrdjkhPnOugeyQyA">重算涨跌（实际 -0.62%）</div></div>
+            <div class="fbar-track" style="height:10px" data-page-node-id="AfSu1X2os2ED0emMjlaLju"><div class="zero" style="left:60%" data-page-node-id="QfSYACeT1EsJ1ZEWPmPafc"></div><div id="calcBar" style="position:absolute;top:0;bottom:0;left:60%;border-radius:3px;background:var(--fall);width:18%" data-page-node-id="BV2fLYKlQCuAaXlpVBaqDd"></div></div>
+            <div class="reset" id="fReset" data-page-node-id="a7c2irlp9mNSnMiOJuG5gT">复原</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- H1 底栏 -->
+    <div class="bottom" data-page-node-id="cye5REH5NSCeQZmDPSe87T">
+      <div class="reason-chips" id="reasonChips" data-page-node-id="XhUVXPlgsyJJdSGxqNt07C">
+        <div class="rchip" data-r="等回调" data-page-node-id="X034nfaCxfOhTzg4q5QlEL">等回调</div>
+        <div class="rchip" data-r="财报前布局" data-page-node-id="jgAj4198hifIyxfq6bAoG8">财报前布局</div>
+        <div class="rchip" data-r="跟热点" data-page-node-id="1cemlfD9RWEHWnCNXYDQ29">跟热点</div>
+      </div>
+      <div class="bar" data-page-node-id="f7KvLq0lSKq4YHPmyFBNnK">
+        <div class="bbtn" id="btnWatch" data-page-node-id="Q5ckcEkX5l6p2d9252BKNZ">+ 加自选</div>
+        <div class="bbtn" data-page-node-id="EFTsr0EeezQSSXQ0uz8vJI">返回对话</div>
+        <div class="bbtn primary" data-page-node-id="ltHCxgWNal0vJtQZ6Fzvan">问 AI</div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" data-page-node-id="vjBWX8gDcIP69BZ7xfpILz"></div>
+  </div>
+
+  <!-- 侧栏 -->
+  <div class="side" data-page-node-id="9wc1luF5s2VlxbWnm4m26E">
+    <h1 data-page-node-id="2JAspcG9Q6tFt7ns171qRC">板块创新 · 发散原型</h1>
+    <div class="sub" data-page-node-id="hKFNsA53h1eCzJTetN3xVB">对应《28-详情页板块创新发散-图表之外_v1.0.md》。宪章六「情境重排」：内容不生成，顺序、着色、注脚由"今天发生了什么"驱动——页面先指给你看，你指给 AI 问。</div>
+    <div class="guide" data-page-node-id="DNJkH5FnvNtkt7dI4ZCQ4w">
+      <div class="g-item" data-page-node-id="aLt4LucpeHZoJLrLHWB2VF"><div class="g-num" data-page-node-id="CiRlFXTiqvRXJ3UL1g4NVA">E1</div><div data-page-node-id="dv9ByACU8cdIdeV8qCyS02"><h3 data-page-node-id="K26ebMqWIhzNcpEQ1FfJ04">今日相关置顶</h3><p data-page-node-id="D5TfxYfnN1tnKiGv3vdx3R">今日龙虎榜上榜 → 龙虎榜卡自动浮到第一位并亮品牌描边；无事件日维持原序。点右上角可重放。</p><div class="try" data-page-node-id="zYAlgXPdbNFHgiSVzvGGaP">→ 已自动播过一次，或点「↻ 重放」</div></div></div>
+      <div class="g-item" data-page-node-id="FV7Hh2zefT1xTDCIvvwFEs"><div class="g-num" data-page-node-id="UkdE6B1zR7xI8ubQ0idGLB">E2</div><div data-page-node-id="MIHSdi5wX4FhM9B9FFPW2D"><h3 data-page-node-id="1MwsNjnATJJppHkOUQ4flF">卡内 AI 注脚</h3><p data-page-node-id="rv1pimSZOuUZEVpkxu52sq">每张卡底部一句端侧规则实话；点注脚看判定依据——规则透明可查。</p><div class="try" data-page-node-id="FTOQk3JZOxF5i9HGJZCYwi">→ 点任意卡片底部的品牌色注脚</div></div></div>
+      <div class="g-item" data-page-node-id="HHUKdIidURKg2b65Ak03fT"><div class="g-num" data-page-node-id="dGo36ftxvs5VyPKhectZpG">B1/B2</div><div data-page-node-id="WpjBmJFcrukaulcdIprCeE"><h3 data-page-node-id="09SuDvGXbzSaJesy3tKYyY">长按先览 + 新闻旗标</h3><p data-page-node-id="oc1hhsuYLRNl4GFsb5h0Mw">长按资讯条目先看 30 字摘要与情绪点；点按后在分时图落一面旗，旗色 = 新闻后 1 小时真实走势。</p><div class="try" data-page-node-id="OkdgCzC0bpxMYPJ9YshQSN">→ 长按「渠道调研：批价走弱」再点按它</div></div></div>
+      <div class="g-item" data-page-node-id="iNyB53XG8bZ8953x6S2Yb6"><div class="g-num" data-page-node-id="QiSdRKmCnDDShaqENiaHPC">A1</div><div data-page-node-id="WmuAUN9aEf5r9PXlwhi2SM"><h3 data-page-node-id="3bFmYH2bm1lbelTFL2HxC0">当初理由回访卡</h3><p data-page-node-id="CG4T4FDmWWXJmldHOra1Nb">自选理由被持续追踪：加自选价 vs 现价、期间事件、兑现状态。</p><div class="try" data-page-node-id="lEQGIcZMDu2OLVchspdO7d">→ 点价格下方「当初理由」一行展开</div></div></div>
+      <div class="g-item" data-page-node-id="OAvpXwQYGfHF2p5X8QBnpl"><div class="g-num" data-page-node-id="nfnjEOs4u6URGkfWQ6WFr0">G1</div><div data-page-node-id="JdDrOiZ030zKEjH8vgpyzo"><h3 data-page-node-id="rWATw0BqUhh8O87XrdZh6M">因子权重重放</h3><p data-page-node-id="cDY7JNJHCc0IEyzPJ8zC3k">拖动因子权重实时重算涨跌分解——纯数学敏感度演示，松手复原。</p><div class="try" data-page-node-id="ZlO0yB3gIf5LuzIUtisjOj">→ 拖「资金面」滑条到 0 和 2 对比</div></div></div>
+      <div class="g-item" data-page-node-id="8Xo2kC9tgeRj5zhTrdvWHd"><div class="g-num" data-page-node-id="Sm9UBp0CZGbPOYPgCtyBK8">F1/F3</div><div data-page-node-id="XhECufDSmUHPKOge9MUJlE"><h3 data-page-node-id="H8WwYVUVoR4siiBEnYqUbF">重要度徽章 + 多空平衡器</h3><p data-page-node-id="KYkpDoK7Ws2sJKuGQwvHfU">公告三点重要度评级；研报评级光谱上拖动滑块看对应观点。</p><div class="try" data-page-node-id="IXSAwxs0UGW6kAd2AANjD4">→ 拖动评级光谱的圆形滑块</div></div></div>
+      <div class="g-item" data-page-node-id="rSWRCB2vYH744B9kA4s40o"><div class="g-num" data-page-node-id="IJZDUucvnkumpygEUkYKPx">E3/H1</div><div data-page-node-id="8vJYXahrfic5vtjX5vl6jD"><h3 data-page-node-id="mur3Nz5uVG9RdFZIiFoU5a">与行业比 + 记一笔理由</h3><p data-page-node-id="i2uDWnKrehC8FKs4Gc7rEp">长按业务卡原地切换行业对比；点「加自选」弹快捷理由 chip。</p><div class="try" data-page-node-id="DvcbHTdjCVAB2sp6G9knkc">→ 长按任意业务卡 / 点底栏「加自选」</div></div></div>
+    </div>
+    <div class="foot" data-page-node-id="Ju4r5RopyPXEivKG82thBK">原型为纯前端模拟，全部"AI 输出"为端侧规则模板生成的事实性文案（每个设想都标注判定依据）。落地约束见 doc 28 §10。</div>
+  </div>
+</div>
+
+<div class="preview" id="preview" data-page-node-id="KHdWIygoc9lpf2A20ERk5y"></div>
+
+<script>
+/* ============ 工具 ============ */
+const $ = s=>document.querySelector(s);
+let toastT=null;
+function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove("show"),2000);}
+
+/* ============ A1 回访卡 ============ */
+$("#revisitRow").addEventListener("click",()=>$("#revisit").classList.toggle("open"));
+
+/* ============ 分时数据（与 doc27 原型同源） ============ */
+const PREV=1331.9, data=[];
+(function(){let p=1326.0;const rnd=(a,b)=>a+Math.random()*(b-a);
+  for(let i=0;i<240;i++){let d=0;
+    if(i>=18&&i<=52)d+=0.55; if(i>=70&&i<=135)d-=0.14;
+    if(i>=140&&i<=157)d-=1.05; if(i>=172&&i<=184)d+=0.95; if(i>=188)d-=0.42;
+    p=Math.max(p+d+rnd(-0.35,0.35),1318);
+    let v=rnd(0.4,1.2); if(i>=18&&i<=30)v*=2.8; if(i>=140&&i<=152)v*=2.4; if(i>=172&&i<=180)v*=2.2;
+    data.push({p:+p.toFixed(2),v});}
+})();
+const idxToX=i=>8+(324*i/239);
+const valToY=v=>106-((v-1318)/16*96);
+
+/* ============ B2 图表绘制 ============ */
+const svg=$("#chart"),NS="http://www.w3.org/2000/svg";
+function el(t,a,parent){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);(parent||svg).appendChild(e);return e;}
+el("line",{x1:8,y1:valToY(PREV),x2:332,y2:valToY(PREV),stroke:"#C9CED6","stroke-dasharray":"3 3","stroke-width":1});
+el("text",{x:332,y:valToY(PREV)-3,"text-anchor":"end","font-size":7,fill:"#9AA1AC"}).textContent="昨收 "+PREV.toFixed(2);
+const path=data.map((d,i)=>(i?"L":"M")+idxToX(i).toFixed(1)+" "+valToY(d.p).toFixed(1)).join(" ");
+el("path",{d:path+" L332 112 L8 112 Z",fill:"rgba(30,158,90,.10)"});
+el("path",{d:path,fill:"none",stroke:"var(--fall)","stroke-width":1.4});
+["09:30","11:30/13:00","15:00"].forEach((t,i)=>el("text",{x:[10,170,332][i],y:117,"text-anchor":["start","middle","end"][i],"font-size":7,fill:"#B7BDC7"}).textContent=t);
+
+/* ============ B1/B2 资讯 + 旗标 ============ */
+const NEWS=[
+  {t:"北向资金早盘净卖出白酒板块", time:"09:47", i:17, s:"neg",
+   sum:"<b>09:47 · 利空</b>：北向早盘净卖出白酒板块 6.8 亿，茅台遭减持居前。<br>发布后 1 小时股价 <b style='color:var(--fall)'>-0.31%</b>。"},
+  {t:"公司发布半年报：营收 +9.2%", time:"11:02", i:92, s:"pos",
+   sum:"<b>11:02 · 利好</b>：半年报营收 +9.2%、净利 +6.8%，符合预期。<br>发布后 1 小时股价 <b style='color:var(--rise)'>+0.18%</b>（午后大盘走弱回吐）。"},
+  {t:"渠道调研：飞天批价环比走弱", time:"13:35", i:145, s:"neg",
+   sum:"<b>13:35 · 利空</b>：渠道调研显示飞天批价环比走弱约 20 元。<br>发布后 1 小时股价 <b style='color:var(--fall)'>-1.12%</b>，13:42 出现放量急跌。"},
+  {t:"龙虎榜：两家机构席位合计买入 1.2 亿", time:"14:06", i:178, s:"pos",
+   sum:"<b>14:06 · 利好</b>：交易所盘后数据显示两家机构席位合计买入 1.2 亿。<br>恰逢 14:05 放量反抽，为日内最大 5 分钟涨幅。"},
+];
+const row=$("#tapeRow"), flagsLayer=$("#flagsLayer");
+const flagEls={};
+NEWS.forEach((n,k)=>{
+  const d=document.createElement("div");
+  d.className="tape-item";
+  d.innerHTML=`<span class="dot ${n.s}"></span>${n.time} ${n.t}`;
+  d.dataset.k=k;
+  row.appendChild(d);
+  // 旗标（初始悬于图外，落旗动画 = top 过渡）
+  const f=document.createElement("div");
+  f.className="flag";
+  f.style.left=(idxToX(n.i)/340*100)+"%";
+  f.style.top="-22px";
+  const color=n.s==="pos"?"var(--rise)":"var(--fall)";
+  f.innerHTML=`<svg width="18" height="20" viewBox="0 0 18 20">
+    <line x1="4" y1="2" x2="4" y2="18" stroke="${color}" stroke-width="1.5"/>
+    <path d="M4 2 L16 5.5 L4 9 Z" fill="${color}"/></svg>
+    <span class="react" style="background:${n.s==="pos"?"var(--riseSoft)":"var(--fallSoft)"};color:${color}">${n.s==="pos"?"+0.18%":"-1.12%"}</span>`;
+  f.addEventListener("click",e=>{e.stopPropagation();selectNews(k,false);});
+  $(".chart-card").appendChild(f);
+  flagEls[k]=f;
+});
+function yAtIdx(i){return valToY(data[i].p)/118*$(".chart-card").querySelector(".mini").clientHeight||valToY(data[i].p);}
+let selected=-1;
+function selectNews(k, fromLongPress){
+  if(k===selected){closeNews();return;}
+  selected=k;
+  document.querySelectorAll(".tape-item").forEach((e,idx)=>e.classList.toggle("sel",idx===k));
+  $("#nsInner").innerHTML=NEWS[k].sum+`<span class="go" id="nsGo">就这条新闻问问 AI ›</span>`;
+  $("#newsSummary").classList.add("open");
+  setTimeout(()=>$("#nsGo")?.addEventListener("click",()=>toast("（原型）新闻作为上下文 chip 带入聊天页 —— 28 号 H2")),0);
+  // 落旗
+  const n=NEWS[k];
+  const y=valToY(data[n.i].p);
+  flagEls[k].style.top=(y/118*100)+"%";
+  flagEls[k].classList.add("dropped");
+}
+function closeNews(){
+  selected=-1;
+  document.querySelectorAll(".tape-item").forEach(e=>e.classList.remove("sel"));
+  $("#newsSummary").classList.remove("open");
+}
+
+/* B1 长按先览 */
+const preview=$("#preview");
+let lpTimer=null,lpItem=null;
+row.addEventListener("pointerdown",e=>{
+  const item=e.target.closest(".tape-item");if(!item)return;
+  lpItem=item;
+  lpTimer=setTimeout(()=>{
+    const n=NEWS[+item.dataset.k];
+    const r=item.getBoundingClientRect();
+    preview.innerHTML=`<b>${n.time} · ${n.s==="pos"?"利好":"利空"}</b><br>${n.t}——${n.s==="pos"?"盘面初步正面反应":"盘面负面反应，关注放量时段"}。点按展开与落旗。`;
+    let left=r.left; if(left+200>innerWidth-12) left=innerWidth-212;
+    preview.style.left=left+"px";
+    preview.style.top=(r.bottom+8)+"px";
+    preview.classList.add("show");
+  },400);
+});
+row.addEventListener("pointerup",e=>{
+  clearTimeout(lpTimer);
+  if(preview.classList.contains("show")){
+    setTimeout(()=>preview.classList.remove("show"),700);
+    e.preventDefault&&e.preventDefault();
+  } else if(lpItem){
+    const k=+lpItem.dataset.k;
+    selectNews(k);
+  }
+  lpItem=null;
+});
+row.addEventListener("pointerleave",()=>{clearTimeout(lpTimer);lpItem=null;});
+$("#scroll").addEventListener("pointerdown",e=>{
+  if(!e.target.closest(".tape")&&!e.target.closest(".chart-card"))closeNews();
+},true);
+
+/* ============ E1 置顶重排（FLIP） + E3 行业比 + E2 注脚 ============ */
+const bento=$("#bento");
+const INDUSTRY={
+  0:{t:"主力资金 · 行业内对比",s:"今日主力净额（亿元）",vals:[["贵州茅台",-3.2],["五粮液",-2.1],["泸州老窖",-0.8],["山西汾酒",0.4],["古井贡酒",0.2]]},
+  1:{t:"营收增速 · 行业内对比",s:"半年报同比（%）",vals:[["山西汾酒",+15.1],["贵州茅台",+9.2],["五粮液",+7.4],["古井贡酒",+6.9],["洋河股份",+3.2]]},
+  2:{t:"股东户数变化 · 行业内对比",s:"环比上期（%）",vals:[["古井贡酒",-6.0],["贵州茅台",-4.1],["泸州老窖",-2.8],["五粮液",-1.5],["洋河股份",+1.2]]},
+  3:{t:"龙虎榜净买 · 行业内对比",s:"今日机构席位（亿元）",vals:[["贵州茅台",1.2],["山西汾酒",0.6],["五粮液",-0.3],["洋河股份",-0.5],["泸州老窖",-0.9]]},
+  4:{t:"解禁压力 · 行业内对比",s:"未来 3 个月解禁市值（亿）",vals:[["五粮液",120],["洋河股份",86],["山西汾酒",41],["泸州老窖",15],["贵州茅台",0]]},
+};
+bento.querySelectorAll(".bcard").forEach(card=>{
+  const idx=+card.dataset.i, cfg=INDUSTRY[idx];
+  const maxAbs=Math.max(...cfg.vals.map(v=>Math.abs(v[1])));
+  card.querySelector(".compare").innerHTML=
+    `<div class="ct">${cfg.t}</div><div class="cs">${cfg.s} · 端侧静态行业样本</div>`+
+    cfg.vals.map(([n,v])=>{
+      const w=Math.abs(v)/maxAbs*100;
+      const pos=v>=0;
+      return `<div class="cbar ${n==="贵州茅台"?"me":""}"><div class="n">${n}</div><div class="track"><div class="fill" style="width:${w}%"></div></div><div class="val">${v>0?"+":""}${v}</div></div>`;
+    }).join("");
+  // E3 长按
+  let t=null;
+  card.addEventListener("pointerdown",()=>{t=setTimeout(()=>card.classList.add("compare-on"),450);});
+  const cancel=()=>{clearTimeout(t);if(card.classList.contains("compare-on"))setTimeout(()=>card.classList.remove("compare-on"),2200);};
+  card.addEventListener("pointerup",cancel);card.addEventListener("pointerleave",()=>clearTimeout(t));
+  // E2 注脚
+  card.querySelector(".foot").addEventListener("click",e=>{e.stopPropagation();toast(e.currentTarget.dataset.r);});
+});
+
+/* E1 FLIP 重排 */
+const order0=[...bento.children];
+function pinFirst(){
+  if(order0[order0.length-1].classList.contains("pinned")&&bento.children[0].classList.contains("pinned"))return;
+  const first=new Map(order0.map(c=>[c,c.getBoundingClientRect()]));
+  // 龙虎榜卡移到最前
+  const bb=order0.find(c=>c.dataset.i==="3");
+  bento.insertBefore(bb,bento.firstChild);
+  // FLIP
+  order0.concat().forEach(c=>{
+    const f=first.get(c),l=c.getBoundingClientRect();
+    const dx=f.left-l.left,dy=f.top-l.top;
+    if(dx||dy){c.style.transition="none";c.style.transform=`translate(${dx}px,${dy}px)`;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{c.style.transition="transform .5s cubic-bezier(.3,1.1,.4,1)";c.style.transform="";}));
+      setTimeout(()=>{c.style.transition="";c.style.transform="";},600);}
+  });
+  setTimeout(()=>{bb.classList.add("pinned");
+    if(!bb.querySelector(".badge")){const b=document.createElement("div");b.className="badge";b.textContent="今日相关";bb.appendChild(b);}
+    toast("端侧规则：今日上龙虎榜 → 该卡置顶");},550);
+}
+function unpin(){
+  order0.forEach(c=>c.classList.remove("pinned"));
+  bento.querySelectorAll(".badge").forEach(b=>b.remove());
+  const bb=order0.find(c=>c.dataset.i==="3");
+  const first=new Map([...bento.children].map(c=>[c,c.getBoundingClientRect()]));
+  bento.insertBefore(bb,order0[4]); // 移回原位（原顺序 [0,1,2,3,4]）
+  const last=bb.getBoundingClientRect();
+  const f=first.get(bb);
+  bb.style.transition="none";bb.style.transform=`translate(${f.left-last.left}px,${f.top-last.top}px)`;
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{bb.style.transition="transform .5s cubic-bezier(.3,1.1,.4,1)";bb.style.transform="";}));
+  setTimeout(()=>{bb.style.transition="";bb.style.transform="";},600);
+}
+let pinned=false;
+setTimeout(()=>{pinFirst();pinned=true;},1100);
+$("#replay").addEventListener("click",()=>{
+  if(pinned){unpin();pinned=false;setTimeout(()=>{pinFirst();pinned=true;},1200);}
+  else {pinFirst();pinned=true;}
+});
+
+/* ============ F1 徽章说明 ============ */
+document.querySelectorAll(".mat").forEach(m=>m.addEventListener("click",()=>toast(`端侧评级：${m.dataset.l} —— 关键词规则（业绩/减持/回购 = 高）`)));
+
+/* ============ F3 多空平衡器 ============ */
+const RATINGS=[
+  ["买入","多家头部券商维持买入：批价压力为短期扰动，直营占比提升支撑利润率。"],
+  ["增持","增持观点集中在估值角度：当前 21x PE 处于近五年 38% 分位，安全边际尚可。"],
+  ["中性","中性观点认为需求端未见拐点，短期缺乏催化，建议等待批价企稳信号。"],
+  ["减持","减持观点担忧渠道库存与批价下行传导，认为分红除权前资金面承压。"],
+];
+const bq=$("#ratingQuote");
+function renderRating(){
+  const [name,txt]=RATINGS[$("#balRange").value];
+  bq.innerHTML=`<b>${name}</b>（${[4,3,2,1][$("#balRange").value]} 份）—— ${txt}`;
+}
+$("#balRange").addEventListener("input",renderRating);
+renderRating();
+
+/* ============ G1 因子重放 ============ */
+const FACTORS=[
+  {n:"资金面",base:-0.30},{n:"板块联动",base:-0.14},{n:"市场整体",base:0.05},{n:"个股事件",base:-0.23},
+];
+const frows=$("#frows");
+FACTORS.forEach((f,k)=>{
+  const d=document.createElement("div");
+  d.className="frow";
+  d.innerHTML=`<div class="n">${f.n}</div><input type="range" min="0" max="2" step="0.1" value="1"><div class="w">1.0×</div>`;
+  frows.appendChild(d);
+  d.querySelector("input").addEventListener("input",e=>{f.w=+e.target.value;d.querySelector(".w").textContent=f.w.toFixed(1)+"×";recalc();});
+});
+FACTORS.forEach(f=>f.w=1);
+function recalc(){
+  const sum=FACTORS.reduce((s,f)=>s+f.base*f.w,0);
+  const v=$("#calcVal");
+  v.textContent=(sum>0?"+":"")+sum.toFixed(2)+"%";
+  v.style.color=sum>0?"var(--rise)":"var(--fall)";
+  const bar=$("#calcBar");
+  const pct=Math.min(Math.abs(sum)/1.2*50,48);
+  bar.style.width=pct+"%";
+  bar.style.left=sum>=0?"60%":(60-pct)+"%";
+  bar.style.background=sum>=0?"var(--rise)":"var(--fall)";
+}
+recalc();
+$("#fReset").addEventListener("click",()=>{
+  document.querySelectorAll("#frows input").forEach((inp,k)=>{inp.value=1;FACTORS[k].w=1;
+    inp.parentElement.querySelector(".w").textContent="1.0×";});
+  recalc();toast("已复原为原始归因权重");
+});
+
+/* ============ H1 加自选记一笔 ============ */
+const chips=$("#reasonChips"),btnW=$("#btnWatch");
+let watchlisted=false;
+btnW.addEventListener("click",()=>{
+  if(watchlisted){toast("已在自选中 · 点当初理由可回访");return;}
+  chips.classList.toggle("show");
+});
+chips.querySelectorAll(".rchip").forEach(c=>c.addEventListener("click",()=>{
+  watchlisted=true;
+  chips.classList.remove("show");
+  btnW.textContent="✓ 已自选";btnW.classList.add("done");
+  toast(`已记入当初理由：${c.dataset.r}（A1 回访卡会追踪它）`);
+  $("#revisit").classList.add("open");
+}));
+</script>
+</body>
+</html>

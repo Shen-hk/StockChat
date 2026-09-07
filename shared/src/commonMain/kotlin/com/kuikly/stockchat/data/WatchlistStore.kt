@@ -24,6 +24,9 @@ data class WatchlistItem(
     val starred: Boolean = false,
     // FR-W9 停留时长「没看过」半边：最后一次从自选列表点进详情的时间。0 = 从未点开。
     val lastViewedAtMillis: Long = 0L,
+    // doc 29 A1 回访卡：加自选当时的行情价。0 = 未记录（旧数据/非详情页入口），
+    // 序列化兼容：optString 缺省 0.0，写回时仅在 >0 时落盘，旧 key 不迁移。
+    val entryPrice: Double = 0.0,
 )
 
 enum class WatchlistAddResult { ADDED, ALREADY_IN, FULL }
@@ -119,6 +122,14 @@ class WatchlistStore(
     }
 
     /**
+     * doc 29 A1：记录加自选当时的行情价（回访卡 KPI）。仅详情页入口调用；
+     * 旧数据该字段缺省 0.0，页面侧据此显示「—」。
+     */
+    fun setEntryPrice(symbol: String, price: Double) {
+        writeRows(readRows().map { if (it.symbol == symbol) it.copy(entryPrice = price) else it })
+    }
+
+    /**
      * FR-W7 手动排序：沿 sortOrder 整列重排（不做拖动手势——与左滑行/滚动手势
      * 叠加时误触率高，菜单步进是有意取舍）。delta = -1 上移一位，+1 下移一位。
      */
@@ -166,6 +177,7 @@ class WatchlistStore(
                                 reasonHistory = parseHistory(item.optString("reasonHistory")),
                                 starred = item.optString("starred") == "1",
                                 lastViewedAtMillis = item.optString("lastViewedAtMillis").toLongOrNull() ?: 0L,
+                                entryPrice = item.optString("entryPrice").toDoubleOrNull() ?: 0.0, // 集成修复：A1 回访卡字段（兼容旧数据缺省 0.0）
                             ),
                         )
                     }
@@ -190,6 +202,7 @@ class WatchlistStore(
                 put("reasonHistory", JSONArray().apply { item.reasonHistory.forEach { put(it) } })
                 if (item.starred) put("starred", "1")
                 if (item.lastViewedAtMillis > 0L) put("lastViewedAtMillis", item.lastViewedAtMillis)
+                if (item.entryPrice > 0.0) put("entryPrice", item.entryPrice) // 集成修复：A1 回访卡字段（向后兼容，仅在有值时落盘）
             })
         }
         preferences.setString(KEY, array.toString())
