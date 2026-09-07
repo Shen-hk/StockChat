@@ -10,6 +10,7 @@ object Routes {
     const val STOCK_DETAIL = "StockDetailPage"
     const val CARD_GALLERY = "CardGallery"
     const val GLOSSARY = "GlossaryPage"
+    const val TERM_DECK = "TermCardDeckPage"
     const val WATCHLIST = "WatchlistPage"
     const val RISK = "RiskMapPage"
     const val API_CONFIG = "ApiConfigPage"

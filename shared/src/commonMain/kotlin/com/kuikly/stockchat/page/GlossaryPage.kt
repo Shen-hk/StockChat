@@ -11,6 +11,7 @@ import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
+import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.data.GlossaryEncounter
 import com.kuikly.stockchat.data.GlossaryStore
 import com.kuikly.stockchat.data.MarketDependencies
@@ -155,6 +156,48 @@ internal class GlossaryPage : BasePager() {
         val rec = page.recommend()
         container.View {
             attr { marginTop(6f) }
+
+            // 卡片轮学入口（doc 30）：掌握度驱动的出牌顺序，挂在地图首屏最上方。
+            View {
+                attr {
+                    marginBottom(10f)
+                    paddingTop(13f)
+                    paddingBottom(13f)
+                    paddingLeft(14f)
+                    paddingRight(14f)
+                    borderRadius(14f)
+                    backgroundColor(page.theme.surface)
+                    boxShadow(BoxShadow(0f, 4f, 12f, Color(0x000000, 0.06f)))
+                }
+                event { click { page.openPage(Routes.TERM_DECK) } }
+                View {
+                    attr { flexDirectionRow(); alignItemsCenter() }
+                    Text {
+                        attr {
+                            text("卡片轮学")
+                            fontSize(14f)
+                            fontWeightSemiBold()
+                            color(page.theme.textPrimary)
+                        }
+                    }
+                    View { attr { flex(1f) } }
+                    Text {
+                        attr {
+                            text("›")
+                            fontSize(15f)
+                            color(page.theme.textTertiary)
+                        }
+                    }
+                }
+                Text {
+                    attr {
+                        text("按「没记住 → 模糊 → 新词」轮番出卡，甩动翻页，答「会了」才算过关")
+                        fontSize(11f)
+                        color(page.theme.textTertiary)
+                        marginTop(4f)
+                    }
+                }
+            }
 
             // z0 氛围底：极淡品牌色（不用涨跌色），承载 z3 主卡。
             View {
