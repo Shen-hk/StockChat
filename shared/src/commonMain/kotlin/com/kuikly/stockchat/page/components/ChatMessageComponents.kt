@@ -28,10 +28,13 @@ import com.kuikly.stockchat.richtext.EntityRichText
 import com.kuikly.stockchat.richtext.EntitySpan
 import com.kuikly.stockchat.richtext.EntityStreamingMarkdown
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.base.event.LongPressParams
 import com.tencent.kuikly.core.directives.vif
+import com.tencent.kuikly.core.views.DivView
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.Scroller
+import com.tencent.kuikly.core.views.SelectableOption
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
@@ -57,6 +60,8 @@ internal class ChatMessageActions(
     val onEntityStockLongPress: (EntitySpan, LongPressParams) -> Unit,
     val onCardStock: (String) -> Unit,
     val onTerm: (String) -> Unit,
+    // 长按术语高亮 = 术语灵动岛预览/拖拽起手（与股票实体同款手势体系）。
+    val onTermLongPress: (EntitySpan, LongPressParams) -> Unit = { _, _ -> },
     val onSuggestion: (String) -> Unit,
     val onRetry: () -> Unit,
     val onRetryCard: (String, String, String, String) -> Unit,
@@ -74,6 +79,17 @@ internal class ChatMessageActions(
     val onCompareCandidate: (String, String) -> Unit,
     val onCardEvent: (String, CardEvent) -> Unit,
     val onShareInterpretation: (String) -> Unit,
+    // ===== 正文文本选择（复制 / 追问）=====
+    // 气泡容器开启 selectable 后：长按正文 → 页侧调 createSelection 起选
+    // （渲染层显示系统选择手柄与放大镜）→ 拖手柄调整 → selectEnd 取词弹菜单。
+    // 实体链接的 linkLongPress 在更内层的富文本视图消费、不冒泡到这里，
+    // 因此「长按实体=行情预览岛」与「长按正文=选择文字」天然共存。
+    // 每条消息的容器 ref 必须按 messageId 注册：vfor 下 page 级单 ref 会被
+    // 最后挂载的消息覆盖，导致跨消息坐标错乱。
+    val onSelectionContainerRef: (String, ViewRef<DivView>) -> Unit,
+    val onTextSelectionLongPress: (messageId: String, x: Float, y: Float, pageX: Float, pageY: Float) -> Unit,
+    val onTextSelectEnd: (String) -> Unit,
+    val onTextSelectCancel: (String) -> Unit,
 )
 
 internal fun ViewContainer<*, *>.ChatMessageView(
@@ -107,6 +123,19 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                     marginLeft(6f)
                     marginRight(6f)
                 }
+                // 子树内所有 Text/富文本可选（渲染层以本容器为根收集可选文本，
+                // selectEnd 事件与选区手柄均挂在此容器上）。
+                selectable(SelectableOption.ENABLE)
+                selectionColor(theme.brand)
+            }
+            ref { actions.onSelectionContainerRef(message.id, it) }
+            event {
+                longPress { params ->
+                    if (params.isCancel || params.state != "start") return@longPress
+                    actions.onTextSelectionLongPress(message.id, params.x, params.y, params.pageX, params.pageY)
+                }
+                selectEnd { actions.onTextSelectEnd(message.id) }
+                selectCancel { actions.onTextSelectCancel(message.id) }
             }
             if (user) {
                 Text { attr { text(message.content); fontSize(16f); lineHeight(24f); color(theme.onBrand) } }
@@ -126,6 +155,7 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                             onStockClick = actions.onEntityStock,
                             onStockLongPress = actions.onEntityStockLongPress,
                             onTermClick = actions.onTerm,
+                            onTermLongPress = actions.onTermLongPress,
                         )
                     }
                 }
@@ -164,7 +194,15 @@ private fun ViewContainer<*, *>.AssistantContent(
             is TextBlock -> {
                 View {
                     attr { marginTop(4f) }
-                    EntityRichText(block.content, theme, contextSymbols, actions.onEntityStock, actions.onEntityStockLongPress, actions.onTerm)
+                    EntityRichText(
+                        block.content,
+                        theme,
+                        contextSymbols,
+                        actions.onEntityStock,
+                        actions.onEntityStockLongPress,
+                        actions.onTerm,
+                        actions.onTermLongPress,
+                    )
                 }
             }
             is CardBlock -> {

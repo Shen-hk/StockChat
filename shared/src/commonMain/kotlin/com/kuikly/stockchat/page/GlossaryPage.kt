@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.base.BasePager
+import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
@@ -16,9 +17,11 @@ import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.GlossaryCategory
 import com.kuikly.stockchat.data.entity.GlossaryEntry
+import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.SegmentBar
 import com.tencent.kuikly.core.annotations.Page
+import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
@@ -58,6 +61,12 @@ internal class GlossaryPage : BasePager() {
     /** "map" = 知识地图首页；"list" = 完整词表二级页（搜索 + 分类浏览）。 */
     private var viewMode: String by observable(VIEW_MAP)
 
+    // ── 交接淡入（与 StockDetailPage 同款）：术语岛下滑 → 无动画 push，
+    // 页面内容就地淡入接管灵动岛玻璃帧（R4 两帧翻转 + 500ms 兜底）。
+    private var handoffPresented: Boolean by observable(true)
+    private var handoffFadeActive = false
+    private val reduceMotion by lazy { platformPrefersReducedMotion() }
+
     // ── 二级词表的状态（沿用 v1）──
     private var query: String by observable("")
     private var activeCategory: GlossaryCategory? by observable(null)
@@ -71,6 +80,14 @@ internal class GlossaryPage : BasePager() {
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
+        handoffFadeActive = pagerData.params.optString("krTransition") == "islandExpand"
+        handoffPresented = !handoffFadeActive || reduceMotion
+        if (handoffFadeActive) {
+            // R4 两帧翻转：首帧 opacity 0 挂载，下一帧翻转为可见触发淡入；
+            // 500ms 兜底防 ref→setTimeout 链路丢失导致页面停在透明态。
+            setTimeout(0) { handoffPresented = true }
+            setTimeout(500) { handoffPresented = true }
+        }
         refreshEncounters()
         applyFilter()
     }
@@ -82,6 +99,16 @@ internal class GlossaryPage : BasePager() {
         val searchSeed = page.query
         return {
             attr { backgroundColor(page.theme.page) }
+            // 交接容器：整页内容（含顶栏）在容器上统一淡入，接管灵动岛
+            // 形变铺满全屏后的玻璃帧（与 StockDetailPage 同一条转场语言）。
+            View {
+            attr {
+                flex(1f)
+                opacity(if (page.handoffPresented) 1f else 0f)
+                if (!page.reduceMotion) {
+                    animate(Animation.easeOut(0.22f), "glossary-handoff")
+                }
+            }
             Scroller {
                 attr {
                     flex(1f)
@@ -117,6 +144,7 @@ internal class GlossaryPage : BasePager() {
                     if (page.viewMode == VIEW_MAP) page.closePage() else page.viewMode = VIEW_MAP
                 },
             )
+            }
         }
     }
 

@@ -30,6 +30,7 @@ import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.StreamState
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
+import com.kuikly.stockchat.common.openGlossary
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.WatchlistAddResult
@@ -40,11 +41,13 @@ import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.kuikly.stockchat.data.entity.Glossary
+import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
 import com.kuikly.stockchat.page.components.CardSheetHost
 import com.kuikly.stockchat.page.components.ActiveComparePanel
+import com.kuikly.stockchat.page.components.TermComparePanel
 import com.kuikly.stockchat.page.components.ChatMessageActions
 import com.kuikly.stockchat.page.components.ChatMessageRenderState
 import com.kuikly.stockchat.page.components.ChatMessageView
@@ -143,6 +146,8 @@ import com.tencent.kuikly.core.views.ScrollerView
 import com.tencent.kuikly.core.views.ScrollParams
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import com.tencent.kuikly.core.views.DivView
+import com.tencent.kuikly.core.views.SelectionType
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.timer.Timer
 import kotlin.math.PI
@@ -166,6 +171,17 @@ internal class ChatPage : BasePager() {
         // 滚动声波条数：新采样从右缘进入、历史整体左移（60ms/格），
         // 40 条 × (3+3) ≈ 240dp，铺满中段波形区。
         const val VOICE_AMP_BARS = 56
+        // 流式贴底循环在「非流式且不在贴底窗口」后的宽限拍数（120ms/拍 ≈ 2.4s），
+        // 覆盖流结束后的收尾长高（卡片解析、追问 chips、卡片行情异步到账）。
+        const val CHAT_FOLLOW_GRACE_TICKS = 20
+        // 流式尚未开始（首包未到）时贴底循环的最长存活拍数（120ms/拍 ≈ 19s）：
+        // 行情上下文解析 watchdog 最长 3s + LLM 首包延迟，宽限计数必须等见过
+        // STREAMING 才启动，否则循环会在流开始前退出、跟随彻底失去驱动。
+        // 同时兜底防「流永远不来」（网络挂死）时循环无限存活。
+        const val CHAT_FOLLOW_PRE_STREAM_MAX_TICKS = 160
+        // 贴底目标偏移量的安全余量：native 侧对超出 contentH-viewH 的
+        // setContentOffset 请求会静默无效，减 1px 规避浮点精度导致的误判。
+        const val CHAT_SCROLL_HAIR_WIDTH = 1f
     }
     private val dependencies by lazy { ChatDependencies.forPager(pagerId) }
     private val viewModel by lazy { ChatViewModel(pagerId, dependencies) }
@@ -175,10 +191,16 @@ internal class ChatPage : BasePager() {
     private var inputRef: ViewRef<TextAreaView>? = null
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
     private var chatContentHeight = 0f
+    private var lastLoggedScrollY = -1f
+    private var lastLoggedContentH = -1f
     private var keepChatAtBottomVersion = 0
     // 流式跟随开关：内容增长时自动贴底。用户上滑/按住（isDragging 且不在底部）
     // 即暂停，拖回底部或重新发消息时恢复。
     private var chatFollowStream = true
+    // 流式期间确实 flush 长高过：用于识别「流刚结束」的最后一次收尾长高。
+    private var chatStreamFlushed = false
+    // 流式贴底轮询循环（发送时启动，流结束+宽限后自灭）。
+    private var chatFollowLoop: Timer? = null
     private var peekSymbol: String by observable("")
     private var peekVisible: Boolean by observable(false)
     // Symbol whose long press was recognised but whose gesture has not ended.
@@ -199,6 +221,25 @@ internal class ChatPage : BasePager() {
     private var ambiguousSymbols: ObservableList<String> by observableList()
     private var ambiguousEntityText: String by observable("")
     private var ambiguousAction: EntityAction by observable(EntityAction.PREVIEW)
+    // ===== 消息长按操作菜单（复制 / 追问）=====
+    // 双态机（mounted → presented 一拍后翻转，R4/R5），与 Drawer/CardSheet 同款。
+    private var messageActionMounted: Boolean by observable(false)
+    private var messageActionPresented: Boolean by observable(false)
+    private var messageActionX: Float by observable(0f)
+    private var messageActionY: Float by observable(0f)
+    // 用户消息只提供复制；AI 消息追加「追问」。
+    private var messageActionFollowUp: Boolean by observable(false)
+    // 菜单内容不进 observable：只在长按事件里赋值、由点击动作直接读取。
+    private var messageActionText = ""
+    private var messageActionQuote = ""
+    private var messageActionVersion = 0
+    // 每条消息气泡的 selectable 容器 ref（vfor 下必须按 messageId 分键，
+    // 单 ref 会被最后挂载的消息覆盖）。生命周期与页面一致，条目级泄漏可忽略。
+    private val messageSelectionRefs = mutableMapOf<String, ViewRef<DivView>>()
+    // 当前选择会话的落点（页面绝对坐标），selectEnd 弹菜单时复用定位。
+    private var selectionMessageId = ""
+    private var selectionPageX = 0f
+    private var selectionPageY = 0f
     private var keyboardHeight: Float by observable(0f)
     private var drawerOpen: Boolean by observable(false)
     // Drawer double-state machine (mirrors sheetMounted/sheetPresented): vif
@@ -228,6 +269,17 @@ internal class ChatPage : BasePager() {
     private var islandCompareLeftSymbol: String by observable("")
     private var islandCompareRightSymbol: String by observable("")
     private var islandCompareVisible: Boolean by observable(false)
+    // ===== 术语灵动岛（与股票行情岛同体系，内容层分流、对比会话互斥）=====
+    // 非空 = 岛当前承载该术语的讲解卡；长按蓝色术语高亮进入，与行情卡共用
+    // 同一条形变/手势管线（AppChrome.StockIsland 的 termEntry 分支）。
+    private var islandTermKey: String by observable("")
+    private var islandTermCompareLeftKey: String by observable("")
+    private var islandTermCompareRightKey: String by observable("")
+    private var islandTermCompareVisible: Boolean by observable(false)
+    // 长按术语的进行中 key（与 pendingLongPressSymbol 平行，互不串扰），
+    // 以及长按后部分 bridge 会补发的 click 的抑制词形。
+    private var pendingLongPressTermKey: String = ""
+    private var suppressNextTermClick: String = ""
     // 对比会话代数：退出/重建对比时自增，使在途的收起兜底定时器失效。
     private var compareExperienceVersion = 0
     // Page data is injected after construction; use the safe fallback until created().
@@ -463,9 +515,7 @@ internal class ChatPage : BasePager() {
                 event {
                     contentSizeChanged { _, height ->
                         page.chatContentHeight = height
-                        // 流式期间内容每 100ms flush 长高一次：非动画贴底最顺滑，
-                        // animated 连续重启动画会互相打断造成抖动
-                        if (page.shouldKeepChatAtBottom()) page.scheduleScrollChatToBottom(animated = false)
+                        page.handleChatContentSizeGrew()
                     }
                     scroll { params ->
                         page.handleChatStreamScroll(params)
@@ -514,10 +564,16 @@ internal class ChatPage : BasePager() {
                             onEntityStockLongPress = page::handleStockEntityLongPress,
                             onCardStock = page::openStockDetail,
                             onTerm = {
-                                // 用户卡在术语上主动点高亮 = 一次真实「遇到」（doc 24 §6.3）。
-                                Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
-                                page.viewModel.send("$it 是什么意思")
+                                // 长按术语后部分 bridge 会补发 click，抑制之。
+                                if (it == page.suppressNextTermClick) {
+                                    page.suppressNextTermClick = ""
+                                } else {
+                                    // 用户卡在术语上主动点高亮 = 一次真实「遇到」（doc 24 §6.3）。
+                                    Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
+                                    page.viewModel.send("$it 是什么意思")
+                                }
                             },
+                            onTermLongPress = page::handleTermEntityLongPress,
                             onSuggestion = page.viewModel::send,
                             onRetry = page.viewModel::retryLast,
                             onRetryCard = page::retryCard,
@@ -535,6 +591,10 @@ internal class ChatPage : BasePager() {
                             onCompareCandidate = page::handleCompareCandidate,
                             onCardEvent = page::handleCardEvent,
                             onShareInterpretation = page::copyShareCard,
+                            onSelectionContainerRef = page::handleSelectionContainerRef,
+                            onTextSelectionLongPress = page::handleTextSelectionLongPress,
+                            onTextSelectEnd = page::handleTextSelectEnd,
+                            onTextSelectCancel = page::handleTextSelectCancel,
                         ),
                     )
                 }
@@ -567,7 +627,14 @@ internal class ChatPage : BasePager() {
                 islandCompareRightSymbol = { page.islandCompareRightSymbol },
                 islandCompareLeftQuote = { page.quoteFor(page.islandCompareLeftSymbol) },
                 islandCompareRightQuote = { page.quoteFor(page.islandCompareRightSymbol) },
-                islandCompareVisible = { page.isIslandCompareLobbyVisible() },
+                // 股票对比与术语对比共用同一套 lobby 几何，内容层按会话分流。
+                islandCompareVisible = {
+                    page.isIslandCompareLobbyVisible() || page.isIslandTermCompareLobbyVisible()
+                },
+                islandTermEntry = { Glossary.byKey(page.islandTermKey) },
+                islandCompareIsTerm = { page.islandTermCompareLeftKey.isNotEmpty() },
+                islandTermCompareLeft = { Glossary.byKey(page.islandTermCompareLeftKey) },
+                islandTermCompareRight = { Glossary.byKey(page.islandTermCompareRightKey) },
                 islandTextOnly = { false },
                 islandCompareInsightLoading = { page.compareInsightState == CompareInsightState.LOADING },
                 islandCompareInsightAvailable = { page.compareInsightState == CompareInsightState.READY },
@@ -689,6 +756,71 @@ internal class ChatPage : BasePager() {
                     GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
                     LineIconChevronUp(color = page.theme.textSecondary, size = 18f)
                     event { click { page.scrollChatToTopAnimated() } }
+                }
+            }
+            // ===== 长按消息操作菜单（复制 / 追问）=====
+            // 全屏透明手势层（点按任意处关闭）+ 长按落点附近的玻璃胶囊菜单。
+            // 入场与回到顶部按钮同款双态机：mount 周期注册动画，presented
+            // 翻转周期消费（R4/R5）。菜单内容（followUp 分支）在挂载帧读取
+            // 一次即可，不参与挂载后的响应式变化。
+            vif({ page.messageActionMounted }) {
+                View {
+                    attr {
+                        absolutePosition(left = 0f, top = 0f)
+                        size(page.pagerData.pageViewWidth, page.pagerData.pageViewHeight)
+                    }
+                    event { click { page.dismissMessageActionMenu() } }
+                }
+                View {
+                    attr {
+                        val menuWidth = if (page.messageActionFollowUp) 174f else 96f
+                        absolutePosition(
+                            left = (page.messageActionX - 20f).coerceIn(
+                                12f,
+                                (page.pagerData.pageViewWidth - menuWidth - 12f).coerceAtLeast(12f),
+                            ),
+                            // 近底部翻到手指上方，避免被输入栏遮住。
+                            top = if (page.messageActionY + 150f > page.pagerData.pageViewHeight - 160f) {
+                                page.messageActionY - 96f
+                            } else {
+                                page.messageActionY + 14f
+                            },
+                        )
+                        height(44f)
+                        borderRadius(14f)
+                        boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
+                        border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
+                        opacity(if (page.messageActionPresented) 1f else 0f)
+                        transform(scale = if (page.messageActionPresented) Scale(1f, 1f) else Scale(0.9f, 0.9f))
+                        animate(Animation.easeOut(0.2f), page.messageActionPresented)
+                    }
+                    GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
+                    View {
+                        attr {
+                            flexDirectionRow()
+                            alignItemsCenter()
+                            height(44f)
+                            paddingLeft(5f)
+                            paddingRight(5f)
+                        }
+                        View {
+                            attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
+                            Text { attr { text("复制"); fontSize(13f); color(page.theme.textPrimary) } }
+                            event { click { page.copyMessageToPasteboard() } }
+                        }
+                        if (page.messageActionFollowUp) {
+                            View {
+                                attr { width(1f); height(18f); backgroundColor(page.theme.textTertiary.opacity(0.25f)) }
+                            }
+                            View {
+                                attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
+                                Text {
+                                    attr { text("追问"); fontSize(13f); fontWeightMedium(); color(page.theme.brand) }
+                                }
+                                event { click { page.quoteMessageIntoComposer() } }
+                            }
+                        }
+                    }
                 }
             }
             val composerSheetMaterial = page.theme.glass.sheet
@@ -1107,6 +1239,37 @@ internal class ChatPage : BasePager() {
                     )
                 }
             }
+            // 术语对比弹窗：双槽位填满即弹出（与股票 compareCard 同款触发），
+            // 蒙层 + 面板绘制在输入栏之上，压暗聊天区/灵动岛/输入栏。
+            vif({
+                page.islandTermCompareVisible &&
+                    page.islandTermCompareLeftKey.isNotEmpty() &&
+                    page.islandTermCompareRightKey.isNotEmpty()
+            }) {
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        backgroundColor(Color(0x59000000))
+                        touchEnable(true)
+                        animate(Animation.easeOut(0.2f), page.islandTermCompareVisible)
+                    }
+                    event { click { } }
+                }
+                Glossary.byKey(page.islandTermCompareLeftKey)?.let { leftEntry ->
+                    Glossary.byKey(page.islandTermCompareRightKey)?.let { rightEntry ->
+                        TermComparePanel(
+                            left = leftEntry,
+                            right = rightEntry,
+                            theme = page.theme,
+                            insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
+                            insightText = { page.compareInsightText },
+                            insightError = { page.compareInsightError },
+                            onRetryInsight = { page.retryCompareInsight() },
+                            onClose = { page.clearIslandCompare() },
+                        )
+                    }
+                }
+            }
             vif({ page.entityDragActive }) {
                 page.renderEntityDragOverlay(this)
             }
@@ -1129,7 +1292,7 @@ internal class ChatPage : BasePager() {
                         onTerm = {
                             // 卡片底部「问术语」同样记一次「遇到」。
                             Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
-                            page.viewModel.send("$it 是什么意思")
+                            page.sendFromChat("$it 是什么意思")
                         },
                         primaryActionLabel = (model as? StockQuoteCardModel)?.quote?.symbol?.let { symbol ->
                             if (page.watchlistStore.contains(symbol)) "已自选" else "加自选"
@@ -1333,6 +1496,9 @@ internal class ChatPage : BasePager() {
         keepChatAtBottomVersion = 0
         chatContentHeight = 0f
         chatFollowStream = true
+        chatStreamFlushed = false
+        chatFollowLoop?.cancel()
+        chatFollowLoop = null
         viewModel.startNewChat()
         resetSessionUiState()
         setComposerText("")
@@ -2365,7 +2531,7 @@ internal class ChatPage : BasePager() {
                         this@ChatPage.composerBlurRecoverAttempts = 0
                         this@ChatPage.scheduleComposerFocusAfterKeyboardLayout(it.duration)
                     }
-                    this@ChatPage.scheduleScrollChatToBottom()
+                    this@ChatPage.scheduleScrollChatToBottom(animated = false)
                 }
                 inputReturn {
                     KLog.i(COMPOSER_LOG_TAG, "EV inputReturn len=${it.text.length}")
@@ -2432,9 +2598,59 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    /**
+     * 聊天内非输入栏发送入口（追问 chips / 术语高亮 / 建议问题）统一走这里：
+     * 发送即视为用户要回到新消息处，与 submitInput 同待遇——即使此刻正
+     * 上滑翻阅历史，也要自动滚到新消息再跟随流式输出。
+     */
+    private fun sendFromChat(payload: SendPayload) {
+        viewModel.send(payload)
+        keepChatAtBottomTemporarily()
+    }
+
+    private fun sendFromChat(question: String) {
+        sendFromChat(
+            SendPayload(
+                text = question,
+                mentions = emptyList(),
+                command = null,
+                renderedPrompt = null,
+            ),
+        )
+    }
+
     private fun shouldKeepChatAtBottom(): Boolean =
         keepChatAtBottomVersion > 0 ||
             (viewModel.streamState == StreamState.STREAMING && chatFollowStream)
+
+    /**
+     * 内容长高统一入口。流式期间内容每 100ms flush 长高一次：非动画贴底最顺滑，
+     * animated 连续重启动画会互相打断造成抖动。
+     *
+     * 关键缺口修补：ViewModel 在 onDone 里先把 streamState 置回 IDLE、再写入
+     * 最终内容（完整卡片解析、追问 chips 挂载），此刻 shouldKeepChatAtBottom
+     * 已不满足——若不补宽限，收尾长高后用户看到的不是最底部。此处识别
+     * 「流中 flush 过、现已非 STREAMING」的第一拍，补一段宽限贴底窗口。
+     */
+    private fun handleChatContentSizeGrew() {
+        if (viewModel.streamState == StreamState.STREAMING) {
+            chatStreamFlushed = true
+        } else if (chatStreamFlushed) {
+            chatStreamFlushed = false
+            // 用户流式中已上滑离开（chatFollowStream=false）则不打扰。
+            if (chatFollowStream) keepChatAtBottomAfterStreamEnd()
+        }
+        if (shouldKeepChatAtBottom()) scheduleScrollChatToBottom(animated = false)
+    }
+
+    /** 流结束宽限贴底：只延长 keepChatAtBottomVersion 窗口，不改 chatFollowStream。 */
+    private fun keepChatAtBottomAfterStreamEnd() {
+        val version = ++keepChatAtBottomVersion
+        scheduleScrollChatToBottom(animated = false)
+        setTimeout(1500) {
+            if (keepChatAtBottomVersion == version) keepChatAtBottomVersion = 0
+        }
+    }
 
     /**
      * 流式跟随手势仲裁：用户手指拖拽中（isDragging）且不在底部 → 暂停跟随；
@@ -2442,6 +2658,20 @@ internal class ChatPage : BasePager() {
      * 不会误判为用户接管。
      */
     private fun handleChatStreamScroll(params: ScrollParams) {
+        // 诊断日志：native 实际滚动位置（scroll 事件是 native 真实位移的地面真相，
+        // 与 scrollBottom apply 的目标值对照即可判断「发了指令但没滚到位」）。
+        if (kotlin.math.abs(params.offsetY - lastLoggedScrollY) > 8f ||
+            kotlin.math.abs(params.contentHeight - lastLoggedContentH) > 1f
+        ) {
+            lastLoggedScrollY = params.offsetY
+            lastLoggedContentH = params.contentHeight
+            KLog.i(
+                COMPOSER_LOG_TAG,
+                "scroll actual y=${params.offsetY} ch=${params.contentHeight} vh=${params.viewHeight} drag=${params.isDragging}",
+            )
+        }
+        // 长按操作菜单随列表滚动即消失，避免浮层与内容错位。
+        if (messageActionPresented) dismissMessageActionMenu()
         // 回到顶部按钮显隐：所有 scroll 事件都判定（含惯性滚动），仅程序化
         // 动画回顶期间挂起，避免动画中间帧（offsetY 仍很大）把按钮弹回来。
         if (chatTopScrollAnimationVersion == 0) {
@@ -2487,15 +2717,96 @@ internal class ChatPage : BasePager() {
     private fun keepChatAtBottomTemporarily() {
         chatFollowStream = true
         val version = ++keepChatAtBottomVersion
-        scheduleScrollChatToBottom()
-        setTimeout(1200) {
+        // 入口这一跳走动画：用户从上方发消息/触发追问时，要看到从当前位置
+        // 滚到底部的过程，而不是硬跳。后续 follow loop / 内容长高的追加贴底
+        // 仍一律非动画（那些是流式期间的高频小步追平，animated 会互相打断，
+        // 且 native 侧 offset 状态在动画未完成时不同步，content 一长高就被
+        // 重新布局拉回旧位置，实测表现为「滚了又弹回」）。
+        scheduleScrollChatToBottom(animated = true)
+        // 2.5s：覆盖行情上下文解析的 3s watchdog——期间用户消息/占位气泡
+        // 已挂载长高，窗口内 follow loop 的贴底才生效（流开始后由 STREAMING 接管）。
+        setTimeout(2500) {
             if (keepChatAtBottomVersion == version) keepChatAtBottomVersion = 0
+        }
+        startChatFollowLoop()
+    }
+
+    /**
+     * 贴底执行体：直接读 contentView 的实时布局高度，不依赖
+     * contentSizeChanged 事件（该事件挂在 ScrollerContentView 的
+     * layoutFrameDidChanged 回调链上，实测不触发时缓存的
+     * chatContentHeight 恒为 0，setContentOffset(0, 0) 会把列表钉在顶部）。
+     * 内容不足一屏（或高度未知）时不滚，杜绝误跳顶。
+     */
+    private fun scheduleScrollChatToBottom(animated: Boolean = true) {
+        setTimeout(16) {
+            val scroller = chatScrollerRef?.view
+            if (scroller == null) {
+                KLog.i(COMPOSER_LOG_TAG, "scrollBottom ref=null")
+                return@setTimeout
+            }
+            val contentH = scroller.contentView?.frame?.height ?: 0f
+            if (contentH > 0f) chatContentHeight = contentH
+            val viewH = scroller.frame.height
+            if (contentH <= viewH + 1f) {
+                KLog.i(COMPOSER_LOG_TAG, "scrollBottom skip contentH=$contentH viewH=$viewH")
+                return@setTimeout
+            }
+            // 目标偏移量必须是 contentH - viewH（而非 contentH 本身），否则超出可滚动
+            // 范围，native 侧会静默忽略该次 setContentOffset（Kuikly 自身 List 实现
+            // 滚到底也是这个减法，见 LazyLoopDirectivesView 的 maxScrollOffset 计算）。
+            val maxOffset = (contentH - viewH - CHAT_SCROLL_HAIR_WIDTH).coerceAtLeast(0f)
+            scroller.setContentOffset(0f, maxOffset, animated)
+            KLog.i(COMPOSER_LOG_TAG, "scrollBottom apply offset=$maxOffset contentH=$contentH viewH=$viewH animated=$animated")
         }
     }
 
-    private fun scheduleScrollChatToBottom(animated: Boolean = true) {
-        setTimeout(16) {
-            chatScrollerRef?.view?.setContentOffset(0f, chatContentHeight, animated)
+    /**
+     * 流式跟随循环：每 120ms 贴一次底，退出条件 = 非流式且不在贴底窗口后
+     * 再宽限约 1.6s（13 拍）。不依赖任何布局事件驱动——发送时启动，流式
+     * 期间内容每次长高都会被下一次 tick 追平，流结束收尾（卡片解析、
+     * 追问 chips 挂载）由「结束即续 1.5s 版本窗口」覆盖。
+     */
+    private fun startChatFollowLoop() {
+        chatFollowLoop?.cancel()
+        val timer = Timer()
+        chatFollowLoop = timer
+        var lastStreaming = false
+        // 是否已见过 STREAMING：宽限计数只在流真正开始过之后才允许累积。
+        // 发送 → 流开始之间隔着行情上下文解析（watchdog 最长 3s）+ LLM 首包
+        // 延迟，若在此期间按「空闲」计数，循环会在流开始前退出，而
+        // contentSizeChanged 事件实测不可靠，流式跟随将彻底失去驱动。
+        var sawStreaming = false
+        var preStreamTicks = 0
+        var idleTicks = 0
+        timer.schedule(120, 120) {
+            if (isWillDestroy()) {
+                timer.cancel()
+                if (chatFollowLoop === timer) chatFollowLoop = null
+                return@schedule
+            }
+            val streaming = viewModel.streamState == StreamState.STREAMING
+            if (streaming) sawStreaming = true
+            KLog.i(COMPOSER_LOG_TAG, "followLoop streaming=$streaming ver=$keepChatAtBottomVersion idle=$idleTicks follow=$chatFollowStream")
+            // 流式刚结束：补一段贴底窗口，让收尾长高也被跟随（尊重用户上滑）。
+            if (lastStreaming && !streaming && chatFollowStream) {
+                keepChatAtBottomAfterStreamEnd()
+            }
+            lastStreaming = streaming
+            idleTicks = if (streaming || keepChatAtBottomVersion > 0 || !sawStreaming) 0 else idleTicks + 1
+            // 流一直没来（网络挂死等）：上限拍数后自灭，防止循环无限存活。
+            if (!sawStreaming && preStreamTicks++ > CHAT_FOLLOW_PRE_STREAM_MAX_TICKS) {
+                KLog.i(COMPOSER_LOG_TAG, "followLoop preStream timeout")
+                timer.cancel()
+                if (chatFollowLoop === timer) chatFollowLoop = null
+                return@schedule
+            }
+            if (idleTicks > CHAT_FOLLOW_GRACE_TICKS) {
+                timer.cancel()
+                if (chatFollowLoop === timer) chatFollowLoop = null
+                return@schedule
+            }
+            if (shouldKeepChatAtBottom()) scheduleScrollChatToBottom(animated = false)
         }
     }
 
@@ -2571,8 +2882,11 @@ internal class ChatPage : BasePager() {
                     attr {
                         text(
                             when (page.entityDropTarget) {
-                                EntityDropTarget.ISLAND -> "松手加入股票对比"
-                                EntityDropTarget.COMPOSER -> "松手插入 @ 提及"
+                                EntityDropTarget.ISLAND ->
+                                    if (page.draggedEntity?.type == EntityType.TERM) "松手加入术语对比" else "松手加入股票对比"
+                                EntityDropTarget.COMPOSER ->
+                                    // 术语没有 @ 提及形态：落到输入框是填入提问。
+                                    if (page.draggedEntity?.type == EntityType.TERM) "松手填入提问" else "松手插入 @ 提及"
                                 EntityDropTarget.NONE -> "拖到输入框或灵动岛"
                             }
                         )
@@ -2669,12 +2983,21 @@ internal class ChatPage : BasePager() {
             statusBarHeight = pagerData.statusBarHeight,
             safeAreaBottom = pagerData.safeAreaInsets.bottom,
             keyboardHeight = keyboardHeight,
-            islandExpanded = islandExpanded || islandCompareLeftSymbol.isNotEmpty(),
+            islandExpanded = islandExpanded ||
+                islandCompareLeftSymbol.isNotEmpty() ||
+                islandTermKey.isNotEmpty() ||
+                islandTermCompareLeftKey.isNotEmpty(),
         )
     }
 
     private fun isIslandFirstCompareDrop(): Boolean =
-        islandCompareLeftSymbol.isEmpty()
+        // 首槽判定跟随被拖实体类型，而非槽位残留态：术语对比面板开着时再拖
+        // 一只股票进岛，应按股票槽位判定而不是被旧术语槽架空（反之亦然）。
+        if (draggedEntity?.type == EntityType.TERM) {
+            islandTermCompareLeftKey.isEmpty()
+        } else {
+            islandCompareLeftSymbol.isEmpty()
+        }
 
     private fun isIslandCompareLobbyVisible(): Boolean =
         islandCompareVisible &&
@@ -2691,10 +3014,19 @@ internal class ChatPage : BasePager() {
         pendingLongPressSymbol = ""
 
         if (entity != null) {
-            when (target) {
-                EntityDropTarget.COMPOSER -> handleStockEntity(entity, EntityAction.MENTION)
-                EntityDropTarget.ISLAND -> handleStockEntity(entity, EntityAction.COMPARE)
-                EntityDropTarget.NONE -> Unit
+            if (entity.type == EntityType.TERM) {
+                when (target) {
+                    // 术语没有 @ 提及形态：拖到输入框 = 注入「X 是什么意思」问句。
+                    EntityDropTarget.COMPOSER -> injectTermQuestion(entity)
+                    EntityDropTarget.ISLAND -> addDraggedTermToIsland(entity.target)
+                    EntityDropTarget.NONE -> Unit
+                }
+            } else {
+                when (target) {
+                    EntityDropTarget.COMPOSER -> handleStockEntity(entity, EntityAction.MENTION)
+                    EntityDropTarget.ISLAND -> handleStockEntity(entity, EntityAction.COMPARE)
+                    EntityDropTarget.NONE -> Unit
+                }
             }
             if (target != EntityDropTarget.NONE) {
                 trackComposerEvent("entity_drag_drop", "symbol" to entity.target, "target" to target.name.lowercase())
@@ -2712,6 +3044,150 @@ internal class ChatPage : BasePager() {
                 suppressNextStockClickSymbol = ""
             }
         }
+    }
+
+    // ===== 消息长按操作菜单（复制 / 追问）=====
+
+    /** 提取可复制的纯文本：AI 回复剔除卡片代码块只保留正文，解析失败兜底原文。 */
+    private fun messagePlainText(message: ChatMessage): String {
+        if (message.role == MessageRole.USER) return message.content
+        return runCatching {
+            AiResponseLexer.lex(message.content, finished = true)
+                .filterIsInstance<TextBlock>()
+                .joinToString("\n") { it.content.trim() }
+                .trim()
+        }.getOrNull()?.takeIf { it.isNotEmpty() } ?: message.content
+    }
+
+    private fun handleSelectionContainerRef(messageId: String, ref: ViewRef<DivView>) {
+        messageSelectionRefs[messageId] = ref
+    }
+
+    /**
+     * 长按消息：优先在落点处起选（WORD 粒度，渲染层显示选择手柄）；起选落空
+     * （长按在空白/卡片非文本区）或流式期间，回退为整条消息的复制/追问菜单。
+     */
+    private fun handleTextSelectionLongPress(
+        messageId: String,
+        x: Float,
+        y: Float,
+        pageX: Float,
+        pageY: Float,
+    ) {
+        val message = viewModel.messages.firstOrNull { it.id == messageId } ?: return
+        selectionMessageId = messageId
+        selectionPageX = pageX
+        selectionPageY = pageY
+        val ref = messageSelectionRefs[messageId]
+        if (message.streaming || ref == null) {
+            showMessageActionMenu(messagePlainText(message), message.role != MessageRole.USER, pageX, pageY)
+            return
+        }
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+        ref.view?.createSelection(x, y, SelectionType.WORD)
+        // 长按后不拖手柄的场景：留一拍给渲染层落词，已选上就直接弹菜单；
+        // 若长按点没有文本（空白），回退整条消息菜单。
+        val version = messageActionVersion
+        setTimeout(500) {
+            if (version != messageActionVersion) return@setTimeout
+            collectSelectionAndShowMenu(pageX, pageY, fallbackMessage = message)
+        }
+    }
+
+    /** selectEnd：手柄拖动结束（或起选定时器到达），取选中文本弹「复制/追问」。 */
+    private fun handleTextSelectEnd(messageId: String) {
+        if (messageId != selectionMessageId) return
+        collectSelectionAndShowMenu(selectionPageX, selectionPageY, fallbackMessage = null)
+    }
+
+    private fun handleTextSelectCancel(messageId: String) {
+        // 点按其他区域退出选择模式：同步收起菜单，保持界面状态一致。
+        if (messageId == selectionMessageId && messageActionPresented) {
+            dismissMessageActionMenu()
+        }
+    }
+
+    private fun collectSelectionAndShowMenu(pageX: Float, pageY: Float, fallbackMessage: ChatMessage?) {
+        val ref = messageSelectionRefs[selectionMessageId]
+        if (ref == null) {
+            fallbackMessage?.let {
+                showMessageActionMenu(messagePlainText(it), it.role != MessageRole.USER, pageX, pageY)
+            }
+            return
+        }
+        ref.view?.getSelection { result ->
+            // content 按 Text 视图阅读顺序给出选中文本，直接相连即原文。
+            val selected = result.joinToString("").trim()
+            when {
+                selected.isNotEmpty() ->
+                    showMessageActionMenu(selected, allowFollowUp = true, pageX = pageX, pageY = pageY)
+                fallbackMessage != null ->
+                    showMessageActionMenu(
+                        messagePlainText(fallbackMessage),
+                        fallbackMessage.role != MessageRole.USER,
+                        pageX,
+                        pageY,
+                    )
+                else -> Unit
+            }
+        }
+    }
+
+    private fun showMessageActionMenu(text: String, allowFollowUp: Boolean, pageX: Float, pageY: Float) {
+        if (text.isBlank()) return
+        messageActionText = text
+        // 追问预填引文：压缩空白并截断，避免长回复撑爆输入栏。
+        messageActionQuote = text.replace(Regex("\\s+"), " ").trim().let {
+            if (it.length > 60) "${it.take(60)}…" else it
+        }
+        messageActionFollowUp = allowFollowUp
+        messageActionVersion++
+        messageActionX = pageX
+        messageActionY = pageY
+        if (messageActionMounted) {
+            messageActionPresented = true
+        } else {
+            messageActionMounted = true
+            val version = messageActionVersion
+            // vif 新挂载视图首帧不播动画（R4）：挂载一拍后翻 presented。
+            setTimeout(0) {
+                if (version == messageActionVersion && messageActionMounted) messageActionPresented = true
+            }
+        }
+    }
+
+    private fun dismissMessageActionMenu() {
+        if (!messageActionMounted) return
+        clearActiveTextSelection()
+        messageActionVersion++
+        messageActionPresented = false
+        val version = messageActionVersion
+        setTimeout(220) {
+            // version 已变化 = 期间重新长按打开了菜单，不能卸载。
+            if (version == messageActionVersion && !messageActionPresented) messageActionMounted = false
+        }
+    }
+
+    /** 清除当前消息上残留的选择手柄与高亮。 */
+    private fun clearActiveTextSelection() {
+        messageSelectionRefs[selectionMessageId]?.view?.clearSelection()
+    }
+
+    private fun copyMessageToPasteboard() {
+        val bridge = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
+        bridge.copyToPasteboard(messageActionText)
+        bridge.toast("已复制")
+        dismissMessageActionMenu()
+    }
+
+    /** 追问：把引文预填进输入栏并聚焦，问句由用户补全（不预填价值判断类文案）。 */
+    private fun quoteMessageIntoComposer() {
+        val quote = messageActionQuote
+        dismissMessageActionMenu()
+        if (quote.isEmpty()) return
+        val draft = viewModel.inputText.trimEnd()
+        setComposerText(if (draft.isEmpty()) "「$quote」" else "$draft\n「$quote」")
+        expandComposer(requestFocus = true)
     }
 
     private fun handleStockEntity(entity: EntitySpan, action: EntityAction) {
@@ -2739,6 +3215,13 @@ internal class ChatPage : BasePager() {
     private fun entityDisplayName(symbol: String, fallback: String = symbol): String =
         quoteFor(symbol)?.name ?: ComposerCatalog.find(symbol)?.name ?:
         Securities.all.firstOrNull { it.symbol == symbol }?.name ?: fallback
+
+    /** 术语拖到输入框：注入「X 是什么意思」问句（术语没有 @ 提及形态）。 */
+    private fun injectTermQuestion(entity: EntitySpan) {
+        val name = Glossary.byKey(entity.target)?.term ?: entity.text
+        injectQuestion("$name 是什么意思")
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+    }
 
     private fun insertDraggedMention(symbol: String) {
         val entry = ComposerCatalog.find(symbol)
@@ -2769,6 +3252,11 @@ internal class ChatPage : BasePager() {
         compareExperienceVersion++
         compareCandidateKey = ""
         compareCandidateSymbol = ""
+        // 对比会话互斥：开始股票对比即结束术语对比（槽位、面板与岛内术语态）。
+        islandTermKey = ""
+        islandTermCompareLeftKey = ""
+        islandTermCompareRightKey = ""
+        islandTermCompareVisible = false
         if (islandCompareLeftSymbol.isEmpty()) {
             islandCompareLeftSymbol = symbol
             islandCompareRightSymbol = ""
@@ -2811,7 +3299,11 @@ internal class ChatPage : BasePager() {
     }
 
     private fun clearIslandCompare() {
-        clearCompareExperience()
+        if (islandTermCompareLeftKey.isNotEmpty()) {
+            clearIslandTermCompare()
+        } else {
+            clearCompareExperience()
+        }
     }
 
     private fun clearCompareExperience() {
@@ -2848,6 +3340,12 @@ internal class ChatPage : BasePager() {
     }
 
     private fun openIslandComparePanel() {
+        // 术语对比的「查看对比」：面板由双槽位驱动，无需额外状态。
+        if (islandTermCompareLeftKey.isNotEmpty() && islandTermCompareRightKey.isNotEmpty()) {
+            resetIslandMotion()
+            islandExpanded = true
+            return
+        }
         if (compareCard == null) return
         resetIslandMotion()
         islandCompareVisible = true
@@ -2876,8 +3374,163 @@ internal class ChatPage : BasePager() {
         islandSymbol = symbol
         islandWatchlisted = watchlistStore.contains(symbol)
         islandCompareVisible = false
+        // 术语讲解卡与行情卡互斥：打开股票岛时收起术语卡（对比面板不在此清理，
+        // 与股票对比面板在行情卡打开时保留的策略一致）。
+        islandTermKey = ""
         requestQuote(symbol)
         islandExpanded = true
+    }
+
+    // ===== 术语灵动岛（与股票行情岛同一手势/形变体系，2026-09-07）=====
+
+    /** 长按蓝色术语高亮：原地展开术语讲解卡；拖拽跟手与股票实体共用一套字段。 */
+    private fun handleTermEntityLongPress(entity: EntitySpan, params: LongPressParams) {
+        when (params.state) {
+            "start" -> {
+                if (params.isCancel || pendingLongPressTermKey == entity.target) return
+                pendingLongPressTermKey = entity.target
+                suppressNextTermClick = entity.text
+                draggedEntity = entity
+                entityDragName = Glossary.byKey(entity.target)?.term ?: entity.text
+                entityDragStartX = params.pageX
+                entityDragStartY = params.pageY
+                entityDragX = params.pageX
+                entityDragY = params.pageY
+                entityDragActive = false
+                entityDropTarget = EntityDropTarget.NONE
+                // 静止长按 = 术语讲解预览。长按展开讲解与点击高亮一样算一次
+                // 真实「遇到」（doc 24 §6.3：用户真实撞上术语才算）。
+                openEntityTermIsland(entity.target)
+                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                trackComposerEvent("term_hold_preview", "term" to entity.target)
+                return
+            }
+            "move" -> {
+                if (pendingLongPressTermKey != entity.target) return
+                if (!entityDragActive && EntityDropResolver.hasExceededDragThreshold(
+                        entityDragStartX,
+                        entityDragStartY,
+                        params.pageX,
+                        params.pageY,
+                    )
+                ) {
+                    entityDragActive = true
+                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                    trackComposerEvent("term_drag_start", "term" to entity.target)
+                }
+                if (entityDragActive) updateEntityDragPosition(params.pageX, params.pageY)
+                if (params.isCancel) {
+                    if (entityDragActive) finishEntityDrag() else finishTermHold(entity.target)
+                }
+                return
+            }
+            "end" -> {
+                if (pendingLongPressTermKey != entity.target) return
+                if (entityDragActive) {
+                    updateEntityDragPosition(params.pageX, params.pageY)
+                    finishEntityDrag()
+                } else {
+                    finishTermHold(entity.target)
+                }
+                return
+            }
+            else -> if (params.isCancel && pendingLongPressTermKey == entity.target) {
+                if (entityDragActive) finishEntityDrag() else finishTermHold(entity.target)
+                return
+            }
+        }
+    }
+
+    private fun finishTermHold(key: String) {
+        draggedEntity = null
+        entityDragActive = false
+        entityDropTarget = EntityDropTarget.NONE
+        entityDragName = ""
+        pendingLongPressTermKey = ""
+        // 与 finishStockLongPress 同款：岛在释放手指的命中区之外，只需清理
+        // 长按补发 click 的抑制词形。
+        val suppressed = suppressNextTermClick
+        setTimeout(400) {
+            if (suppressNextTermClick == suppressed) {
+                suppressNextTermClick = ""
+            }
+        }
+    }
+
+    private fun openEntityTermIsland(key: String) {
+        resetIslandMotion()
+        // 股票对比 lobby 隐藏（对比面板/槽位不销毁，与行情卡打开时同策略）。
+        islandCompareVisible = false
+        islandTermKey = key
+        glossaryStore.encounter(key)
+        islandExpanded = true
+    }
+
+    /** 术语拖入灵动岛：第一只占左槽，第二只占右槽并弹出术语对比面板。 */
+    private fun addDraggedTermToIsland(key: String) {
+        resetIslandMotion()
+        // 对比会话互斥：开始术语对比即结束股票对比（反之亦然）。
+        compareExperienceVersion++
+        islandCompareLeftSymbol = ""
+        islandCompareRightSymbol = ""
+        islandCompareVisible = false
+        compareCard = null
+        resetCompareInsight()
+        compareCandidateKey = ""
+        compareCandidateSymbol = ""
+        if (islandTermCompareLeftKey.isEmpty()) {
+            islandTermCompareLeftKey = key
+            islandTermCompareRightKey = ""
+        } else if (islandTermCompareLeftKey == key || islandTermCompareRightKey == key) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("请拖入另一个术语进行对比")
+            islandExpanded = true
+            return
+        } else if (islandTermCompareRightKey.isNotEmpty()) {
+            islandTermCompareLeftKey = islandTermCompareRightKey
+            islandTermCompareRightKey = key
+        } else {
+            islandTermCompareRightKey = key
+        }
+        islandTermCompareVisible = true
+        islandExpanded = true
+        syncTermComparePanel()
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+    }
+
+    private fun syncTermComparePanel() {
+        if (!islandTermCompareVisible) return
+        val left = Glossary.byKey(islandTermCompareLeftKey) ?: return
+        val right = Glossary.byKey(islandTermCompareRightKey) ?: return
+        requestTermCompareInsightIfNeeded(left, right)
+    }
+
+    private fun isIslandTermCompareLobbyVisible(): Boolean =
+        islandTermCompareVisible && islandTermCompareLeftKey.isNotEmpty()
+
+    private fun clearIslandTermCompare() {
+        clearTermCompareExperience()
+    }
+
+    private fun clearTermCompareExperience() {
+        resetIslandMotion()
+        // 退出对比是硬交互边界：失效全部拖拽字段，防止终态长按事件丢失残留。
+        pendingLongPressTermKey = ""
+        draggedEntity = null
+        entityDragActive = false
+        entityDropTarget = EntityDropTarget.NONE
+        entityDragName = ""
+        islandTermCompareLeftKey = ""
+        islandTermCompareRightKey = ""
+        islandTermCompareVisible = false
+        islandTermKey = ""
+        islandExpanded = false
+        resetCompareInsight()
+        val version = ++compareExperienceVersion
+        setTimeout(360) {
+            if (version == compareExperienceVersion && !islandExpanded && !isIslandTermCompareLobbyVisible()) {
+                forceIslandCollapsedForDetailRoute()
+            }
+        }
     }
 
     private fun toggleIslandWatchlist(symbol: String) {
@@ -3036,6 +3689,10 @@ internal class ChatPage : BasePager() {
             clearCompareExperience()
             return
         }
+        if (isIslandTermCompareLobbyVisible()) {
+            clearTermCompareExperience()
+            return
+        }
         cancelIslandDetailRouteReset()
         islandAnimating = true
         islandExpanded = !islandExpanded
@@ -3053,7 +3710,8 @@ internal class ChatPage : BasePager() {
                     !islandExpanded ||
                     islandAnimating ||
                     islandGestureMotion.phase != IslandGesturePhase.IDLE ||
-                    isIslandCompareLobbyVisible()
+                    isIslandCompareLobbyVisible() ||
+                    isIslandTermCompareLobbyVisible()
                 ) return
                 islandGestureStartY = y
                 islandGestureMotion = islandGestureMotion.copy(
@@ -3109,7 +3767,10 @@ internal class ChatPage : BasePager() {
         if (
             !islandExpanded ||
             islandGestureMotion.phase != IslandGesturePhase.DRAGGING ||
-            symbol.isEmpty()
+            // 术语岛没有 islandSymbol（只有 islandTermKey），下滑去术语表走
+            // 同一条 OPENING_DETAIL 管线——空 symbol 不能提前 return，否则
+            // motion 永远停在 DRAGGING，卡片停留在被拉高的形变态（卡死）。
+            (symbol.isEmpty() && islandTermKey.isEmpty())
         ) return
         islandDetailHandoffDone = false
         islandGestureMotion = islandGestureMotion.copy(
@@ -3151,13 +3812,23 @@ internal class ChatPage : BasePager() {
                 // 会强制归位灵动岛），但全屏玻璃帧还要作原生整页淡入的底，
                 // 先捂住归位，等详情页完全不透明后再原地 snap 归位（用户不可见）。
                 islandHandoffMaskActive = true
-                openStockDetail(symbol, islandExpand = true)
+                if (islandTermKey.isNotEmpty()) {
+                    // 术语岛下滑 = 进入术语表：与股票岛进详情页同一条容器变换
+                    // 交接（无动画 push + 页面就地淡入接管玻璃帧）。
+                    openGlossary(islandExpand = true)
+                } else {
+                    openStockDetail(symbol, islandExpand = true)
+                }
                 setTimeout(550) {
                     islandHandoffMaskActive = false
                     islandExpanded = false
                     islandCompareVisible = false
                     islandCompareLeftSymbol = ""
                     islandCompareRightSymbol = ""
+                    islandTermKey = ""
+                    islandTermCompareLeftKey = ""
+                    islandTermCompareRightKey = ""
+                    islandTermCompareVisible = false
                     remountIslandCollapsedForDetailRoute()
                 }
             }
@@ -4191,11 +4862,23 @@ internal class ChatPage : BasePager() {
     }
 
     private fun retryCompareInsight() {
+        // 术语对比的解读重试不能走股票路径（pairKey/quotes 都不同），按会话派发。
+        if (islandTermCompareLeftKey.isNotEmpty()) {
+            retryTermCompareInsight()
+            return
+        }
         val cardQuotes = compareCard?.quotes.orEmpty()
         val left = cardQuotes.getOrNull(0) ?: quoteFor(islandCompareLeftSymbol) ?: return
         val right = cardQuotes.getOrNull(1) ?: quoteFor(islandCompareRightSymbol) ?: return
         compareInsightPairKey = ""
         requestCompareInsightIfNeeded(left, right)
+    }
+
+    private fun retryTermCompareInsight() {
+        val left = Glossary.byKey(islandTermCompareLeftKey) ?: return
+        val right = Glossary.byKey(islandTermCompareRightKey) ?: return
+        compareInsightPairKey = ""
+        requestTermCompareInsightIfNeeded(left, right)
     }
 
     private fun resetCompareInsight() {
@@ -4204,6 +4887,40 @@ internal class ChatPage : BasePager() {
         compareInsightState = CompareInsightState.IDLE
         compareInsightText = ""
         compareInsightError = ""
+    }
+
+    /**
+     * 术语对比 AI 解读：与股票对比共用 insight 状态机（会话互斥），
+     * 只做两个概念的区别与联系的事实性解释（合规文案铁律：不做价值判断）。
+     */
+    private fun requestTermCompareInsightIfNeeded(left: GlossaryEntry, right: GlossaryEntry) {
+        val pairKey = "term:${left.key}:${right.key}"
+        if (compareInsightPairKey == pairKey && compareInsightState != CompareInsightState.ERROR) return
+        compareInsightPairKey = pairKey
+        compareInsightState = CompareInsightState.LOADING
+        compareInsightText = ""
+        compareInsightError = ""
+        val requestVersion = ++compareInsightVersion
+        var response = ""
+        viewModel.askSubThread(
+            prompt = "用不超过 120 字向 A 股新手解释金融术语「${left.term}」和「${right.term}」的区别与联系，" +
+                "各举一个它们分别适用的小场景。只做事实性解释，不要给任何买卖建议或倾向性结论。",
+            onDelta = { delta ->
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
+                response += delta
+                compareInsightText = response
+            },
+            onDone = {
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
+                compareInsightText = response.ifBlank { "暂未生成对比解读" }
+                compareInsightState = CompareInsightState.READY
+            },
+            onError = { error ->
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
+                compareInsightError = error
+                compareInsightState = CompareInsightState.ERROR
+            },
+        )
     }
 
     private fun requestCompareInsightIfNeeded(left: Quote, right: Quote) {

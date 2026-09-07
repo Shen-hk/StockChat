@@ -2,8 +2,12 @@ package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.ChatSessionSummary
+import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.data.entity.GlossaryEntry
+import com.kuikly.stockchat.data.entity.GlossaryCategory
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.QuotePoint
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.tencent.kuikly.core.base.Animation
@@ -20,6 +24,7 @@ import com.tencent.kuikly.core.base.attr.CaptureRule
 import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
+import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -113,6 +118,12 @@ fun ViewContainer<*, *>.ChatTopNav(
     islandCompareRightQuote: () -> Quote? = { null },
     islandCompareInsightLoading: () -> Boolean = { false },
     islandCompareInsightAvailable: () -> Boolean = { false },
+    // ===== 术语灵动岛（与股票行情岛同一形变体系，内容层分流）=====
+    // 非空 = 岛当前承载术语讲解卡；此时行情卡层隐藏、术语卡层显示。
+    islandTermEntry: () -> GlossaryEntry? = { null },
+    islandCompareIsTerm: () -> Boolean = { false },
+    islandTermCompareLeft: () -> GlossaryEntry? = { null },
+    islandTermCompareRight: () -> GlossaryEntry? = { null },
     onToggleIsland: () -> Unit = {},
     onIslandGesture: (String, Float) -> Unit = { _, _ -> },
     onIslandMotionComplete: (String) -> Unit = {},
@@ -270,6 +281,10 @@ fun ViewContainer<*, *>.ChatTopNav(
             compareRightQuote = islandCompareRightQuote,
             compareInsightLoading = islandCompareInsightLoading,
             compareInsightAvailable = islandCompareInsightAvailable,
+            termEntry = islandTermEntry,
+            compareIsTerm = islandCompareIsTerm,
+            termCompareLeft = islandTermCompareLeft,
+            termCompareRight = islandTermCompareRight,
             liveData = liveData,
             title = contextTitle,
             theme = theme,
@@ -312,6 +327,10 @@ private fun ViewContainer<*, *>.StockIsland(
     compareRightQuote: () -> Quote?,
     compareInsightLoading: () -> Boolean,
     compareInsightAvailable: () -> Boolean,
+    termEntry: () -> GlossaryEntry?,
+    compareIsTerm: () -> Boolean,
+    termCompareLeft: () -> GlossaryEntry?,
+    termCompareRight: () -> GlossaryEntry?,
     liveData: () -> Boolean,
     title: String?,
     theme: StockChatTheme,
@@ -346,6 +365,8 @@ private fun ViewContainer<*, *>.StockIsland(
     val collapsedRadius = 19.8f
     val expandedWidth = (pageWidth - expandedIslandInset * 2f).coerceAtLeast(collapsedWidth)
     val quoteHeight = 140f
+    // 术语讲解卡：标题行 + 人话解释（≤3 行）+ A股例子（≤2 行），比行情卡高 18dp。
+    val termHeight = 158f
     val fullScreenHeight = pageHeight.coerceAtLeast(quoteHeight)
     // Full-width transparent strip lays the island out from the left edge so
     // the pill keeps its 60dp offset in the collapsed state.  It has no event
@@ -385,11 +406,15 @@ private fun ViewContainer<*, *>.StockIsland(
                     e && !dropTextOnly -> expandedWidth
                     else -> collapsedWidth
                 }
+                // 跟手拖拽的高度基准必须取当前模式的展开态高度：术语卡 158f
+                // 若沿用 quoteHeight，拖动起手第一帧会跳变 18dp。
+                val expandedBaseHeight = if (termEntry() != null) termHeight else quoteHeight
                 val targetHeight = when {
                     navigating -> fullScreenHeight
-                    gestureEnabled -> (quoteHeight + dragY).coerceIn(collapsedHeight, fullScreenHeight)
+                    gestureEnabled -> (expandedBaseHeight + dragY).coerceIn(collapsedHeight, fullScreenHeight)
                     e && dropTextOnly -> collapsedHeight
                     e && compareVisible() -> 146f
+                    e && termEntry() != null -> termHeight
                     e -> quoteHeight
                     else -> collapsedHeight
                 }
@@ -532,7 +557,8 @@ private fun ViewContainer<*, *>.StockIsland(
                     val closeProgress = (-dragY / 104f).coerceIn(0f, 1f)
                     val spreadProgress = (dragY / 180f).coerceIn(0f, 1f)
                     val openingDetail = motion.phase == IslandGesturePhase.OPENING_DETAIL
-                    val showQuote = e && !dropActive() && !compareVisible() && !openingDetail
+                    // 术语模式下行情卡层让位给术语讲解卡（二者互斥，会话级分流）。
+                    val showQuote = e && termEntry() == null && !dropActive() && !compareVisible() && !openingDetail
                     val gestureFade = maxOf(closeProgress, spreadProgress * 0.72f)
                     opacity(if (showQuote) 1f - gestureFade else 0f)
                     transform(
@@ -579,6 +605,33 @@ private fun ViewContainer<*, *>.StockIsland(
                     View { attr { flex(1f) } }
                     View { attr { size(5f, 5f); borderRadius(3f); backgroundColor(if (liveData()) Color(0xFF34C759) else theme.textTertiary) } }
                     Text { attr { text(if (liveData()) "实时" else "模拟"); marginLeft(4f); fontSize(9f); color(theme.textTertiary) } }
+                    // 自选按钮上移到右上角（用户反馈 2026-09-07）：原位置悬在底行
+                    // 最右、四周是大片空白，且卡片底部 44dp 是下拉详情手势的捕获带。
+                    // 右上角紧贴实时标识，视线动线顺（名称 → 代码 → 状态 → 操作）。
+                    View {
+                        attr {
+                            marginLeft(8f)
+                            height(20f)
+                            paddingLeft(7f)
+                            paddingRight(7f)
+                            allCenter()
+                            borderRadius(10f)
+                            backgroundColor(if (watchlisted()) theme.brandSoft else theme.surfaceMuted)
+                        }
+                        Text {
+                            attr {
+                                text(if (watchlisted()) "✓ 自选" else "＋ 自选")
+                                fontSize(10f)
+                                fontWeightMedium()
+                                color(if (watchlisted()) theme.brand else theme.textSecondary)
+                            }
+                        }
+                        event {
+                            click {
+                                if (expanded()) quote()?.let { onToggleWatchlist(it.symbol) }
+                            }
+                        }
+                    }
                 }
                 View {
                     // Loading hint occupies the same slot as the stats block;
@@ -633,85 +686,148 @@ private fun ViewContainer<*, *>.StockIsland(
                         attr { marginTop(9f); flexDirectionRow(); alignItemsCenter() }
                         Text { attr { text(quote()?.let { "高 ${Format.price(it.high)}" } ?: "高 --"); fontSize(10f); color(theme.textSecondary) } }
                         Text { attr { text(quote()?.let { "低 ${Format.price(it.low)}" } ?: "低 --"); marginLeft(10f); fontSize(10f); color(theme.textSecondary) } }
-                        View { attr { flex(1f) } }
-                        View {
-                            attr {
-                                height(24f)
-                                paddingLeft(7f)
-                                paddingRight(7f)
-                                allCenter()
-                                borderRadius(8f)
-                                backgroundColor(if (watchlisted()) theme.brandSoft else theme.surfaceMuted)
-                            }
-                            Text {
-                                attr {
-                                    text(if (watchlisted()) "✓ 自选" else "＋ 自选")
-                                    fontSize(10f)
-                                    fontWeightMedium()
-                                    color(if (watchlisted()) theme.brand else theme.textSecondary)
-                                }
-                            }
-                            event {
-                                click {
-                                    if (expanded()) quote()?.let { onToggleWatchlist(it.symbol) }
-                                }
-                            }
+                    }
+                    // 右侧留白填上简笔分时（用户反馈 2026-09-07）：虚线昨收基准 +
+                    // 单色折线，数据来自 quote.timeline（QuoteRepository 异步填充）；
+                    // 分时未就绪时退化为 open/high/low/现价 合成的 5 点简笔示意，
+                    // 右半区不再是一片空白。draw 闭包内读 quote() observable，
+                    // 行情/分时到达时 ReactiveObserver 驱动重绘（composer 渐变描边同款）。
+                    Canvas({
+                        attr {
+                            absolutePosition(right = 0f, top = 2f)
+                            width(98f)
+                            height(66f)
                         }
+                    }) { canvas, width, canvasHeight ->
+                        val q = quote() ?: return@Canvas
+                        val points = q.timeline.ifEmpty { islandSketchPoints(q) }
+                        if (points.isEmpty() || q.previousClose <= 0.0) return@Canvas
+                        val geometry = TimeLineCalculator.calculate(points, width, canvasHeight, q.previousClose)
+                        if (geometry.points.isEmpty()) return@Canvas
+                        canvas.beginPath()
+                        canvas.moveTo(0f, geometry.baselineY)
+                        canvas.lineTo(width, geometry.baselineY)
+                        canvas.setLineDash(listOf(3f, 4f))
+                        canvas.strokeStyle(theme.divider)
+                        canvas.lineWidth(1f)
+                        canvas.stroke()
+                        canvas.setLineDash(emptyList())
+                        canvas.beginPath()
+                        geometry.points.forEachIndexed { index, point ->
+                            if (index == 0) canvas.moveTo(point.x, point.y) else canvas.lineTo(point.x, point.y)
+                        }
+                        canvas.strokeStyle(if (q.rising) theme.rise else theme.fall)
+                        canvas.lineWidth(1.5f)
+                        canvas.lineCapRound()
+                        canvas.stroke()
                     }
                 }
                 // The visible handle stays intentionally small, while its
                 // capture area is large enough for a reliable one-thumb swipe.
                 // Up dismisses; down continues into the current stock detail.
-                // Capture area is 44dp tall (stats row sits ~49dp above the
-                // card bottom, so it stays clear of the hit zone).  pan uses
-                // pageY, so a taller capture area costs nothing in tracking.
-                View {
-                    attr {
-                        val motion = gestureMotion()
-                        absolutePosition(left = 0f, right = 0f, bottom = 0f)
-                        height(44f)
-                        alignItemsCenter()
-                        capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
-                        touchEnable(motion.phase != IslandGesturePhase.OPENING_DETAIL)
-                    }
-                    View {
-                        attr {
-                            val motion = gestureMotion()
-                            val openingDetail = motion.phase == IslandGesturePhase.OPENING_DETAIL
-                            val dragging = motion.phase == IslandGesturePhase.DRAGGING
-                            width(44f)
-                            height(4f)
-                            // 44 - 4 - 13 = 27: keeps the visible bar 13dp above
-                            // the card bottom, exactly where it was with the
-                            // old 27dp capture area.
-                            marginTop(27f)
-                            borderRadius(2f)
-                            // Grey grabber (iOS style): on the pure-white card
-                            // the old white@0.92 bar was invisible.
-                            backgroundColor(Color(0x000000, 0.18f))
-                            opacity(if (openingDetail) 0f else 1f)
-                            transform(
-                                scale = Scale(
-                                    if (dragging) 1.08f else 1f,
-                                    if (dragging) 1.08f else 1f,
-                                )
-                            )
-                            val motionAnimationKey = gestureMotion()
-                            animate(
-                                if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.16f),
-                                motionAnimationKey,
-                            )
-                        }
-                    }
-                    event {
-                        pan { params ->
-                            // pageY remains stable while the handle itself moves
-                            // with the resizing card; local y would cancel out
-                            // part of the finger travel and feel detached.
-                            onGesture(params.state, params.pageY)
-                        }
+                IslandGestureHandle(gestureMotion, onGesture)
+            }
+
+            // Expanded term-card layer：术语讲解卡（长按蓝色术语高亮进入）。
+            // 与行情卡同一条形变/手势管线，只是内容层分流：标题行 + 分类 chip +
+            // 人话解释 + A股例子；上滑收起、下滑进入术语表（与详情页分流）。
+            // 布局必须与行情卡层同构：absolutePosition 铺满卡片 + 同款内边距。
+            // 之前是普通流式子节点且零内边距——文字顶到卡片左缘、层高只随内容
+            // 收缩，内部把手 absolutePosition(bottom=0) 锚不到卡片真实底边
+            // （小白条悬浮在卡片中部、44dp 捕获带压住例句）。
+            View {
+                attr {
+                    val e = expanded()
+                    val motion = gestureMotion()
+                    val dragY = motion.offsetY
+                    val closeProgress = (-dragY / 104f).coerceIn(0f, 1f)
+                    val spreadProgress = (dragY / 180f).coerceIn(0f, 1f)
+                    val openingDetail = motion.phase == IslandGesturePhase.OPENING_DETAIL
+                    val showTerm = e && termEntry() != null && !dropActive() && !compareVisible() && !openingDetail
+                    val gestureFade = maxOf(closeProgress, spreadProgress * 0.72f)
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    // 与行情卡层同款水平/顶部内边距；底部 26dp 让例句末行
+                    // 避开把手可见条（条体距卡底 13dp）。
+                    paddingLeft(16f)
+                    paddingRight(16f)
+                    paddingTop(12f)
+                    paddingBottom(26f)
+                    opacity(if (showTerm) 1f - gestureFade else 0f)
+                    transform(
+                        Translate(
+                            0f,
+                            when {
+                                dragY < 0f -> -0.08f * closeProgress
+                                dragY > 0f -> 0.05f * spreadProgress
+                                else -> 0f
+                            },
+                        )
+                    )
+                    touchEnable(showTerm)
+                    // 与行情卡层同款：每个驱动恰好一次 animate（R2/R3）。
+                    val isGestureSettling =
+                        motion.phase == IslandGesturePhase.RETURNING ||
+                        motion.phase == IslandGesturePhase.CLOSING ||
+                        motion.phase == IslandGesturePhase.OPENING_DETAIL
+                    if (isGestureSettling) {
+                        val motionAnimationKey = gestureMotion()
+                        animate(
+                            if (motion.snap) {
+                                Animation.linear(0f)
+                            } else {
+                                Animation.easeOut(if (openingDetail) 0.18f else 0.20f)
+                            },
+                            motionAnimationKey,
+                        )
+                    } else if (motion.phase != IslandGesturePhase.DRAGGING) {
+                        val expandedAnimationKey = expanded()
+                        animate(
+                            if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.26f),
+                            expandedAnimationKey,
+                        )
                     }
                 }
+                View {
+                    attr { flexDirectionRow(); alignItemsCenter() }
+                    Text { attr { text(termEntry()?.term ?: ""); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
+                    View {
+                        attr {
+                            marginLeft(7f)
+                            paddingLeft(6f)
+                            paddingRight(6f)
+                            paddingTop(2f)
+                            paddingBottom(2f)
+                            borderRadius(7f)
+                            backgroundColor(theme.brandSoft)
+                        }
+                        Text { attr { text(termEntry()?.category?.label ?: ""); fontSize(9f); fontWeightMedium(); color(theme.term) } }
+                    }
+                    View { attr { flex(1f) } }
+                    Text { attr { text("术语"); fontSize(9f); color(theme.textTertiary) } }
+                }
+                Text {
+                    attr {
+                        text(termEntry()?.plain ?: "")
+                        marginTop(9f)
+                        fontSize(12f)
+                        lineHeight(17f)
+                        // 卡高 158f 的内容预算：标题行 20 + 9 + 3×17 + 7 + 2×15
+                        // ≈ 117 ≤ 158-12-26。超限截断，防止溢出卡底被裁切。
+                        lines(3)
+                        color(theme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        text(termEntry()?.let { "例 ${it.example}" } ?: "")
+                        marginTop(7f)
+                        fontSize(10.5f)
+                        lineHeight(15f)
+                        lines(2)
+                        color(theme.textSecondary)
+                    }
+                }
+                IslandGestureHandle(gestureMotion, onGesture)
             }
 
             // Drag target layer. It replaces the quote content while a stock is hovering so the
@@ -737,7 +853,13 @@ private fun ViewContainer<*, *>.StockIsland(
                 }
                 Text {
                     attr {
-                        text(if (compareLeftSymbol().isEmpty()) "松手创建股票对比" else "松手加入对比")
+                        text(
+                            if (termEntry() != null) {
+                                if (termCompareLeft() == null) "松手创建术语对比" else "松手加入术语对比"
+                            } else {
+                                if (compareLeftSymbol().isEmpty()) "松手创建股票对比" else "松手加入对比"
+                            }
+                        )
                         marginTop(if (firstCompareDrop()) 9f else 0f)
                         fontSize(13f)
                         fontWeightSemiBold()
@@ -758,7 +880,7 @@ private fun ViewContainer<*, *>.StockIsland(
                     val e = expanded()
                     val dropping = dropActive()
                     val inCompare = compareVisible()
-                    val hasLeft = compareLeftSymbol().isNotEmpty()
+                    val hasLeft = compareLeftSymbol().isNotEmpty() || termCompareLeft() != null
                     val visible = e && !dropping && inCompare && hasLeft
                     absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
                     padding(12f)
@@ -772,8 +894,10 @@ private fun ViewContainer<*, *>.StockIsland(
                 // 作用在容器上。
                 vif({
                     expanded() && !dropActive() && compareVisible() &&
-                        compareLeftSymbol().isNotEmpty()
+                        (compareLeftSymbol().isNotEmpty() || termCompareLeft() != null)
                 }) {
+                // 股票对比 lobby 与术语对比 lobby 互斥分流（会话级）。
+                vif({ !compareIsTerm() }) {
                 View {
                     attr { height(24f); flexDirectionRow(); alignItemsCenter() }
                     Text { attr { text("股票对比"); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
@@ -857,6 +981,152 @@ private fun ViewContainer<*, *>.StockIsland(
                     }
                 }
                 }
+                // 术语对比 lobby：第一只术语拖入占左槽，第二只占右槽（R5 同款
+                // 可见性全部无条件读取，避免退出对比残留文字）。
+                vif({ compareIsTerm() }) {
+                View {
+                    attr { height(24f); flexDirectionRow(); alignItemsCenter() }
+                    Text { attr { text("术语对比"); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text {
+                        attr {
+                            text(
+                                when {
+                                    termCompareRight() == null -> "已选 1/2"
+                                    compareInsightLoading() -> "AI 解读中"
+                                    compareInsightAvailable() -> "含 AI 解读"
+                                    else -> "对比就绪"
+                                }
+                            )
+                            marginLeft(7f)
+                            fontSize(10f)
+                            color(theme.term)
+                        }
+                    }
+                    View { attr { flex(1f) } }
+                    View {
+                        attr { size(24f, 24f); allCenter(); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
+                        Text { attr { text("×"); fontSize(13f); color(theme.textSecondary) } }
+                        event { click { onClearCompare() } }
+                    }
+                }
+                View {
+                    attr { height(52f); marginTop(7f); flexDirectionRow() }
+                    CompareIslandSlot(
+                        name = { termCompareLeft()?.term ?: "正在读取" },
+                        symbol = { termCompareLeft()?.category?.label ?: "" },
+                        quote = { null },
+                        filled = { true },
+                        theme = theme,
+                    )
+                    View { attr { width(8f) } }
+                    CompareIslandSlot(
+                        name = { termCompareRight()?.term ?: "拖入另一个术语" },
+                        symbol = { termCompareRight()?.category?.label ?: "" },
+                        quote = { null },
+                        filled = { termCompareRight() != null },
+                        theme = theme,
+                    )
+                }
+                View {
+                    attr {
+                        height(25f)
+                        marginTop(5f)
+                        borderRadius(9f)
+                        allCenter()
+                        backgroundColor(if (termCompareRight() != null) theme.brand else theme.surfaceMuted)
+                    }
+                    Text {
+                        attr {
+                            text(
+                                when {
+                                    termCompareRight() == null -> "继续拖入术语实体"
+                                    compareInsightLoading() -> "对比已生成，AI 解读中"
+                                    else -> "查看对比"
+                                }
+                            )
+                            fontSize(10f)
+                            fontWeightMedium()
+                            color(if (termCompareRight() != null) theme.onBrand else theme.textTertiary)
+                        }
+                    }
+                    event { click { if (termCompareRight() != null) onOpenCompare() } }
+                }
+                }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 无分时数据时的简笔示意点：用真实 open / high / low / 现价按
+ * 昨收 → 开盘 → 回踩 → 冲高 → 现价 的次序串成一条折线。
+ * 只示意当日波动区间（简笔画，用户口径 2026-09-07），不伪造分钟级轨迹。
+ */
+private fun islandSketchPoints(q: Quote): List<QuotePoint> {
+    if (q.price <= 0.0 || q.previousClose <= 0.0) return emptyList()
+    val rising = q.rising
+    return listOf(
+        QuotePoint("", q.previousClose),
+        QuotePoint("", if (q.open > 0.0) q.open else q.previousClose),
+        QuotePoint("", if (rising) q.low else q.high),
+        QuotePoint("", if (rising) q.high else q.low),
+        QuotePoint("", q.price),
+    )
+}
+
+/**
+ * 灵动岛卡底手势条：行情卡与术语卡共用。可见把手刻意小（4dp），捕获区 44dp；
+ * 上滑收起、下滑进入详情（股票）或术语表（术语）。pan 用 pageY，捕获区加高
+ * 不影响跟踪精度。
+ */
+private fun ViewContainer<*, *>.IslandGestureHandle(
+    gestureMotion: () -> IslandGestureMotion,
+    onGesture: (String, Float) -> Unit,
+) {
+    View {
+        attr {
+            val motion = gestureMotion()
+            absolutePosition(left = 0f, right = 0f, bottom = 0f)
+            height(44f)
+            alignItemsCenter()
+            capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
+            touchEnable(motion.phase != IslandGesturePhase.OPENING_DETAIL)
+        }
+        View {
+            attr {
+                val motion = gestureMotion()
+                val openingDetail = motion.phase == IslandGesturePhase.OPENING_DETAIL
+                val dragging = motion.phase == IslandGesturePhase.DRAGGING
+                width(44f)
+                height(4f)
+                // 44 - 4 - 13 = 27: keeps the visible bar 13dp above the card
+                // bottom, exactly where it was with the old 27dp capture area.
+                marginTop(27f)
+                borderRadius(2f)
+                // Grey grabber (iOS style): on the pure-white card the old
+                // white@0.92 bar was invisible.
+                backgroundColor(Color(0x000000, 0.18f))
+                opacity(if (openingDetail) 0f else 1f)
+                transform(
+                    scale = Scale(
+                        if (dragging) 1.08f else 1f,
+                        if (dragging) 1.08f else 1f,
+                    )
+                )
+                val motionAnimationKey = gestureMotion()
+                animate(
+                    if (motion.snap) Animation.linear(0f) else Animation.easeOut(0.16f),
+                    motionAnimationKey,
+                )
+            }
+        }
+        event {
+            pan { params ->
+                // pageY remains stable while the handle itself moves with the
+                // resizing card; local y would cancel out part of the finger
+                // travel and feel detached.
+                onGesture(params.state, params.pageY)
             }
         }
     }

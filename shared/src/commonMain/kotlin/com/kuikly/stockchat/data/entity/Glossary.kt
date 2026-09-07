@@ -535,6 +535,7 @@ object Glossary {
             category = GlossaryCategory.TECHNICAL,
             plain = "从阶段最高点跌到最低点的最大幅度，衡量最疼的时候有多疼。",
             example = "净值从 1.5 跌到 1.2，最大回撤 20%——问问自己能不能扛住，再决定要不要这样的组合。",
+            advanced = "回撤 = (峰值 − 谷值) / 峰值。注意两点：回撤 50% 需要涨 100% 才能回本，亏损与回本不对称；它只描述历史最差一段，不预测未来最大跌幅。",
         ),
         GlossaryEntry(
             key = "HHI", term = "赫芬达尔指数", ascii = "HHI", aliases = listOf("HHI指数", "集中度指数"),

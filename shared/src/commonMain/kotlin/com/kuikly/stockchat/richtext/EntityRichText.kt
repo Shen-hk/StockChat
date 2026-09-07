@@ -35,6 +35,7 @@ fun ViewContainer<*, *>.EntityRichText(
     onStockClick: (EntitySpan) -> Unit,
     onStockLongPress: (EntitySpan, LongPressParams) -> Unit,
     onTermClick: (String) -> Unit,
+    onTermLongPress: (EntitySpan, LongPressParams) -> Unit,
 ) {
     val adapted = EntityMarkdownAdapter.withEntityLinks(rawText, contextSymbols)
     View {
@@ -50,6 +51,7 @@ fun ViewContainer<*, *>.EntityRichText(
                 onStockClick = onStockClick,
                 onStockLongPress = onStockLongPress,
                 onTermClick = onTermClick,
+                onTermLongPress = onTermLongPress,
             ),
         )
     }
@@ -77,6 +79,7 @@ fun ViewContainer<*, *>.EntityStreamingMarkdown(
     onStockClick: (EntitySpan) -> Unit,
     onStockLongPress: (EntitySpan, LongPressParams) -> Unit,
     onTermClick: (String) -> Unit,
+    onTermLongPress: (EntitySpan, LongPressParams) -> Unit,
 ) {
     val state = MarkdownStreamingState()
     val blocksHolder = StreamingBlocksHolder(timerScope.pagerId)
@@ -121,6 +124,7 @@ fun ViewContainer<*, *>.EntityStreamingMarkdown(
                     onStockClick = onStockClick,
                     onStockLongPress = onStockLongPress,
                     onTermClick = onTermClick,
+                    onTermLongPress = onTermLongPress,
                 ),
             )
         }
@@ -185,6 +189,7 @@ private fun stockMarkdownConfig(
     onStockClick: (EntitySpan) -> Unit,
     onStockLongPress: (EntitySpan, LongPressParams) -> Unit,
     onTermClick: (String) -> Unit,
+    onTermLongPress: (EntitySpan, LongPressParams) -> Unit,
 ): MarkdownConfig {
     val dark = theme == StockChatTheme.Dark
     return MarkdownConfig(
@@ -227,7 +232,7 @@ private fun stockMarkdownConfig(
         },
         onLinkLongPress = { url, params ->
             entityFromUrl(url, entities)?.let { entity ->
-                if (entity.type == EntityType.STOCK) onStockLongPress(entity, params)
+                if (entity.type == EntityType.STOCK) onStockLongPress(entity, params) else onTermLongPress(entity, params)
             }
         },
         unorderedListBullet = { _, depth ->

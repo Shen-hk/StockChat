@@ -5,6 +5,7 @@ import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -563,6 +564,149 @@ internal fun ViewContainer<*, *>.ActiveComparePanel(
                 }
                 Text { attr { text("重试"); fontSize(10f); fontWeightMedium(); color(theme.brand) } }
                 event { click { if (insightError().isNotBlank()) onRetryInsight() } }
+            }
+        }
+    }
+}
+
+/**
+ * 术语对比全屏面板（灵动岛术语对比的第二只落槽后弹出，对标 ActiveComparePanel）。
+ * 两列并排：术语名 + 分类 + 人话解释 + A股例子；底部 AI 解读块复用股票对比的
+ * insight 状态机（股票/术语对比会话互斥，状态可安全共用）。纯词典端侧内容 +
+ * AI 事实性解读，不做任何「该选哪个」的价值判断（合规文案铁律）。
+ */
+internal fun ViewContainer<*, *>.TermComparePanel(
+    left: GlossaryEntry,
+    right: GlossaryEntry,
+    theme: StockChatTheme,
+    insightLoading: () -> Boolean = { false },
+    insightText: () -> String = { "" },
+    insightError: () -> String = { "" },
+    onRetryInsight: () -> Unit = {},
+    onClose: () -> Unit,
+) {
+    View {
+        attr {
+            marginLeft(12f)
+            marginRight(12f)
+            marginBottom(8f)
+            padding(10f)
+            backgroundColor(theme.surface)
+            borderRadius(theme.cardRadius)
+            boxShadow(BoxShadow(0f, 8f, 28f, Color(0x000000, 0.22f)))
+        }
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            Text {
+                attr {
+                    text("术语对比")
+                    fontSize(12f)
+                    fontWeightSemiBold()
+                    color(theme.textPrimary)
+                    flex(1f)
+                }
+            }
+            Text { attr { text("退出"); fontSize(11f); color(theme.textSecondary) } }
+            event { click { onClose() } }
+        }
+        View {
+            attr { marginTop(8f); flexDirectionRow() }
+            TermCompareColumn(left, theme)
+            View { attr { width(8f) } }
+            TermCompareColumn(right, theme)
+        }
+        View {
+            attr {
+                marginTop(10f)
+                padding(10f)
+                borderRadius(10f)
+                backgroundColor(theme.surfaceMuted)
+            }
+            Text {
+                attr {
+                    text("AI 解读")
+                    fontSize(11f)
+                    fontWeightSemiBold()
+                    color(theme.textSecondary)
+                }
+            }
+            Text {
+                attr {
+                    val content = when {
+                        insightLoading() -> "正在生成两个概念的区别与联系..."
+                        insightError().isNotBlank() -> insightError()
+                        insightText().isNotBlank() -> insightText()
+                        else -> "等待第二个术语完成对比"
+                    }
+                    text(content)
+                    marginTop(6f)
+                    fontSize(11f)
+                    lineHeight(17f)
+                    color(if (insightError().isNotBlank()) theme.fall else theme.textSecondary)
+                }
+            }
+            View {
+                attr {
+                    val visible = insightError().isNotBlank()
+                    height(if (visible) 24f else 0f)
+                    marginTop(if (visible) 8f else 0f)
+                    paddingLeft(9f)
+                    paddingRight(9f)
+                    alignSelfFlexStart()
+                    allCenter()
+                    borderRadius(8f)
+                    backgroundColor(theme.brandSoft)
+                    opacity(if (visible) 1f else 0f)
+                    touchEnable(visible)
+                }
+                Text { attr { text("重试"); fontSize(10f); fontWeightMedium(); color(theme.brand) } }
+                event { click { if (insightError().isNotBlank()) onRetryInsight() } }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.TermCompareColumn(
+    entry: GlossaryEntry,
+    theme: StockChatTheme,
+) {
+    View {
+        attr {
+            flex(1f)
+            padding(9f)
+            borderRadius(10f)
+            backgroundColor(theme.surfaceMuted)
+        }
+        Text { attr { text(entry.term); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
+        View {
+            attr {
+                marginTop(4f)
+                paddingLeft(6f)
+                paddingRight(6f)
+                paddingTop(2f)
+                paddingBottom(2f)
+                alignSelfFlexStart()
+                borderRadius(6f)
+                backgroundColor(theme.brandSoft)
+            }
+            Text { attr { text(entry.category.label); fontSize(8.5f); fontWeightMedium(); color(theme.term) } }
+        }
+        Text {
+            attr {
+                text(entry.plain)
+                marginTop(7f)
+                fontSize(11f)
+                lineHeight(16f)
+                color(theme.textPrimary)
+            }
+        }
+        Text {
+            attr {
+                text("例 ${entry.example}")
+                marginTop(6f)
+                fontSize(9.5f)
+                lineHeight(14f)
+                color(theme.textSecondary)
             }
         }
     }
