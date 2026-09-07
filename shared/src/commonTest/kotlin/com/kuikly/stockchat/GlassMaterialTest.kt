@@ -36,7 +36,8 @@ class GlassMaterialTest {
     fun realtimeModePreservesAVisibleBlurredBackground() {
         val renderer = GlassRenderer(GlassRenderingMode.REALTIME)
 
-        assertTrue(renderer.resolve(GlassPalette.Light.sheet).tintAlpha in 0.28f..0.29f)
+        // sheet token 0.80→0.60（「更透亮」，GlassTokens 同步调整）：0.60 × 0.36 = 0.216
+        assertTrue(renderer.resolve(GlassPalette.Light.sheet).tintAlpha in 0.21f..0.22f)
         assertTrue(renderer.resolve(GlassPalette.Light.peek).tintAlpha in 0.24f..0.25f)
         assertEquals(0.05f, renderer.resolve(GlassPalette.Light.sheet).backdropTintAlpha)
         assertEquals(0.05f, renderer.resolve(GlassPalette.Light.peek).backdropTintAlpha)

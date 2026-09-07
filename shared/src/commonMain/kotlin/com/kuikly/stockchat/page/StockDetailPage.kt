@@ -17,7 +17,6 @@ import com.kuikly.stockchat.cards.core.CorporateActionCardModel
 import com.kuikly.stockchat.cards.core.DisclosureCardModel
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.stock.KLineChart
-import com.kuikly.stockchat.cards.stock.KuiklyTimelineChart
 import com.kuikly.stockchat.cards.stock.MarketCardRenderers
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -27,16 +26,23 @@ import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openChatWithQuestion
+import com.kuikly.stockchat.common.openUrl
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.StockInsightBundle
 import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
+import com.kuikly.stockchat.page.components.AtmosphereBackdrop
+import com.kuikly.stockchat.page.components.DetailTimelineChart
+import com.kuikly.stockchat.page.components.NewsSummarySheet
+import com.kuikly.stockchat.page.components.NewsTape
+import com.kuikly.stockchat.page.components.estimateTapeWidth
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.DataModeBadge
 import com.tencent.kuikly.core.annotations.Page
@@ -93,6 +99,16 @@ internal class StockDetailPage : BasePager() {
     private var selectedKLineIndex: Int by observable(-1)
     private var livePulseVersion = 0
     private var aiRevealVersion = 0
+    // ---- doc 26 新增状态：氛围/自绘分时/新闻弹幕 ----
+    private var crosshairIndex: Int by observable(-1)
+    private var drawProgress: Float by observable(0f)
+    private var drawVersion = 0
+    private var newsList: List<NewsItem> by observable(emptyList())
+    private var tapeIndex: Int by observable(0)
+    private var tapeOffset: Float by observable(0f)
+    private var tapePaused: Boolean by observable(false)
+    private var tapeVersion = 0
+    private var newsSummary: NewsItem? by observable(null)
     private var insight: StockInsightBundle by observable(OfflineMarketInsightProvider().stock("600519.SH"))
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
@@ -120,6 +136,13 @@ internal class StockDetailPage : BasePager() {
             startAiReveal()
         }
         startAiReveal()
+        // 新闻弹幕带：东财个股资讯（失败回 Mock 由 Fallback 链外置；此处空列表=整条隐藏）
+        dependencies.stockNewsProvider.stockNews(symbol) { items ->
+            if (items.isNotEmpty() && newsList.isEmpty()) {
+                newsList = items.take(12)
+                startNewsTape()
+            }
+        }
     }
 
     override fun pageDidAppear() {
@@ -137,12 +160,15 @@ internal class StockDetailPage : BasePager() {
         }
         startLivePulse()
         startAiReveal()
+        startDrawOn()
     }
 
     override fun pageDidDisappear() {
         super.pageDidDisappear()
         livePulseVersion++
         aiRevealVersion++
+        drawVersion++
+        tapeVersion++
     }
 
     override fun body(): ViewBuilder {
@@ -191,7 +217,19 @@ internal class StockDetailPage : BasePager() {
                         }
                     }
 
-                    // ---- Hero 行情（去卡片，直接铺底） ----
+                    // ---- 氛围底（doc 26 §3）：横向铺满、纵向渐变 wash（原型 .atmo，无光晕）。
+                    // 原型 .atmo 是 inset:0 整屏容器、渐变在屏高 58% 处收束——
+                    // washHeight 必须用整屏高度，渐变比例才与 HTML 一致（此前 460px
+                    // 小盒子导致 58% 停在 ~340px，视觉上近乎不可见）。
+                    AtmosphereBackdrop(
+                        toneSoft = { page.toneSoftColor() },
+                        pageColor = page.theme.page,
+                        washHeight = page.pagerData.pageViewHeight,
+                        topOffset = page.pagerData.statusBarHeight + 73f,
+                        sideExtend = 14f,
+                    )
+
+                    // ---- Hero 行情（卡外价格行，直接铺在氛围底上） ----
                     View {
                         attr { marginTop(page.theme.spacing.xl) }
                         View {
@@ -314,60 +352,187 @@ internal class StockDetailPage : BasePager() {
                         }
                     }
 
-                    // ---- 行情指标：细分隔线网格（替代白卡） ----
-                    SectionLabel("行情数据", page.theme)
+                    // ---- 新闻弹幕带（doc 26 §5.5）：Hero 与走势主卡之间，单条队列 ----
+                    NewsTape(
+                        theme = page.theme,
+                        renderer = page.hostGlassRenderer,
+                        items = { page.newsList },
+                        index = { page.tapeIndex },
+                        offset = { page.tapeOffset },
+                        paused = { page.tapePaused },
+                        reduceMotion = page.reduceMotion,
+                        containerWidth = page.pagerData.pageViewWidth - 28f,
+                        onTapItem = { page.newsSummary = it },
+                        onPauseChange = { page.tapePaused = it },
+                    )
+
+                    // ---- 走势主卡（玻璃，页面第一实体）：分时 340px 自绘 + 蒙层 chips ----
                     View {
                         attr {
                             marginTop(page.theme.spacing.lg)
+                            borderRadius(20f)
+                            overflow(true)
+                            boxShadow(BoxShadow(0f, 8f, 24f, page.theme.textPrimary.opacity(0.08f)))
+                        }
+                        GlassBackdrop(page.theme.glass.peek, page.hostGlassRenderer)
+                        View {
+                            attr { padding(12f) }
+                            // 卡头：分段控件 + 图例（价格/均价/昨收）
+                            View {
+                                attr { flexDirectionRow(); alignItemsCenter() }
+                                View {
+                                    attr { flex(1f); marginRight(10f) }
+                                    ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
+                                        page.chartMode = m
+                                        page.chartPeriod = p
+                                        page.selectedKLineIndex = -1
+                                        page.crosshairIndex = -1
+                                    }
+                                }
+                                ChartLegend(page.theme, { page.toneColor() })
+                            }
+                            // 分时主体（自绘）与 K 线互斥切换
+                            vif({ page.chartMode == StockChartMode.TIMELINE }) {
+                                DetailTimelineChart(
+                                    theme = page.theme,
+                                    quote = { page.quote },
+                                    crosshairIndex = { page.crosshairIndex },
+                                    drawProgress = { page.drawProgress },
+                                    pulse = { page.livePulse },
+                                    reduceMotion = page.reduceMotion,
+                                    containerWidth = page.pagerData.pageViewWidth - 28f - 24f,
+                                    onScrub = { page.crosshairIndex = it },
+                                )
+                            }
+                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
+                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx, page.selectedKLineIndex) { page.selectedKLineIndex = it }
+                            }
+                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK }) {
+                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx, page.selectedKLineIndex) { page.selectedKLineIndex = it }
+                            }
+                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH }) {
+                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx, page.selectedKLineIndex) { page.selectedKLineIndex = it }
+                            }
+                        }
+                        // 蒙层 chip 条：叠卡底（压量能带下沿），值按相对昨收看色
+                        vif({ page.chartMode == StockChartMode.TIMELINE }) {
+                            vbind({ page.quote }) {
+                                View {
+                                    attr {
+                                        absolutePosition(left = 24f, right = 24f, bottom = 24f)
+                                        height(30f)
+                                        borderRadius(15f)
+                                        backgroundColor(page.theme.marketGlass)
+                                        border(Border(1f, BorderStyle.SOLID, page.theme.marketGlassEdge))
+                                        flexDirectionRow()
+                                        alignItemsCenter()
+                                        touchEnable(false)
+                                    }
+                                    listOf(
+                                        "今开" to Format.price(page.quote.open) to page.marketColor(page.quote.open),
+                                        "最高" to Format.price(page.quote.high) to page.marketColor(page.quote.high),
+                                        "最低" to Format.price(page.quote.low) to page.marketColor(page.quote.low),
+                                        "换手" to "${Format.decimal(page.quote.turnoverRate, 2)}%" to page.theme.textSecondary,
+                                    ).forEachIndexed { i, (pair, color) ->
+                                        val (label, value) = pair
+                                        View {
+                                            attr {
+                                                flex(1f)
+                                                flexDirectionRow()
+                                                allCenter()
+                                            }
+                                            Text {
+                                                attr {
+                                                    text(label)
+                                                    fontSize(9f)
+                                                    color(page.theme.textTertiary)
+                                                }
+                                            }
+                                            Text {
+                                                attr {
+                                                    text(value)
+                                                    marginLeft(3f)
+                                                    fontSize(10f)
+                                                    fontWeightMedium()
+                                                    color(color)
+                                                }
+                                            }
+                                        }
+                                        if (i < 3) {
+                                            View {
+                                                attr {
+                                                    width(0.5f)
+                                                    height(14f)
+                                                    backgroundColor(page.theme.divider)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- 次级指标：卡下 muted 两行（替代原 8 格 MetricGrid + 关键指标格） ----
+                    View {
+                        attr {
+                            marginTop(page.theme.spacing.md)
                             backgroundColor(page.theme.surfaceMuted)
                             borderRadius(page.theme.cardRadius)
+                            paddingTop(10f); paddingBottom(10f)
+                            paddingLeft(14f); paddingRight(14f)
                         }
-                        // 指标值随行情刷新：数据驱动重建，vbind 范式（MarketPage 同款）
                         vbind({ page.quote }) {
-                            MetricGrid(
+                            SecondaryMetricRow(
                                 listOf(
-                                    DetailMetric("今开", Format.price(page.quote.open), page.marketColor(page.quote.open)),
-                                    DetailMetric("最高", Format.price(page.quote.high), page.marketColor(page.quote.high)),
-                                    DetailMetric("最低", Format.price(page.quote.low), page.marketColor(page.quote.low)),
-                                    DetailMetric("昨收", Format.price(page.quote.previousClose), page.theme.textSecondary),
                                     DetailMetric("成交量", Format.compactAmount(page.quote.volume)),
                                     DetailMetric("成交额", Format.compactAmount(page.quote.amount)),
-                                    DetailMetric("换手率", "${Format.decimal(page.quote.turnoverRate, 2)}%"),
                                     DetailMetric("总市值", Format.compactAmount(page.quote.marketCap)),
                                 ),
                                 page.theme,
                             )
+                            SecondaryMetricRow(
+                                listOf(
+                                    DetailMetric("昨收", Format.price(page.quote.previousClose)),
+                                    DetailMetric("PE(TTM)", Format.decimal(page.quote.peTtm, 2)),
+                                    DetailMetric("PB", Format.decimal(page.quote.pb, 2)),
+                                    DetailMetric("振幅", Format.decimal(page.amplitudePercent(), 2) + "%"),
+                                ),
+                                page.theme,
+                                marginTop = 8f,
+                            )
                         }
                     }
 
-                    // ---- 走势：去卡片，满宽绘制 + 分段控件 ----
-                    SectionLabel("走势", page.theme)
-                    ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
-                        page.chartMode = m
-                        page.chartPeriod = p
-                        page.selectedKLineIndex = -1
-                    }
-                    DetailChart(page.theme, { page.chartMode }, { page.chartPeriod }, page.quote, ctx, { page.selectedKLineIndex }) {
-                        page.selectedKLineIndex = it
+                    // ---- AI 一行归因：全页唯一常驻 AI 触点（端侧模板，纯事实） ----
+                    vbind({ page.quote }) {
+                        View {
+                            attr {
+                                marginTop(page.theme.spacing.md)
+                                paddingLeft(10f)
+                                paddingTop(7f); paddingBottom(7f)
+                                backgroundColor(page.theme.brandSoft)
+                                borderRadius(8f)
+                            }
+                            View {
+                                attr {
+                                    absolutePosition(left = 0f, top = 7f, bottom = 7f)
+                                    width(3f)
+                                    borderRadius(1.5f)
+                                    backgroundColor(page.theme.brand)
+                                }
+                            }
+                            Text {
+                                attr {
+                                    text(page.buildOneLineAttribution())
+                                    fontSize(11.5f)
+                                    lineHeight(17f)
+                                    color(page.theme.textSecondary)
+                                }
+                            }
+                        }
                     }
 
-                    // ---- 关键指标：细分隔线网格 ----
-                    SectionLabel("关键指标", page.theme)
-                    View {
-                        attr {
-                            marginTop(page.theme.spacing.lg)
-                            backgroundColor(page.theme.surfaceMuted)
-                            borderRadius(page.theme.cardRadius)
-                        }
-                        MetricGrid(
-                            listOf(
-                                DetailMetric("PE(TTM)", Format.decimal(page.quote.peTtm, 2)),
-                                DetailMetric("PB", Format.decimal(page.quote.pb, 2)),
-                                DetailMetric("振幅", Format.decimal((page.quote.high - page.quote.low) / page.quote.previousClose * 100, 2) + "%"),
-                            ),
-                            page.theme,
-                        )
-                    }
                     Text {
                         attr {
                             text("指标要结合行业、增长与盈利质量一起看，单个数值不构成结论。")
@@ -445,6 +610,16 @@ internal class StockDetailPage : BasePager() {
                         page.openChatWithQuestion(page.askAiQuestion())
                     },
                 )
+                // 新闻摘要卡（弹幕点击展开；无站内正文渲染）
+                NewsSummarySheet(
+                    item = { page.newsSummary },
+                    theme = page.theme,
+                    onDismiss = { page.newsSummary = null },
+                    onOpenUrl = { url ->
+                        page.newsSummary = null
+                        page.openUrl(url)
+                    },
+                )
             }
         }
     }
@@ -512,6 +687,83 @@ internal class StockDetailPage : BasePager() {
             setTimeout(680) { tick() }
         }
         setTimeout(0) { tick() }
+    }
+
+    /** 分时 draw-on 入场（doc 26 §4.5）：progress 0→1 步进驱动；断链兜底 1.2s 强制终帧。 */
+    private fun startDrawOn() {
+        val version = ++drawVersion
+        if (reduceMotion) {
+            drawProgress = 1f
+            return
+        }
+        drawProgress = 0f
+        fun tick() {
+            if (version != drawVersion) return
+            drawProgress = (drawProgress + 0.08f).coerceAtMost(1f)
+            if (drawProgress < 1f) setTimeout(28) { tick() }
+        }
+        setTimeout(0) { tick() }
+        setTimeout(1200) { if (version == drawVersion) drawProgress = 1f }
+    }
+
+    /**
+     * 新闻弹幕队列节拍（doc 26 §5.5.3）：步进驱动（32ms ≈ 1.8f/步 ≈ 55dp/s），
+     * 一条飘出左缘 → 停 1.5s → 下一条；按住暂停时原地等待、松开续播不丢进度。
+     */
+    private fun startNewsTape() {
+        if (reduceMotion || newsList.isEmpty()) return
+        val version = ++tapeVersion
+        fun tick() {
+            if (version != tapeVersion || newsList.isEmpty()) return
+            if (tapePaused) {
+                setTimeout(120) { tick() }
+                return
+            }
+            val item = newsList[tapeIndex.mod(newsList.size)]
+            val width = estimateTapeWidth(item)
+            tapeOffset -= 1.8f
+            if (tapeOffset <= -width) {
+                tapeIndex = tapeIndex + 1
+                tapeOffset = tapeTravelStart()
+                setTimeout(1500) { tick() }
+            } else {
+                setTimeout(32) { tick() }
+            }
+        }
+        tapeOffset = tapeTravelStart()
+        setTimeout(600) { tick() }
+    }
+
+    private fun tapeTravelStart(): Float = (pagerData.pageViewWidth - 28f).coerceAtLeast(200f)
+
+    /** 振幅（(高-低)/昨收），昨收缺失时 0。 */
+    private fun amplitudePercent(): Double =
+        if (quote.previousClose <= 0.0) 0.0 else (quote.high - quote.low) / quote.previousClose * 100.0
+
+    /**
+     * AI 一行归因（doc 26 §7）：端侧模板、纯事实槽位，不走 LLM、无「问 AI」按钮。
+     * 例：「低开 0.45%，日内最高 1331.35（09:31）、最低 1324.00（09:30），现价 1323.65，位于平盘线下方。」
+     */
+    private fun buildOneLineAttribution(): String {
+        val q = quote
+        if (q.previousClose <= 0.0) return "行情到达后，这里会给出一句事实性复盘。"
+        if (q.timeline.isEmpty()) return "分时数据到达后，这里会给出一句事实性复盘。"
+        val openPct = (q.open - q.previousClose) / q.previousClose * 100.0
+        val openDesc = when {
+            openPct > 0.05 -> "高开 ${Format.decimal(openPct, 2)}%"
+            openPct < -0.05 -> "低开 ${Format.decimal(-openPct, 2)}%"
+            else -> "平开"
+        }
+        val highPoint = q.timeline.maxByOrNull { it.price }
+        val lowPoint = q.timeline.minByOrNull { it.price }
+        val position = if (q.price >= q.previousClose) "上方" else "下方"
+        val toneDesc = when {
+            q.change > 0.0 -> "现报 ${Format.price(q.price)}"
+            q.change < 0.0 -> "现报 ${Format.price(q.price)}"
+            else -> "现价 ${Format.price(q.price)}"
+        }
+        return "$openDesc，日内最高 ${Format.price(q.high)}（${highPoint?.time ?: "--"}）、" +
+            "最低 ${Format.price(q.low)}（${lowPoint?.time ?: "--"}），$toneDesc，位于平盘线$position。"
     }
 
     private fun startAiReveal() {
@@ -701,29 +953,69 @@ private fun ViewContainer<*, *>.FocusHairline(
     }
 }
 
-private fun ViewContainer<*, *>.MetricGrid(items: List<DetailMetric>, theme: StockChatTheme) {
-    val rows = items.chunked(4)
-    rows.forEachIndexed { r, row ->
+/** 走势卡头图例：价格（实色）/ 均价（虚线）/ 昨收（虚线弱化）。 */
+private fun ViewContainer<*, *>.ChartLegend(theme: StockChatTheme, tone: () -> Color) {
+    View {
+        attr { flexDirectionRow(); alignItemsCenter(); touchEnable(false) }
+        LegendItem(theme, tone, "价格", dashed = false)
+        LegendItem(theme, { theme.textSecondary }, "均价", dashed = true)
+        LegendItem(theme, { theme.textTertiary }, "昨收", dashed = true)
+    }
+}
+
+private fun ViewContainer<*, *>.LegendItem(theme: StockChatTheme, color: () -> Color, label: String, dashed: Boolean) {
+    View {
+        attr { flexDirectionRow(); alignItemsCenter(); marginLeft(if (label == "价格") 0f else 8f) }
         View {
-            attr { flexDirectionRow() }
-            row.forEachIndexed { c, item ->
-                View {
+            attr {
+                width(10f)
+                if (dashed) {
+                    height(0f)
+                    borderBottom(Border(1.5f, BorderStyle.DASHED, color()))
+                } else {
+                    height(2.4f)
+                    borderRadius(1.2f)
+                    backgroundColor(color())
+                }
+                touchEnable(false)
+            }
+        }
+        Text {
+            attr {
+                text(label)
+                marginLeft(3f)
+                fontSize(9f)
+                color(theme.textTertiary)
+            }
+        }
+    }
+}
+
+/** 次级指标行：无分隔线的轻量 label-value 列（doc 26 §6）。 */
+private fun ViewContainer<*, *>.SecondaryMetricRow(
+    items: List<DetailMetric>,
+    theme: StockChatTheme,
+    marginTop: Float = 0f,
+) {
+    View {
+        attr { flexDirectionRow(); marginTop(marginTop) }
+        items.forEach { item ->
+            View {
+                attr { flex(1f) }
+                Text {
                     attr {
-                        flex(1f)
-                        paddingTop(theme.spacing.lg); paddingBottom(theme.spacing.lg)
-                        paddingLeft(theme.spacing.md); paddingRight(theme.spacing.md)
-                        if (c < row.lastIndex) borderRight(Border(0.5f, BorderStyle.SOLID, theme.divider))
-                        if (r < rows.lastIndex) borderBottom(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                        text(item.label)
+                        fontSize(9.5f)
+                        color(theme.textTertiary)
                     }
-                    Text { attr { text(item.label); fontSize(theme.type.label); color(theme.textTertiary) } }
-                    Text {
-                        attr {
-                            text(item.value)
-                            marginTop(5f)
-                            fontSize(theme.type.body)
-                            fontWeightMedium()
-                            color(item.valueColor ?: theme.textPrimary)
-                        }
+                }
+                Text {
+                    attr {
+                        text(item.value)
+                        marginTop(2f)
+                        fontSize(12f)
+                        fontWeightMedium()
+                        color(item.valueColor ?: theme.textSecondary)
                     }
                 }
             }
@@ -910,35 +1202,6 @@ private fun ViewContainer<*, *>.ChartSegment(
                 }
             }
         }
-    }
-}
-
-private fun ViewContainer<*, *>.DetailChart(
-    theme: StockChatTheme,
-    chartMode: () -> StockChartMode,
-    chartPeriod: () -> StockChartPeriod,
-    quote: Quote,
-    ctx: CardContext,
-    selectedKLineIndex: () -> Int,
-    onSelectKLine: (Int) -> Unit,
-) {
-    vif({ chartMode() == StockChartMode.TIMELINE }) {
-        KuiklyTimelineChart(this, quote, ctx, height = 132f)
-        Text {
-            attr {
-                text("虚线为昨收基准")
-                marginTop(6f); fontSize(theme.type.meta); color(theme.textTertiary)
-            }
-        }
-    }
-    vif({ chartMode() == StockChartMode.K_LINE && chartPeriod() == StockChartPeriod.DAY }) {
-        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx, selectedKLineIndex(), onSelectKLine)
-    }
-    vif({ chartMode() == StockChartMode.K_LINE && chartPeriod() == StockChartPeriod.WEEK }) {
-        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx, selectedKLineIndex(), onSelectKLine)
-    }
-    vif({ chartMode() == StockChartMode.K_LINE && chartPeriod() == StockChartPeriod.MONTH }) {
-        KLineChart(this, StockChartCardModel(quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx, selectedKLineIndex(), onSelectKLine)
     }
 }
 
