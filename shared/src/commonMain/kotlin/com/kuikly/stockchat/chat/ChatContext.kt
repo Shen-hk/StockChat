@@ -11,12 +11,17 @@ object ChatContext {
     /**
      * @param systemNote 输入期结构化意图注记（规范 10 §4.8）：@ 固化提及、指令调用与
      *        上下文标记。null 时保持与旧管线完全一致（无 @ 提问不受影响）。
+     * @param quoteNote 行情上下文注入（ChatQuoteContext 产出）：端侧拉取的真实快照，
+     *        让模型正文与卡片同源。null 时不追加消息。
      */
-    fun build(messages: List<ChatMessage>, systemNote: String?): List<AiChatMessage> {
+    fun build(messages: List<ChatMessage>, systemNote: String?, quoteNote: String? = null): List<AiChatMessage> {
         val selected = select(messages)
         val out = mutableListOf<AiChatMessage>()
         if (!systemNote.isNullOrBlank()) {
             out += AiChatMessage("system", systemNote)
+        }
+        if (!quoteNote.isNullOrBlank()) {
+            out += AiChatMessage("system", quoteNote)
         }
         out += selected
         return out

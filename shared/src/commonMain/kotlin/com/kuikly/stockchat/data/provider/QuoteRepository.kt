@@ -60,6 +60,14 @@ class QuoteRepository(
     fun cachedOrOffline(symbol: String): Quote? =
         cachedOrOfflineResult(symbol).quote
 
+    /**
+     * 最新快照（在线→缓存→离线降级，保证回调一次），供对话上下文注入等轻量场景。
+     * 与 [load] 不同：不触发分时/K线刷新；快照结果照常入缓存供后续复用。
+     */
+    fun snapshotForContext(symbol: String, onResult: (QuoteLoadResult) -> Unit) {
+        snapshot(symbol, onResult)
+    }
+
     fun search(query: String, limit: Int = 20): List<Security> =
         Securities.search(query, limit)
 

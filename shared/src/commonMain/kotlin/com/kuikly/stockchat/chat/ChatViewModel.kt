@@ -9,6 +9,7 @@ import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
+import com.tencent.kuikly.core.timer.setTimeout
 
 class ChatViewModel(
     override val pagerId: String,
@@ -100,28 +101,37 @@ class ChatViewModel(
         val assistantMessage = ChatMessage(pagerId, assistantId, MessageRole.ASSISTANT, "正在组织回答…", streaming = true)
         messages.add(assistantMessage)
         streamState = StreamState.STREAMING
-        var content = ""
-        provider.ask(
-            messages = ChatContext.build(messages, payload.systemNote()),
-            onDelta = { delta ->
-                content += delta
-                assistantMessage.content = content.substringBefore("```card").trim().ifEmpty { "正在整理结构化信息…" }
-            },
-            onDone = {
-                streamState = StreamState.IDLE
-                val question = payload.renderedPrompt ?: payload.text
-                assistantMessage.content = CardResponseFallback.appendMissingCard(question, content)
-                assistantMessage.streaming = false
-                persist()
-            },
-            onError = { error ->
-                streamState = StreamState.ERROR
-                assistantMessage.content = error
-                assistantMessage.streaming = false
-                assistantMessage.failed = true
-                persist()
-            },
-        )
+        // 先解析行情上下文（端侧拉最新快照注入给模型，正文与卡片数字同源），再流式请求。
+        // 快照链保证回调，但网络层极端挂起时由 watchdog 兜底：3s 未返回则按无行情发送。
+        var launched = false
+        fun launch(note: String?) {
+            if (launched) return
+            launched = true
+            var content = ""
+            provider.ask(
+                messages = ChatContext.build(messages, payload.systemNote(), note),
+                onDelta = { delta ->
+                    content += delta
+                    assistantMessage.content = content.substringBefore("```card").trim().ifEmpty { "正在整理结构化信息…" }
+                },
+                onDone = {
+                    streamState = StreamState.IDLE
+                    val question = payload.renderedPrompt ?: payload.text
+                    assistantMessage.content = CardResponseFallback.appendMissingCard(question, content)
+                    assistantMessage.streaming = false
+                    persist()
+                },
+                onError = { error ->
+                    streamState = StreamState.ERROR
+                    assistantMessage.content = error
+                    assistantMessage.streaming = false
+                    assistantMessage.failed = true
+                    persist()
+                },
+            )
+        }
+        ChatQuoteContext.resolve(payload, quoteRepository, ::launch)
+        this.setTimeout(3000) { launch(null) }
     }
 
     private fun replyWithWatchlistSummary(assistantId: String) {
