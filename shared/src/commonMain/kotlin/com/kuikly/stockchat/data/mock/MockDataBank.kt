@@ -3,9 +3,11 @@ package com.kuikly.stockchat.data.mock
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.KLinePoint
+import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuotePoint
 import com.kuikly.stockchat.data.provider.QuoteProvider
+import com.kuikly.stockchat.data.provider.StockNewsProvider
 import kotlin.math.max
 import kotlin.math.min
 
@@ -93,13 +95,16 @@ object MockDataBank {
     }
 }
 
-class MockQuoteProvider : QuoteProvider {
+class MockQuoteProvider : QuoteProvider, StockNewsProvider {
     override val mode: DataMode = DataMode.OFFLINE
 
     override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) = onResult(MockDataBank.quote(symbol))
 
     override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) =
         onResult(MockDataBank.quote(symbol)?.timeline.orEmpty())
+
+    override fun stockNews(symbol: String, onResult: (List<NewsItem>) -> Unit) =
+        onResult(news(symbol))
 
     override fun kLines(symbol: String, count: Int, interval: com.kuikly.stockchat.data.provider.KLineInterval, onResult: (List<KLinePoint>) -> Unit) =
         onResult(
@@ -123,6 +128,37 @@ class MockQuoteProvider : QuoteProvider {
             high = group.maxOf { it.high },
             low = group.minOf { it.low },
             volume = group.sumOf { it.volume },
+        )
+    }
+    /** 离线演示用的个股快讯：事实性标题，不带任何建议话术。 */
+    fun news(symbol: String): List<NewsItem> {
+        val security = Securities.all.firstOrNull { it.symbol == symbol } ?: return emptyList()
+        val code = symbol.substringBefore('.')
+        return listOf(
+            NewsItem(
+                id = "${code}-demo-1",
+                title = "${security.name}：公司披露近期生产经营正常，无应披露而未披露事项",
+                source = "离线演示数据",
+                time = "2026-09-07 09:45:00",
+                url = "",
+                summary = "演示模式下展示的示例快讯，用于呈现新闻弹幕带的版式与节奏。",
+            ),
+            NewsItem(
+                id = "${code}-demo-2",
+                title = "${security.name}所在行业今日开盘表现与板块资金动向（示例）",
+                source = "离线演示数据",
+                time = "2026-09-07 10:12:00",
+                url = "",
+                summary = "演示模式下展示的示例快讯，仅用于演示，不代表任何真实信息。",
+            ),
+            NewsItem(
+                id = "${code}-demo-3",
+                title = "机构调研纪要显示${security.name}产能利用率保持稳定（示例）",
+                source = "离线演示数据",
+                time = "2026-09-06 16:30:00",
+                url = "",
+                summary = "演示模式下展示的示例快讯，仅用于演示，不代表任何真实信息。",
+            ),
         )
     }
 }

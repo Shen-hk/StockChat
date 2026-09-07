@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.entity.Security
+import com.kuikly.stockchat.data.provider.NewsItem
 import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
@@ -208,6 +209,26 @@ object EastMoneyInsightParser {
 
     fun parsePoolCount(root: JSONObject): Int = root.optJSONObject("data")?.int("tc") ?: 0
 
+    /**
+     * 东财个股资讯 `np-listapi`（2026-09-07 茅台实测）：字段
+     * Art_Code / Art_Title / Art_ShowTime / Author / Art_Url，UTF-8。
+     * 按 Art_Code 去重，标题为空或与代码弱相关的榜单行不做过滤（交给 UI 端克制呈现）。
+     */
+    fun parseNews(root: JSONObject): List<NewsItem> = root.rows("data", "list")
+        .mapNotNull { row ->
+            val id = row.optString("Art_Code")
+            val title = row.optString("Art_Title").trim()
+            if (id.isEmpty() || title.isEmpty()) return@mapNotNull null
+            NewsItem(
+                id = id,
+                title = title,
+                source = row.optString("Author").ifEmpty { "东方财富" },
+                time = row.optString("Art_ShowTime"),
+                url = row.optString("Art_Url"),
+            )
+        }
+        .distinctBy(NewsItem::id)
+
     fun parseCalendar(root: JSONObject): List<MarketCalendarEvent> = root.rows("result", "data").mapNotNull { row ->
         val code = row.optString("SECURITY_CODE")
         val date = row.date("APPOINT_PUBLISH_DATE").ifEmpty { row.date("ACTUAL_PUBLISH_DATE") }
@@ -273,7 +294,7 @@ object EastMoneyInsightParser {
 
 class EastMoneyInsightProvider(
     override val pagerId: String,
-) : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, SecuritySearchProvider, IndustryProvider, PagerScope {
+) : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, SecuritySearchProvider, IndustryProvider, StockNewsProvider, PagerScope {
     private val client = createPlatformHttpClient()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val throttle = Mutex()
@@ -397,6 +418,18 @@ class EastMoneyInsightProvider(
             // 000001.SH(上证指数) 与 000001.SZ(平安银行) 只靠代码会撞车。
             val root = request("https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f12,f13,f100&secids=$secids")
             deliver { onResult(root?.let { EastMoneyInsightParser.parseIndustries(it, symbols) }.orEmpty()) }
+        }
+    }
+
+    /** 东财个股资讯：mTypeAndCode 用 `1.沪代码` / `0.深代码`；接口要求 UA + Referer。 */
+    override fun stockNews(symbol: String, onResult: (List<NewsItem>) -> Unit) {
+        scope.launch {
+            val code = symbol.substringBefore('.')
+            val market = if (symbol.endsWith(".SH", ignoreCase = true)) "1" else "0"
+            val url = "https://np-listapi.eastmoney.com/comm/web/getListInfo?cfh=1&client=web" +
+                "&mTypeAndCode=$market.$code&type=1&pageSize=20&pageIndex=1"
+            val root = request(url)
+            deliver { onResult(root?.let(EastMoneyInsightParser::parseNews).orEmpty()) }
         }
     }
 

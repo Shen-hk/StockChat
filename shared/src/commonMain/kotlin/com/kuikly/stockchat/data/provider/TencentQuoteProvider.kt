@@ -35,12 +35,19 @@ object TencentQuoteParser {
         )
     }
 
+    /**
+     * 腾讯分时行格式：`HHMM 价 累计量(手) 累计额(元)`（2026-09-07 实测）。
+     * 量额均为当日累计，逐分钟差分为单分钟值；缺额字段（旧缓存格式）时 amount 记 0，
+     * 均价由消费方走近似口径（Σ price×volume×100）。
+     */
     fun parseTimeline(root: JSONObject, symbol: String): List<QuotePoint> {
         val code = remoteCode(symbol)
         val rows = root.optJSONObject("data")
             ?.optJSONObject(code)
             ?.optJSONObject("data")
             ?.optJSONArray("data") ?: return emptyList()
+        var prevVolume = 0.0
+        var prevAmount = 0.0
         return buildList {
             repeat(rows.length()) { index ->
                 val fields = rows.text(index).trim().split(Regex("\\s+"))
@@ -48,8 +55,21 @@ object TencentQuoteParser {
                     val time = fields[0].let { raw ->
                         if (raw.length == 4) "${raw.take(2)}:${raw.takeLast(2)}" else raw
                     }
+                    // 只保留交易时段（09:30–11:30 / 13:00–15:00）。实测收盘后接口
+                    // 会按分钟追加"冻结填充点"（价格/累计量停在收盘值，如 15:01–15:30），
+                    // 不过滤会把 now 点拖到 15:30、末槽量恒为 0。
+                    val inSession = (time >= "09:30" && time <= "11:30") ||
+                        (time >= "13:00" && time <= "15:00")
+                    if (!inSession) return@repeat
                     val price = fields[1].toDoubleOrNull() ?: return@repeat
-                    add(QuotePoint(time, price, fields[2].toDoubleOrNull() ?: 0.0))
+                    val cumVolume = fields[2].toDoubleOrNull() ?: 0.0
+                    val cumAmount = fields.getOrNull(3)?.toDoubleOrNull() ?: 0.0
+                    val hasAmount = fields.size >= 4
+                    val volume = (cumVolume - prevVolume).coerceAtLeast(0.0)
+                    val amount = if (hasAmount) (cumAmount - prevAmount).coerceAtLeast(0.0) else 0.0
+                    add(QuotePoint(time, price, volume, amount))
+                    prevVolume = cumVolume
+                    prevAmount = cumAmount
                 }
             }
         }

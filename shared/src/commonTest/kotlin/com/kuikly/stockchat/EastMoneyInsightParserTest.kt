@@ -14,6 +14,27 @@ import kotlin.test.assertTrue
 
 class EastMoneyInsightParserTest {
     @Test
+    fun parsesNewsListWithDedupAndEmptyTitleFilter() {
+        val root = JSONObject(
+            """{"data":{"list":[
+                {"Art_Code":"20260907102346140823780","Art_Title":"白酒巨头集体入局，却不愿为低度赛道豪赌","Author":"钛媒体APP","Art_ShowTime":"2026-09-07 10:23:42","Art_Url":"http://caifuhao.eastmoney.com/news/20260907102346140823780"},
+                {"Art_Code":"20260907102346140823780","Art_Title":"重复行应被去重","Author":"x","Art_ShowTime":"2026-09-07 10:23:42","Art_Url":""},
+                {"Art_Code":"","Art_Title":"缺少编码的行应被过滤","Author":"x","Art_ShowTime":"2026-09-07 10:00:00","Art_Url":""},
+                {"Art_Code":"20260907100000000000001","Art_Title":"","Author":"x","Art_ShowTime":"2026-09-07 10:00:00","Art_Url":""}
+            ]}}""",
+        )
+        val news = EastMoneyInsightParser.parseNews(root)
+
+        assertEquals(1, news.size)
+        val item = news.single()
+        assertEquals("20260907102346140823780", item.id)
+        assertEquals("白酒巨头集体入局，却不愿为低度赛道豪赌", item.title)
+        assertEquals("钛媒体APP", item.source)
+        assertEquals("2026-09-07 10:23:42", item.time)
+        assertEquals("http://caifuhao.eastmoney.com/news/20260907102346140823780", item.url)
+    }
+
+    @Test
     fun parsesFundFlowAndNeverDependsOnFieldOrder() {
         val root = JSONObject("""{"data":{"diff":[{"f84":-2602,"f62":-39785971,"f78":39788576,"f72":-87867184,"f66":48081213}]}}""")
         val value = assertNotNull(EastMoneyInsightParser.parseFundFlow(root, "2026-09-02"))

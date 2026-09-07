@@ -173,6 +173,7 @@ private fun List<QuotePoint>.toQuotePointArray(): JSONArray = JSONArray().apply 
             put("time", point.time)
             put("price", point.price)
             put("volume", point.volume)
+            if (point.amount > 0.0) put("amount", point.amount)
         })
     }
 }
@@ -180,7 +181,7 @@ private fun List<QuotePoint>.toQuotePointArray(): JSONArray = JSONArray().apply 
 private fun JSONArray.toQuotePoints(): List<QuotePoint> = buildList {
     repeat(length()) { index ->
         val row = optJSONObject(index) ?: return@repeat
-        add(QuotePoint(row.optString("time"), row.double("price"), row.double("volume")))
+        add(QuotePoint(row.optString("time"), row.double("price"), row.double("volume"), row.double("amount")))
     }
 }
 

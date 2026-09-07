@@ -2,6 +2,7 @@ package com.kuikly.stockchat.data
 
 import com.kuikly.stockchat.data.provider.QuoteRepository
 import com.kuikly.stockchat.data.provider.SharedPreferencesQuoteCacheStore
+import com.kuikly.stockchat.data.provider.StockNewsProvider
 import com.kuikly.stockchat.data.provider.TencentQuoteProvider
 import com.kuikly.stockchat.data.provider.EastMoneyInsightProvider
 import com.kuikly.stockchat.data.provider.MarketInsightRepository
@@ -18,6 +19,7 @@ class MarketDependencies(
     val quoteRepository: QuoteRepository,
     val insightRepository: MarketInsightRepository,
     val securitySearchProvider: SecuritySearchProvider,
+    val stockNewsProvider: StockNewsProvider,
 ) {
     companion object {
         fun forPager(
@@ -42,6 +44,7 @@ class MarketDependencies(
                     onlineIndustry = eastMoney,
                 ),
                 securitySearchProvider = eastMoney,
+                stockNewsProvider = eastMoney,
             )
         }
     }

@@ -21,7 +21,26 @@ enum class KLineInterval(
     MONTH("month", "qfqmonth", "month", 60),
 }
 
-data class QuotePoint(val time: String, val price: Double, val volume: Double = 0.0)
+/**
+ * 分时单点。[volume] 为该分钟成交量（手）、[amount] 为该分钟成交额（元），
+ * 由腾讯分时接口的累计量额逐分钟差分得到；旧缓存/Mock 无 amount 时为 0，均价走近似口径。
+ */
+data class QuotePoint(
+    val time: String,
+    val price: Double,
+    val volume: Double = 0.0,
+    val amount: Double = 0.0,
+)
+
+/** 新闻弹幕带的单条快讯（东财个股资讯）。[time] 形如 `2026-09-07 10:23:42`。 */
+data class NewsItem(
+    val id: String,
+    val title: String,
+    val source: String,
+    val time: String,
+    val url: String,
+    val summary: String = "",
+)
 
 data class KLinePoint(
     val date: String,
@@ -89,4 +108,9 @@ interface QuoteProvider {
         interval: KLineInterval = KLineInterval.DAY,
         onResult: (List<KLinePoint>) -> Unit,
     )
+}
+
+/** 详情页新闻弹幕带的数据源（东财个股资讯；空列表 = 无可展示内容，UI 整条隐藏）。 */
+interface StockNewsProvider {
+    fun stockNews(symbol: String, onResult: (List<NewsItem>) -> Unit)
 }
