@@ -69,13 +69,13 @@ class AlertInboxStore(
         if (id.isEmpty()) return
         val state = read()
         if (id in state.readIds) return
-        write(state.copy(readIds = (state.readIds + id).takeLast(MAX_READ_IDS).toSet()))
+        write(state.copy(readIds = (state.readIds + id).toList().takeLast(MAX_READ_IDS).toSet())) // 集成修复：Set 无 takeLast，先转 List
     }
 
     fun markAllRead(ids: List<String>) {
         if (ids.isEmpty()) return
         val state = read()
-        write(state.copy(readIds = (state.readIds + ids).takeLast(MAX_READ_IDS).toSet()))
+        write(state.copy(readIds = (state.readIds + ids).toList().takeLast(MAX_READ_IDS).toSet())) // 集成修复：Set 无 takeLast，先转 List
     }
 
     /** 未读数 = 消息里 id 不在已读集合中的条数（派生消息天然可能过期消失）。 */
@@ -179,7 +179,7 @@ class AlertInboxStore(
                 if (id.isEmpty()) return@repeat
                 val facts = buildList {
                     row.optJSONArray("facts")?.let { arr ->
-                        repeat(arr.length()) { i -> arr.optString(i).takeIf { it.isNotEmpty() }?.let(::add) }
+                        repeat(arr.length()) { i -> arr.optString(i)?.takeIf { it.isNotEmpty() }?.let(::add) } // 集成修复：optString 可空
                     }
                 }
                 add(
@@ -205,7 +205,7 @@ class AlertInboxStore(
         if (array == null) return emptySet()
         return buildSet {
             repeat(array.length()) { index ->
-                array.optString(index).takeIf { it.isNotEmpty() }?.let(::add)
+                array.optString(index)?.takeIf { it.isNotEmpty() }?.let(::add) // 集成修复：optString 可空
             }
         }
     }

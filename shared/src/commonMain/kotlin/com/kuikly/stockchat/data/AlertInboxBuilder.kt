@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.data
 
 import com.kuikly.stockchat.data.provider.CalendarEventKind
-import com.kuikly.stockchat.data.provider.LocalAlertProvider
+// 集成修复：LocalAlertProvider 在本包（AlertStore.kt），从 provider 子包 import 无法解析
 import com.kuikly.stockchat.data.provider.MarketCalendarEvent
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.platformCurrentHour

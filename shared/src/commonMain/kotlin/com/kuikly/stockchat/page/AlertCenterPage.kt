@@ -6,6 +6,7 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
+import com.kuikly.stockchat.common.openChatWithQuestion // 集成修复：缺失 import
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.AlertInboxBuilder
@@ -386,7 +387,7 @@ internal class AlertCenterPage : BasePager() {
                                 color(cardTheme.brand)
                             }
                         }
-                        vfor({ msg.facts }) { fact ->
+                        msg.facts.forEach { fact -> // 集成修复：vfor 只接受 ObservableList，普通 List 用 forEach
                             Text {
                                 attr {
                                     text(fact)
