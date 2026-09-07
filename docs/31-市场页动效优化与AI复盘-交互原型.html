@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>31 · 市场页动效优化与 AI 复盘 — 交互原型 v1.0</title>
+<style>
+  /* ============ tokens（对齐 StockChatTheme Light） ============ */
+  :root {
+    --page: #F6F6F4;
+    --surface: #FFFFFF;
+    --surface-muted: #EEEEEC;
+    --text-primary: #1C1C1E;
+    --text-secondary: #55554F;
+    --text-tertiary: #9B9B94;
+    --rise: #D92E2E;          /* A 股涨红 */
+    --fall: #0C7A45;          /* A 股跌绿 */
+    --flat: #8E8E88;
+    --rise-soft: #FCEDED;
+    --fall-soft: #E9F4EE;
+    --brand: #C8641E;
+    --brand-soft: #FBF2E9;
+    --market-glass: rgba(255,255,255,0.82);
+    --market-glass-edge: rgba(28,28,30,0.06);
+    --divider: rgba(28,28,30,0.08);
+    --ease-out: cubic-bezier(.22,.61,.36,1);
+    --ease-ios: cubic-bezier(.32,.72,0,1);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-font-smoothing: antialiased; }
+  body {
+    background: #E8E8E4; font-family: -apple-system, "PingFang SC", "Noto Sans SC", sans-serif;
+    display: flex; justify-content: center; padding: 24px 12px 60px; color: var(--text-primary);
+  }
+  .phone {
+    width: 390px; background: var(--page); border-radius: 28px; overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,.18); height: 844px; position: sticky; top: 24px;
+    display: flex; flex-direction: column;
+  }
+  .topbar {
+    padding: 52px 16px 10px; background: var(--market-glass); backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--divider); flex-shrink: 0;
+  }
+  .topbar .row { display: flex; align-items: baseline; justify-content: space-between; }
+  .topbar h1 { font-size: 20px; font-weight: 700; }
+  .topbar .sub { font-size: 10px; color: var(--text-tertiary); margin-top: 2px; }
+  .topbar .actions { font-size: 12px; color: var(--brand); display: flex; gap: 12px; }
+  .scroll { flex: 1; overflow-y: auto; padding: 6px 14px 90px; }
+  .session { display: flex; align-items: center; gap: 6px; margin: 10px 4px 16px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--rise); }
+  .session .label { font-size: 11px; font-weight: 600; }
+  .session .time { font-size: 10px; color: var(--text-tertiary); margin-left: auto; }
+  .headline { font-size: 29px; font-weight: 700; line-height: 38px; padding: 0 4px; }
+  .explain { margin: 10px 4px 0; padding-left: 9px; border-left: 2px solid var(--brand); font-size: 12px; line-height: 18px; color: var(--text-secondary); }
+  .section-title { display: flex; align-items: baseline; gap: 7px; margin: 24px 4px 9px; }
+  .section-title b { font-size: 17px; }
+  .section-title span { font-size: 10px; color: var(--text-tertiary); }
+  .card { background: var(--surface); border-radius: 16px; padding: 15px; box-shadow: 0 2px 8px rgba(28,28,30,.05); }
+  .glass { background: var(--market-glass); border: 1px solid var(--market-glass-edge); border-radius: 20px; padding: 17px; box-shadow: 0 10px 24px rgba(28,28,30,.10); }
+
+  /* ============ A1 指数带入场 stagger ============ */
+  .strip { display: flex; gap: 8px; margin: 9px 8px 0; }
+  .strip .mini {
+    flex: 1; height: 108px; padding: 13px; border-radius: 17px; background: var(--surface-muted);
+    opacity: 0; transform: translateY(12px);
+    animation: rise-in .3s var(--ease-out) forwards;
+  }
+  .strip .mini:nth-child(2) { animation-delay: .06s; }
+  .strip .mini:nth-child(3) { animation-delay: .12s; }
+  .mini .name { font-size: 11px; color: var(--text-secondary); }
+  .mini .price { font-size: 19px; font-weight: 700; margin-top: 8px; font-variant-numeric: tabular-nums; }
+  .mini .chg { font-size: 12px; font-weight: 600; margin-top: 3px; }
+  @keyframes rise-in { to { opacity: 1; transform: translateY(0); } }
+
+  /* ============ A2 宽度条：中心双向生长 520ms + 数字 70% 时淡入 ============ */
+  .breadth-num { display: flex; align-items: flex-end; }
+  .breadth-num .side { flex: 1; }
+  .breadth-num .n { font-size: 25px; font-weight: 700; }
+  .breadth-num .t { font-size: 10px; color: var(--text-tertiary); margin-top: 2px; }
+  .breadth-num .mid { width: 82px; text-align: center; font-size: 11px; font-weight: 600; color: var(--text-secondary); opacity: 0; animation: fade-in .3s var(--ease-out) .36s forwards; }
+  @keyframes fade-in { to { opacity: 1; } }
+  .breadth-bar { margin-top: 13px; height: 10px; border-radius: 5px; overflow: hidden; display: flex; background: var(--surface-muted); transform-origin: center; transform: scaleX(0); animation: grow-center .52s var(--ease-out) forwards; }
+  @keyframes grow-center { to { transform: scaleX(1); } }
+  .breadth-bar .up { background: var(--rise); flex: 28; }
+  .breadth-bar .flatseg { background: var(--flat); flex: 6; }
+  .breadth-bar .down { background: var(--fall); flex: 66; }
+  .replay-hint { font-size: 10px; color: var(--text-tertiary); margin-top: 8px; }
+  .replay { color: var(--brand); cursor: pointer; }
+
+  /* ============ A3 量能柱生长 320ms stagger 40ms ============ */
+  .vol-row { display: flex; align-items: center; margin-top: 10px; }
+  .vol-row .lb { width: 34px; font-size: 10px; color: var(--text-tertiary); }
+  .vol-track { width: 160px; height: 6px; border-radius: 3px; background: var(--surface-muted); overflow: hidden; }
+  .vol-fill { height: 6px; border-radius: 3px; background: rgba(28,28,30,.38); transform-origin: left; transform: scaleX(0); animation: grow-x .32s var(--ease-out) forwards; }
+  .vol-fill.today { background: var(--brand); }
+  .vol-row:nth-of-type(1) .vol-fill { animation-delay: 0s; }
+  .vol-row:nth-of-type(2) .vol-fill { animation-delay: .04s; }
+  .vol-row:nth-of-type(3) .vol-fill { animation-delay: .08s; }
+  @keyframes grow-x { to { transform: scaleX(1); } }
+  .vol-row .v { flex: 1; text-align: right; font-size: 10px; color: var(--text-secondary); }
+
+  /* ============ A4 梯队逐层升起：首板→高板 stagger 60ms，Y 12px + 淡入 ============ */
+  .ladder-row { display: flex; align-items: center; margin-top: 8px; opacity: 0; transform: translateY(12px); animation: rise-in .28s var(--ease-out) forwards; }
+  .ladder-row:nth-child(1) { animation-delay: 0s; }
+  .ladder-row:nth-child(2) { animation-delay: .06s; }
+  .ladder-row:nth-child(3) { animation-delay: .12s; }
+  .ladder-row:nth-child(4) { animation-delay: .18s; }
+  .ladder-row .lv { width: 34px; font-size: 10px; color: var(--text-secondary); }
+  .ladder-bar { height: 20px; border-radius: 5px; background: rgba(217,46,46,.25); position: relative; cursor: pointer; transition: transform .18s var(--ease-out); }
+  .ladder-bar:active { transform: scale(1.03); }
+  .ladder-bar .cnt { position: absolute; left: 100%; margin-left: 6px; top: 3px; font-size: 10px; font-weight: 600; color: var(--rise); white-space: nowrap; }
+  .ghost { font-size: 10px; color: var(--flat); margin: 8px 0 0 34px; opacity: 0; animation: fade-in .8s var(--ease-out) .3s forwards; }
+
+  /* ============ B · AI 复盘卡（核心新增） ============ */
+  .ai-card {
+    margin-top: 24px; padding: 15px; border-radius: 16px; background: var(--brand-soft);
+    border: 1px solid rgba(200,100,30,.14); cursor: pointer; overflow: hidden;
+  }
+  .ai-head { display: flex; align-items: center; gap: 8px; }
+  .ai-star {
+    width: 22px; height: 22px; border-radius: 7px; background: var(--brand); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0;
+  }
+  .ai-star.thinking { animation: ai-breathe 1s var(--ease-out) infinite; }
+  @keyframes ai-breathe { 0%,100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(200,100,30,.35);} 50% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(200,100,30,0);} }
+  .ai-title { font-size: 14px; font-weight: 700; flex: 1; }
+  .ai-action { font-size: 11px; color: var(--brand); font-weight: 600; }
+  .ai-sub { margin-top: 4px; font-size: 11px; line-height: 16px; color: var(--text-secondary); }
+  .ai-skeleton { margin-top: 12px; }
+  .skel { height: 11px; border-radius: 5px; background: rgba(200,100,30,.16); overflow: hidden; position: relative; }
+  .skel.short { width: 62%; margin-top: 8px; }
+  .skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.75) 50%, transparent 70%); animation: shimmer 1.4s linear infinite; }
+  @keyframes shimmer { to { transform: translateX(100%); } }
+  .ai-thinking-label { margin-top: 10px; font-size: 10px; color: var(--brand); display: flex; align-items: center; gap: 5px; }
+  .ai-output { margin-top: 12px; font-size: 12.5px; line-height: 21px; color: var(--text-primary); }
+  .caret { display: inline-block; width: 2px; height: 14px; background: var(--brand); vertical-align: -2px; margin-left: 2px; animation: blink .8s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .ai-foot { margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 10px; color: var(--text-tertiary); }
+  .ai-follow { color: var(--brand); font-weight: 600; font-size: 11px; cursor: pointer; }
+  .ai-error { margin-top: 10px; font-size: 11px; color: var(--fall); line-height: 16px; }
+  .pillbar { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .pill { height: 24px; padding: 0 8px; border-radius: 12px; font-size: 10px; display: flex; align-items: center; }
+
+  /* hero */
+  .hero-price { font-size: 38px; font-weight: 700; line-height: 43px; margin-top: 4px; padding: 0 4px; border-radius: 4px; display: inline-block; font-variant-numeric: tabular-nums; transition: background .3s var(--ease-out), color .3s var(--ease-out); }
+  .hero-price.tick-up { background: var(--rise-soft); color: var(--rise); }
+  .hero-price.tick-down { background: var(--fall-soft); color: var(--fall); }
+  .hero-row { display: flex; align-items: center; }
+  .hero-chg { margin-left: auto; padding: 7px; border-radius: 7px; font-size: 15px; font-weight: 700; }
+  .facts { display: flex; margin-top: 10px; }
+  .facts .f { flex: 1; font-size: 11px; font-weight: 600; }
+  .facts .k { font-size: 9.5px; color: var(--text-tertiary); font-weight: 400; }
+
+  .tabs { display: flex; padding: 3px; border-radius: 15px; background: var(--surface-muted); margin-top: 9px; }
+  .tab { flex: 1; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 10.5px; border-radius: 12px; color: var(--text-tertiary); cursor: pointer; transition: all .18s var(--ease-out); }
+  .tab.on { background: var(--surface); color: var(--text-primary); font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.06); }
+
+  .doclink { max-width: 720px; margin: 20px auto 0; background: #fff; border-radius: 14px; padding: 16px 20px; font-size: 12px; line-height: 20px; color: #555; }
+  .doclink b { color: #1c1c1e; }
+  .doclink code { background: #f2f2ee; padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="topbar">
+    <div class="row">
+      <div><h1>市场</h1><div class="sub">数字之后，解释今天发生了什么</div></div>
+      <div class="actions"><span>刷新</span><span>日历</span></div>
+    </div>
+  </div>
+
+  <div class="scroll" id="scroll">
+    <div class="session"><span class="dot"></span><span class="label">早盘连续交易</span><span class="time">实时 · 10:42</span></div>
+    <div class="headline">上涨占优，热度回升</div>
+    <div class="explain">三大指数集体收红，量能较 5 日均放大，短线情绪修复但封板率仍偏弱，分化延续。</div>
+
+    <div class="section-title"><b>指数带</b><span>点位、方向与当日区间 · A1 入场 stagger</span></div>
+    <div class="strip">
+      <div class="mini"><div class="name">深证成指</div><div class="price">10,284.31</div><div class="chg" style="color:var(--rise)">+0.86%</div></div>
+      <div class="mini"><div class="name">创业板指</div><div class="price">2,131.55</div><div class="chg" style="color:var(--rise)">+1.24%</div></div>
+    </div>
+
+    <div class="glass" style="margin-top:-18px">
+      <div class="hero-row">
+        <div>
+          <div style="font-size:12px;color:var(--text-secondary)">上证指数</div>
+          <div class="hero-price" id="heroPrice">3,312.48</div>
+        </div>
+        <div class="hero-chg" style="background:var(--rise-soft);color:var(--rise)">+0.42%</div>
+      </div>
+      <div class="facts">
+        <div class="f"><div class="k">成交</div>1.24万亿</div>
+        <div class="f"><div class="k">最高</div>3,318.20</div>
+        <div class="f"><div class="k">最低</div>3,298.11</div>
+      </div>
+    </div>
+
+    <div class="section-title"><b>量能</b><span>成交额与近期均值对照 · A3 柱体生长</span></div>
+    <div class="card">
+      <div style="font-size:27px;font-weight:700">1.24万亿 <span style="font-size:10.5px;color:var(--rise);font-weight:400">较5日均 +12.4%</span></div>
+      <div style="margin-top:6px">
+        <div class="vol-row"><span class="lb">今日</span><div class="vol-track"><div class="vol-fill today" style="width:100%"></div></div><span class="v">1.24万亿</span></div>
+        <div class="vol-row"><span class="lb">昨日</span><div class="vol-track"><div class="vol-fill" style="width:92%"></div></div><span class="v">1.14万亿</span></div>
+        <div class="vol-row"><span class="lb">5日均</span><div class="vol-track"><div class="vol-fill" style="width:89%"></div></div><span class="v">1.10万亿</span></div>
+      </div>
+    </div>
+
+    <div class="section-title"><b>市场宽度</b><span>上涨、平盘与下跌的结构 · A2 中心生长 + 数字延迟淡入 <span class="replay" onclick="replayBreadth()">↻ 重播</span></span></div>
+    <div class="card" id="breadthCard">
+      <div class="breadth-num">
+        <div class="side"><div class="n" style="color:var(--rise)">1541</div><div class="t">上涨</div></div>
+        <div class="mid">红盘 28.1%</div>
+        <div class="side" style="text-align:right"><div class="n" style="color:var(--fall)">3618</div><div class="t">下跌</div></div>
+      </div>
+      <div class="breadth-bar"><div class="up"></div><div class="flatseg"></div><div class="down"></div></div>
+      <div class="replay-hint">涨跌差 -2077 · 平盘 96</div>
+    </div>
+
+    <div class="section-title"><b>短线情绪</b><span>涨停池口径 ⓘ</span></div>
+    <div class="glass" style="padding:15px;display:flex">
+      <div style="flex:1"><div style="font-size:10px;color:var(--text-tertiary)">涨停</div><div style="font-size:17px;font-weight:700;color:var(--rise);margin-top:7px">54</div></div>
+      <div style="flex:1;border-left:1px solid var(--divider);padding-left:8px"><div style="font-size:10px;color:var(--text-tertiary)">跌停</div><div style="font-size:17px;font-weight:700;color:var(--fall);margin-top:7px">9</div></div>
+      <div style="flex:1;border-left:1px solid var(--divider);padding-left:8px"><div style="font-size:10px;color:var(--text-tertiary)">封板率</div><div style="font-size:17px;font-weight:700;margin-top:7px">72%</div></div>
+      <div style="flex:1;border-left:1px solid var(--divider);padding-left:8px"><div style="font-size:10px;color:var(--text-tertiary)">最高板</div><div style="font-size:17px;font-weight:700;margin-top:7px">5板</div></div>
+    </div>
+
+    <div class="section-title"><b>连板梯队</b><span>昨日 5 板 · 今日高度回落 0 板 · A4 逐层升起</span></div>
+    <div class="card" style="padding-bottom:18px">
+      <div class="ladder-row"><span class="lv">首板</span><div class="ladder-bar" style="width:180px"><span class="cnt">32</span></div></div>
+      <div class="ladder-row"><span class="lv">2板</span><div class="ladder-bar" style="width:124px"><span class="cnt">13</span></div></div>
+      <div class="ladder-row"><span class="lv">3板</span><div class="ladder-bar" style="width:66px"><span class="cnt">6</span></div></div>
+      <div class="ladder-row"><span class="lv">4板+</span><div class="ladder-bar" style="width:30px"><span class="cnt">3</span></div></div>
+    </div>
+
+    <!-- ============ B · AI 复盘卡 ============ -->
+    <div class="ai-card" id="aiCard">
+      <div class="ai-head">
+        <div class="ai-star" id="aiStar">✦</div>
+        <div class="ai-title">让 AI 讲讲今天</div>
+        <div class="ai-action" id="aiAction">生成</div>
+      </div>
+      <div id="aiBody">
+        <div class="ai-sub" id="aiIdleSub">基于本页已展示的指数、宽度、量能与情绪数据，30 秒讲清今天市场的结构。</div>
+      </div>
+      <div class="ai-foot" id="aiFoot" style="display:none">
+        <span id="aiStamp">数据源 · 截至页内快照，AI 输出仅供参考，不构成投资建议</span>
+        <span class="ai-follow" id="aiFollow" style="display:none">追问 ›</span>
+      </div>
+    </div>
+
+    <div class="section-title"><b>板块</b><span>领涨、领跌与热力图</span></div>
+    <div class="tabs"><div class="tab on">领涨</div><div class="tab">领跌</div><div class="tab">热力图</div></div>
+    <div class="glass" style="margin-top:10px">
+      <div style="display:flex;align-items:center">
+        <div style="flex:1"><div style="font-size:17px;font-weight:700">半导体</div><div style="font-size:10px;color:var(--text-tertiary);margin-top:4px">主力 +48.2亿 · 上涨 86 / 下跌 21</div></div>
+        <div style="font-size:22px;font-weight:700;color:var(--rise)">+2.84%</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div style="position:fixed;left:16px;top:24px;max-width:300px">
+  <div class="doclink">
+    <b>31 · 市场页动效优化与 AI 复盘 — 交互原型 v1.0</b><br><br>
+    <b>B · AI 复盘卡（点上方品牌色卡片体验）</b>：点击「生成」→ 思考态（星标呼吸 + 同构骨架 shimmer）→ 流式打字机输出 → 完成后出现「追问 ›」深链进对话页。再次点击可中断。<br><br>
+    <b>A1</b> 指数带卡片入场 stagger（60ms 间隔上移淡入）<br>
+    <b>A2</b> 市场宽度条从中心双向生长 520ms，中央数字在 70% 处淡入（spec 22 §3.3）<br>
+    <b>A3</b> 量能三柱从基线生长 320ms + 40ms stagger（spec 22 §3.2）<br>
+    <b>A4</b> 连板梯队首板→高板逐层升起 60ms stagger，Y 12px + 淡入（spec 22 §4.6，替代原 scale 方案）<br><br>
+    全部动效遵循 spec 22：变动触发、非循环（AI 思考态除外且可中断）、reduce-motion 降级为瞬时切换。
+  </div>
+</div>
+
+<script>
+  /* ============ AI 复盘卡状态机（与 Kuikly 实现同构） ============ */
+  const aiCard = document.getElementById('aiCard');
+  const aiStar = document.getElementById('aiStar');
+  const aiAction = document.getElementById('aiAction');
+  const aiBody = document.getElementById('aiBody');
+  const aiFoot = document.getElementById('aiFoot');
+  const aiFollow = document.getElementById('aiFollow');
+  const AI_TEXT = "指数层面三大指数集体收红，创业板指领涨 1.24%，量能 1.24 万亿较 5 日均放大 12%，属于放量上涨而非缩量反弹。宽度上上涨 1541 家对下跌 3618 家，红盘占比仅 28%，指数与个股明显背离——权重护盘、题材退潮。短线情绪封板率 72% 偏弱、最高板维持 5 板，梯队中段（2-3 板）家数尚可，情绪处于「修复但未共振」阶段。整体看今天是权重搭台、结构分化的一天，追高需谨慎。";
+  let aiState = 0; // 0 idle / 1 thinking / 2 streaming / 3 done
+  let timer = null, abort = false;
+
+  function renderIdle() {
+    aiState = 0; aiStar.classList.remove('thinking');
+    aiAction.textContent = '生成';
+    aiFollow.style.display = 'none';
+    aiBody.innerHTML = '<div class="ai-sub" id="aiIdleSub">基于本页已展示的指数、宽度、量能与情绪数据，30 秒讲清今天市场的结构。</div>';
+  }
+  function renderThinking() {
+    aiState = 1; aiStar.classList.add('thinking');
+    aiAction.textContent = '停止';
+    aiFollow.style.display = 'none';
+    aiBody.innerHTML = '<div class="ai-skeleton"><div class="skel"></div><div class="skel short"></div></div><div class="ai-thinking-label">✦ 正在汇总页面数据（指数 · 宽度 · 量能 · 情绪）…</div>';
+  }
+  function renderStream(text) {
+    if (aiState !== 2) { aiState = 2; aiStar.classList.remove('thinking'); aiBody.innerHTML = '<div class="ai-output" id="aiOut"></div>'; aiFoot.style.display = 'flex'; }
+    const el = document.getElementById('aiOut');
+    el.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;') + '<span class="caret"></span>';
+    el.scrollIntoView && false; // 保持页面滚动位置，不打断阅读
+  }
+  function renderDone(text) {
+    aiState = 3; aiAction.textContent = '重新生成';
+    document.getElementById('aiOut').textContent = text;
+    aiFollow.style.display = 'inline';
+  }
+  function start() {
+    abort = false; renderThinking();
+    // 模拟 DeepSeek 流式：先 900ms 思考态，再按 2 字/28ms 推流
+    timer = setTimeout(() => {
+      if (abort) return;
+      let i = 0;
+      const step = () => {
+        if (abort) return;
+        i += 2;
+        renderStream(AI_TEXT.slice(0, i));
+        if (i < AI_TEXT.length) timer = setTimeout(step, 28);
+        else renderDone(AI_TEXT);
+      };
+      step();
+    }, 900);
+  }
+  function stop() {
+    abort = true; clearTimeout(timer);
+    if (aiState === 2 && document.getElementById('aiOut')) renderDone(document.getElementById('aiOut').textContent);
+    else renderIdle();
+  }
+  aiCard.addEventListener('click', (e) => {
+    if (e.target === aiFollow || aiFollow.contains(e.target)) return; // 追问走深链
+    (aiState === 1 || aiState === 2) ? stop() : start();
+  });
+  aiFollow.addEventListener('click', () => alert('openChatWithQuestion("就刚才的市场复盘继续追问：…")'));
+
+  /* ============ A2 宽度条重播 ============ */
+  function replayBreadth() {
+    const card = document.getElementById('breadthCard');
+    const clone = card.cloneNode(true);
+    card.parentNode.replaceChild(clone, card);
+    document.getElementById('breadthCard').id = 'breadthCard';
+  }
+
+  /* ============ tick flash 演示（既有能力，仅演示节拍） ============ */
+  setInterval(() => {
+    const el = document.getElementById('heroPrice');
+    const up = Math.random() > 0.5;
+    el.classList.remove('tick-up', 'tick-down'); void el.offsetWidth;
+    el.classList.add(up ? 'tick-up' : 'tick-down');
+    setTimeout(() => el.classList.remove('tick-up', 'tick-down'), 600);
+  }, 3200);
+</script>
+</body>
+</html>

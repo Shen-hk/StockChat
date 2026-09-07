@@ -2,10 +2,14 @@ package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.chat.AiChatMessage
+import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
+import com.kuikly.stockchat.common.openChatWithQuestion
 import com.kuikly.stockchat.common.openPage
+import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.provider.HotspotSnapshot
 import com.kuikly.stockchat.data.provider.MarketOverview
@@ -18,12 +22,16 @@ import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.AppTopBarMetric
 import com.kuikly.stockchat.page.components.SourceStampLine
 import com.tencent.kuikly.core.annotations.Page
+import com.tencent.kuikly.core.base.Anchor
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.Rotate
 import com.tencent.kuikly.core.base.Scale
+import com.tencent.kuikly.core.base.Skew
+import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind
@@ -90,6 +98,20 @@ internal class MarketPage : BasePager() {
     private var pullReady: Boolean by observable(false)
     private var refreshResultVisible: Boolean by observable(false)
     private var debugScroll: String by observable("scroll:none")
+    /** 指数带次级卡片与 AI 卡的入场开关（spec 22 §5.2 渐进加载的入场层）。 */
+    private var stripEntered: Boolean by observable(false)
+    /** 宽度条中心双向生长（spec 22 §3.3）。 */
+    private var breadthEntered: Boolean by observable(false)
+    /** 量能三柱从基线生长（spec 22 §3.2）。 */
+    private var volumeEntered: Boolean by observable(false)
+    /** AI 复盘卡状态机：0 idle / 1 thinking / 2 streaming / 3 done / 4 error。 */
+    private var aiState: Int by observable(0)
+    private var aiText: String by observable("")
+    /** AI 思考态骨架的有限呼吸脉冲（2 次，非循环，可中断）。 */
+    private var aiPulse: Boolean by observable(false)
+    private var aiPulseRevision = 0
+    private var aiProvider: AiProvider? = null
+    private val aiDependencies by lazy { ChatDependencies.forPager(pagerId) }
 
     /**
      * The page's single motion switch. Every transform/opacity timeline on this
@@ -104,7 +126,15 @@ internal class MarketPage : BasePager() {
     override fun created() {
         super.created()
         // Entry motion is one-shot and decorative-free; it never repeats while prices update.
-        if (motionEnabled()) setTimeout(1) { heroEntered = true; ladderEntered = true }
+        if (motionEnabled()) {
+            setTimeout(1) {
+                heroEntered = true
+                ladderEntered = true
+                stripEntered = true
+                breadthEntered = true
+                volumeEntered = true
+            }
+        }
         refreshOverview()
         dependencies.insightRepository.loadHotspots { hotspots = it }
     }
@@ -258,6 +288,107 @@ internal class MarketPage : BasePager() {
         showPeek(label, primary, "$detail · 数据源：${overview.stamp.source}。不同平台统计范围和时间点可能不同。")
     }
 
+    // ------------------------------------------------------------------
+    // AI 复盘卡（doc 31 §1）：内联流式生成，未配置 AI 时降级为深链对话页。
+    // ------------------------------------------------------------------
+
+    private fun toggleAiBriefing() {
+        if (aiState == 1 || aiState == 2) stopAiBriefing() else startAiBriefing()
+    }
+
+    private fun aiActionLabel(): String = when (aiState) {
+        1, 2 -> "停止"
+        3 -> "重新生成"
+        4 -> "重试"
+        else -> "生成"
+    }
+
+    private fun startAiBriefing() {
+        val config = aiDependencies.configStore.load()
+        val configError = config.validationError()
+        if (configError != null) {
+            // 无可用配置时不弹错误：直接带上下文跳对话页，由对话页做配置引导
+            //（与 RiskMapPage / StockDetailPage 的深链范式一致）。
+            openChatWithQuestion("帮我复盘一下今天的市场：${moodHeadline(overview)}")
+            return
+        }
+        aiProvider?.stop()
+        aiText = ""
+        aiState = 1
+        triggerAiPulse()
+        val provider = aiDependencies.aiProviderFactory(config)
+        aiProvider = provider
+        provider.ask(
+            messages = listOf(AiChatMessage("user", buildAiPrompt())),
+            onDelta = { delta ->
+                aiText += delta
+                if (aiState == 1) aiState = 2
+            },
+            onDone = {
+                if (aiState <= 2) aiState = if (aiText.isBlank()) 0 else 3
+            },
+            onError = { message ->
+                if (aiState == 1 || aiState == 2) {
+                    aiText = message
+                    aiState = 4
+                }
+            },
+        )
+    }
+
+    /** 流式中的再点击 = 中断：保留已生成的部分文本（落为 done），否则回到 idle。 */
+    private fun stopAiBriefing() {
+        aiProvider?.stop()
+        aiPulseRevision += 1
+        aiState = if (aiText.isNotBlank()) 3 else 0
+    }
+
+    /** 骨架呼吸是有限脉冲（2 次），流式一旦开始即被内容反馈取代。 */
+    private fun triggerAiPulse() {
+        aiPulseRevision += 1
+        val revision = aiPulseRevision
+        aiPulse = true
+        setTimeout(350) { if (aiPulseRevision == revision && aiState == 1) aiPulse = false }
+        setTimeout(700) { if (aiPulseRevision == revision && aiState == 1) aiPulse = true }
+        setTimeout(1050) { if (aiPulseRevision == revision && aiState == 1) aiPulse = false }
+    }
+
+    /** 只喂本页已展示的数据；明确禁止卡片协议与荐股措辞（doc 31 §1.2）。 */
+    private fun buildAiPrompt(): String {
+        val data = overview
+        val indexText = data.indices.take(3)
+            .joinToString("；") { "${it.name} ${Format.price(it.price)}（${Format.percent(it.changePercent)}）" }
+        val topSectors = data.sectors.sortedByDescending { it.changePercent }
+            .take(3)
+            .joinToString("、") { "${it.name} ${Format.percent(it.changePercent)}" }
+        return buildString {
+            append("你是 A 股市场解读助手。基于以下今日行情快照，用不超过 150 字的简体中文口语化复盘今天市场结构：")
+            append("先讲指数与量能，再讲宽度与情绪，最后一句给中性观察。")
+            append("只输出正文，不要列表、不要卡片协议、不要任何个股买卖建议。\n")
+            append("指数：").append(indexText.ifBlank { "待接入" }).append("。\n")
+            append("宽度：上涨 ").append(data.risingCount).append(" / 平盘 ").append(data.flatCount)
+                .append(" / 下跌 ").append(data.fallingCount).append("。\n")
+            append("量能：").append(data.turnoverAmount?.let(::turnoverText) ?: "待接入")
+            volumeDeviation()?.let { append("（较5日均 ").append(Format.percent(it)).append("）") }
+            append("。\n")
+            append("情绪：恐贪 ").append(data.moodScore)
+                .append("；封板率 ").append(data.sealRate?.let { Format.percent(it * 100) } ?: "--")
+                .append("；最高板 ").append(data.highestBoard ?: "--")
+                .append(" 板（昨 ").append(data.yesterdayHighestBoard ?: "--").append(" 板）。\n")
+            append("领涨板块：").append(topSectors.ifBlank { "待接入" }).append("。\n")
+            append("数据源：").append(data.stamp.source).append("，截至 ").append(data.stamp.asOf).append("。")
+        }
+    }
+
+    private fun aiFollowUpQuestion(): String {
+        val leader = overview.sectors.maxByOrNull { it.changePercent }
+        return buildString {
+            append("接着刚才今天市场的复盘，帮我展开讲讲")
+            if (leader != null) append("领涨板块 ${leader.name}（${Format.percent(leader.changePercent)}）") else append("板块轮动")
+            append("背后的资金和情绪逻辑。")
+        }
+    }
+
     override fun body(): ViewBuilder {
         val page = this
         return {
@@ -318,7 +449,24 @@ internal class MarketPage : BasePager() {
                 View { attr { marginTop(9f); marginLeft(8f); marginRight(8f); flexDirectionRow(); opacity(0.90f) }
                     vbind({ page.overview }) {
                         page.overview.indices.drop(1).take(2).forEachIndexed { index, item ->
-                            View { attr { flex(1f); height(108f); padding(13f); borderRadius(17f); backgroundColor(theme.surfaceMuted); if (index > 0) marginLeft(8f) }
+                            View {
+                                attr {
+                                    flex(1f); height(108f); padding(13f); borderRadius(17f); backgroundColor(theme.surfaceMuted); if (index > 0) marginLeft(8f)
+                                    // A1 入场 stagger（doc 31 §2）：上移淡入，scale 与 translate 必须
+                                    // 走全参 transform——便捷重载会把其余分量重置为 DEFAULT。
+                                    opacity(if (page.stripEntered || !page.motionEnabled()) 1f else 0f)
+                                    if (page.motionEnabled()) {
+                                        val entered = page.stripEntered
+                                        transform(
+                                            rotate = Rotate.DEFAULT,
+                                            scale = Scale.DEFAULT,
+                                            translate = Translate(0f, 0f, 0f, if (entered) 0f else 12f),
+                                            anchor = Anchor.DEFAULT,
+                                            skew = Skew.DEFAULT,
+                                        )
+                                        animate(Animation.easeOut(0.26f).delay(0.06f * index), page.stripEntered)
+                                    }
+                                }
                                 Text { attr { text(item.name); fontSize(11f); color(theme.textSecondary) } }
                                 Text { attr { text(Format.price(item.price)); marginTop(8f); fontSize(19f); fontWeightBold(); color(theme.textPrimary) } }
                                 Text { attr { text(Format.percent(item.changePercent)); marginTop(3f); fontSize(12f); fontWeightSemiBold(); color(page.changeColor(item.changePercent)) } }
@@ -410,7 +558,19 @@ internal class MarketPage : BasePager() {
                             View { attr { marginTop(10f); flexDirectionRow(); alignItemsCenter() }
                                 Text { attr { text(label); width(34f); fontSize(10f); color(theme.textTertiary) } }
                                 View { attr { width(160f); height(6f); borderRadius(3f); backgroundColor(theme.surfaceMuted) }
-                                    View { attr { width(width); height(6f); borderRadius(3f); backgroundColor(if (index == 0) theme.brand else theme.textTertiary.opacity(0.38f)) } }
+                                    // A3 柱体从基线生长（spec 22 §3.2）：320ms + 40ms stagger。
+                                    // width 是普通 attr，animate 会补间它的变化；vbind 重建后
+                                    // volumeEntered 恒真，刷新不重播。
+                                    View {
+                                        attr {
+                                            width(if (!page.motionEnabled() || page.volumeEntered) width else 0.02f)
+                                            height(6f); borderRadius(3f); backgroundColor(if (index == 0) theme.brand else theme.textTertiary.opacity(0.38f))
+                                            if (page.motionEnabled()) {
+                                                val entered = page.volumeEntered
+                                                animate(Animation.easeOut(0.32f).delay(0.04f * index), page.volumeEntered)
+                                            }
+                                        }
+                                    }
                                 }
                                 Text { attr { text(value?.let(page::turnoverText) ?: "--"); flex(1f); marginLeft(8f); textAlignRight(); fontSize(10f); color(theme.textSecondary) } }
                             }
@@ -429,11 +589,42 @@ internal class MarketPage : BasePager() {
                         val fallingFraction = data.fallingCount.toFloat() / total
                         View { attr { flexDirectionRow(); alignItemsFlexEnd() }
                             View { attr { flex(1f) }; Text { attr { text(data.risingCount.toString()); fontSize(25f); fontWeightBold(); color(theme.rise) } }; Text { attr { text("上涨"); marginTop(2f); fontSize(10f); color(theme.textTertiary) } } }
-                            View { attr { width(82f); allCenter() }; Text { attr { text("红盘 ${Format.decimal(risingFraction.toDouble() * 100, 1)}%"); fontSize(11f); fontWeightSemiBold(); color(theme.textSecondary) } } }
+                            View { attr { width(82f); allCenter() }
+                                Text {
+                                    attr {
+                                        text("红盘 ${Format.decimal(risingFraction.toDouble() * 100, 1)}%")
+                                        fontSize(11f); fontWeightSemiBold(); color(theme.textSecondary)
+                                        // A2：数字在条生长到约 70% 时淡入（delay ≈ 0.52s × 0.7）。
+                                        opacity(if (page.breadthEntered || !page.motionEnabled()) 1f else 0f)
+                                        if (page.motionEnabled()) {
+                                            val entered = page.breadthEntered
+                                            animate(Animation.easeOut(0.30f).delay(0.36f), page.breadthEntered)
+                                        }
+                                    }
+                                }
+                            }
                             View { attr { flex(1f) }; Text { attr { text(data.fallingCount.toString()); textAlignRight(); fontSize(25f); fontWeightBold(); color(theme.fall) } }; Text { attr { text("下跌"); marginTop(2f); textAlignRight(); fontSize(10f); color(theme.textTertiary) } } }
                         }
-                        View { attr { marginTop(13f); height(10f); flexDirectionRow(); borderRadius(5f); overflow(true); backgroundColor(theme.surfaceMuted) }
-                            View { attr { flex(risingFraction); backgroundColor(theme.rise) } }; View { attr { flex(flatFraction); backgroundColor(theme.flat) } }; View { attr { flex(fallingFraction); backgroundColor(theme.fall) } }
+                        // A2 宽度条从中心分界线向两侧生长（spec 22 §3.3）：整条 scaleX 0→1
+                        // 520ms，中心 origin 下两段同时伸展——它们是同一个事实的两面。
+                        View {
+                            attr {
+                                marginTop(13f); height(10f); flexDirectionRow(); borderRadius(5f); overflow(true); backgroundColor(theme.surfaceMuted)
+                                if (page.motionEnabled()) {
+                                    val entered = page.breadthEntered
+                                    transform(
+                                        rotate = Rotate.DEFAULT,
+                                        scale = Scale(if (entered) 1f else 0.02f, 1f),
+                                        translate = Translate.DEFAULT,
+                                        anchor = Anchor.DEFAULT,
+                                        skew = Skew.DEFAULT,
+                                    )
+                                    animate(Animation.easeOut(0.52f), page.breadthEntered)
+                                }
+                            }
+                            View { attr { flex(risingFraction); backgroundColor(theme.rise) } }
+                            View { attr { flex(flatFraction); backgroundColor(theme.flat) } }
+                            View { attr { flex(fallingFraction); backgroundColor(theme.fall) } }
                         }
                         Text { attr { text("涨跌差 ${data.risingCount - data.fallingCount} · 涨幅>5% / 跌幅>5% 待接入 · 平盘 ${data.flatCount}"); marginTop(8f); fontSize(10f); color(theme.textTertiary) } }
                     }
@@ -496,10 +687,18 @@ internal class MarketPage : BasePager() {
                                 flexDirectionRow()
                                 alignItemsCenter()
                                 opacity(if (page.ladderEntered || !page.motionEnabled()) 1f else 0f)
+                                // A4 逐层升起（spec 22 §4.6 / doc 31 §2）：Y 12px 上移 + 淡入
+                                // 280ms，delay 按首板→高板 60ms 递增（与梯队高度的空间隐喻一致）。
                                 if (page.motionEnabled()) {
                                     val entered = page.ladderEntered
-                                    transform(scale = Scale(if (entered) 1f else 0.96f, if (entered) 1f else 0.96f))
-                                    animate(Animation.easeOut(0.28f).delay(0.06f * (3 - index)), page.ladderEntered)
+                                    transform(
+                                        rotate = Rotate.DEFAULT,
+                                        scale = Scale.DEFAULT,
+                                        translate = Translate(0f, 0f, 0f, if (entered) 0f else 12f),
+                                        anchor = Anchor.DEFAULT,
+                                        skew = Skew.DEFAULT,
+                                    )
+                                    animate(Animation.easeOut(0.28f).delay(0.06f * (level - 1)), page.ladderEntered)
                                 }
                             }
                             Text { attr { text(if (level == 1) "首板" else "${level}板"); width(34f); fontSize(10f); color(theme.textSecondary) } }
@@ -688,9 +887,81 @@ internal class MarketPage : BasePager() {
                     Text { attr { text("北向资金存在不同统计口径，展示前需核对来源与时间范围。"); marginTop(11f); fontSize(10f); lineHeight(15f); color(theme.flat) } }
                 }
 
-                View { attr { marginTop(22f); padding(15f); borderRadius(16f); backgroundColor(theme.brandSoft); border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.14f))) }
-                    Text { attr { text("让 AI 讲讲今天"); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
-                    Text { attr { text("基于已展示的指数、宽度和情绪数据，解释今天发生了什么。"); marginTop(4f); fontSize(11f); lineHeight(16f); color(theme.textSecondary) } }
+                // B · AI 复盘卡（doc 31 §1）：idle → thinking（骨架呼吸）→ streaming（打字机）
+                // → done（追问深链）。未配置 AI 时点击直接带上下文跳对话页。
+                View {
+                    attr {
+                        marginTop(22f); padding(15f); borderRadius(16f); backgroundColor(theme.brandSoft); border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.14f)))
+                        opacity(if (page.stripEntered || !page.motionEnabled()) 1f else 0f)
+                        if (page.motionEnabled()) {
+                            val entered = page.stripEntered
+                            transform(
+                                rotate = Rotate.DEFAULT,
+                                scale = Scale(if (entered) 1f else 0.98f, if (entered) 1f else 0.98f),
+                                translate = Translate(0f, 0f, 0f, if (entered) 0f else 10f),
+                                anchor = Anchor.DEFAULT,
+                                skew = Skew.DEFAULT,
+                            )
+                            animate(Animation.easeOut(0.28f).delay(0.18f), page.stripEntered)
+                        }
+                    }
+                    View {
+                        attr { flexDirectionRow(); alignItemsCenter() }
+                        View { attr { width(22f); height(22f); borderRadius(7f); backgroundColor(theme.brand); allCenter() }
+                            Text { attr { text("✦"); fontSize(12f); fontWeightBold(); color(theme.onBrand) } }
+                        }
+                        Text { attr { text("让 AI 讲讲今天"); marginLeft(8f); flex(1f); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
+                        Text { attr { text(page.aiActionLabel()); fontSize(11f); fontWeightSemiBold(); color(theme.brand) } }
+                        event { click { page.toggleAiBriefing() } }
+                    }
+                    vif({ page.aiState == 0 }) {
+                        Text { attr { text("基于本页已展示的指数、宽度、量能与情绪数据，让 AI 用一段话讲清今天市场的结构。"); marginTop(8f); fontSize(11f); lineHeight(16f); color(theme.textSecondary) } }
+                    }
+                    vif({ page.aiState == 1 }) {
+                        // 思考态骨架与输出文本同构（spec 22 §5.1）；呼吸是 aiPulse 驱动的
+                        // 有限脉冲，流式开始即被内容反馈取代，不引入循环 shimmer。
+                        View { attr { marginTop(12f) }
+                            View {
+                                attr {
+                                    height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.16f))
+                                    opacity(if (!page.motionEnabled()) 0.6f else if (page.aiPulse) 1f else 0.45f)
+                                    if (page.motionEnabled()) {
+                                        val pulsing = page.aiPulse
+                                        animate(Animation.easeOut(0.5f), page.aiPulse)
+                                    }
+                                }
+                            }
+                            View {
+                                attr {
+                                    marginTop(8f); marginRight(110f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.16f))
+                                    opacity(if (!page.motionEnabled()) 0.6f else if (page.aiPulse) 1f else 0.45f)
+                                    if (page.motionEnabled()) {
+                                        val pulsing = page.aiPulse
+                                        animate(Animation.easeOut(0.5f), page.aiPulse)
+                                    }
+                                }
+                            }
+                            Text { attr { text("正在汇总页面数据（指数 · 宽度 · 量能 · 情绪）…"); marginTop(10f); fontSize(10f); color(theme.brand) } }
+                        }
+                    }
+                    vif({ page.aiState == 2 || page.aiState == 3 || page.aiState == 4 }) {
+                        Text {
+                            attr {
+                                // 打字机：attr 内读 aiText，每个 delta 重跑本 attr 更新文本，
+                                // 视图不重挂（R1）；流式态尾随一个光标字符。
+                                text(page.aiText + if (page.aiState == 2) " ▍" else "")
+                                marginTop(10f); fontSize(12f); lineHeight(20f)
+                                color(if (page.aiState == 4) theme.fall else theme.textPrimary)
+                            }
+                        }
+                    }
+                    vif({ page.aiState == 3 }) {
+                        View { attr { marginTop(10f); flexDirectionRow(); alignItemsCenter() }
+                            Text { attr { text("AI 生成 · 仅供参考，不构成投资建议"); flex(1f); fontSize(9.5f); color(theme.textTertiary) } }
+                            Text { attr { text("追问 ›"); fontSize(11f); fontWeightSemiBold(); color(theme.brand) }
+                                event { click { page.openChatWithQuestion(page.aiFollowUpQuestion()) } } }
+                        }
+                    }
                 }
                 vbind({ page.overview.stamp }) {
                     SourceStampLine(page.overview.stamp, theme)
