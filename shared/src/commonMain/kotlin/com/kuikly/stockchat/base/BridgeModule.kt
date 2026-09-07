@@ -36,6 +36,13 @@ internal class BridgeModule : Module() {
         callNativeMethod("shareInterpretation", methodArgs, null)
     }
 
+    // 用系统浏览器/外部应用打开 http(s) 链接（新闻原文等）
+    fun openUrl(url: String) {
+        val methodArgs = JSONObject()
+        methodArgs.put("url", url)
+        callNativeMethod("openUrl", methodArgs, null)
+    }
+
     fun showAlert(
         title: String?,
         message: String?,

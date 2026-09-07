@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.common
 
+import com.kuikly.stockchat.base.BridgeModule
 import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
@@ -47,6 +48,17 @@ fun PagerScope.openChatWithQuestion(question: String) {
     )
 }
 
+fun PagerScope.openGlossary(islandExpand: Boolean = false) {
+    getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
+        Routes.GLOSSARY,
+        JSONObject().apply {
+            // 术语岛下滑 → 术语表与股票岛下滑 → 详情页共用同一条容器变换
+            // 交接：原生无动画 push，页面内容就地淡入接管玻璃帧。
+            if (islandExpand) put("krTransition", "islandExpand")
+        },
+    )
+}
+
 fun PagerScope.openPage(page: String) {
     if (!platformOpenPage(page)) {
         getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(page, JSONObject())
@@ -59,5 +71,15 @@ fun PagerScope.closePage() {
     }
 }
 
+// 外部链接（新闻原文等）。平台通道优先（H5 直接 window.open），
+// 未接平台通道的端走原生桥 openUrl（Android ACTION_VIEW）。
+fun PagerScope.openUrl(url: String) {
+    if (url.isBlank()) return
+    if (!platformOpenUrl(url)) {
+        getPager().acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).openUrl(url)
+    }
+}
+
 internal expect fun platformOpenPage(page: String): Boolean
 internal expect fun platformClosePage(): Boolean
+internal expect fun platformOpenUrl(url: String): Boolean

@@ -67,6 +67,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                 copyToPasteboard(params)
             }
 
+            "openUrl" -> {
+                openUrlExternal(params)
+            }
+
             "shareInterpretation" -> {
                 shareInterpretation(params)
             }
@@ -249,6 +253,31 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         val paramJSON = JSONObject(params)
         (context?.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)?.also {
             it.setPrimaryClip(ClipData.newPlainText(MODULE_NAME, paramJSON.optString("content")))
+        }
+    }
+
+    /** 系统浏览器打开 http(s) 外链（新闻「阅读原文」等）。 */
+    private fun openUrlExternal(params: String?) {
+        if (params == null) {
+            return
+        }
+        val url = JSONObject(params).optString("url")
+        if (url.isBlank() || !(url.startsWith("http://") || url.startsWith("https://"))) {
+            return
+        }
+        val currentActivity = activity
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            if (currentActivity != null) {
+                currentActivity.startActivity(intent)
+            } else {
+                context?.startActivity(intent)
+            }
+        } catch (error: Throwable) {
+            Log.w("StockChatBridge", "openUrl failed: $url", error)
+            Toast.makeText(KRApplication.application, "未找到可打开链接的应用", Toast.LENGTH_SHORT).show()
         }
     }
 
