@@ -41,3 +41,23 @@ Consequences:
 - Are reduced-motion behavior and Android/H5/iOS runtime interactions verified after the change?
 
 When debugging a silent Kuikly animation, inspect reactive dependency registration and event hit testing before changing timing or easing.
+
+---
+
+# Vibe coding workflow conventions
+
+Conventions for AI-assisted development in this repository (multiple AI sessions may work on the same codebase). Confirmed direction from mentor feedback, 2026-09-07.
+
+## Light constraints + periodic cleanup
+
+- Keep hard rules minimal (this file). Do not try to enumerate every constraint up front — it is impossible to be exhaustive at prototype stage.
+- After each development phase, run a consolidation pass: collect the pitfalls actually hit and fold them back into this rules file (or the relevant docs). Rules grow from real errors, not speculation.
+
+## Spec-assisted execution for long requirements
+
+- Do not raw-vibe long requirements. Write a short spec first (goal, scope, boundaries, acceptance), give the AI a simple review of it, then let it run autonomously.
+
+## Session hygiene
+
+- Start new AI sessions frequently; long sessions accumulate stale context and drift from the architecture.
+- During and after each session, have the AI summarize its own work — decisions, pitfalls, invariants — so the summary can be persisted and carried into the next session.
