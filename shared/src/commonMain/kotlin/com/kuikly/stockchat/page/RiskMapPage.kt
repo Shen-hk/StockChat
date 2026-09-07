@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.base.BasePager
+import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
@@ -8,6 +9,8 @@ import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openChatWithQuestion
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
+import com.kuikly.stockchat.data.AlertKind
+import com.kuikly.stockchat.data.AlertMessage
 import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.RiskSnapshot
 import com.kuikly.stockchat.data.provider.CalendarEventKind
@@ -58,6 +61,11 @@ import kotlin.math.sqrt
  * - **C-2 术语触发单点收口**：维度标题的术语出口只调 GlossaryStore.encounter，不自行记录。
  * - **C-3 AI 预算分账**：本页 ≤3 处、全条件触发、无常驻。
  * - **C-4 口径诚实**：等权估算/数据模式/快照口径在**该处**标注，不只页头一行。
+ *
+ * doc 30：本页是预警收件箱的生产端（事件/暴露变化 → putExtraMessage）。
+ * 事件时间轴行与暴露快照历史面板只写不读：把已发生事实组装成 pinned EVENT /
+ * EXPOSURE 消息写入 alertInboxStore，是否「已转/已生成」的显示态由构建期读一次的
+ * extraMessages() id 集合驱动（convertedEventIds / generatedExposureIds）。
  */
 @Page(Routes.RISK, supportInLocal = true)
 internal class RiskMapPage : BasePager() {
@@ -84,6 +92,25 @@ internal class RiskMapPage : BasePager() {
 
     /** 相关性矩阵选中的配对 "symA|symB"；空 = 未选中。 */
     private var selectedPair: String by observable("")
+
+    /**
+     * 构建期读一次 alertInboxStore.extraMessages() 得到的 id 集合（EVENT 类）。
+     * 事件时间轴据此判定某行事件「是否已转预警」，转成功后同步追加 id 触发刷新。
+     */
+    private var convertedEventIds: Set<String> by observable(emptySet())
+
+    /**
+     * 同上，EXPOSURE 类 id 集合（"EXPOSURE:<capturedAtMillis>"）。
+     * 暴露快照面板据此判定「是否已被生成预警」。
+     */
+    private var generatedExposureIds: Set<String> by observable(emptySet())
+
+    /**
+     * 「转预警」后的瞬时提示，时间轴底部一行 brand 色文案。
+     * 置 "已加入预警收件箱 ✓" 后 2.5s 经 setTimeout 清空；
+     * 清空用同值 early-return 规避：先写 "" 由 vif(isNotEmpty) 让视图消失即可。
+     */
+    private var eventToInboxHint: String by observable("")
 
     override fun created() {
         super.created()
@@ -779,8 +806,11 @@ internal class RiskMapPage : BasePager() {
             return
         }
         upcoming.forEach { event ->
+            // doc 30：每行右端动作。IPO 不产生消息（与 AlertInboxBuilder 同口径），不提供「转预警」。
+            val eventId = "EVENT:${event.symbol}:${event.date}"
+            val convertible = event.kind != CalendarEventKind.IPO
             container.View {
-                attr { marginTop(10f); flexDirectionRow() }
+                attr { marginTop(10f); flexDirectionRow(); alignItemsCenter() }
                 Text {
                     attr {
                         text(event.date.substring(5))
@@ -819,6 +849,44 @@ internal class RiskMapPage : BasePager() {
                     }
                     event { click { page.openStockDetail(event.symbol, Routes.RISK) } }
                 }
+                // 右端动作：未转→「转预警 ›」，已转→「已在收件箱 ✓」（doc 30）。
+                vif({ convertible }) {
+                    vif({ !page.convertedEventIds.contains(eventId) }) {
+                        View {
+                            attr {
+                                marginLeft(8f)
+                                paddingLeft(8f)
+                                paddingRight(8f)
+                                height(24f)
+                                allCenter()
+                                borderRadius(8f)
+                                backgroundColor(page.theme.brandSoft)
+                            }
+                            Text {
+                                attr {
+                                    text("转预警 ›")
+                                    fontSize(11f)
+                                    color(page.theme.brand)
+                                }
+                            }
+                            event {
+                                click {
+                                    page.convertEventToInbox(event, eventId)
+                                }
+                            }
+                        }
+                    }
+                    vif({ page.convertedEventIds.contains(eventId) }) {
+                        Text {
+                            attr {
+                                text("已在收件箱 ✓")
+                                marginLeft(8f)
+                                fontSize(10f)
+                                color(page.theme.textTertiary)
+                            }
+                        }
+                    }
+                }
             }
         }
         // AI 触点 #3（条件）：未来存在解禁/减持类事件才出现。
@@ -828,6 +896,99 @@ internal class RiskMapPage : BasePager() {
                 "未来 30 天内自选有解禁安排——解禁不等于下跌，但意味着可流通筹码增加",
             )
         }
+        // doc 30：转预警成功后的瞬时提示（brand 色，2.5s 后清空）。
+        vif({ page.eventToInboxHint.isNotEmpty() }) {
+            container.Text {
+                attr {
+                    text(page.eventToInboxHint)
+                    marginTop(10f)
+                    fontSize(10.5f)
+                    color(page.theme.brand)
+                }
+            }
+        }
+    }
+
+    /**
+     * doc 30：把单条事件组装成 pinned EVENT 消息写入预警收件箱（只写不读）。
+     * id 严格用 "EVENT:$symbol:$date"，与 AlertInboxBuilder 同 id 规则避免重复。
+     * 事实句只陈述已发生/已预约事项，不含任何 §1 禁词（风险承受/匹配/建议仓位/调仓等）。
+     */
+    private fun convertEventToInbox(event: MarketCalendarEvent, eventId: String) {
+        val kindLabel = when (event.kind) {
+            CalendarEventKind.EARNINGS -> "财报"
+            CalendarEventKind.UNLOCK -> "解禁"
+            CalendarEventKind.DIVIDEND -> "分红"
+            else -> event.kind.label
+        }
+        val title = when (event.kind) {
+            CalendarEventKind.EARNINGS -> "${event.name}：财报预约披露 ${event.date}"
+            else -> "${event.name}：${kindLabel}进入 30 天窗口"
+        }
+        // 事实卡：描述已预约事项，不下结论、不预测、无操作暗示。
+        val facts = when (event.kind) {
+            CalendarEventKind.UNLOCK -> listOf(
+                "解禁日期为 ${event.date}，意味着可流通筹码增加（解禁≠减持，不等于必然下跌）",
+                "具体解禁规模以公司公告为准，本页只陈述已发生/已预约事项",
+            )
+            CalendarEventKind.EARNINGS -> listOf(
+                "财报预约披露日期为 ${event.date}（统计描述，不是预测）",
+                "披露前后波动可能放大，具体以公司公告为准",
+            )
+            else -> listOf(
+                "${kindLabel}安排于 ${event.date}（统计描述，非预测）",
+                "具体以公司公告为准，本页只陈述已发生/已预约事项",
+            )
+        }
+        val msg = AlertMessage(
+            id = eventId,
+            kind = AlertKind.EVENT,
+            symbol = event.symbol,
+            name = event.name,
+            title = title,
+            summary = "${event.name} 的${kindLabel}安排在 ${event.date}（统计描述，非预测）",
+            facts = facts,
+            createdAtMillis = platformCurrentTimeMillis(),
+            askQuestion = "「${event.name}的${kindLabel}意味着什么？」",
+            termKey = if (event.kind == CalendarEventKind.UNLOCK) "UNLOCK" else "",
+            pinned = true,
+        )
+        dependencies.alertInboxStore.putExtraMessage(msg)
+        // 同步已转 observable，避免回读 store；新 Set 实例触发刷新。
+        convertedEventIds = convertedEventIds + eventId
+        // 底部瞬时提示：先置文案，2.5s 后经 setTimeout 清空（同值 early-return 规避：先写 "" 由 vif 消失）。
+        eventToInboxHint = "已加入预警收件箱 ✓"
+        setTimeout(2500) { eventToInboxHint = "" }
+    }
+
+    /**
+     * doc 30：把最近两次快照的 CR3 / 成员数变化组装成 EXPOSURE 消息写入预警收件箱（只写不读）。
+     * id 严格用 "EXPOSURE:<newer.capturedAtMillis>"，与 AlertInboxBuilder 同 id 规则避免重复。
+     * 文案用品牌蓝语境、只陈述事实（Top 行业 CR3 / 成员数变化 + 「等权估算」口径），
+     * 不带任何「该减仓 / 调仓」暗示（§1 禁词表）。
+     */
+    private fun generateExposureAlert(older: RiskSnapshot, newer: RiskSnapshot, exposureId: String) {
+        val concentrationWord = if (newer.cr3Percent >= older.cr3Percent) "集中" else "分散"
+        val msg = AlertMessage(
+            id = exposureId,
+            kind = AlertKind.EXPOSURE,
+            symbol = "",
+            name = "组合",
+            title = "你的组合比上次更${concentrationWord}了",
+            summary = "Top 行业 CR3 ${older.cr3Percent}% → ${newer.cr3Percent}%（等权估算）",
+            facts = listOf(
+                "Top 行业 CR3：${older.cr3Percent}% → ${newer.cr3Percent}%",
+                "成员数：${older.memberCount} → ${newer.memberCount}",
+                "变化主因见风险地图 · 等权估算",
+            ),
+            createdAtMillis = newer.capturedAtMillis,
+            askQuestion = "我的自选组合集中度变化说明什么？",
+            termKey = "HHI",
+            pinned = false,
+        )
+        dependencies.alertInboxStore.putExtraMessage(msg)
+        // 同步已生成 observable，避免回读 store。
+        generatedExposureIds = generatedExposureIds + exposureId
     }
 
     // ── ⑥ 情绪暴露：连板梯队成员 ──
@@ -916,6 +1077,8 @@ internal class RiskMapPage : BasePager() {
     // ── 数据装载 ──
 
     private fun reload() {
+        // doc 30：构建期读一次收件箱已写消息的 id 集合，驱动「已转/已生成」显示态。
+        refreshInboxConverted()
         val items = watchlistStore.list()
         rows.clear()
         items.forEach { item ->
@@ -962,6 +1125,13 @@ internal class RiskMapPage : BasePager() {
         }
     }
 
+    /** 读一次 alertInboxStore.extraMessages() 的 id 集合，填充已转/已生成 observable。 */
+    private fun refreshInboxConverted() {
+        val ids = dependencies.alertInboxStore.extraMessages().map { it.id }.toSet()
+        convertedEventIds = ids
+        generatedExposureIds = ids
+    }
+
     // ── 纯计算（无副作用，可测）──
 
     /**
@@ -995,6 +1165,12 @@ internal class RiskMapPage : BasePager() {
         val page = this
         val snapshots = page.riskSnapshotStore.all()
         if (snapshots.size < 2) return
+        // doc 30：最近两次快照的 CR3 变化，决定是否展示「生成暴露变化预警」入口。
+        val ascSnapshots = snapshots.sortedBy { it.capturedAtMillis }
+        val olderSnap = ascSnapshots[ascSnapshots.lastIndex - 1]
+        val newerSnap = ascSnapshots.last()
+        val deltaCr3 = abs(newerSnap.cr3Percent - olderSnap.cr3Percent)
+        val exposureId = "EXPOSURE:${newerSnap.capturedAtMillis}"
         container.View {
             attr {
                 marginTop(10f)
@@ -1054,6 +1230,35 @@ internal class RiskMapPage : BasePager() {
                             fontSize(11f)
                             lineHeight(16f)
                             color(page.theme.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+        // doc 30：暴露变化预警入口（仅当最近两次快照 |ΔCR3| ≥ 10 个百分点）。
+        vif({ deltaCr3 >= 10 }) {
+            vif({ !page.generatedExposureIds.contains(exposureId) }) {
+                container.View {
+                    attr { marginTop(10f); flexDirectionRow(); alignItemsCenter() }
+                    Text {
+                        attr {
+                            text("对比上次 · 生成暴露变化预警 ›")
+                            flex(1f)
+                            fontSize(11f)
+                            color(page.theme.brand) // EXPOSURE 用品牌蓝语境，不用涨跌色
+                        }
+                    }
+                    event { click { page.generateExposureAlert(olderSnap, newerSnap, exposureId) } }
+                }
+            }
+            vif({ page.generatedExposureIds.contains(exposureId) }) {
+                container.View {
+                    attr { marginTop(10f); flexDirectionRow() }
+                    Text {
+                        attr {
+                            text("已生成 ✓")
+                            fontSize(10f)
+                            color(page.theme.textTertiary)
                         }
                     }
                 }

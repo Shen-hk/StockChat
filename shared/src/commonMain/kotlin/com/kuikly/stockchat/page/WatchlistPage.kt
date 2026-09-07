@@ -10,7 +10,10 @@ import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
+import com.kuikly.stockchat.data.AlertInboxBuilder
+import com.kuikly.stockchat.data.AlertMessage
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
+import com.kuikly.stockchat.data.provider.platformCurrentDate
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
@@ -63,6 +66,13 @@ import kotlin.math.abs
  *
  * 设计取向遵循「聊看一体」：入口放在抽屉而非独立 Tab，列表行复用 MINI 行情渲染器，
  * 点击直接进详情页；行情走三级降级链并诚实标注数据模式，不拿陈旧价格冒充实时。
+ *
+ * doc 30 小空间整合：本页升级为「我的小空间」首页——
+ * - InboxPreviewRow：聚合头下的预警收件箱预览（未读 badge 即应用内消息提示入口）；
+ * - 今日速览卡：规则引擎事实句（聚合结论/最异常行/最近事件），条件触发，平静日不出现；
+ * - 消息由 AlertInboxBuilder 从行情/规则/日历/快照派生（纯函数，C-1 自选唯一输入源）。
+ * 动效：两块新卡均为 R4 两拍入场（inboxPreviewPresented / briefPresented），
+ * animate 恒注册（R5）、驱动 key 最后读取（R2），reduceMotion 直出。
  */
 @Page(Routes.WATCHLIST, supportInLocal = true)
 internal class WatchlistPage : BasePager() {
@@ -123,11 +133,36 @@ internal class WatchlistPage : BasePager() {
     private var undoText: String by observable("")
     private var undoTimerRef: String = ""
 
+    // ── doc 30 小空间整合：预警收件箱预览 + 今日速览 ──
+    /** 收件箱当前消息（AlertInboxBuilder 派生 + pinned 合并；vfor/badge 从这里读）。 */
+    private var inboxMessages: ObservableList<AlertMessage> by observableList()
+    /** 未读数（AlertInboxStore 口径），驱动预览条标题与角标。 */
+    private var inboxUnread: Int by observable(0)
+    /** 预览条入场两拍（R4）。 */
+    private var inboxPreviewPresented: Boolean by observable(false)
+    /** 速览卡展开态。 */
+    private var briefOpen: Boolean by observable(false)
+    /** 速览卡入场两拍：首条事实到达时翻转（R4），此后恒 true 不再重复播。 */
+    private var briefPresented: Boolean by observable(false)
+    /** 速览卡是否该出现（有异动或 30 天内事件）。 */
+    private var hasBrief: Boolean by observable(false)
+    /** 速览卡事实行（规则引擎产出，每行一句）。 */
+    private var briefLines: ObservableList<String> by observableList()
+
+    /** 预约日历 ∩ 自选的未来事件缓存（非 observable；到达即 rebuildInbox）。 */
+    private var latestEvents: List<com.kuikly.stockchat.data.provider.MarketCalendarEvent> = emptyList()
+
     private val swipeTotalWidth: Float get() = SwipeRow.ACTION_WIDTH
 
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
+        // R4 两拍：预览条首帧隐藏，下一帧翻入（reduceMotion 直出）。
+        if (reduceMotion) {
+            inboxPreviewPresented = true
+        } else {
+            setTimeout(0) { inboxPreviewPresented = true }
+        }
         reload()
     }
 
@@ -149,6 +184,11 @@ internal class WatchlistPage : BasePager() {
                 // ── z0 聚合头：回答「我的自选今天整体怎么样」 ──
                 vif({ page.rows.isNotEmpty() }) {
                     page.renderAggregateHeader(this)
+                }
+
+                // ── doc 30：预警收件箱预览（消息提示的首页入口，badge 即未读数） ──
+                vif({ page.inboxMessages.isNotEmpty() }) {
+                    page.renderInboxPreview(this)
                 }
 
                 // ── z1 筛选：状态在上，分组弱化到第二行 ──
@@ -329,6 +369,11 @@ internal class WatchlistPage : BasePager() {
                     }
                 }
 
+                // ── doc 30：今日速览（规则引擎事实句，条件触发；平静日不出现） ──
+                vif({ page.hasBrief }) {
+                    page.renderBriefCard(this)
+                }
+
                 // ── FR-W5 底部通路：扫描完列表，下一问是「我押注了什么」 ──
                 vif({ page.rows.isNotEmpty() }) {
                     View {
@@ -375,14 +420,15 @@ internal class WatchlistPage : BasePager() {
             }
 
             AppTopBar(
-                title = "自选股",
-                subtitle = "已关注 ${WatchlistStore.MAX_ITEMS} 只上限内的标的，点进详情可继续追问",
+                title = "我的小空间",
+                subtitle = "自选 · 预警 · 风险 · 速览，都在这里",
                 statusBarHeight = page.pagerData.statusBarHeight,
                 theme = page.theme,
                 renderer = page.hostGlassRenderer,
                 backLabel = "返回",
                 onBack = { page.closePage() },
                 actions = listOf(
+                    "预警" to { page.openPage(Routes.ALERTS) },
                     "风险" to { page.openPage(Routes.RISK) },
                     "搜索" to { page.searchOpen = true },
                 ),
@@ -831,6 +877,235 @@ internal class WatchlistPage : BasePager() {
         else -> theme.flat
     }
 
+    // ── doc 30 小空间整合：预警预览条 + 今日速览 ──
+
+    /** 预警收件箱预览条：未读数即 badge，点击进收件箱（应用内消息提示，无远程推送）。 */
+    private fun renderInboxPreview(container: ViewContainer<*, *>) {
+        val page = this@WatchlistPage
+        val rowTheme = theme
+        container.View {
+            attr {
+                marginTop(12f)
+                padding(12f)
+                borderRadius(14f)
+                backgroundColor(rowTheme.surface)
+                boxShadow(BoxShadow(0f, 1f, 3f, Color(0x182238, 0.06f)))
+                flexDirectionRow()
+                alignItemsCenter()
+                // 入场两拍（R4/R5）：目标值由 inboxPreviewPresented 决定，animate 恒注册
+                // 且是本 attr 最后一次 observable 读取（R2）。
+                opacity(if (page.inboxPreviewPresented) 1f else 0f)
+                transform(translate = Translate(0f, 0f, offsetY = if (page.inboxPreviewPresented) 0f else 12f))
+                if (!page.reduceMotion) {
+                    animate(Animation.easeOut(0.28f), page.inboxPreviewPresented)
+                }
+            }
+            event { click { page.openPage(Routes.ALERTS) } }
+            View {
+                attr {
+                    width(36f)
+                    height(36f)
+                    borderRadius(11f)
+                    backgroundColor(rowTheme.brandSoft)
+                    allCenter()
+                }
+                Text { attr { text("⚡"); fontSize(15f) } }
+            }
+            View {
+                attr { flex(1f); marginLeft(11f); marginRight(8f) }
+                Text {
+                    attr {
+                        text(page.inboxTitle())
+                        fontSize(12.5f)
+                        fontWeightSemiBold()
+                        color(rowTheme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        // 在 attr 内读 observableList（R1）：消息重建时预览行即时刷新，
+                        // 不能在构建闭包先取快照（那是首帧定格，R1 高危）。
+                        text(page.inboxMessages.firstOrNull()?.summary.orEmpty())
+                        marginTop(3f)
+                        fontSize(10.5f)
+                        color(rowTheme.textSecondary)
+                    }
+                }
+            }
+            // 未读角标（badge）：0 不画，与收件箱已读态同源（AlertInboxStore）。
+            vif({ page.inboxUnread > 0 }) {
+                View {
+                    attr {
+                        paddingLeft(7f)
+                        paddingRight(7f)
+                        height(18f)
+                        allCenter()
+                        borderRadius(9f)
+                        backgroundColor(rowTheme.rise)
+                        marginRight(6f)
+                    }
+                    Text {
+                        attr {
+                            text("${page.inboxUnread}")
+                            fontSize(10f)
+                            fontWeightSemiBold()
+                            color(Color(0xFFFFFFFF, 1f))
+                        }
+                    }
+                }
+            }
+            Text {
+                attr {
+                    text("查看 ›")
+                    fontSize(11f)
+                    fontWeightSemiBold()
+                    color(rowTheme.brand)
+                }
+            }
+        }
+    }
+
+    private fun inboxTitle(): String =
+        if (inboxUnread > 0) "预警收件箱 · $inboxUnread 条未读" else "预警收件箱 · 暂无新消息"
+
+    /** 今日速览卡：徽标「速览」（规则引擎产出，不冒称 AI），点击展开事实行。 */
+    private fun renderBriefCard(container: ViewContainer<*, *>) {
+        val page = this@WatchlistPage
+        val cardTheme = theme
+        container.View {
+            attr {
+                marginTop(14f)
+                padding(14f)
+                borderRadius(16f)
+                backgroundColor(cardTheme.surface)
+                boxShadow(BoxShadow(0f, 4f, 14f, Color(0x182238, 0.07f)))
+                opacity(if (page.briefPresented) 1f else 0f)
+                transform(translate = Translate(0f, 0f, offsetY = if (page.briefPresented) 0f else 12f))
+                if (!page.reduceMotion) {
+                    animate(Animation.easeOut(0.28f), page.briefPresented)
+                }
+            }
+            event { click { page.briefOpen = !page.briefOpen } }
+            View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                View {
+                    attr {
+                        paddingLeft(6f); paddingRight(6f); paddingTop(2f); paddingBottom(2f)
+                        borderRadius(6f)
+                        backgroundColor(cardTheme.brand)
+                    }
+                    Text {
+                        attr {
+                            text("速览")
+                            fontSize(9f)
+                            fontWeightSemiBold()
+                            color(Color(0xFFFFFFFF, 1f))
+                        }
+                    }
+                }
+                Text {
+                    attr {
+                        flex(1f)
+                        text("今日速览 · 开盘前看完")
+                        marginLeft(7f)
+                        fontSize(12.5f)
+                        fontWeightSemiBold()
+                        color(cardTheme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        text(if (page.briefOpen) "收起" else "展开")
+                        fontSize(10f)
+                        color(cardTheme.textTertiary)
+                    }
+                }
+            }
+            // 展开区 vif 直出（与收件箱展开区同口径：不做高度动画，只做事实呈现）。
+            vif({ page.briefOpen }) {
+                View {
+                    attr { marginTop(10f) }
+                    vfor({ page.briefLines }) { line ->
+                        Text {
+                            attr {
+                                text(line)
+                                marginTop(6f)
+                                fontSize(11.5f)
+                                lineHeight(17f)
+                                color(cardTheme.textSecondary)
+                            }
+                        }
+                    }
+                    Text {
+                        attr {
+                            text("由规则引擎从行情与事件整理 · 非预测非建议")
+                            marginTop(9f)
+                            fontSize(9.5f)
+                            color(cardTheme.textTertiary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 收件箱消息重建：builder 纯函数 + pinned 合并去重（契约见 doc 30 §2.4）。 */
+    private fun rebuildInbox() {
+        val store = dependencies.alertInboxStore
+        val watchlist = watchlistStore.list()
+        val quotes = rows.associate { it.symbol to it.quote }
+        val derived = AlertInboxBuilder.build(
+            watchlist = watchlist,
+            rules = dependencies.alertStore.list(),
+            quotes = quotes,
+            events = latestEvents,
+            snapshots = dependencies.riskSnapshotStore.all(),
+            mutedSymbols = store.mutedRuleSymbols(),
+            exposureMuted = store.exposureMuted(),
+            quietHours = store.quietHoursEnabled(),
+            nowMillis = platformCurrentTimeMillis(),
+            today = platformCurrentDate(),
+        )
+        val merged = (derived + store.extraMessages())
+            .distinctBy { it.id }
+            .sortedByDescending { it.createdAtMillis }
+        inboxMessages.clear()
+        merged.forEach(inboxMessages::add)
+        inboxUnread = store.unreadCount(merged)
+        rebuildBrief()
+    }
+
+    /** 速览事实行重建：聚合结论 + 最异常行 + 最近事件，缺数据的行不写（口径诚实）。 */
+    private fun rebuildBrief() {
+        val agg = aggregate()
+        val lines = mutableListOf<String>()
+        if (agg.quoted > 0) {
+            lines.add("你的 ${agg.total} 只自选等权 ${Format.percent(agg.avgPct)}，${agg.conclusion}。")
+        }
+        val topMover = rows
+            .mapNotNull { row -> row.quote?.let { row to abs(it.changePercent) } }
+            .filter { it.second >= 3.0 }
+            .maxByOrNull { it.second }
+        if (topMover != null) {
+            val quote = topMover.first.quote
+            if (quote != null) {
+                lines.add("「${topMover.first.name} ${Format.percent(quote.changePercent)}」是当前最异常的一行，先看板块再看公告。")
+            }
+        }
+        latestEvents.firstOrNull()?.let { event ->
+            lines.add("「${event.name}的${event.kind.label}」安排在 ${event.date}（预约口径，非预测）。")
+        }
+        briefLines.clear()
+        lines.forEach(briefLines::add)
+        val nowHas = lines.isNotEmpty()
+        // 首条事实到达时播一次入场两拍（R4）；此后恒 true，不重复打扰。
+        if (nowHas && !hasBrief && !reduceMotion) {
+            briefPresented = false
+            setTimeout(0) { briefPresented = true }
+        }
+        hasBrief = nowHas
+    }
+
     // ── 筛选与行 ──
 
     private fun displayRows(): List<WatchlistRow> = rows.filter { row ->
@@ -1124,6 +1399,8 @@ internal class WatchlistPage : BasePager() {
         displayRows().forEach { displayList.add(it) }
         // z3 hero 随每次行情落定重算（值不变不通知；见 [refreshHero]）。
         refreshHero()
+        // doc 30：行情/列表任一落定后重建收件箱与速览（builder 纯函数，量级小）。
+        rebuildInbox()
     }
 
     /**
@@ -1133,7 +1410,8 @@ internal class WatchlistPage : BasePager() {
      */
     private fun reload() {
         rows.clear()
-        watchlistStore.list().forEach { item ->
+        val items = watchlistStore.list()
+        items.forEach { item ->
             rows.add(
                 WatchlistRow(
                     item.symbol, item.name,
@@ -1150,6 +1428,18 @@ internal class WatchlistPage : BasePager() {
                 dataModeLabel = result.mode.quoteLabel()
                 refreshDisplay()
             }
+        }
+        // doc 30：事件临近输入——全市场预约日历 ∩ 自选（口径照抄 RiskMapPage：
+        // 代码去后缀匹配 + 未来事件），到达后重建收件箱与速览。
+        dependencies.insightRepository.loadCalendar { all ->
+            val codes = watchlistStore.list().map { it.symbol.substringBefore('.') }.toSet()
+            val today = platformCurrentDate()
+            latestEvents = all
+                .filter { it.symbol.substringBefore('.') in codes }
+                .filter { it.date >= today }
+                .sortedBy { it.date }
+                .take(8)
+            rebuildInbox()
         }
         refreshDisplay()
     }

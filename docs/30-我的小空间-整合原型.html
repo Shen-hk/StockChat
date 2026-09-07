@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="a0TzVYzvIJgJlkrTmb7MzE">
+<head data-page-node-id="B9Ac1Pve1CfDjma5D4oVkV">
+<meta charset="UTF-8" data-page-node-id="mE1y28bz8wuojZzSZPACer">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="hR33rwhMnsmkf2X8V9WQ9U">
+<title>30 · 我的小空间 · 异动预警 × 风险地图 × 自选 整合原型</title>
+<style>
+:root{
+  --page:#F5F6F8; --surface:#FFFFFF; --muted:#EEF1F5;
+  --t1:#1A1D23; --t2:#5B6573; --t3:#5F6B82;
+  --brand:#1E5BD6; --brandSoft:#EAF1FD;
+  --rise:#D92E2E; --riseSoft:#FCEDED;
+  --fall:#0C7A45; --fallSoft:#E9F4EE;
+  --flat:#8A93A3; --divider:#E2E8F0;
+  --glass:rgba(255,255,255,.82); --glassEdge:rgba(255,255,255,.72);
+  --sh1:0 1px 2px rgba(24,34,56,.05);
+  --sh2:0 4px 14px rgba(24,34,56,.07);
+  --sh3:0 10px 30px rgba(24,34,56,.12);
+  --mono:'SF Mono',ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-font-smoothing:antialiased}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;
+  background:#EDEFF3;color:var(--t1);padding:0 0 70px;
+}
+.wrap{max-width:1400px;margin:0 auto;padding:0 24px}
+
+/* ── 页头 ── */
+header{padding:30px 0 22px;border-bottom:1px solid #DDE1E8;margin-bottom:22px}
+.kicker{font-size:11px;letter-spacing:.14em;color:var(--t3);text-transform:uppercase;margin-bottom:8px}
+h1{font-size:24px;font-weight:700;letter-spacing:-.01em}
+.sub{font-size:13px;color:var(--t2);margin-top:6px;line-height:1.7;max-width:860px}
+.sub b{color:var(--brand);font-weight:600}
+
+/* 调研结论条 */
+.research{
+  margin-top:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;
+}
+.rk{background:#fff;border:1px solid var(--divider);border-radius:12px;padding:13px 15px;box-shadow:var(--sh1)}
+.rk h4{font-size:12px;font-weight:700;color:var(--t1);display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.rk h4 .no{font-family:var(--mono);font-size:10px;color:#fff;background:var(--brand);border-radius:5px;padding:1px 6px}
+.rk p{font-size:11.5px;color:var(--t2);line-height:1.65}
+.rk p b{color:var(--t1);font-weight:600}
+
+/* ── 舞台 ── */
+.stage{display:flex;gap:30px;justify-content:center;align-items:flex-start;flex-wrap:wrap;margin-top:6px}
+.cell{width:366px;flex:0 0 auto}
+.cell-label{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12.5px;font-weight:700;color:var(--t1)}
+.dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.dot.brand{background:var(--brand)} .dot.rise{background:var(--rise)} .dot.neutral{background:var(--t3)}
+.cell-note{font-size:11.5px;color:var(--t3);line-height:1.7;margin-top:12px;padding-left:14px;border-left:2px solid var(--divider)}
+.cell-note b{color:var(--t1);font-weight:600}
+.cell-note .ai{color:var(--brand);font-weight:600}
+
+/* ── 手机 ── */
+.phone{
+  width:360px;height:768px;border-radius:34px;background:var(--page);margin:0 auto;
+  border:1px solid #D9DEE7;box-shadow:var(--sh3),0 0 0 6px #E4E7EE;
+  position:relative;overflow:hidden;
+}
+.pbar{
+  position:absolute;top:0;left:0;right:0;height:44px;z-index:60;
+  display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 7px;
+  font-size:12px;font-weight:600;color:var(--t1);
+}
+.pbar .time{font-family:var(--mono);font-size:12px}
+.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding-bottom:26px}
+.screen::-webkit-scrollbar{width:0}
+
+/* 顶栏 */
+.atb{position:sticky;top:0;z-index:50;padding:46px 16px 8px;background:linear-gradient(180deg,var(--page) 60%,rgba(245,246,248,0))}
+.atb-row{display:flex;align-items:flex-start;justify-content:space-between}
+.atb-t{font-size:17px;font-weight:700;letter-spacing:-.01em}
+.atb-s{font-size:11px;color:var(--t3);margin-top:3px}
+.bell{
+  position:relative;width:34px;height:34px;border-radius:11px;background:var(--surface);
+  border:1px solid var(--divider);display:flex;align-items:center;justify-content:center;
+  font-size:15px;box-shadow:var(--sh1);cursor:pointer;flex:0 0 auto;
+}
+.badge{
+  position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;border-radius:8px;
+  background:var(--rise);color:#fff;font-size:9.5px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;padding:0 4px;
+  border:2px solid var(--page);font-family:var(--mono);
+}
+
+/* 氛围底 */
+.amb{position:relative;margin:-6px -1px 0;padding:0 16px 4px;overflow:visible}
+.amb.brand{background:radial-gradient(120% 100% at 22% 0%,rgba(30,91,214,.08) 0%,rgba(245,246,248,0) 62%)}
+.amb.neutral{background:radial-gradient(120% 100% at 20% 0%,rgba(90,100,120,.07) 0%,rgba(245,246,248,0) 62%)}
+
+/* z 层 */
+.z3{background:var(--glass);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:16px;box-shadow:var(--sh3);border:1px solid var(--glassEdge);position:relative;z-index:30}
+.z2{background:var(--surface);border-radius:14px;box-shadow:var(--sh1);border:1px solid var(--divider);position:relative;z-index:20}
+.z1{background:var(--surface);opacity:.92;border-radius:13px;position:relative;z-index:10}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+
+.seg{display:flex;gap:7px;margin:14px 16px 12px}
+.seg-item{
+  flex:1;height:32px;border-radius:10px;background:var(--muted);border:none;
+  font-size:11.5px;color:var(--t2);font-family:inherit;cursor:pointer;transition:.16s;font-weight:500;
+  display:inline-flex;align-items:center;justify-content:center;gap:5px;
+}
+.seg-item.on{background:var(--brandSoft);color:var(--brand);font-weight:600}
+.seg-item .cnt{font-family:var(--mono);font-size:10px;opacity:.75}
+
+/* ── 聚合头 ── */
+.hero{padding:15px 16px 14px}
+.hero-date{font-size:10.5px;color:var(--t3);letter-spacing:.04em}
+.hero-main{display:flex;align-items:flex-end;gap:10px;margin-top:5px}
+.hero-big{font-size:34px;font-weight:800;line-height:1}
+.hero-tag{font-size:11px;font-weight:600;padding:3px 8px;border-radius:7px;margin-bottom:4px}
+.hero-tag.rise{background:var(--riseSoft);color:var(--rise)}
+.hero-tag.fall{background:var(--fallSoft);color:var(--fall)}
+.hero-tag.flat{background:var(--muted);color:var(--t2)}
+.hero-line{font-size:12px;color:var(--t1);line-height:1.6;margin-top:9px}
+.hero-line b{font-weight:700}
+.ratio{display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:11px}
+.ratio i{display:block;height:100%}
+.hero-foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.hero-foot .legend{display:flex;gap:10px;font-size:10px;color:var(--t3)}
+.legend i{display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:4px;vertical-align:0}
+.hero-link{font-size:11px;color:var(--brand);font-weight:600;cursor:pointer}
+
+/* ── 预警预览条 ── */
+.inbox-preview{margin:12px 16px 0;padding:12px 13px;display:flex;align-items:center;gap:11px;cursor:pointer}
+.iv-ic{width:36px;height:36px;border-radius:11px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:16px;position:relative}
+.iv-ic.alert{background:var(--riseSoft)}
+.iv-t{flex:1;min-width:0}
+.iv-title{font-size:12.5px;font-weight:700;color:var(--t1)}
+.iv-sub{font-size:10.5px;color:var(--t2);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.iv-go{font-size:11px;color:var(--brand);font-weight:600;flex:0 0 auto}
+
+/* 自选行 */
+.rows{margin:0 16px}
+.rows-h{display:flex;justify-content:space-between;align-items:baseline;margin:16px 0 9px}
+.rows-h .h{font-size:13px;font-weight:700}
+.rows-h .more{font-size:10.5px;color:var(--t3)}
+.wrow{display:flex;align-items:center;gap:10px;padding:11px 13px;margin-bottom:8px;cursor:pointer;transition:.15s}
+.wrow:hover{box-shadow:var(--sh2)}
+.w-name{width:64px;flex:0 0 auto}
+.w-name .n{font-size:12.5px;font-weight:700;display:flex;align-items:center;gap:4px}
+.w-name .s{font-size:9.5px;color:var(--t3);font-family:var(--mono);margin-top:2px}
+.star{font-size:9px;color:var(--brand)}
+.w-spark{flex:1;display:flex;align-items:center;gap:7px;min-width:0}
+.spark{flex:1;height:26px;min-width:40px}
+.w-pill{flex:0 0 auto;font-size:9.5px;font-weight:600;padding:3px 7px;border-radius:6px;white-space:nowrap}
+.p-event{background:#FFF7E8;color:#A66A00}
+.p-calm{background:var(--muted);color:var(--t3)}
+.w-price{text-align:right;flex:0 0 auto;width:64px}
+.w-price .p{font-size:12.5px;font-weight:700;font-family:var(--mono)}
+.w-price .c{font-size:10.5px;font-family:var(--mono);margin-top:2px}
+.cR{color:var(--rise)} .cG{color:var(--fall)} .cF{color:var(--flat)}
+.pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--rise);flex:0 0 auto;animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* AI 简报卡 */
+.brief{margin:16px 16px 0;padding:13px 14px;cursor:pointer;transition:.2s}
+.brief-h{display:flex;align-items:center;gap:8px}
+.ai-badge{
+  font-size:9px;font-weight:700;color:#fff;background:linear-gradient(135deg,#1E5BD6,#5B8DEF);
+  border-radius:5px;padding:2px 6px;letter-spacing:.04em;flex:0 0 auto;
+}
+.brief-h .t{font-size:12.5px;font-weight:700;flex:1}
+.brief-h .arrow{font-size:10px;color:var(--t3);transition:.2s}
+.brief.open .arrow{transform:rotate(90deg)}
+.brief-body{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--divider)}
+.brief.open .brief-body{display:block;animation:fade .3s ease}
+.brief-item{display:flex;gap:8px;font-size:11.5px;color:var(--t2);line-height:1.65;margin-bottom:7px}
+.brief-item:last-child{margin-bottom:0}
+.brief-item .k{flex:0 0 auto;font-size:10px;font-weight:600;padding:1px 6px;border-radius:5px;height:17px;display:flex;align-items:center}
+.k.morn{background:var(--brandSoft);color:var(--brand)}
+.k.risk{background:#FFF7E8;color:#A66A00}
+.k.act{background:var(--riseSoft);color:var(--rise)}
+.brief-item b{color:var(--t1);font-weight:600}
+.brief-foot{margin-top:10px;font-size:10.5px;color:var(--brand);font-weight:600;cursor:pointer}
+
+@keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+/* ── 收件箱 ── */
+.filter-tabs{display:flex;gap:7px;margin:6px 16px 12px;flex-wrap:wrap}
+.ftab{padding:0 12px;height:29px;display:inline-flex;align-items:center;gap:5px;border-radius:9px;background:var(--muted);font-size:11px;color:var(--t2);border:none;font-family:inherit;cursor:pointer;transition:.16s;font-weight:500}
+.ftab.on{background:var(--brandSoft);color:var(--brand);font-weight:600}
+.ftab .cnt{font-family:var(--mono);font-size:10px}
+.mailbox{margin:0 16px}
+.mail{
+  padding:13px 14px;margin-bottom:9px;cursor:pointer;transition:.2s;position:relative;
+}
+.mail.unread::before{
+  content:'';position:absolute;left:0;top:16px;bottom:16px;width:3px;border-radius:0 3px 3px 0;background:var(--rise);
+}
+.mail-head{display:flex;align-items:center;gap:8px}
+.mail-kind{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;flex:0 0 auto}
+.mk-move{background:var(--riseSoft);color:var(--rise)}
+.mk-event{background:#FFF7E8;color:#A66A00}
+.mk-exposure{background:var(--brandSoft);color:var(--brand)}
+.mail-title{font-size:12.5px;font-weight:700;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mail-time{font-size:9.5px;color:var(--t3);font-family:var(--mono);flex:0 0 auto}
+.mail-sum{font-size:11px;color:var(--t2);line-height:1.6;margin-top:6px}
+.mail-detail{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--divider)}
+.mail.open .mail-detail{display:block;animation:fade .28s ease}
+.attr-box{background:var(--brandSoft);border-radius:10px;padding:10px 11px}
+.attr-box .h{font-size:10px;font-weight:700;color:var(--brand);display:flex;align-items:center;gap:5px;margin-bottom:5px}
+.attr-box p{font-size:11px;color:var(--t2);line-height:1.7}
+.attr-box p b{color:var(--t1);font-weight:600}
+.mail-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.mact{
+  flex:1;min-width:86px;height:30px;border-radius:9px;border:1px solid var(--divider);
+  background:var(--surface);font-size:11px;font-weight:600;color:var(--t1);font-family:inherit;cursor:pointer;transition:.15s;
+}
+.mact:hover{border-color:#C3CBDA}
+.mact.primary{background:var(--brand);border-color:var(--brand);color:#fff}
+.mact.primary:hover{box-shadow:0 3px 10px rgba(30,91,214,.3)}
+.ai-reply{display:none;margin-top:10px;background:var(--brandSoft);border-radius:10px;padding:11px 12px;animation:fade .3s ease}
+.ai-reply.show{display:block}
+.ai-reply .h{display:flex;align-items:center;gap:6px;margin-bottom:5px}
+.ai-reply .h .t{font-size:10px;font-weight:700;color:var(--brand)}
+.ai-reply p{font-size:11px;color:var(--t2);line-height:1.7}
+.ai-reply p b{color:var(--t1);font-weight:600}
+.mute-row{margin:14px 16px 0;padding:12px 14px;display:flex;align-items:center;gap:11px}
+.mute-row .t{flex:1}
+.mute-row .tt{font-size:12px;font-weight:600}
+.mute-row .ts{font-size:10px;color:var(--t3);margin-top:2px}
+.switch{width:38px;height:22px;border-radius:11px;background:var(--divider);position:relative;cursor:pointer;transition:.2s;flex:0 0 auto}
+.switch.on{background:var(--brand)}
+.switch i{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:var(--sh1);transition:.2s}
+.switch.on i{left:18px}
+
+/* ── 风险屏 ── */
+.dim{margin:0 16px 10px;padding:13px 14px}
+.dim-h{display:flex;align-items:center;gap:8px}
+.dim-rank{font-family:var(--mono);font-size:10px;font-weight:700;color:var(--t3);background:var(--muted);border-radius:5px;padding:2px 6px;flex:0 0 auto}
+.dim-title{font-size:12.5px;font-weight:700;flex:1;display:flex;align-items:center;gap:5px}
+.term{color:var(--brand);border-bottom:1px dashed rgba(30,91,214,.4);cursor:pointer;position:relative}
+.dim-val{font-size:11.5px;font-weight:700;flex:0 0 auto}
+.dim-note{font-size:10.5px;color:var(--t3);margin-top:4px}
+.bar{height:7px;border-radius:4px;background:var(--muted);margin-top:9px;overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+.bar-lbl{display:flex;justify-content:space-between;font-size:9.5px;color:var(--t3);margin-top:5px}
+.ai-line{margin-top:10px;padding:8px 10px 8px 12px;background:var(--brandSoft);border-radius:9px;position:relative;font-size:11px;line-height:1.65;color:var(--t2)}
+.ai-line::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;border-radius:2px;background:var(--brand)}
+.ai-line b{color:var(--t1);font-weight:600}
+.sector-chips{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.schip{font-size:10px;padding:4px 9px;border-radius:7px;background:var(--muted);color:var(--t2)}
+.schip.hot{background:var(--brandSoft);color:var(--brand);font-weight:600;box-shadow:var(--sh2)}
+.schip.hot .n{font-family:var(--mono);font-weight:700}
+.matrix{margin-top:9px;display:grid;grid-template-columns:repeat(6,1fr);gap:3px}
+.mx{aspect-ratio:1;border-radius:4px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:8px;color:#fff}
+.mx.hi{background:#3D6FD6} .mx.mid{background:#7FA0E4} .mx.lo{background:#C9D7F0;color:var(--t3)} .mx.self{background:var(--muted);color:var(--t3)}
+.timeline{margin-top:10px;position:relative;padding-left:14px}
+.timeline::before{content:'';position:absolute;left:3px;top:5px;bottom:5px;width:1.5px;background:var(--divider)}
+.tl-item{position:relative;margin-bottom:9px}
+.tl-item:last-child{margin-bottom:0}
+.tl-item::before{content:'';position:absolute;left:-14px;top:4px;width:7px;height:7px;border-radius:50%;background:var(--brand);border:1.5px solid #fff;box-shadow:0 0 0 1px rgba(30,91,214,.3)}
+.tl-item.warn::before{background:#E8A400;box-shadow:0 0 0 1px rgba(232,164,0,.3)}
+.tl-d{font-size:9.5px;color:var(--t3);font-family:var(--mono)}
+.tl-t{font-size:11px;font-weight:600;color:var(--t1);margin-top:1px}
+.tl-t .sub{font-size:10px;color:var(--t2);font-weight:400}
+.dim-foot{display:flex;justify-content:space-between;align-items:center;margin-top:9px}
+.dim-foot .src{font-size:9px;color:var(--t3)}
+.dim-foot .go{font-size:10.5px;color:var(--brand);font-weight:600;cursor:pointer}
+.ask-btn{
+  margin:12px 16px 0;width:calc(100% - 32px);height:36px;border-radius:11px;border:none;
+  background:linear-gradient(135deg,#1E5BD6,#4A7EE8);color:#fff;font-size:12px;font-weight:600;
+  font-family:inherit;cursor:pointer;box-shadow:0 4px 14px rgba(30,91,214,.28);transition:.18s;
+  display:flex;align-items:center;justify-content:center;gap:7px;
+}
+.ask-btn:hover{box-shadow:0 6px 18px rgba(30,91,214,.36)}
+.ask-panel{display:none;margin:10px 16px 0;background:var(--brandSoft);border-radius:12px;padding:12px 13px;animation:fade .3s ease}
+.ask-panel.show{display:block}
+.ask-panel p{font-size:11px;color:var(--t2);line-height:1.75}
+.ask-panel p b{color:var(--t1);font-weight:600}
+
+/* 术语气泡 */
+.pop{
+  position:absolute;z-index:90;width:230px;background:#fff;border-radius:12px;box-shadow:var(--sh3);
+  border:1px solid var(--divider);padding:11px 12px;font-size:10.5px;color:var(--t2);line-height:1.65;display:none;
+}
+.pop.show{display:block;animation:fade .2s ease}
+.pop .t{font-size:11.5px;font-weight:700;color:var(--t1);margin-bottom:4px}
+
+/* 底部说明区 */
+.guide{max-width:1200px;margin:34px auto 0;padding:20px 24px;background:#fff;border:1px solid var(--divider);border-radius:16px;box-shadow:var(--sh1)}
+.guide h3{font-size:14px;font-weight:700;margin-bottom:12px}
+.guide-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.g-item{border-left:2px solid var(--brand);padding-left:12px}
+.g-item h5{font-size:12px;font-weight:700;margin-bottom:4px}
+.g-item p{font-size:11px;color:var(--t2);line-height:1.7}
+.compliance{margin-top:16px;padding:12px 14px;background:var(--muted);border-radius:11px;font-size:10.5px;color:var(--t3);line-height:1.75}
+.compliance b{color:var(--t1)}
+</style>
+</head>
+<body data-page-node-id="QbFd1RCrYZe09yvtGgcfp3">
+<div class="wrap" data-page-node-id="nPVwYd2TpKLdVMEpusUIqJ">
+
+<header data-page-node-id="y2PJukx1JW4luHiPHtvXOJ">
+  <div class="kicker" data-page-node-id="qNPXBxOzA4rCSFwTEKap9R">StockChat · Doc 30 · Interactive Prototype</div>
+  <h1 data-page-node-id="Lk8XWNnYE91Qq5eYPdyXaH">我的小空间 —— 异动预警 × 风险地图 × 自选 一体化</h1>
+  <div class="sub" data-page-node-id="qAJLCz5op3aRhbN1ZZ63Gm">
+    把「自选股 · 异动预警 · 风险地图」三个独立页面整合为一个<b data-page-node-id="TrGahWDCjHKDK7v5Pu1JwR">个人空间（Home Base）</b>：
+    自选是唯一输入源，预警从「盯价格」升级为「盯价格 + 盯事件 + 盯暴露变化」，风险地图成为空间的风险底座，
+    AI 以<b data-page-node-id="7FYFmjiQbiyOvC4GUg1CZ4">条件触发的解释者</b>身份贯穿（简报 / 归因 / 追问出口），全程只解释已发生的事，不做任何买卖建议。
+    可交互：筛选、展开、追问、开关。
+  </div>
+  <div class="research" data-page-node-id="UMwcuk8XNAd7jzSaAFeOsE">
+    <div class="rk" data-page-node-id="xDnN28IYePIqv625lsHogh"><h4 data-page-node-id="6whhSiG6UClO4D4QxqVrZs"><span class="no" data-page-node-id="aewreYen3rjrJokOrZc8q2">调研 1</span>现状：三页割裂，闭环断在入口</h4>
+      <p data-page-node-id="doHs5p6mtCsceG5MEX7dgG">自选（WatchlistPage）、异动预警（AlertCenterPage）、风险地图（RiskMapPage）各自独立、抽屉三层入口。预警只做<b data-page-node-id="WHWb8feQIEdf41WglFBBdu">单票价格阈值 ±3%</b>，与风险地图的「暴露 / 事件」能力零复用 —— 用户要自己把三页的信息在脑子里拼起来。</p></div>
+    <div class="rk" data-page-node-id="NwwDjxCiCyPe2OtTlHIG3F"><h4 data-page-node-id="8ecmRyJ8dGGAzBCjn1mYuI"><span class="no" data-page-node-id="lN30lyDRTGawt1YrNtT3td">调研 2</span>对标：蚂小财串联 vs 同花顺并列</h4>
+      <p data-page-node-id="WJCbEhiW5cFmTmQC4D0nQy">同花顺 Lumi 把「持仓风险检查」做成了并列功能项；蚂小财走「体检 → 了解风险 → 学习」的<b data-page-node-id="5d0223rQJ184MfaO7TtMzV">串联</b>形态。我们的整合方向是串联：预警消息是钩子，点开即归因，归因即风险，风险即术语，术语即知识库。</p></div>
+    <div class="rk" data-page-node-id="u5FCi2F3fPnhKXESVE0fAi"><h4 data-page-node-id="4gId6217L19pLX1gXCbsTt"><span class="no" data-page-node-id="7ze5CAIRT7ylTznyG23TjA">调研 3</span>预警的行业现状：只有价格，没有"与我有关"</h4>
+      <p data-page-node-id="M8UCVrfA9yBC3SEiMKYpb9">主流券商 App 的预警几乎全部是价格/涨跌幅触发，触发后只给一个数字，<b data-page-node-id="WQ68jn1sa81OFDKuTW6xIU">用户不知道"然后呢"</b>。差异化机会：预警 = 行情异动 + 事件临近（解禁/财报）+ 暴露变化（集中度突变），每条都带<b data-page-node-id="v49NPzME17Fd9iIuyK9Tbx">归因检查顺序</b>与「追问 AI」出口。</p></div>
+    <div class="rk" data-page-node-id="jdSMOqd04yRWfREQhfTSaP"><h4 data-page-node-id="vqkjdPCwFkBUI6sCgppNJ5"><span class="no" data-page-node-id="KQO24ErvonmOMHiFJ6nr6D">调研 4</span>合规边界（doc 23 硬约束）</h4>
+      <p data-page-node-id="9ReuZBIDA3xTB4KRPPIdtK">N-R6 原否决的是<b data-page-node-id="OEhvkDM0MjvHfcJGmQkLWw">远程推送</b>（催促操作）。本次改为<b data-page-node-id="FNzeePQb7jNaR5KITNoMkh">应用内消息中心</b>：打开才看、消息只解释已发生波动、附带检查顺序而非操作建议；不出现评分/等级/匹配词汇；等权估算常驻标注；AI 触点预算 ≤5 处全条件触发。</p></div>
+  </div>
+</header>
+
+<div class="stage" data-page-node-id="AXmJqUsaNNnH9NDKTh5AjN">
+
+  <!-- ═══════════ 屏 A：小空间首页 ═══════════ -->
+  <div class="cell" id="cellA" data-page-node-id="mnoVSsyjMbEEnG98H1bmiY">
+    <div class="cell-label" data-page-node-id="RROL9i2D8RgKgY4Qkqc8xN"><span class="dot brand" data-page-node-id="fzGuC7asxFvmuGRNGbCNm8"></span>屏 A · 小空间首页（自选 + 预警 + 简报）</div>
+    <div class="phone" data-page-node-id="hC5psIuDkvKrN39XJxq5Ja">
+      <div class="pbar" data-page-node-id="byy2pC2Dsptju1lpMY9hAC"><span class="time" data-page-node-id="4TOG38C6ciXGgF1l20aNWh">9:41</span><span data-page-node-id="HZ0jeZNX4hEWnAmjI9HHLq">●●●</span></div>
+      <div class="screen" data-page-node-id="EDwlw2ACMhZmLdRhSm5k8Q">
+        <div class="atb" data-page-node-id="fLiaeaLD3BURXzeXATmsrV">
+          <div class="atb-row" data-page-node-id="I0RsY1acREhRT6uDi0C9yV">
+            <div data-page-node-id="yHxjTnGPQAorqYFJ9PpzOU">
+              <div class="atb-t" data-page-node-id="ilbe1Jm4QqDGwnl33OhvTt">我的小空间</div>
+              <div class="atb-s" data-page-node-id="jH8mEk9LeyRHQuJM0RQPYY">自选 · 预警 · 风险 · 简报，都在这里</div>
+            </div>
+            <div class="bell" title="预警收件箱 → 屏 B" data-page-node-id="ADaEkrymwVBEUZWv8jK94t">🔔<span class="badge" id="badgeA" data-page-node-id="wPKojUpbZDqVyZg3D9UdyL">2</span></div>
+          </div>
+        </div>
+
+        <div class="amb brand" data-page-node-id="Re8iYyhSh9oFSrqwjDbc9r">
+          <!-- 聚合头 z3 -->
+          <div class="z3 hero" data-page-node-id="S4HTPNToAsqyY1Or152Ljj">
+            <div class="hero-date" data-page-node-id="SHD50GfKKnlaG6hDESbL3Y">9月7日 周一 · 8 只自选 · <span style="color:var(--brand)" data-page-node-id="mFZ8ygTAKBfXoSMd1lXQv3">等权估算 · 非真实仓位</span></div>
+            <div class="hero-main" data-page-node-id="nWGFO1lQECBlPPeuX78DrC">
+              <div class="hero-big num cG" data-page-node-id="Nv9hRAUXr0BqilnWi80RVs">−0.84%</div>
+              <div class="hero-tag fall" data-page-node-id="jsNeTW98I0dwsg9a8Ohxc5">3 涨 · 1 平 · 4 跌</div>
+            </div>
+            <div class="hero-line" data-page-node-id="pG8INKOig3rzw3eGzCLF4l">今天主要被<b data-page-node-id="H7cBsaBoHXZXEbQmUa0OPH">通信链 4 只</b>拖累：中际旭创放量上攻 4.2%，但同链其余 3 只集体回落 —— <b data-page-node-id="DvNxX8MdAnc2ouGAmJ9EOC">它们押的是同一个变量</b>。</div>
+            <div class="ratio" data-page-node-id="9z7X7DYgQHXf3F8aFZJKLP">
+              <i style="width:37.5%;background:var(--rise)" data-page-node-id="MMg5L3RJFNhxzQFCRzUNJj"></i>
+              <i style="width:12.5%;background:var(--flat)" data-page-node-id="zSInv2KNtrL1mklQqhSDbT"></i>
+              <i style="width:50%;background:var(--fall)" data-page-node-id="xyaYDy10RDjj8BxJwolfmC"></i>
+            </div>
+            <div class="hero-foot" data-page-node-id="p8uaAAHtLePsNYSGy1BEM1">
+              <div class="legend" data-page-node-id="cUIrE4awK1zvYFtGd8zQA6">
+                <span data-page-node-id="zoUx3MaJ1BLP9i8Q0gCZdm"><i style="background:var(--rise)" data-page-node-id="CTQwH3SvZvBbE8Cgc1Kgh9"></i>涨 3</span>
+                <span data-page-node-id="ev9TDkUqLs47LpA2A3GQkZ"><i style="background:var(--flat)" data-page-node-id="E7XxTJh3ltZmglAyz5hQwb"></i>平 1</span>
+                <span data-page-node-id="BUx4xHqPnLEAZxFTLxn8Ao"><i style="background:var(--fall)" data-page-node-id="7D8nJhDV28HrqndEctXUHl"></i>跌 4</span>
+              </div>
+              <div class="hero-link" onclick="location.hash='cellC'" data-page-node-id="6cjZymmnI5GQjWqt2Ta9h2">我押了什么？看共同暴露 ›</div>
+            </div>
+          </div>
+
+          <!-- 预警收件箱预览 z2 -->
+          <div class="z2 inbox-preview" onclick="document.getElementById('cellB').scrollIntoView({behavior:'smooth'})" data-page-node-id="T2yPuUs84icM784FncEwMg">
+            <div class="iv-ic alert" data-page-node-id="BIdd5QwZ6p7TQcVVbcAPNH">⚡<span class="badge" id="badgeB" style="top:-5px;right:-5px" data-page-node-id="tzyHsxa8v0b3M3hdP4cC5n">2</span></div>
+            <div class="iv-t" data-page-node-id="Mc5f3EU9aBeIrWWDbyoVfc">
+              <div class="iv-title" data-page-node-id="6XV2YFiaSkfx3CKuAe9Jwz">预警收件箱 · 2 条未读</div>
+              <div class="iv-sub" data-page-node-id="qaEhorX7MQ39td6bTLNxCw">中际旭创 +4.2% 异动 · 恒瑞医药解禁进入 30 天</div>
+            </div>
+            <div class="iv-go" data-page-node-id="8vLPqcPqMk5texsoJgBxjs">查看 ›</div>
+          </div>
+        </div>
+
+        <div class="rows" data-page-node-id="IPfaWtR27QKN58YdaHJjls">
+          <div class="rows-h" data-page-node-id="vBgHkRIUgP6FJ1xzPghXW8">
+            <div class="h" data-page-node-id="AAohBF5FeprWtDDBNymI3j">我的关注</div>
+            <div class="more" data-page-node-id="DJme1mvYG5Mp1cRmXCDhcp">长按看当初的理由</div>
+          </div>
+        </div>
+        <div class="seg" id="segA" data-page-node-id="qVIGQx25R38sf0TvIvIPXx">
+          <button class="seg-item on" data-f="all" data-page-node-id="pxPtE4AnCPvjn9vFf2f4yp">全部 <span class="cnt" data-page-node-id="Hp9vCcr4a1evbpYrnqEk92">8</span></button>
+          <button class="seg-item" data-f="move" data-page-node-id="4CPUJ3FUa1jvYr4mdWWM9q">异动 <span class="cnt" data-page-node-id="xSpn96rE0TH7YormyYjnzo">2</span></button>
+          <button class="seg-item" data-f="event" data-page-node-id="nuufOwXXdgYT3M3fe409He">事件待办 <span class="cnt" data-page-node-id="SAJAzLVqEpofEds25qOu5a">2</span></button>
+          <button class="seg-item" data-f="calm" data-page-node-id="eBol6dw0TUsRlOlfyD5m7E">平静 <span class="cnt" data-page-node-id="qwkoEfMOdtz0D4HbzGYBqU">4</span></button>
+        </div>
+        <div class="rows" id="rowsA" data-page-node-id="GfNBwwnbmxdgL5lsSlZahQ">
+
+          <div class="z1 wrow" data-kind="move" data-page-node-id="FPYFjVv8MBaBtIpcG3SZRH">
+            <div class="w-name" data-page-node-id="SgYjlnXuryMRIvbmOOKwjs"><div class="n" data-page-node-id="7SAaXSnkHaL8anAG0w2tny"><span class="star" data-page-node-id="ABhHusSUoEbJTYV5KMO7It">★</span>中际旭创</div><div class="s" data-page-node-id="KyhRwDQ96z3iw7SfIOBBRy">300308</div></div>
+            <div class="w-spark" data-page-node-id="IlYPzDgQ3HB9CMXGC45HMd">
+              <span class="pulse-dot" data-page-node-id="B4nmNEjc9ez3II27ZXFMRa"></span>
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="jC9GDHoC0mKeClwFBkYtFx"><polyline points="0,18 12,17 24,19 36,15 48,14 60,10 70,6 80,2" fill="none" stroke="#D92E2E" stroke-width="1.8" stroke-linecap="round" data-page-node-id="7Ym8YKmv6kxCFOASKETh3W"/></svg>
+            </div>
+            <div class="w-pill p-event" style="background:var(--riseSoft);color:var(--rise)" data-page-node-id="OMGEIHq8CwQFsqOFst5OFs">异动 +4.2%</div>
+            <div class="w-price" data-page-node-id="ZGq6MZPBK6F7OXR8OmnNE3"><div class="p num cR" data-page-node-id="2E1phEr3yNVoPqPmSGduoS">168.40</div><div class="c num cR" data-page-node-id="fRDAB6YRzW2cfcUA3fcHZr">+4.20%</div></div>
+          </div>
+
+          <div class="z1 wrow" data-kind="event" data-page-node-id="VN2LmmQbppJDPVy5NMujZE">
+            <div class="w-name" data-page-node-id="Sy1hH2EbIjQ9OxdrbWSxDH"><div class="n" data-page-node-id="J17v8p6RAVS7iomelM8Oj7">恒瑞医药</div><div class="s" data-page-node-id="WMrO8MJy6EAqUdRADwUH30">600276</div></div>
+            <div class="w-spark" data-page-node-id="T1zUZuXUtPQfjQncjSVkmL">
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="Aq1f10yPtKp3o3DAlWOmj0"><polyline points="0,14 16,15 32,13 48,16 64,17 80,18" fill="none" stroke="#0C7A45" stroke-width="1.8" stroke-linecap="round" data-page-node-id="rEHfeVUjTeo35qBJJxDQcZ"/></svg>
+            </div>
+            <div class="w-pill p-event" data-page-node-id="n7uWAbWnbziZ1GeWEcAzUA">解禁 30 天内</div>
+            <div class="w-price" data-page-node-id="vassjCbyEUGrefdYa8anav"><div class="p num cG" data-page-node-id="bz3qQ1RJIPrCZFXycPPO3B">45.12</div><div class="c num cG" data-page-node-id="c1UXATLJOcGvQuiXOl6OxK">−1.08%</div></div>
+          </div>
+
+          <div class="z1 wrow" data-kind="move event" data-page-node-id="7PPQrPqJYCzVlSxvehB9sx">
+            <div class="w-name" data-page-node-id="KOlECO6gEBWwrWbpnIBXDF"><div class="n" data-page-node-id="REVnxpHMcqVOxyTqipoLGa">紫金矿业</div><div class="s" data-page-node-id="UW8Kb38w4bEVPl23uIIdOw">601899</div></div>
+            <div class="w-spark" data-page-node-id="cD7LJ5arQVRUFkD8OEQLzW">
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="LBMYMC5qS6HGSNm4xDedrc"><polyline points="0,16 14,14 28,15 42,11 56,9 68,7 80,5" fill="none" stroke="#D92E2E" stroke-width="1.8" stroke-linecap="round" data-page-node-id="W3m0NTU7yTgvzj6jbMJDfP"/></svg>
+            </div>
+            <div class="w-pill p-event" style="background:var(--riseSoft);color:var(--rise)" data-page-node-id="lCH57fDt4fCQiPV2GmDk5l">+2.6%</div>
+            <div class="w-price" data-page-node-id="aQWwpQCSYNX6YZsUNdidrQ"><div class="p num cR" data-page-node-id="4dEa5lKHxGUggscARtGnkY">19.83</div><div class="c num cR" data-page-node-id="jEl4jF5YJEbJq6DCYLkytv">+2.60%</div></div>
+          </div>
+
+          <div class="z1 wrow" data-kind="event" data-page-node-id="Wzy3YRh8mu7QOjVZZJs2mB">
+            <div class="w-name" data-page-node-id="GKC2jSHQaONwrzWUlLDZzY"><div class="n" data-page-node-id="AQ93yGPq4je2sEdAcLGAXt">宁德时代</div><div class="s" data-page-node-id="TAUU06Eq3L6Y7A5JNJYJOq">300750</div></div>
+            <div class="w-spark" data-page-node-id="ZGGkvkZxiUah1LX79vYFaj">
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="sFUmawukCzGvihOSuB8YFH"><polyline points="0,13 16,14 32,12 48,13 64,15 80,14" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" data-page-node-id="RhH4DFRMEjPSR93lKfotxe"/></svg>
+            </div>
+            <div class="w-pill p-event" data-page-node-id="a14KyG1ZRKaHDnJ2NNRzmG">财报预约 10/18</div>
+            <div class="w-price" data-page-node-id="vCKMcHjgsFdreD72XAHmKq"><div class="p num cF" data-page-node-id="VgFJc04uakDZK0HyanPsIg">186.20</div><div class="c num cF" data-page-node-id="BcggblqfznAza45GnzrpYr">−0.05%</div></div>
+          </div>
+
+          <div class="z1 wrow" data-kind="calm" data-page-node-id="FsdUG4SKG0HeqgJdCKj5lc">
+            <div class="w-name" data-page-node-id="L4nZ3tS1jlZdWoxU7IurWa"><div class="n" data-page-node-id="PLjE1rNhMWkM6JedAZePMk">贵州茅台</div><div class="s" data-page-node-id="cOLBi3IFEd4n4t58P9J7JM">600519</div></div>
+            <div class="w-spark" data-page-node-id="jHUN4g4pA04X0bns9NrJXt">
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="dnN7DEpbPQd4MJa1Ex1mUA"><polyline points="0,14 20,14 40,13 60,15 80,14" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" data-page-node-id="2FqYxRTlKGEu5MYWA777NQ"/></svg>
+            </div>
+            <div class="w-pill p-calm" data-page-node-id="6GHU6VkK3iiWQk0vwCI3iB">平静</div>
+            <div class="w-price" data-page-node-id="V8G3IxUrvZ9cj6WEFeVbTT"><div class="p num cR" data-page-node-id="5zIDYEBbzdH97RXhziFAqT">1452.00</div><div class="c num cR" data-page-node-id="4qupG5xWzwRNAvvW8JJ7IH">+0.31%</div></div>
+          </div>
+
+          <div class="z1 wrow" data-kind="calm" data-page-node-id="BVr7d9w7eF38g8KQWHrBqf">
+            <div class="w-name" data-page-node-id="U5CajRyTVEfnU5CAVHA3HX"><div class="n" data-page-node-id="9rfYFnRMBqKZt4eX2ehAWG">隆基绿能</div><div class="s" data-page-node-id="vkC4y6NFnWs9Dm1ExQMzcw">601012</div></div>
+            <div class="w-spark" data-page-node-id="GAMlmTMiFB5F536oYDraab">
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="6opvO0AzLBu3nBOhRbNnGG"><polyline points="0,12 16,13 32,15 48,17 64,18 80,20" fill="none" stroke="#0C7A45" stroke-width="1.8" stroke-linecap="round" data-page-node-id="unWIn7n3J0pp1fLrTpBEJJ"/></svg>
+            </div>
+            <div class="w-pill p-calm" data-page-node-id="iztIRfHbfHl6avl8lAC9Tv">平静</div>
+            <div class="w-price" data-page-node-id="95QPdf6EDsPHhWSJWJCaWz"><div class="p num cG" data-page-node-id="2ADej4VmnWGUpRILjRSja2">14.28</div><div class="c num cG" data-page-node-id="1jNWHaCWbkj6dzRTHtQtIf">−2.13%</div></div>
+          </div>
+
+          <div class="z1 wrow" data-kind="calm" data-page-node-id="VUZuwML7AM8FYVMXNgeipU">
+            <div class="w-name" data-page-node-id="Ly6P2WchWGwy2u3Z6qH5SV"><div class="n" data-page-node-id="Uj0YQSAFCPXqao07UoMAwX">立讯精密</div><div class="s" data-page-node-id="VV958V5c4m59FvIBLag1uH">002475</div></div>
+            <div class="w-spark" data-page-node-id="i4UuMpDmGoEsNGFyqHGyt4">
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="SlUPLYLEkBDDCY7mTMYhKm"><polyline points="0,15 14,16 28,14 42,17 56,18 70,19 80,19" fill="none" stroke="#0C7A45" stroke-width="1.8" stroke-linecap="round" data-page-node-id="9hKJfKIMWW5spxXWOu0nTh"/></svg>
+            </div>
+            <div class="w-pill p-calm" data-page-node-id="NEFyXbyASY6BIgRPhdwwDP">平静</div>
+            <div class="w-price" data-page-node-id="y8S6sDaruc0lymyIUUwuHo"><div class="p num cG" data-page-node-id="X2mjLKuxKUpw3YJNZVJ5qI">32.15</div><div class="c num cG" data-page-node-id="XyMnFx520qkXJMcNthikB5">−1.42%</div></div>
+          </div>
+
+          <div class="z1 wrow" data-kind="calm" data-page-node-id="1KFsEY6Ca6gcVtAdoDGzxn">
+            <div class="w-name" data-page-node-id="RFwvVRQsDPWyJV9g14FGrG"><div class="n" data-page-node-id="F7ZDvauMm9fQiMxHElvEiS">东方财富</div><div class="s" data-page-node-id="GFm6mhN95qgtdrtiYlQDYO">300059</div></div>
+            <div class="w-spark" data-page-node-id="Zpj2MObicTxNbA0C4DyiVS">
+              <svg class="spark" viewBox="0 0 80 26" preserveAspectRatio="none" data-page-node-id="6UCw8dDAomidfaEMRH5zyf"><polyline points="0,14 16,15 32,14 48,15 64,16 80,15" fill="none" stroke="#8A93A3" stroke-width="1.8" stroke-linecap="round" data-page-node-id="5uVNJ1tFjwFT4a6KSx49gs"/></svg>
+            </div>
+            <div class="w-pill p-calm" data-page-node-id="mOjDr1L2y1cLF7iHLxZl2v">平静</div>
+            <div class="w-price" data-page-node-id="LVoEvHwFuacauHxwk0iZWe"><div class="p num cR" data-page-node-id="l1z5bZDdqlnHJqDH21aicw">11.06</div><div class="c num cR" data-page-node-id="tgzXBhhJWJ5XRrcFeoTZXw">+0.18%</div></div>
+          </div>
+        </div>
+
+        <!-- AI 早安简报 z3 -->
+        <div class="z3 brief" id="briefA" data-page-node-id="su0ZLfb6cpDXF9CKon2o7c">
+          <div class="brief-h" data-page-node-id="GZUBAfgXhkddLumRv1ogRT">
+            <span class="ai-badge" data-page-node-id="060U5bfEMJezq0ScB8BE6R">AI 简报</span>
+            <span class="t" data-page-node-id="TmBKR2krMy4qM2YV9cpNSg">今日 1 分钟 · 9:30 前看完</span>
+            <span class="arrow" data-page-node-id="E9aDOPtxoXBeUe8ltfyCEb">›</span>
+          </div>
+          <div class="brief-body" data-page-node-id="MkQEBXQT9BttCOk4hvt8dc">
+            <div class="brief-item" data-page-node-id="AvVnBetuZuMIs3xFbLoQEQ"><span class="k morn" data-page-node-id="XlKi6iIwNfDYe2WEHHR2AR">开盘</span><span data-page-node-id="CPXL7W8s0BmjzgvV1bHPkC">你的 8 只自选等权 <b data-page-node-id="BJRhXPE624D8UX4XRnRFkK">−0.84%</b>，弱于沪深300（−0.42%）。差距几乎全部来自通信链 3 只同跌 —— <b data-page-node-id="5i6mMYMAf0kstWjSgOcFVQ">不是 3 个独立事件，是 1 个</b>。</span></div>
+            <div class="brief-item" data-page-node-id="mh5OHgRUByrJEqDs57CSyd"><span class="k act" data-page-node-id="TyhtGmWRBeAQ04Q6WACFKV">异动</span><span data-page-node-id="0fHDN1EQ4Iio8oTe0OAqrs">中际旭创 <b data-page-node-id="3vhhWKEYfRzuqideA2FLv2">+4.2% 放量</b>，同链反而跌：资金在链内轮动而非整体走强，追高的"锚"和低吸的"锚"不同。</span></div>
+            <div class="brief-item" data-page-node-id="7FbzDHVJLN8NfswKDPfEKH"><span class="k risk" data-page-node-id="g6AXxmdzMDKk5HNrqShHDG">事件</span><span data-page-node-id="l74SZpCL9Y6GHzkkUNc1t9">恒瑞医药 9/28 解禁 <b data-page-node-id="3c6GxLLWRHQmfXU7G1QqXP">占总股本 1.2%</b>，规模中性；宁德时代财报预约 10/18。</span></div>
+            <div class="brief-item" data-page-node-id="lAXXqb8bdLryQlmP6EsJkX"><span class="k morn" data-page-node-id="1oAIl2aACUMc2E0ZDMSboJ">概念</span><span data-page-node-id="aJNy6yXHQeYhqW07KiOhWt">你最近 3 天两次遇到「<b data-page-node-id="IwE1hQ4kAANPxBV4ZhOnhe">相关系数</b>」，风险地图里点一下就能看人话解释。</span></div>
+            <div class="brief-foot" onclick="event.stopPropagation();alert('原型演示：跳转对话页，携带问题「我的自选今天为什么跌得比大盘多？」→ AttributionIntent 链路')" data-page-node-id="bkFXtxtwNpnkwju1VaNqD0">还有疑问？直接问我一句 ›</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note" data-page-node-id="kHWwJX7a5MZH6smxIUVvN5">
+      <b data-page-node-id="zfFS3QxkMeXsbL8Kha9Xmx">整合要点：</b>自选不再是裸列表 —— 聚合头给结论，<span class="ai" data-page-node-id="0ZECWwGnyoHP8pFqkdaDcd">预警预览条</span>把收件箱提到首屏（badge 即消息提示），
+      行内异动徽标与收件箱消息同源。<span class="ai" data-page-node-id="b7NGusQ3ym5TdiOsOH2pEV">AI 简报</span>为每日一条条件触发卡（行情平静日不出现），内容全部由规则引擎产出的事实句构成。
+    </div>
+  </div>
+
+  <!-- ═══════════ 屏 B：预警收件箱 ═══════════ -->
+  <div class="cell" id="cellB" data-page-node-id="bkpRwYjZ6VWn6FyYfH3XwI">
+    <div class="cell-label" data-page-node-id="rDfE2HpsopqDUk6lVLpsrr"><span class="dot rise" data-page-node-id="xRLEfqJAOODhSaxoeDU9JY"></span>屏 B · 预警收件箱（消息提示 × 归因 × 追问）</div>
+    <div class="phone" data-page-node-id="1ePoUKHJA7gqO4dM0w2nut">
+      <div class="pbar" data-page-node-id="X9hn6xBPnBF5ZuYZUihM9t"><span class="time" data-page-node-id="9UygRVCqh7eTQdOFDDsHuf">9:41</span><span data-page-node-id="30NUmYWHrwNvQ2gvrBOlVH">●●●</span></div>
+      <div class="screen" data-page-node-id="fK8moPkQAXsYITUB47lYC4">
+        <div class="atb" data-page-node-id="1Nycx4o8DUzD1WU4rKEio1">
+          <div class="atb-row" data-page-node-id="XHFUDgyxcIchKXmgLMgxhT">
+            <div data-page-node-id="esz2RCtQGAsFfPR4W5CZ29">
+              <div class="atb-t" style="font-size:15px" data-page-node-id="nOikfDfJakNgIP1J131JQH">‹ 预警收件箱</div>
+              <div class="atb-s" data-page-node-id="CuQYQ6BvJ79ToI0MvJNjJ1">只解释已发生的事 · 不做操作建议 · 无远程推送</div>
+            </div>
+            <div class="bell" title="全部已读" onclick="markAllRead(event)" data-page-node-id="G8jo1GGzglw5sTsaYtzGBf">✓</div>
+          </div>
+        </div>
+
+        <div class="amb neutral" data-page-node-id="dYCB0EyddslRG7vUOpqSr1">
+          <div class="filter-tabs" id="ftabsB" data-page-node-id="j01ERa96EBbM0fNvLKZTk3">
+            <button class="ftab on" data-f="all" data-page-node-id="KU7g4XPCSeE7rBxBDUJRRo">全部 <span class="cnt" data-page-node-id="wb71hvmLobhXgMa3rWsCCM">4</span></button>
+            <button class="ftab" data-f="move" data-page-node-id="y40nVusSeyd6cOyLPdxOMh">行情异动 <span class="cnt" data-page-node-id="GY10w9qiO9BXaNaxFOlAh6">1</span></button>
+            <button class="ftab" data-f="event" data-page-node-id="ZT4zO29BCwGfER5rCrFcF2">事件临近 <span class="cnt" data-page-node-id="Gwy21j1HHLKR298qEHX3BP">2</span></button>
+            <button class="ftab" data-f="expo" data-page-node-id="HFwvS1Qfz2kfXP2PUvJQqy">暴露变化 <span class="cnt" data-page-node-id="o1W5yNcIVvV9mX5D2quGJC">1</span></button>
+          </div>
+        </div>
+
+        <div class="mailbox" id="mailbox" data-page-node-id="XfziwTVKyQQWUNBxMWizeR">
+
+          <!-- 消息 1 -->
+          <div class="z2 mail unread open" data-kind="move" data-page-node-id="JzRGxx7oHjxp2vETsjIHYl">
+            <div class="mail-head" data-page-node-id="xzxKjkTI5ar3drEsND4ZGe">
+              <span class="mail-kind mk-move" data-page-node-id="FV2VrmHIsyfaWOB8YRhpCH">行情异动</span>
+              <span class="mail-title" data-page-node-id="sZuzBRG1hAnK59bPsMa9JZ">中际旭创上涨达到 4.2%</span>
+              <span class="mail-time" data-page-node-id="Bj2Eb1pgfzr5XBuGIhi75C">09:37</span>
+            </div>
+            <div class="mail-sum" data-page-node-id="qeBIrk3WxhOIXVUUOsKFpa">触发了你设置的 ±3% 阈值。同链的立讯精密、沪电股份（自选外）同期回落。</div>
+            <div class="mail-detail" data-page-node-id="0KOCW8qpBjO3e07VpJkz9Y">
+              <div class="attr-box" data-page-node-id="ESu0b5GoSKedeQFRbSKG5v">
+                <div class="h" data-page-node-id="bBPAQAUX8pYdUtqNt4iAjs">✦ 归因检查顺序（AI 整理 · 事实句）</div>
+                <p data-page-node-id="OOt52OSlysBCo80Pm5OaMF"><b data-page-node-id="kUNZbeN2jvP0MzgnA3usoC">① 板块是否同步：</b>光模块板块 +1.1%，弱于个股 —— 板块未整体走强。<br data-page-node-id="FZG9xyWLbsFVWav0GVjV1k">
+                <b data-page-node-id="FXCIrUEHK4fLj7e3VDnKcn">② 有无最新公告：</b>近 7 天无新公告、无龙虎榜上榜。<br data-page-node-id="2M8AcUnCeL5i7pjYunAPDv">
+                <b data-page-node-id="YmEKiJ0m0LjuSRaJx3jlcC">③ 量价关系：</b>成交量 2.8× 五日均量，放量上涨。</p>
+              </div>
+              <div class="mail-actions" data-page-node-id="rGL9jAqAd7DgOfBbgnsPRL">
+                <button class="mact primary" onclick="askAI(event,this)" data-page-node-id="lbF4jTHgfuFoW3qD1J7tjH">问 AI：为什么？</button>
+                <button class="mact" onclick="event.stopPropagation();alert('原型演示：openStockDetail(300308)')" data-page-node-id="0UpQCjOCXqGoNO6InomMgc">看详情</button>
+                <button class="mact" onclick="muteRule(event,this)" data-page-node-id="UhG8l8lH7YZp8WRzNzXz4G">静默本规则</button>
+              </div>
+              <div class="ai-reply" id="aiReply1" data-page-node-id="SNLUxYyTVlBpWmxaEotXZ1">
+                <div class="h" data-page-node-id="26OxR5YTCVHwfFWujFsvVe"><span class="ai-badge" data-page-node-id="14jtMndRXAblPZNx6EG2vE">AI</span><span class="t" data-page-node-id="jsgyBnjlrS8IGBAZ98o7Yw">基于实时行情与公开数据的解释</span></div>
+                <p data-page-node-id="HLKXF7tSwGJ9yoVIMd52cM">最可能的方向：<b data-page-node-id="13YxPzZeJulchmVxkKHkCU">链内资金轮动</b>。你自选里的通信链 4 只近 20 日有 16 天同向（相关系数 0.78），今天这只会涨、其余三只跌，历史上多出现在轮动而非整体景气变化时 —— 也就是说，<b data-page-node-id="ZEsbdaixI8yZH8o7yX1Csg">你在这条链上的暴露没有减少，只是位置换了</b>。以上为已发生事实的解释，不构成任何判断。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 消息 2 -->
+          <div class="z2 mail unread" data-kind="event" data-page-node-id="ScQySSgzWm0Yb9plDRj27S">
+            <div class="mail-head" data-page-node-id="0FgIv6fLItgj46hwOvLnTp">
+              <span class="mail-kind mk-event" data-page-node-id="gdF71adMUuB4lqFqLHDf1X">事件临近</span>
+              <span class="mail-title" data-page-node-id="TLaS2vqxpbcld63xpHGaFD">恒瑞医药：解禁进入 30 天窗口</span>
+              <span class="mail-time" data-page-node-id="430fXWZWDEwk8VCyCu2Fax">昨日 18:00</span>
+            </div>
+            <div class="mail-sum" data-page-node-id="1C3UHFXAUUaQXkPYvgCiGX">9/28 解禁 2.4 亿股，占总股本 1.2%。来源：东财限售解禁表（日更）。</div>
+            <div class="mail-detail" data-page-node-id="DRsK7nAWBUbGCNb2DOuVFf">
+              <div class="attr-box" data-page-node-id="xRMS2jqIDfcvGJzuoin3Px">
+                <div class="h" data-page-node-id="FdRdGw6a1cYVwnheLC7rQr">✦ 事实卡（规则引擎产出，非 AI）</div>
+                <p data-page-node-id="5D47dtoanOhDX4HZl0dnzE">解禁规模 1.2% 属<b data-page-node-id="Sy6kiSUmrIKjR4hH9pHbGE">中性量级</b>（市场常用分档：&lt;1% 低 / 1–3% 中 / &gt;3% 高）。同一窗口内该股无减持公告。口径：解禁≠减持，只代表可流通数量变化。</p>
+              </div>
+              <div class="mail-actions" data-page-node-id="P7ZX5DTqtRyEBMbQmX5zZ1">
+                <button class="mact primary" onclick="event.stopPropagation();alert('原型演示：术语 sheet ——「解禁」人话解释 + A股例子（L0 内联出口，记一笔 SEEN）')" data-page-node-id="x1vW2yxRVjowEq6UAiWJPa">「解禁」是什么意思</button>
+                <button class="mact" onclick="event.stopPropagation();alert('原型演示：openStockDetail(600276)')" data-page-node-id="VLCjfxbPZGcZ47VVQROXuK">看详情</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 消息 3 -->
+          <div class="z2 mail" data-kind="event" data-page-node-id="ctLPTFbr3sa5SRHb9C0XUG">
+            <div class="mail-head" data-page-node-id="ZtBrkomL1Jz888DWBDQ6eS">
+              <span class="mail-kind mk-event" data-page-node-id="hbe4H7dFSt3zouj24Un5NS">事件临近</span>
+              <span class="mail-title" data-page-node-id="71jrn9n59AG55mUpa9vp8J">宁德时代：财报预约披露 10/18</span>
+              <span class="mail-time" data-page-node-id="mXvLWJbklRH24rHOhKV5RW">周一 08:30</span>
+            </div>
+            <div class="mail-sum" data-page-node-id="MeCQiFqZJChqDDLnoMaTHE">来自交易所财报预约日历。上次预约披露日的 3 天前后，该股波动率为平时的 2.1 倍（历史统计口径）。</div>
+            <div class="mail-detail" data-page-node-id="7M2y5Y34Wk2vN7r8No5xBj">
+              <div class="attr-box" data-page-node-id="mAFDNZlQvw2y17QG5y9ORU">
+                <div class="h" data-page-node-id="S5MtzvcGBZn5A9wDTWlQTc">✦ 事实卡</div>
+                <p data-page-node-id="ipnf6xjd0XZiTzWMezFyiH">历史口径统计：临近财报披露日 3 天，日均振幅由 1.9% 升至 4.0%。<b data-page-node-id="cLE6oJHwyy0wwiki4BqDgi">这是统计描述，不是预测。</b></p>
+              </div>
+              <div class="mail-actions" data-page-node-id="ChV6Jje6rUF1n4TEcVpoit">
+                <button class="mact primary" onclick="askAI(event,this)" data-page-node-id="BbqpXGFYpt0nNqrb4pi64S">问 AI：要提前做什么？</button>
+              </div>
+              <div class="ai-reply" data-page-node-id="1b6kG0C5CXkE60xfDsmCzu">
+                <div class="h" data-page-node-id="4064qefO459KePMf6LEOtx"><span class="ai-badge" data-page-node-id="A3E8o0BrnqJZZSCCmF6NOt">AI</span><span class="t" data-page-node-id="iUaMceEEly3UEhwsBq5Y8M">只解释，不建议</span></div>
+                <p data-page-node-id="Wrur6ErMU8TbjFEYcS1MOJ">我无法告诉你"该做什么"。能做的是：到 10/18 前一天，把你自选里与宁德时代<b data-page-node-id="TVD6n5K84tNkeRYCRQoYPH">相关系数 &gt; 0.7 的 2 只</b>列出来 —— 那才是财报日当天你会"被动承担"波动的方式。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 消息 4 -->
+          <div class="z2 mail" data-kind="expo" data-page-node-id="rrgR0pvDN44dJdXQRBsAQZ">
+            <div class="mail-head" data-page-node-id="wvOtMYLTRPCmHSQPEJzrPc">
+              <span class="mail-kind mk-exposure" data-page-node-id="TBvcXdn2cruLLQcg0ChKT4">暴露变化</span>
+              <span class="mail-title" data-page-node-id="xuloBzxa7JakAZDt10rb1W">你的组合比上周更集中了</span>
+              <span class="mail-time" data-page-node-id="31YbUfsFLIeap9zBwubVq5">周一 08:30</span>
+            </div>
+            <div class="mail-sum" data-page-node-id="mZ9jtslCiYPxkrAuc9Hp4p">Top3 权重和（等权）：58% → 71%。触发原因：你新加了 2 只同链标的。</div>
+            <div class="mail-detail" data-page-node-id="iGyD4x2jCfeHrzhkmg9zWC">
+              <div class="attr-box" data-page-node-id="YfJ38nKZU9RUg9wbBs9SuD">
+                <div class="h" data-page-node-id="hqtnhzqnC2xPewZLebOLPT">✦ 暴露变化（风险地图快照对比）</div>
+                <p data-page-node-id="PJ8DAyePGfFyECbfGqyW8L">行业 CR3：<b data-page-node-id="qkgR1p5Af27wQ540Eo8E7W">52% → 68%</b>；成对相关系数 &gt;0.8 的配对：1 对 → <b data-page-node-id="g7Jyszb7VvCc7MH9CNQG70">3 对</b>。变化主因：本周新增中际旭创、立讯精密，均属通信链。<br data-page-node-id="4IaZo1rXOY6bgNqSyD9rAF"><span style="color:var(--t3)" data-page-node-id="dkwH2lfo5h5dFsAD6BN3dI">这是"你正在承担什么"的变化，不是"你该减仓"的暗示。</span></p>
+              </div>
+              <div class="mail-actions" data-page-node-id="CBosZ9YPDOA007Npo12m3X">
+                <button class="mact primary" onclick="location.hash='cellC'" data-page-node-id="YAnI24GqFfTf1QV8xdGtmq">去风险地图看 ›</button>
+                <button class="mact" onclick="muteKind(event,this)" data-page-node-id="6AAuBcw4KefbCftotqGHmJ">不再提醒此类</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 免打扰 -->
+        <div class="z2 mute-row" data-page-node-id="4ZNIhCAD8hNLhTr5pToJUP">
+          <div class="t" data-page-node-id="zlxkiAjlwXv1HpSN3SitsM">
+            <div class="tt" data-page-node-id="VZHYxBMUTmNuCFtb0c6sD9">收盘后免打扰</div>
+            <div class="ts" data-page-node-id="bJGLPmeaF2tleNwgATojZ1">15:05 后触发的异动合并到次日 8:30 早简报</div>
+          </div>
+          <div class="switch on" onclick="this.classList.toggle('on')" data-page-node-id="PPL7OaRCELTU3O1hFSuv8T"><i data-page-node-id="jazMMD2ADilx9hvZFLu3s6"></i></div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note" data-page-node-id="tiooxZGZvARAXCgTav7jPj">
+      <b data-page-node-id="11IEXELcIkVFDsCiFU2Sul">消息提示的三层设计：</b>① badge 常显未读数（应用内，无远程推送）；② 每条消息点开即给
+      <span class="ai" data-page-node-id="gM7zwEBZMsQPj7xBStQbRt">归因检查顺序 / 事实卡</span>；③ <span class="ai" data-page-node-id="w0QjnQ1jqyC5ECD5R9FHQO">「问 AI」</span>出口接对话页。
+      第三类「暴露变化」预警是本方案独有的整合点 —— 它把风险地图的六维判定变成了一条消息，
+      让预警从"盯价格"升级为"盯你的暴露"。
+    </div>
+  </div>
+
+  <!-- ═══════════ 屏 C：风险底座 ═══════════ -->
+  <div class="cell" id="cellC" data-page-node-id="dKEcmBT03zW42xBrEHytYb">
+    <div class="cell-label" data-page-node-id="wFIo1HCTwKf8fTRpkPrl47"><span class="dot neutral" data-page-node-id="tnj6tKql1C0Ap7KyJBLJwE"></span>屏 C · 风险底座（暴露解释 × 术语出口 × 追问）</div>
+    <div class="phone" data-page-node-id="exjtHx7GVts8ksKiXQqKSV">
+      <div class="pbar" data-page-node-id="pHx2pahNTJOPxkgcgqf0oa"><span class="time" data-page-node-id="J9sTABHqFOn7o8FlgA6K3Z">9:41</span><span data-page-node-id="5XGXCD0WqBwLWpl6yOdHSx">●●●</span></div>
+      <div class="screen" data-page-node-id="yovJRcogzAg1AlbZvWsdRB">
+        <div class="atb" data-page-node-id="GVaS5Pp9Qw03Ap8r10u8Wy">
+          <div class="atb-row" data-page-node-id="UkAHLjrEnWcdutQN3hyE2A">
+            <div data-page-node-id="XiGCyhWiEFRfIgkt6nsMfz">
+              <div class="atb-t" style="font-size:15px" data-page-node-id="mbcQ49CWyzIgVK14U6DQl9">‹ 共同暴露</div>
+              <div class="atb-s" data-page-node-id="lH2uRfN2W1n1JVfhEpBEm6">你正在承担什么 · 按显著性排序 · 等权估算</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="amb neutral" data-page-node-id="9zqFFhAT69H2sh9n2Z5yfA">
+          <!-- 维度1：行业重叠（命中判定，z3 上浮） -->
+          <div class="z3 dim" data-page-node-id="56NNDRM4hSHWJQ8vgIEfLV">
+            <div class="dim-h" data-page-node-id="i5dO7Ww31k0qentzxha4yU">
+              <span class="dim-rank" style="background:var(--brandSoft);color:var(--brand)" data-page-node-id="P5C6vYsvUQCPelHtlJi7ET">最显著</span>
+              <span class="dim-title" data-page-node-id="vwALwRYLIcqzBqzF8RE4xR"><span class="term" onclick="showPop(event,'popSector')" data-page-node-id="3TX48oy5aNbA2o7X0gL1fd">行业重叠</span></span>
+              <span class="dim-val num cG" data-page-node-id="gxOCx9uDIdYSjaKCFflIUe">CR3 68%</span>
+            </div>
+            <div class="bar" data-page-node-id="2cC2vkYKrDhy49enVI3pvm">
+              <i style="width:68%;background:var(--brand)" data-page-node-id="yRSWFWeUyYelIMiMjiW1PM"></i>
+              <i style="width:14%;background:#7FA0E4" data-page-node-id="hbwyUV79dBTXzgy292NhoN"></i>
+              <i style="width:18%;background:var(--muted)" data-page-node-id="SuxCwcPLCtVoQ88Bl0SwVU"></i>
+            </div>
+            <div class="bar-lbl" data-page-node-id="8JCe1DopjftprVi2w9DScf"><span data-page-node-id="pd2Q4MzrccM8qLGTe1yfFF">通信链 4 只</span><span data-page-node-id="jCaEk1nw1Yoh3GdNkZY5Ds">新能源 1</span><span data-page-node-id="jKqubknhjpw2nKynfZfyfa">医药/金融/消费 3</span></div>
+            <div class="sector-chips" data-page-node-id="eKmSf3eaelK9y5mRH5hgKA">
+              <span class="schip hot" data-page-node-id="5YHsZ3RHjmd9uWQcDwS9Om">通信链 ×4 <span class="n" data-page-node-id="YTfOsExLXHc41M32jWbYkd">· 同涨同跌 16/20 天</span></span>
+              <span class="schip" data-page-node-id="iHXUMrpTaZWJncmchGH7te">新能源 ×1</span>
+              <span class="schip" data-page-node-id="wh3xKwD81eTMnEQKmIN8g4">其他 ×3</span>
+            </div>
+            <div class="ai-line" data-page-node-id="MpGHnrr879cmfZLJWSrZty">你以为分散在 8 只票里，其实<b data-page-node-id="9iIsUMo0oaIFI14cFLYuHn">一半押在同一个变量上</b> —— 今天 4 涨 4 跌里的 3 只跌的，跌的都是同一个理由。</div>
+          </div>
+
+          <!-- 维度2：相关性 -->
+          <div class="z1 dim" data-page-node-id="G8LgOJtPvgUuznhnLD7r3r">
+            <div class="dim-h" data-page-node-id="pBI5kPhYsRsaqgCRj31vN9">
+              <span class="dim-rank" data-page-node-id="8yu35GwPqmgA4niiNYxw1d">02</span>
+              <span class="dim-title" data-page-node-id="ktqEi2JB2yMyKmlMRVZzob"><span class="term" onclick="showPop(event,'popCorr')" data-page-node-id="VTB4sxeDbhRZ3dZzSzeUFi">相关系数</span></span>
+              <span class="dim-val num" data-page-node-id="QvOs5ws3soX8jaLWoQXqBe">最高 0.78</span>
+            </div>
+            <div class="matrix" data-page-node-id="pzXt51qSYL3WDiE7z2SgUV">
+              <div class="mx self" data-page-node-id="Q9vqCvLhw158HAS5JCu5DS">—</div><div class="mx hi" data-page-node-id="yfywmbwpDtJMgGPF9Syb4N">.78</div><div class="mx hi" data-page-node-id="kTowaxP0YlJUrCFA7jisjd">.71</div><div class="mx mid" data-page-node-id="9ld8LNeo81KLLOCyw6A7CZ">.55</div><div class="mx lo" data-page-node-id="7NXXfrjnT8X5XWZjWcvcmK">.21</div><div class="mx lo" data-page-node-id="O533ryouJNoEETte6dLyYX">.12</div>
+              <div class="mx hi" data-page-node-id="N0wdBKFvwEwpCUS94Z4Bmu">.78</div><div class="mx self" data-page-node-id="zepQFeq7ZydNKok2jffuO2">—</div><div class="mx hi" data-page-node-id="GnXrFgAnrpCYf0KTKuxBCn">.74</div><div class="mx mid" data-page-node-id="Pmus9mHGsWr5egJCOQ9GqU">.52</div><div class="mx lo" data-page-node-id="n4ibABaT77TrKHl354bxAG">.18</div><div class="mx lo" data-page-node-id="WQugeKaXOvTfwIAqvLeEMe">.15</div>
+              <div class="mx hi" data-page-node-id="mv7z5yW3PCz7jMZrxzEFPd">.71</div><div class="mx hi" data-page-node-id="tPuuTD1FH7EWP9duoBdiC4">.74</div><div class="mx self" data-page-node-id="ervl33QQBMy8QlOK7LvlyH">—</div><div class="mx mid" data-page-node-id="rfWsCeLKH24JYhkHK2KEyT">.58</div><div class="mx lo" data-page-node-id="W7bMXATVSkULj3JtdFWL50">.22</div><div class="mx lo" data-page-node-id="7ePhJqVyyQUkP43iEpklJe">.09</div>
+              <div class="mx mid" data-page-node-id="M7Sabw7gjf479qmMNh4oZw">.55</div><div class="mx mid" data-page-node-id="qbrbCF8Zx6farxOffgAdgm">.52</div><div class="mx mid" data-page-node-id="gh2CYnX7Rj4J7JWOVzfuEL">.58</div><div class="mx self" data-page-node-id="AJ3JVnPQjVyq9g45lYpUGE">—</div><div class="mx lo" data-page-node-id="DS4J3D80icpZcuAbNgaf8W">.31</div><div class="mx lo" data-page-node-id="OAI8LAArionFeLiQIw5JaV">.14</div>
+              <div class="mx lo" data-page-node-id="XCBvlTHUCaWtLz6Dm8tkqI">.21</div><div class="mx lo" data-page-node-id="u1yqXqi1SYYGTvcGHPmb1c">.18</div><div class="mx lo" data-page-node-id="WtzIPDpLBGi34mOmDIy7G9">.22</div><div class="mx lo" data-page-node-id="l0AYdBhbOJsObD9EE2T3EF">.31</div><div class="mx self" data-page-node-id="OjyU86pgAFYD8UcBhgcu7u">—</div><div class="mx lo" data-page-node-id="DtRUn5jDGf9aOyduEtKd3E">.28</div>
+              <div class="mx lo" data-page-node-id="RKDjKhcJPeRlmkRs8M1PU4">.12</div><div class="mx lo" data-page-node-id="ktG5Xte8Y6O3tvjYBfFCyz">.15</div><div class="mx lo" data-page-node-id="1BfIVoBfDoYAejCiWyRMfU">.09</div><div class="mx lo" data-page-node-id="pjnFlEF0VOdBr5Xr2Abbv0">.14</div><div class="mx lo" data-page-node-id="1cZlxAhBLQddF7PixWSc4b">.28</div><div class="mx self" data-page-node-id="HtWfOBAExaGDzsIb2EgqBe">—</div>
+            </div>
+            <div class="dim-note" data-page-node-id="B6gTj9xluEZTPt9G2tEFeK">近 20 日 · 明度编码强度 · N&gt;12 时降级为 Top5 配对列表 · 点击任一格看两只票的走势对照</div>
+          </div>
+
+          <!-- 维度3：集中度 + 波动 -->
+          <div class="z1 dim" data-page-node-id="C0Xrc071dNCNKZUeSqY7TW">
+            <div class="dim-h" data-page-node-id="i3hLgOqItE1e82w9ChBYqi">
+              <span class="dim-rank" data-page-node-id="agNZL32ghvcoF3ppl0C9hM">03</span>
+              <span class="dim-title" data-page-node-id="7zDoH7pKs6azlz4N6yDEZ3"><span class="term" onclick="showPop(event,'popHHI')" data-page-node-id="BzocTKhsYiapD2GI7Vwgwr">集中度</span> / <span class="term" onclick="showPop(event,'popVol')" data-page-node-id="k9MLjBBr4ezBH10ZZCaPo6">波动暴露</span></span>
+              <span class="dim-val num" data-page-node-id="9aAZ506GwpEmPgqkfJAxfo">Top3 71% · 1.8×</span>
+            </div>
+            <div class="bar" data-page-node-id="PYYIMOlzuyMSHKoy9JeenS"><i style="width:71%;background:var(--brand)" data-page-node-id="hjFalma6vqnxj1uS6cVP96"></i><i style="width:29%;background:var(--muted)" data-page-node-id="mICwgHeWYWUNQVLWsfDpOJ"></i></div>
+            <div class="bar-lbl" data-page-node-id="ea8sgA9vrDAKyLBIexAFer"><span data-page-node-id="tVhqkNyvSPAGxqRjAMYtEJ">前 3 只占 71%（等权估算）</span><span data-page-node-id="paZeSI5yDlh06Al5nFMMOt">HHI 0.19</span></div>
+            <div class="bar" style="margin-top:11px" data-page-node-id="GoIGE7KnqFLMZmEfmRACfy">
+              <i style="width:64%;background:#E8A400" data-page-node-id="9dhqAKxAG4WRB3gdiLeWdI"></i><i style="width:36%;background:var(--muted)" data-page-node-id="hWnhdCqrfyedwtF4WQaale"></i>
+            </div>
+            <div class="bar-lbl" data-page-node-id="CvEMfkRVfE3XDpeMmWrmDd"><span data-page-node-id="wmrLPGclIZ5IxQ9CJx3iT8">组合年化波动 1.8× 沪深300</span><span data-page-node-id="ds14aWDViS4t6mDkWw4DhM">口径：近 60 日</span></div>
+          </div>
+
+          <!-- 维度4：事件时间轴 -->
+          <div class="z1 dim" data-page-node-id="MVsDvpiJDeAH8Kl68OC0MH">
+            <div class="dim-h" data-page-node-id="CbtztJZzGbnLuS7AaQOxM0">
+              <span class="dim-rank" data-page-node-id="JaW0Eh58HIiGVdjiUN9UV8">04</span>
+              <span class="dim-title" data-page-node-id="fMVIQTHcC5nBxbtlcjgvM3"><span class="term" onclick="showPop(event,'popUnlock')" data-page-node-id="yDKYkhi0l7y5zZmoN0TCZ6">事件时间轴</span></span>
+              <span class="dim-val" data-page-node-id="d5ZmKgDkL8YMAbam4axHNl">30 天 · 2 件</span>
+            </div>
+            <div class="timeline" data-page-node-id="VvnWewVb7njyuD873JCb2B">
+              <div class="tl-item warn" data-page-node-id="kivRyGACFs1OLlsJreUVol"><div class="tl-d" data-page-node-id="333IsJi6FKtuMtSqHuqZ6g">09/28</div><div class="tl-t" data-page-node-id="ZEdlFVdFaF8E2Ql4MGqrzs">恒瑞医药 解禁 1.2% <span class="sub" data-page-node-id="A3pC4XcYZAlBpLzRv2Em1X">· 事件预警已设置 ✓</span></div></div>
+              <div class="tl-item" data-page-node-id="YyKMc1FEErW0IEE5Jj70Wy"><div class="tl-d" data-page-node-id="TQUjOmhssmPke6wpqEmjfZ">10/18</div><div class="tl-t" data-page-node-id="Fao3vniTNWUHV9VqWa6GYm">宁德时代 财报预约披露 <span class="sub" data-page-node-id="phcmUlrqC5qH9pMicwlPx1">· 事件预警已设置 ✓</span></div></div>
+            </div>
+            <div class="dim-foot" data-page-node-id="VqV8NDEgUaqAjjJIFti2IZ">
+              <span class="src" data-page-node-id="WVnsH7Ndv9jVJYIq2rQLwX">来源：东财解禁表 / 交易所预约日历</span>
+              <span class="go" onclick="alert('原型演示：时间轴上任意事件一键转为「事件临近」预警，进入收件箱分类流')" data-page-node-id="HVgOK2E2ySFjIxRugBVqVK">转为预警 ›</span>
+            </div>
+          </div>
+
+          <!-- 追问 -->
+          <button class="ask-btn" onclick="document.getElementById('askPanel').classList.toggle('show')" data-page-node-id="KFj6u4KHKgD83ZCTHMcp43">✦ 就这个暴露问 AI 一句</button>
+          <div class="ask-panel" id="askPanel" data-page-node-id="A19UK8AAzpgCZHWetUV8bc">
+            <p data-page-node-id="Sm5DdqOycbRGr6iGJF2Zfm"><b data-page-node-id="pDbkVWeABwBjxuUJbifVEh">问：</b>我这条通信链，到底在押什么？<br data-page-node-id="lIWobX9tOguXgbZ2BFYRgG">
+            <b data-page-node-id="wbqfHFBL56wOjE83RoDh4V">AI：</b>四只票的盈利都依赖同一个上游变量 —— <b data-page-node-id="mZNTcw9TPshIBYKXBWnNgB">数通市场订单节奏</b>。链内价格由它统一驱动，所以个股基本面差异被放大波动掩盖了。你近 20 日有 16 天"自动同步"，这正是 <b data-page-node-id="8irLpw1sEGJ4OSEClCClhy">相关系数 0.78</b> 的含义。想看这只链上你还没关注的上下游公司名单，可以在对话里问我。</p>
+          </div>
+
+          <div style="text-align:center;font-size:9px;color:var(--t3);padding:14px 30px 4px;line-height:1.7" data-page-node-id="ffVUrF7sxQ7B5o6uP7I8at">
+            全部结论为规则引擎产出的事实陈述 · 数据来源与免责声明常驻页底<br data-page-node-id="CA2jTNtxlIFHXWZUH31RSb">
+            本页不出现：评分 / 等级 / 匹配 / 建议仓位 / 止损止盈
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="cell-note" data-page-node-id="johOWKZwAw8U0j1mmr4DHT">
+      <b data-page-node-id="EVmVW2rDEGwzsXubYp1WWv">与旧风险地图的差别：</b>① 摘要条 <span class="ai" data-page-node-id="v6tnqqBWbODfwEtECVfemL">"事件 → 转为预警"</span>，风险地图成为收件箱的预警**生产端**；
+      ② 底部 <span class="ai" data-page-node-id="aH4o0NIah8Bn8QSmsabvmH">追问出口</span>把暴露结论送进对话页（复用 AttributionIntent）；
+      ③ 术语点击弹 L0 人话解释并记入知识库 —— 三页在"空间"内互为入口，闭环不再经过抽屉。
+    </div>
+  </div>
+</div>
+
+<!-- 术语气泡 -->
+<div class="pop" id="popSector" data-page-node-id="dhwuqUChHSUYlIBHab2nzp"><div class="t" data-page-node-id="GWizgNpmTI8NL7EewyI1ns">行业重叠</div>你的多只自选属于同一行业或产业链时，它们的涨跌往往被同一个行业变量驱动 —— 行业 CR3 = 前 3 大行业占自选总数的比例，越大说明越"扎堆"。</div>
+<div class="pop" id="popCorr" data-page-node-id="9ohFpVuibuTNtocR3V7fX8"><div class="t" data-page-node-id="WNLHgrAaayvHE5xz1VvMVP">相关系数</div>两只票近期同涨同跌的同步程度，取值 −1 到 +1。0.78 意味着近 20 日里约 8 成交易日同向 —— 从波动的角度看，"约等于一只票"。</div>
+<div class="pop" id="popHHI" data-page-node-id="Sl2mJt60yLZMu3RXqdqerw"><div class="t" data-page-node-id="mi83uN2DlgMEbHL7Vf6hiw">集中度（HHI）</div>赫芬达尔指数：每只票权重平方后求和。数值越大越集中。Top3 71% 表示你的等权组合里，盈亏主要由 3 只票决定。</div>
+<div class="pop" id="popVol" data-page-node-id="7J8rLsoDggpVdKSbRzdq1x"><div class="t" data-page-node-id="5Fv6ajLCfvnhmSq2qTjz5i">波动暴露</div>组合的年化波动率除以沪深300 的年化波动率。1.8× 表示"同样的行情里，你这一篮子大约晃动 1.8 倍"。</div>
+<div class="pop" id="popUnlock" data-page-node-id="VVYCRZiNNvJymCsxvcFhD2"><div class="t" data-page-node-id="AUTMatalArcqlvRxdW57r9">解禁 / 事件时间轴</div>解禁 = 原本限售的股份变为可流通。解禁 ≠ 减持，只代表可卖数量变化。时间轴把 30 天内会影响你自选的已知事件排在一条线上。</div>
+
+<!-- 底部说明 -->
+<div class="guide" data-page-node-id="JIQBns0GS9CbMkgdcJ3qys">
+  <h3 data-page-node-id="UYWhlux1fLg24omgDPodkW">交互设计说明 · 与 AI 的关系 · 落地路径</h3>
+  <div class="guide-grid" data-page-node-id="IioeT3TPxLFvMEtezrGAxy">
+    <div class="g-item" data-page-node-id="vUHLuGAQ1fiP6lS3doUUar"><h5 data-page-node-id="KWM6qkZfKdPoH7b02T1u9W">① 一页三区，联动代替跳转</h5>
+      <p data-page-node-id="kzU7IldF5sbwPIrX1lQzaT">首页 = 聚合结论 + 预警预览 + 关注分层 + AI 简报。收件箱与风险底座从首页一次点击可达，且互相出超链：风险地图的"事件 → 转为预警"、收件箱的"暴露变化 → 去风险地图"。</p></div>
+    <div class="g-item" data-page-node-id="IOYzH0QmvMEb9ZXfTt0P4p"><h5 data-page-node-id="LU8SO902GcZfsjlI2Wdp1V">② 预警从"盯价格"升级为"盯三样"</h5>
+      <p data-page-node-id="hvyc4fDklvrG6I7r9KCC5z">行情异动（已有 AlertStore 阈值）+ 事件临近（解禁/财报/减持，数据源已在 Provider 内）+ 暴露变化（RiskSnapshotStore 周快照对比，已有）。三类消息同一条时间线，分类 tab 过滤。</p></div>
+    <div class="g-item" data-page-node-id="4hVJI040e6JVXpagENlaFb"><h5 data-page-node-id="kYz7ENneSDINselpWQJd6m">③ 消息提示 = 应用内 badge + 收件箱</h5>
+      <p data-page-node-id="X8yd8EBXK4Lt6fd9cGtj17">不做远程推送（N-R6 维持）：badge 只在 App 内显示未读数；消息点开才消费；"收盘后免打扰"开关把盘后异动合并进次日早简报，避免催促感。</p></div>
+    <div class="g-item" data-page-node-id="UL6PUTDpoy9HfO3WiQClI4"><h5 data-page-node-id="RKyLoEh8gyQhVwYNjG4hLg">④ AI 触点预算：4 处，全条件触发</h5>
+      <p data-page-node-id="YHpJbF5aIQLJUQwE27GMSG">AI 简报（每日 ≤1 条，平静日不出现）· 归因检查顺序（消息内置）·「问 AI」追问（用户主动）· 暴露页内联注释（≤3，沿用 C-3 预算）。AI 永远是"解释者"，输出全是事实句。</p></div>
+    <div class="g-item" data-page-node-id="L2MOM2xgNdA0wzymFUO9cV"><h5 data-page-node-id="d4xApBCsfod0cd1pl6dhKw">⑤ 落地：增量改造，不推倒重来</h5>
+      <p data-page-node-id="zUp3llsvkjo80ffxEnGr9O">WatchlistPage 聚合头下插入 InboxPreview；AlertCenterPage → AlertInboxPage（加事件/暴露两类消息源 + 已读状态）；RiskMapPage 加"转为预警"出口。三个 Store 全部复用，alertRules schema 已预留。</p></div>
+    <div class="g-item" data-page-node-id="sgzmGAFnOSVSSghzkCiDdb"><h5 data-page-node-id="5bpApnpDuigWXW7xPkepzh">⑥ 闭环的最后一环</h5>
+      <p data-page-node-id="G86EdnbNi4D8eCunqBGqXH">消息里的术语（解禁/相关系数）→ L0 术语 sheet → 知识库记一笔；简报里的"你最近老遇到"接 TermTracker。预警是钩子，知识是沉淀，自选是源头 —— doc 23 的闭环在"空间"内首尾相接。</p></div>
+  </div>
+  <div class="compliance" data-page-node-id="BXIXYdQN3ngASGxjTG5PjD">
+    <b data-page-node-id="Wnih0MwYWrCTzanPU8F0St">合规边界（沿用 doc 23 §4.1，逐条自查）：</b>无风险测评 / 无 C1-C5、R1-R5 / 无"匹配、适配、你的风险等级、评分、健康分"词汇 /
+    无仓位、止损、调仓建议 / 消息只陈述已发生事实并附检查顺序 / 等权估算角标常驻 / 免打扰与静默优先于推送感 /
+    「问 AI」走对话页 AttributionIntent 链路，页内不自行编造原因。
+  </div>
+</div>
+
+</div>
+
+<script>
+/* ── 屏 A：状态筛选 ── */
+document.querySelectorAll('#segA .seg-item').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    document.querySelectorAll('#segA .seg-item').forEach(function(b){b.classList.remove('on')});
+    btn.classList.add('on');
+    var f = btn.dataset.f;
+    document.querySelectorAll('#rowsA .wrow').forEach(function(row){
+      row.style.display = (f==='all' || row.dataset.kind.split(' ').indexOf(f)>=0) ? 'flex' : 'none';
+    });
+  });
+});
+
+/* ── 屏 A：AI 简报展开 ── */
+document.getElementById('briefA').addEventListener('click', function(){
+  this.classList.toggle('open');
+});
+
+/* ── 屏 B：消息分类 ── */
+document.querySelectorAll('#ftabsB .ftab').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    document.querySelectorAll('#ftabsB .ftab').forEach(function(b){b.classList.remove('on')});
+    btn.classList.add('on');
+    var f = btn.dataset.f;
+    document.querySelectorAll('#mailbox .mail').forEach(function(m){
+      m.style.display = (f==='all' || m.dataset.kind===f) ? 'block' : 'none';
+    });
+  });
+});
+
+/* ── 屏 B：消息展开 ── */
+document.querySelectorAll('#mailbox .mail').forEach(function(m){
+  m.addEventListener('click', function(){ m.classList.toggle('open'); });
+});
+
+/* ── 屏 B：问 AI ── */
+function askAI(e, btn){
+  e.stopPropagation();
+  var reply = btn.closest('.mail-detail').querySelector('.ai-reply');
+  if(reply){ reply.classList.add('show'); btn.textContent='再问一句 → 对话页'; }
+}
+function muteRule(e, btn){ e.stopPropagation(); btn.textContent='已静默 ✓'; btn.disabled=true; }
+function muteKind(e, btn){ e.stopPropagation(); btn.textContent='已关闭此类提醒 ✓'; btn.disabled=true; }
+
+/* ── 屏 B：全部已读 ── */
+function markAllRead(e){
+  e.stopPropagation();
+  document.querySelectorAll('#mailbox .mail').forEach(function(m){m.classList.remove('unread')});
+  var b1=document.getElementById('badgeA'), b2=document.getElementById('badgeB');
+  if(b1)b1.remove(); if(b2)b2.remove();
+}
+
+/* ── 屏 C：术语气泡 ── */
+function showPop(e, id){
+  e.stopPropagation();
+  var pop = document.getElementById(id);
+  var wasOpen = pop.classList.contains('show');
+  document.querySelectorAll('.pop').forEach(function(p){p.classList.remove('show')});
+  if(!wasOpen){
+    pop.classList.add('show');
+    var r = e.target.getBoundingClientRect();
+    var pr = pop.getBoundingClientRect();
+    pop.style.left = Math.max(8, r.left - 90) + 'px';
+    pop.style.top = (window.scrollY + r.bottom + 8) + 'px';
+  }
+}
+document.addEventListener('click', function(){
+  document.querySelectorAll('.pop').forEach(function(p){p.classList.remove('show')});
+});
+</script>
+</body>
+</html>

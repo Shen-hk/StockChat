@@ -14,7 +14,9 @@ import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 class MarketDependencies(
     val watchlistStore: WatchlistStore,
     val alertStore: AlertStore,
+    val alertInboxStore: AlertInboxStore,
     val glossaryStore: GlossaryStore,
+    val termDrillStore: TermDrillStore,
     val riskSnapshotStore: RiskSnapshotStore,
     val quoteRepository: QuoteRepository,
     val insightRepository: MarketInsightRepository,
@@ -30,7 +32,9 @@ class MarketDependencies(
             return MarketDependencies(
                 watchlistStore = WatchlistStore(storage),
                 alertStore = AlertStore(storage),
+                alertInboxStore = AlertInboxStore(storage),
                 glossaryStore = GlossaryStore(storage),
+                termDrillStore = TermDrillStore(storage),
                 riskSnapshotStore = RiskSnapshotStore(storage),
                 quoteRepository = QuoteRepository(
                     online = TencentQuoteProvider(pagerId),
