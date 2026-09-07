@@ -89,6 +89,7 @@ internal class MarketPage : BasePager() {
     private var pullDistance: Float by observable(0f)
     private var pullReady: Boolean by observable(false)
     private var refreshResultVisible: Boolean by observable(false)
+    private var debugScroll: String by observable("scroll:none")
 
     /**
      * The page's single motion switch. Every transform/opacity timeline on this
@@ -266,7 +267,7 @@ internal class MarketPage : BasePager() {
                 // Kuikly names the vertical content offset `offsetX`; `offsetY`
                 // is horizontal. Reading the latter kept this state at zero on
                 // real Android devices even while the page visibly scrolled.
-                event { scroll { params -> page.updateStickyIndex(params.offsetX) } }
+                event { scroll { params -> page.debugScroll = "x=${params.offsetX.toInt()} y=${params.offsetY.toInt()} ch=${params.contentHeight.toInt()} vh=${params.viewHeight.toInt()}"; page.updateStickyIndex(params.offsetX) } }
                 // Captured once, deliberately: both are non-observable snapshots
                 // here (see rule 2 in the class doc — reading `page.theme` inside
                 // an attr would steal every animation key on this page).
@@ -697,6 +698,7 @@ internal class MarketPage : BasePager() {
                 Text { attr { text("数据仅供信息参考，不构成投资建议。行情数据可能延迟或存在不同统计口径。"); marginTop(10f); fontSize(10f); lineHeight(15f); color(theme.textTertiary) } }
             }
             // `peek` mounts the overlay, `peekVisible` animates it (see showPeek).
+            Text { attr { absolutePosition(top = 260f, left = 20f); zIndex(99, useOutline = false); text(page.debugScroll + " | sticky=" + page.stickyIndexVisible); fontSize(11f); color(com.tencent.kuikly.core.base.Color.RED) } }
             vif({ page.peek != null }) {
                 View {
                     attr {
