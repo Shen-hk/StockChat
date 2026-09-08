@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="4WWIEIARz89iCma01diCaB">
+<head data-page-node-id="7ZIE4wEj77dIEshwMCtmoI">
+<meta charset="UTF-8" data-page-node-id="HDN6bYAIFKab0XSDBNRVm7">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="rIt4nz7zyvHsNORNRUA9sr">
+<title>思维拓扑 · 选股思路解析</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --ink: #1c2330;
+    --ink-2: #5a6572;
+    --ink-3: #9aa3ad;
+    --line: #e7eaf0;
+    --red: #e5484d;
+    --red-soft: #fdecec;
+    --green: #12a150;
+    --green-soft: #e8f7ef;
+    --amber: #d97706;
+    --amber-soft: #fdf3e3;
+    --blue: #2f6fed;
+    --blue-soft: #eaf1fe;
+    --purple: #7c5cff;
+    --purple-soft: #f1edff;
+    --radius: 14px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.6;
+  }
+  .app { max-width: 1180px; margin: 0 auto; padding: 24px 20px 80px; }
+
+  /* ===== Header ===== */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px;
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .logo {
+    width: 42px; height: 42px; border-radius: 12px;
+    background: linear-gradient(135deg, #2f6fed, #7c5cff);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-size: 20px; font-weight: 700;
+  }
+  .header h1 { font-size: 19px; font-weight: 700; letter-spacing: .5px; }
+  .header .sub { font-size: 12px; color: var(--ink-3); }
+  .report-tag {
+    font-size: 12px; color: var(--blue); background: var(--blue-soft);
+    padding: 5px 12px; border-radius: 999px; font-weight: 600;
+  }
+
+  /* ===== 数据来源条 ===== */
+  .source-bar {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .source-bar .label { font-size: 12px; color: var(--ink-3); font-weight: 600; }
+  .chip {
+    font-size: 12px; padding: 4px 12px; border-radius: 999px;
+    background: #f1f3f6; color: var(--ink-2); display: flex; align-items: center; gap: 6px;
+  }
+  .chip b { color: var(--ink); }
+  .chip.hot { background: var(--red-soft); color: var(--red); }
+  .analyze-btn {
+    margin-left: auto; background: var(--ink); color: #fff; border: none;
+    padding: 8px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+
+  /* ===== 概览指标 ===== */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  .stat .num { font-size: 24px; font-weight: 800; letter-spacing: -.5px; }
+  .stat .lab { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+  .stat.bad .num { color: var(--red); }
+  .stat.warn .num { color: var(--amber); }
+  .stat.good .num { color: var(--green); }
+
+  /* ===== Tabs ===== */
+  .tabs {
+    display: flex; gap: 4px; background: #eceef2; padding: 4px;
+    border-radius: 12px; width: fit-content; margin-bottom: 16px;
+  }
+  .tab {
+    padding: 8px 18px; border-radius: 9px; font-size: 13px; font-weight: 600;
+    color: var(--ink-2); cursor: pointer; border: none; background: transparent;
+    transition: all .15s;
+  }
+  .tab.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ===== 思维拓扑 ===== */
+  .topo-grid { display: grid; grid-template-columns: 1fr 340px; gap: 14px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+  }
+  .card-head {
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .card-head h3 { font-size: 15px; font-weight: 700; }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--ink-3); }
+  .legend i { display: inline-block; width: 18px; height: 3px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  .legend .l-solid i { background: #4a5568; }
+  .legend .l-broken i { background: repeating-linear-gradient(90deg, var(--red) 0 4px, transparent 4px 7px); height: 0; border-top: 2px dashed var(--red); }
+  .legend .l-new i { background: var(--green); }
+  .topo-body { padding: 10px; }
+  #topoSvg { width: 100%; height: auto; display: block; }
+  .tnode { cursor: pointer; }
+  .tnode rect, .tnode circle { transition: all .15s; }
+  .tnode:hover rect, .tnode:hover circle { filter: brightness(.96); }
+  .tnode.selected rect, .tnode.selected circle { stroke-width: 2.5; }
+
+  .detail-card { align-self: start; position: sticky; top: 16px; }
+  .detail-body { padding: 16px 18px; }
+  .detail-title { font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .pill { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+  .pill.miss { background: var(--red-soft); color: var(--red); }
+  .pill.ok { background: var(--green-soft); color: var(--green); }
+  .pill.weak { background: var(--amber-soft); color: var(--amber); }
+  .pill.new { background: var(--purple-soft); color: var(--purple); }
+  .detail-desc { font-size: 13px; color: var(--ink-2); margin: 8px 0 14px; }
+  .quote {
+    background: #f7f8fa; border-left: 3px solid #c9d2de; border-radius: 8px;
+    padding: 10px 12px; font-size: 12.5px; color: var(--ink-2); margin-bottom: 12px;
+  }
+  .quote .q-meta { font-size: 11px; color: var(--ink-3); margin-bottom: 4px; }
+  .quote.miss { border-left-color: var(--red); background: var(--red-soft); }
+  .ai-verdict {
+    background: linear-gradient(135deg, #f4f0ff, #eef4ff);
+    border: 1px solid #e3dcff; border-radius: 10px; padding: 12px 14px;
+  }
+  .ai-verdict .v-head { font-size: 12px; font-weight: 700; color: var(--purple); margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .ai-verdict p { font-size: 12.5px; color: #3d3654; }
+  .sugg { margin-top: 12px; }
+  .sugg .s-head { font-size: 12px; font-weight: 700; color: var(--green); margin-bottom: 6px; }
+  .sugg li { font-size: 12.5px; color: var(--ink-2); margin-left: 16px; margin-bottom: 4px; }
+
+  /* ===== 弊端诊断 ===== */
+  .diag-list { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .diag-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+  .diag-top { padding: 14px 18px 10px; }
+  .diag-top .rank {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 7px; background: var(--red-soft);
+    color: var(--red); font-weight: 800; font-size: 12px; margin-right: 8px;
+  }
+  .diag-top h4 { display: inline; font-size: 15px; font-weight: 700; }
+  .diag-top .freq { float: right; font-size: 11px; color: var(--red); background: var(--red-soft); padding: 2px 10px; border-radius: 999px; font-weight: 600; }
+  .diag-sec { padding: 0 18px 14px; }
+  .diag-sec + .diag-sec { border-top: 1px dashed var(--line); padding-top: 12px; }
+  .sec-label { font-size: 11px; font-weight: 700; letter-spacing: 1px; margin-bottom: 6px; }
+  .sec-label.l-red { color: var(--red); }
+  .sec-label.l-purple { color: var(--purple); }
+  .sec-label.l-green { color: var(--green); }
+  .diag-sec p { font-size: 12.5px; color: var(--ink-2); }
+  .diag-sec .quote { margin-top: 8px; margin-bottom: 0; }
+
+  /* ===== 对话溯源 ===== */
+  .trace { display: flex; flex-direction: column; gap: 10px; }
+  .trace-item {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 12px 16px; display: flex; gap: 14px; align-items: flex-start;
+  }
+  .trace-time { font-size: 11px; color: var(--ink-3); width: 92px; flex-shrink: 0; padding-top: 2px; }
+  .bubble { flex: 1; }
+  .bubble .who { font-size: 11px; font-weight: 700; margin-bottom: 3px; }
+  .bubble .who.me { color: var(--blue); }
+  .bubble .who.ai { color: var(--purple); }
+  .bubble .txt { font-size: 13px; color: var(--ink); }
+  .tag-row { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .mini-tag { font-size: 10.5px; padding: 1px 8px; border-radius: 999px; font-weight: 600; }
+  .mini-tag.r { background: var(--red-soft); color: var(--red); }
+  .mini-tag.a { background: var(--amber-soft); color: var(--amber); }
+  .mini-tag.g { background: var(--green-soft); color: var(--green); }
+  .mini-tag.p { background: var(--purple-soft); color: var(--purple); }
+
+  /* ===== 学习路径 ===== */
+  .path { position: relative; padding-left: 26px; }
+  .path::before {
+    content: ""; position: absolute; left: 8px; top: 8px; bottom: 8px;
+    width: 2px; background: linear-gradient(var(--blue), var(--purple));
+    border-radius: 2px;
+  }
+  .step { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px; }
+  .step::before {
+    content: ""; position: absolute; left: -25px; top: 20px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--card); border: 3px solid var(--blue);
+  }
+  .step:nth-child(2)::before { border-color: #5b8df5; }
+  .step:nth-child(3)::before { border-color: #8a6ef7; }
+  .step:nth-child(4)::before { border-color: var(--purple); }
+  .step h4 { font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .step .when { font-size: 11px; color: var(--ink-3); font-weight: 500; }
+  .step p { font-size: 12.5px; color: var(--ink-2); margin-top: 6px; }
+  .step .drill {
+    margin-top: 10px; background: #f7f8fa; border-radius: 8px; padding: 8px 12px;
+    font-size: 12px; color: var(--ink-2);
+  }
+  .step .drill b { color: var(--ink); }
+
+  @media (max-width: 900px) {
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    .topo-grid { grid-template-columns: 1fr; }
+    .diag-list { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body data-page-node-id="EkrfWd3JIgesIKreMzc4Nn">
+<div class="app" data-page-node-id="riwsIu5JLjzbGUCS9q2B8k">
+
+  <!-- Header -->
+  <div class="header" data-page-node-id="yzgFQkCodEY5wPW24v57aL">
+    <div class="header-left" data-page-node-id="bJuxgEOqBdhHKC1hemZy7i">
+      <div class="logo" data-page-node-id="1fhG8xswFGMZY2sQuV2iJp">思</div>
+      <div data-page-node-id="szXbvV01HXJYTZg7NFdWPW">
+        <h1 data-page-node-id="37YwAEyOCuYQV1tSjReCU6">选股思维拓扑解析</h1>
+        <div class="sub" data-page-node-id="AyFRhpfjvG3eEmdbrWbVWy">把你的聊天记录抛给 AI · 拆解决策链路 · 找到思维断点</div>
+      </div>
+    </div>
+    <div class="report-tag" data-page-node-id="Ci4AXNr29bpNyIc4NAXTg0">📋 解析报告 · 2026.09.08</div>
+  </div>
+
+  <!-- 数据来源 -->
+  <div class="source-bar" data-page-node-id="kGEkktV36aduErJEhFkna7">
+    <span class="label" data-page-node-id="ys7xDd8Xo5otzxQ0TmrGqB">分析数据源</span>
+    <span class="chip" data-page-node-id="Z4J3EuUmTxtxrWaqBvl0AM">💬 StockChat 会话 <b data-page-node-id="4GaRHOYHUoJk0oPwe1Onil">47</b> 次</span>
+    <span class="chip hot" data-page-node-id="Sq4FJRpTgQn693y6ZjSIeo">🔥 高频讨论 <b data-page-node-id="5QMvR20C3OEbvcAjLVrB6a">宁德时代 / 中际旭创 / 贵州茅台</b></span>
+    <span class="chip" data-page-node-id="2kO8oVznTnBo4J172RcWK0">📅 时间跨度 <b data-page-node-id="Gg1Se7P67DCCB23JgVrEeo">2026.06 – 09</b></span>
+    <span class="chip" data-page-node-id="vItbuDG7UTEMTqIyPx2Xbs">🧠 提取思维片段 <b data-page-node-id="0UJmAy4dBdbvDxxuNn3Tut">212</b> 条</span>
+    <button class="analyze-btn" data-page-node-id="Za6OCjaQgBksiS4GKQwYue">↻ 重新解析</button>
+  </div>
+
+  <!-- 概览 -->
+  <div class="stats" data-page-node-id="U0TLhBR1PHa5RCdOu8OX5A">
+    <div class="stat bad" data-page-node-id="FZrPgId3WnTfa2Z1JBFab0"><div class="num" data-page-node-id="VisHRk98zrg3fYiqacrIOJ">3</div><div class="lab" data-page-node-id="6P3GmcqpJHOWHfh7CulluH">关键断链点（决策链缺失环节）</div></div>
+    <div class="stat warn" data-page-node-id="zM9PP1EMwpZxL6m9MmtsD2"><div class="num" data-page-node-id="KBmMewJRN11TgkMvvHWJoV">5</div><div class="lab" data-page-node-id="wWSI7GB8pVauESIHQ1F7Sz">识别出的思维模式</div></div>
+    <div class="stat" data-page-node-id="dBwhGrCujLMm720ct0wrAH"><div class="num" data-page-node-id="RD2dpAF0Ylve2ir2xruENA">68%</div><div class="lab" data-page-node-id="43M0BwsQP7SbKMcQ68Prpq">决策链完整度</div></div>
+    <div class="stat good" data-page-node-id="cgO3F5LZ8Cnwev8GRLQoOK"><div class="num" data-page-node-id="S2Ww0hFRt5H0vBe3CG7nMU">2</div><div class="lab" data-page-node-id="aZQxfG04EAIRIT0GSPymSZ">已显现的正确直觉</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs" data-page-node-id="Cy0ORMyWqiWR1ZQ0sygH6v">
+    <button class="tab active" data-panel="p-topo" data-page-node-id="gEZqlFDoG3mGlAf4w1cjzm">🧠 思维拓扑</button>
+    <button class="tab" data-panel="p-diag" data-page-node-id="w5WV5kBAVXEcEvSW330lZW">🔍 弊端诊断</button>
+    <button class="tab" data-panel="p-trace" data-page-node-id="absKgZAAvhdanxLVnY2moq">💬 对话溯源</button>
+    <button class="tab" data-panel="p-path" data-page-node-id="fpbX0A9oZ8dvYWdCrisf14">🛤 学习路径</button>
+  </div>
+
+  <!-- ============ 面板 1：思维拓扑 ============ -->
+  <div class="panel active" id="p-topo" data-page-node-id="UvVYmFpSeboNvECjn2tyFQ">
+    <div class="topo-grid" data-page-node-id="Kb85DGhqtZOXC13Ry2aDjt">
+      <div class="card" data-page-node-id="GVnK4lW60HK9RiNkB2BRE8">
+        <div class="card-head" data-page-node-id="KMoBZ8yjPgSjylEABmT9jq">
+          <h3 data-page-node-id="RRH39Kwm7TX6UKtJBfLvUa">你的决策链拓扑</h3>
+          <div class="legend" data-page-node-id="oOD7qv1AsmejyH8B1zQAae">
+            <span class="l-solid" data-page-node-id="th3yrO56EXk8VzDjIEGnYZ"><i data-page-node-id="p7uRnoRucsiwIpap7X8aBa"></i>已有环节</span>
+            <span class="l-broken" data-page-node-id="wBU99siwtDw888YnF3Uubs"><i data-page-node-id="qzSBJbqjw73XKLSCaSHimW"></i>断链（缺失/跳过）</span>
+            <span class="l-new" data-page-node-id="xFWY0LT6vxZ3nDs0m995kp"><i data-page-node-id="IUFn9rkNKeHHDjGH6IElwk"></i>建议补建</span>
+          </div>
+        </div>
+        <div class="topo-body" data-page-node-id="u1jEJbuKYWjYG2k8PdooZV">
+          <svg id="topoSvg" viewBox="0 0 780 500" data-page-node-id="dvoLIRXGVOqcIXLvxDjz8E">
+            <defs data-page-node-id="O0oVHmad3yK69W1prZLwHm">
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="HlB5UCTg6os5UofjM1h2On">
+                <path d="M0 0 L10 5 L0 10 z" fill="#8a93a0" data-page-node-id="CRbZbPYDXEPva7BL2Etl3q"/>
+              </marker>
+              <marker id="arrowR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="q3qvuoWCAHOegDrj0J4ArO">
+                <path d="M0 0 L10 5 L0 10 z" fill="#e5484d" data-page-node-id="Tu12QOUqtiySOPLKqx3SVV"/>
+              </marker>
+              <marker id="arrowG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse" data-page-node-id="HKD8CN6AIpIMQlcvVmuun6">
+                <path d="M0 0 L10 5 L0 10 z" fill="#12a150" data-page-node-id="J9fmHzi4o474SMiWrmSHkS"/>
+              </marker>
+            </defs>
+
+            <!-- edges: solid -->
+            <path d="M150 90 C 220 90, 220 90, 288 90" stroke="#8a93a0" stroke-width="2" fill="none" marker-end="url(#arrow)" data-page-node-id="PRGUKJ0wmTy29vXTzDHPh9"/>
+            <path d="M410 122 C 410 180, 410 180, 410 236" stroke="#8a93a0" stroke-width="2" fill="none" marker-end="url(#arrow)" data-page-node-id="KeCz2EDVYbPOlVyvvb7K6C"/>
+            <path d="M410 310 C 410 360, 410 360, 410 404" stroke="#8a93a0" stroke-width="2" fill="none" marker-end="url(#arrow)" data-page-node-id="iQ85KaejfvEE5MkN7TeHSX"/>
+            <path d="M486 440 C 560 440, 560 440, 630 440" stroke="#8a93a0" stroke-width="2" fill="none" marker-end="url(#arrow)" data-page-node-id="k2Lq4C4N9qFNykkAb6ocWU"/>
+            <!-- back edge 卖出 -> 触发 -->
+            <path d="M120 452 C 60 452, 40 300, 40 130 C 40 80, 70 68, 108 74" stroke="#8a93a0" stroke-width="1.5" fill="none" stroke-dasharray="3 4" marker-end="url(#arrow)" opacity=".55" data-page-node-id="oPmOJL4SobGIc1aWtY5HnS"/>
+
+            <!-- edges: broken (red dashed) -->
+            <path d="M338 90 C 360 90, 360 90, 358 90" stroke="none" fill="none" data-page-node-id="NJXwRrIymhBlm6BQoCQjc5"/>
+            <path d="M472 74 C 560 60, 600 140, 566 226" stroke="#e5484d" stroke-width="2" stroke-dasharray="6 5" fill="none" marker-end="url(#arrowR)" data-page-node-id="tFXeVYXXRGekIPwc7rGNH3"/>
+            <path d="M470 268 C 540 268, 540 268, 606 268" stroke="#e5484d" stroke-width="2" stroke-dasharray="6 5" fill="none" marker-end="url(#arrowR)" data-page-node-id="8omAHQ494G0eEhEdAFJykq"/>
+            <path d="M334 440 C 260 440, 250 320, 332 286" stroke="#e5484d" stroke-width="2" stroke-dasharray="6 5" fill="none" marker-end="url(#arrowR)" data-page-node-id="ILRjECEeMUOVuEVKgaD54y"/>
+
+            <!-- edges: suggested (green) -->
+            <path d="M640 306 C 660 360, 640 400, 570 424" stroke="#12a150" stroke-width="2" stroke-dasharray="2 4" fill="none" marker-end="url(#arrowG)" data-page-node-id="BhGiEzQWhfRXzz71K3SI0y"/>
+
+            <!-- N1 触发 -->
+            <g class="tnode" data-node="n1" data-page-node-id="6XH9Liwy38zChKuqi2sFkb">
+              <rect x="108" y="58" width="130" height="64" rx="14" fill="#eaf1fe" stroke="#2f6fed" stroke-width="1.5" data-page-node-id="dtDtP7pbfyjuDBVdJ8O2tq"/>
+              <text x="173" y="85" text-anchor="middle" font-size="14" font-weight="700" fill="#1c2330" data-page-node-id="p7zGqvKuTRlrUjanct2uHo">① 触发</text>
+              <text x="173" y="105" text-anchor="middle" font-size="10.5" fill="#5a6572" data-page-node-id="UzLjsYdO76yfGY6aH0321e">热点 / 消息 / 涨幅榜</text>
+            </g>
+            <!-- N2 快速归因 -->
+            <g class="tnode" data-node="n2" data-page-node-id="ELzQGDbKLuMETpIBgOK2ap">
+              <rect x="288" y="58" width="122" height="64" rx="14" fill="#fdf3e3" stroke="#d97706" stroke-width="1.5" data-page-node-id="lVzonjXN2C0SkJMvKRvy8t"/>
+              <text x="349" y="85" text-anchor="middle" font-size="14" font-weight="700" fill="#1c2330" data-page-node-id="rFDVQ3g9OBKn2NXF4OHzrV">② 快速归因</text>
+              <text x="349" y="105" text-anchor="middle" font-size="10.5" fill="#5a6572" data-page-node-id="ENpQ9iL1DuRrGOZTuunA9T">"涨了 = 有逻辑"</text>
+            </g>
+            <!-- N3 缺失：验证 -->
+            <g class="tnode" data-node="n3" data-page-node-id="au5L5Vhy6009wcb9GW7mtj">
+              <rect x="488" y="196" width="140" height="60" rx="30" fill="#ffffff" stroke="#e5484d" stroke-width="2" stroke-dasharray="7 5" data-page-node-id="3D1y8NhN95qThaCYg4jtmy"/>
+              <text x="558" y="221" text-anchor="middle" font-size="14" font-weight="700" fill="#e5484d" data-page-node-id="weiwsQiLod3BtcuksJlamT">③ 验证（缺）</text>
+              <text x="558" y="240" text-anchor="middle" font-size="10.5" fill="#c46a6d" data-page-node-id="2Hxx8weGNxeiFlEIFbuRLC">财报 / 估值 / 反方证据</text>
+            </g>
+            <!-- N4 买入决策 -->
+            <g class="tnode" data-node="n4" data-page-node-id="r792VTVGVvqCnCLAfvZHTw">
+              <rect x="330" y="236" width="140" height="74" rx="14" fill="#fdecec" stroke="#e5484d" stroke-width="1.5" data-page-node-id="o1l5ze3THEcRDELuSwkKy8"/>
+              <text x="400" y="266" text-anchor="middle" font-size="14" font-weight="700" fill="#1c2330" data-page-node-id="JEZcQzJIyL2FlFHxtah4Pt">④ 买入决策</text>
+              <text x="400" y="286" text-anchor="middle" font-size="10.5" fill="#5a6572" data-page-node-id="2IjPzzOmA9Z1kzKlG6LghD">追涨进场 · 仓位随意</text>
+            </g>
+            <!-- N5 缺失：预案 -->
+            <g class="tnode" data-node="n5" data-page-node-id="aHUfEYKEDfHcpJJm66mRLC">
+              <rect x="606" y="238" width="140" height="60" rx="30" fill="#ffffff" stroke="#e5484d" stroke-width="2" stroke-dasharray="7 5" data-page-node-id="Eqp0V79poINPoBYVQzDvBE"/>
+              <text x="676" y="263" text-anchor="middle" font-size="14" font-weight="700" fill="#e5484d" data-page-node-id="dJd7mrE1lMAvYhjAxNBPTl">⑤ 预案（缺）</text>
+              <text x="676" y="282" text-anchor="middle" font-size="10.5" fill="#c46a6d" data-page-node-id="j2fKqWnyVCPhGFeDJEpXCV">止损位 / 目标位 / 条件</text>
+            </g>
+            <!-- N6 持有 -->
+            <g class="tnode" data-node="n6" data-page-node-id="C8vZTEmbphrqipHu9WIqOU">
+              <rect x="330" y="404" width="160" height="70" rx="14" fill="#eaf1fe" stroke="#2f6fed" stroke-width="1.5" data-page-node-id="jzxdqoBCI6iGCHrDuFnqhB"/>
+              <text x="410" y="432" text-anchor="middle" font-size="14" font-weight="700" fill="#1c2330" data-page-node-id="7s8WLcRwT4Y00SMkm9ygg4">⑥ 持有期</text>
+              <text x="410" y="452" text-anchor="middle" font-size="10.5" fill="#5a6572" data-page-node-id="kPjYw7D1ahDifiwefL84q6">情绪随波动 · 频繁看盘</text>
+            </g>
+            <!-- N7 缺失：复盘 -->
+            <g class="tnode" data-node="n7" data-page-node-id="Zo2yGAt9qqsvA6yJAbpEvr">
+              <rect x="108" y="408" width="150" height="62" rx="30" fill="#ffffff" stroke="#e5484d" stroke-width="2" stroke-dasharray="7 5" data-page-node-id="PHR2ItU1XiP78ByEpqQA1n"/>
+              <text x="183" y="434" text-anchor="middle" font-size="14" font-weight="700" fill="#e5484d" data-page-node-id="QKtm1blc8tVMXNvgVUhMYm">⑦ 复盘（缺）</text>
+              <text x="183" y="453" text-anchor="middle" font-size="10.5" fill="#c46a6d" data-page-node-id="MduBRzFnLbpW4EcpzRxiNt">归因对错 / 更新认知</text>
+            </g>
+            <!-- N8 卖出 -->
+            <g class="tnode" data-node="n8" data-page-node-id="P7N1K7VWAKzUJ3XQ0TMwtv">
+              <rect x="630" y="410" width="120" height="60" rx="14" fill="#fdf3e3" stroke="#d97706" stroke-width="1.5" data-page-node-id="8h51zc5B1RFrZy8yV8GbCk"/>
+              <text x="690" y="435" text-anchor="middle" font-size="14" font-weight="700" fill="#1c2330" data-page-node-id="CrCgl1IECRJcU4Re0ShSDp">⑧ 卖出</text>
+              <text x="690" y="454" text-anchor="middle" font-size="10.5" fill="#5a6572" data-page-node-id="uk3AeWa1wiuRp4m7vqaNaO">恐慌割 / 解套跑</text>
+            </g>
+
+            <!-- annotation -->
+            <text x="522" y="140" font-size="11" fill="#e5484d" font-weight="600" data-page-node-id="XvjHHNfsEASpFiZdFI4tRB">跳过验证 ↓</text>
+            <text x="524" y="256" font-size="11" fill="#e5484d" font-weight="600" data-page-node-id="TapouO81d1bZCIY2vo2FYc">无预案裸奔 →</text>
+            <text x="196" y="360" font-size="11" fill="#e5484d" font-weight="600" data-page-node-id="MD6kR56XsSDxvJlUpMWtTi">从不归因 ↗</text>
+            <text x="608" y="368" font-size="11" fill="#12a150" font-weight="600" data-page-node-id="STpJvcr9vTlgO2BrlbzAx9">建议：先写预案再下单</text>
+          </svg>
+        </div>
+      </div>
+
+      <!-- 节点详情 -->
+      <div class="card detail-card" data-page-node-id="BSkU7V7lfjEqIvLqvgr4KD">
+        <div class="card-head" data-page-node-id="FFk5W0i4ecWFkM6T0bKW0K"><h3 id="dTitle" data-page-node-id="VuOTUtXNz9JE6HON4BtCTu">节点解析</h3><span class="pill miss" id="dPill" data-page-node-id="Nj7RSzRicTH43AIHPtEmnq">断链</span></div>
+        <div class="detail-body" data-page-node-id="ohtsCeX79j4ws8GMD7FdV9">
+          <div class="detail-title" id="dName" data-page-node-id="E5jlVY78k7DJ4aE5FguLBP">③ 验证环节缺失</div>
+          <div class="detail-desc" id="dDesc" data-page-node-id="68ZZStL3zryGLzljvBhYgj">
+            在 212 条思维片段中，"看到上涨/利好 → 直接买入" 的路径出现了 38 次，其中仅 2 次提到查看财报或估值。这是你决策链上最大的断点：归因替代了验证。
+          </div>
+          <div class="quote miss" data-page-node-id="pUEJosSvslTtthSZlA94lx">
+            <div class="q-meta" data-page-node-id="FvMfZPVIRpu7spRRWeGjtW">2026-08-14 · 与 AI 对话</div>
+            "中际旭创又创新高了，CPO 这波逻辑很硬吧？我现在追进去还来得及吗"
+          </div>
+          <div class="ai-verdict" data-page-node-id="GvKOujVfAAH7JfA86akHR3">
+            <div class="v-head" data-page-node-id="qPkHEVSnoYXQISc1I60k4k">🤖 AI 评判</div>
+            <p id="dVerdict" data-page-node-id="VTVL7DGXGvfs05CekmE84h">"逻辑很硬"是你的感觉，不是被验证的事实。你把【价格强势】当成了【基本面证据】——这是典型的"后见之明 + 追涨合理化"。正确顺序应是：先回答"它凭什么涨、涨了多少是合理的"，再看价格是否还留有余地。</p>
+          </div>
+          <div class="sugg" data-page-node-id="V97v3KoNFHrE84krIRKpgM">
+            <div class="s-head" data-page-node-id="SHhOMTbTTj3fIhfpFwfDxn">✅ 正确的做法</div>
+            <ul id="dSugg" data-page-node-id="s5T3QGVeRg0TFFHZJaY6gD">
+              <li data-page-node-id="KGFKtRctHv117aRYuhjFb3">买入前强制回答三个问题：凭什么涨 / 已经涨了多少 / 我错了怎么知道</li>
+              <li data-page-node-id="qYl2QJQs7uou7UahaTFXOe">为每笔买入写 2 条"反方证据"，找不到反方 = 没想清楚</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 面板 2：弊端诊断 ============ -->
+  <div class="panel" id="p-diag" data-page-node-id="Mx5nx3pNO5KPUQD497QlfK">
+    <div class="diag-list" data-page-node-id="jPTHmZ6lC1xf44ElhgL6RV">
+      <div class="diag-card" data-page-node-id="2mDJMmdcu9iFw3UQAPPOyJ">
+        <div class="diag-top" data-page-node-id="SaLUiW2lzlycjtzWRYxfjV">
+          <span class="rank" data-page-node-id="Yeu7YXosaO6FdIQTv9tND5">1</span><h4 data-page-node-id="ARsdXA2Lh6hv1qNmT1yEUf">归因替代验证</h4>
+          <span class="freq" data-page-node-id="MucePAnlfdLJ0ACk732yGS">出现 38 次</span>
+        </div>
+        <div class="diag-sec" data-page-node-id="cxRPMBfVZudznsv2gyj8gQ">
+          <div class="sec-label l-red" data-page-node-id="DcfQFGyv9yHwl9FMu7SipY">⚠ 模式描述</div>
+          <p data-page-node-id="iEcpZr0R8IFCEwmeDkArZ7">看到涨 → 事后找一个"逻辑"解释 → 相信这个逻辑 → 追入。逻辑是涨出来的，不是想出来的。</p>
+          <div class="quote" data-page-node-id="1ymXwPwLDFVcfHYdUv5Y2L">"它都涨这么多了，肯定是有我们不知道的利好，跟着主力走总没错"</div>
+        </div>
+        <div class="diag-sec" data-page-node-id="rP0DGH9eBfdfkadL28bGQG">
+          <div class="sec-label l-purple" data-page-node-id="5fd8MmSWLcpNra5RFGecS7">🤖 AI 解析</div>
+          <p data-page-node-id="VI9me3aOLUMUdwpfJOlC9O">这是<strong data-page-node-id="tMLzJ6qzXyO6UDia06DBt5">叙事谬误</strong>：大脑厌恶"无因之涨"，会自动补一个故事。故事越顺滑，你越信任，而故事的可靠性为零。正确的拓扑思维要求把"为什么涨"拆成【已验证事实 / 市场预期 / 纯猜测】三层，只允许第一层进入决策。</p>
+        </div>
+        <div class="diag-sec" data-page-node-id="US5hX2MOVabX3lJKmvHUaL">
+          <div class="sec-label l-green" data-page-node-id="gLJ2p9D8NVONm7hJkCHKUy">✅ 校正动作</div>
+          <p data-page-node-id="QL3iZA7bDF5TWrT8kUMBFu">建立"三层归因表"：每条逻辑标注【事实/预期/猜测】，只基于事实层做决策，预期层决定赔率，猜测层直接丢弃。</p>
+        </div>
+      </div>
+
+      <div class="diag-card" data-page-node-id="BQvRx1bAscHdTaL4w8N0IV">
+        <div class="diag-top" data-page-node-id="B6eVwJAtz3GLcHcVN5bBQP">
+          <span class="rank" data-page-node-id="UO8PuS0dlJENvbIWLf06uT">2</span><h4 data-page-node-id="w5BtRLe3zO7BpB2zDiCfUF">无预案交易</h4>
+          <span class="freq" data-page-node-id="CyS5Kbptpi7huTnLA3CwdW">出现 27 次</span>
+        </div>
+        <div class="diag-sec" data-page-node-id="FfSfBtMNwhQguAd7VhlWSE">
+          <div class="sec-label l-red" data-page-node-id="cKURnyML7TmWXGvcwvESSM">⚠ 模式描述</div>
+          <p data-page-node-id="H7sERPjbfIorFJVG5c5myH">下单前从不回答"错了怎么办"。止损位、目标位、失效条件全部空白，全靠盘中情绪临场决定。</p>
+          <div class="quote" data-page-node-id="HGtpo6s1Z1KSM5CO0Ziozd">"先买进去再说，跌了我就扛，反正茅台不会一直跌"</div>
+        </div>
+        <div class="diag-sec" data-page-node-id="QBOh8FoPDLhrPPvwGs2kAl">
+          <div class="sec-label l-purple" data-page-node-id="whnmRpGvuOndd5H9ttanYi">🤖 AI 解析</div>
+          <p data-page-node-id="s3JOIfccDlDpdpUbU1LlQ6">"先买再说"意味着<strong data-page-node-id="AarGdSifkFuYGRw9nCdwaq">决策在你最不理性的时刻（亏损中）才完成</strong>。你其实有意识到风险（"反正不会一直跌"是自我安抚），但安抚替代了预案。拓扑视角：买入和卖出之间缺一条显式的"失效边"，导致持有状态只能被情绪驱动退出。</p>
+        </div>
+        <div class="diag-sec" data-page-node-id="QJlAhexAgviXFvNWYASvlY">
+          <div class="sec-label l-green" data-page-node-id="lJnwzA42KmZPmoiLArteY2">✅ 校正动作</div>
+          <p data-page-node-id="RStnfLEqL1bMZXSYLND72U">强制"预案前置"：下单前必须填写【失效条件 → 动作】清单，AI 在下单页拦截未填预案的买入。</p>
+        </div>
+      </div>
+
+      <div class="diag-card" data-page-node-id="okGfNPYFxEfSbHslo1xBys">
+        <div class="diag-top" data-page-node-id="6mChVC1NFXFru1AAht3Qpv">
+          <span class="rank" data-page-node-id="8hBKnTLhpM51wIysd8YB1w">3</span><h4 data-page-node-id="y1IbE6An8Vo5rwFHFKjMNl">亏损中的补偿性加仓</h4>
+          <span class="freq" data-page-node-id="MKZgToYvUePFHPOFqJzrkl">出现 19 次</span>
+        </div>
+        <div class="diag-sec" data-page-node-id="Ga3gw5a33oinTbbYzSJNyg">
+          <div class="sec-label l-red" data-page-node-id="onGdd5WMDKAJ7C8Eg99f9u">⚠ 模式描述</div>
+          <p data-page-node-id="tpj4tCZwOiygN2Q4Vsbmrw">浮亏后不是检查逻辑是否失效，而是寻找"加仓摊薄"的理由，把补仓当成解套工具。</p>
+          <div class="quote" data-page-node-id="HENHYhYqxgHFFKgcWfhKKi">"跌了 15% 了，更便宜了，要不要补一点快点回本？"</div>
+        </div>
+        <div class="diag-sec" data-page-node-id="1AVXye5ln0PUxJL7Mywq4f">
+          <div class="sec-label l-purple" data-page-node-id="86tNGjFsoTgFUKFgwlKI28">🤖 AI 解析</div>
+          <p data-page-node-id="lTjZ9EwKaxT274atPm5D1w">你的问题是"回本"锚点：<strong data-page-node-id="diVmoM3vAfVy8Y1sYdyB5S">决策参照系是自己的成本价，而非标的的基本面</strong>。便宜与否和你的成本无关。成本锚是拓扑里一条不存在的假边——它不连接任何真实信息，却驱动了你 19 次操作。</p>
+        </div>
+        <div class="diag-sec" data-page-node-id="QofXtbJGhZnNtsuRhrlteR">
+          <div class="sec-label l-green" data-page-node-id="iWTFYNEZ2St9MjLI8BkWqO">✅ 校正动作</div>
+          <p data-page-node-id="ymfS9PsXWk6iZ2p8L19JHe">做"清零测试"：假设今天空仓，用当前价格和现有信息，你还会买它吗？会 → 补仓合法；不会 → 补仓只是不想认错。</p>
+        </div>
+      </div>
+
+      <div class="diag-card" data-page-node-id="XBzV9udi9ipJD066J6tgsX">
+        <div class="diag-top" data-page-node-id="BBJtooGuzDGSFmeWBj847E">
+          <span class="rank" data-page-node-id="I5FhZVGEEftB1oe52rItBk">4</span><h4 data-page-node-id="H6jcTS0WSvE8ITuNbMaHVE">零复盘闭环</h4>
+          <span class="freq" data-page-node-id="EgDw2t3MiIyOE41KC9LJZL">结构性缺失</span>
+        </div>
+        <div class="diag-sec" data-page-node-id="qztY9dMolDntE6G1d1Y5IL">
+          <div class="sec-label l-red" data-page-node-id="LDNwu5NrRvVXsTa3F8bYgz">⚠ 模式描述</div>
+          <p data-page-node-id="kEVhbB9YGasnayHrIfRGBn">47 次会话中 0 次主动复盘已结束的交易。卖出即遗忘，同样的错误在 6-9 月重复出现 3 轮以上。</p>
+          <div class="quote" data-page-node-id="18FijpqKQNmjv5XzxNvVWA">（无原文——这恰恰是问题所在）</div>
+        </div>
+        <div class="diag-sec" data-page-node-id="o8xtTRMzMEHwALRDnnqX7j">
+          <div class="sec-label l-purple" data-page-node-id="EAlwqfYi99WysSdxSDeViB">🤖 AI 解析</div>
+          <p data-page-node-id="xkl0Ha2cA68jV0T39QqfCH">没有复盘，你的每笔交易都是<strong data-page-node-id="6yG2A9UZ6aijYQr8GikT93">孤立的样本，不产生学习信号</strong>。这就是为什么你感觉"交易了很久但没有变强"。拓扑思维的核心是让决策链形成闭环：卖出 → 归因 → 更新判断规则 → 下一次买入。</p>
+        </div>
+        <div class="diag-sec" data-page-node-id="oduYGjpKwnPXMg2PanQiK1">
+          <div class="sec-label l-green" data-page-node-id="oGAo3tHXoy6A9OXkYMLg0N">✅ 校正动作</div>
+          <p data-page-node-id="ZubEGNJpCoEZXRt7wrPtnn">每笔平仓自动触发 AI 复盘对话：当初逻辑 vs 实际走势 → 三层归因表回填 → 沉淀为个人"决策规则库"。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 面板 3：对话溯源 ============ -->
+  <div class="panel" id="p-trace" data-page-node-id="MHFlfrdVByxeKu0HzGcuDc">
+    <div class="trace" data-page-node-id="0LLhvBjRoLHoTfL1EaCSqS">
+      <div class="trace-item" data-page-node-id="TSqtQ0JusPfP38JMnzwVUq">
+        <div class="trace-time" data-page-node-id="xzFuFvnvzADxTy2F7qXerz">08-14 10:32<br data-page-node-id="vE5jySl2DwA08esshu5ZKI">中际旭创</div>
+        <div class="bubble" data-page-node-id="br9q0zM1z7SerGlzLRhA1w">
+          <div class="who me" data-page-node-id="WThMD8RXUAsFnjfn3kBbXc">你</div>
+          <div class="txt" data-page-node-id="neXWyGkcOQ0agHJQfVeN86">中际旭创又创新高了，CPO 这波逻辑很硬吧？现在追进去还来得及吗？</div>
+          <div class="tag-row" data-page-node-id="DSTQz0tNit2rZFKaITVOAg"><span class="mini-tag r" data-page-node-id="UZKvpXQUDb9NDMQcFyiEhb">归因替代验证</span><span class="mini-tag a" data-page-node-id="3dC4POAolTSW2lj4OxWXb5">追涨倾向</span></div>
+        </div>
+      </div>
+      <div class="trace-item" data-page-node-id="V7Qbbwd2Db5arQDr3QPzgQ">
+        <div class="trace-time" data-page-node-id="ijbaLJqCTslKHohuQOP39D">08-14 10:34</div>
+        <div class="bubble" data-page-node-id="qCT7bIWvcsQAvImXfDFxCG">
+          <div class="who ai" data-page-node-id="AMnDev0mDjnySQzglqdufe">AI</div>
+          <div class="txt" data-page-node-id="j5wrXT1l63MnC8IWZrQYL2">"逻辑硬"具体指什么？如果说不出来三条可验证的事实，这更像价格强势带来的感觉。要不我们先把"凭什么涨"拆一下？</div>
+          <div class="tag-row" data-page-node-id="w0rvLy7xPcAq4bblEdHFoV"><span class="mini-tag p" data-page-node-id="U7UBQsVhnEgagGe3mvvEL2">AI 引导拆解</span></div>
+        </div>
+      </div>
+      <div class="trace-item" data-page-node-id="YSkZk6I7PMfJRfBYBM1n2f">
+        <div class="trace-time" data-page-node-id="11Wb8GLoOJZoh9uu17SUcC">08-14 10:36</div>
+        <div class="bubble" data-page-node-id="3E7P3Voa99rMGoJ9lyDqcr">
+          <div class="who me" data-page-node-id="0iuQbLBm6z8t0pAxCBfYWR">你</div>
+          <div class="txt" data-page-node-id="QkZFDzm5GAi7eegirprEMt">就是涨得猛、板块都在涨、研报也在推啊。感觉错过了就没了</div>
+          <div class="tag-row" data-page-node-id="cIyUt4EQizDE5BfbElGGQo"><span class="mini-tag r" data-page-node-id="jbgWhfngLcFTI85pMR7mzb">FOMO</span><span class="mini-tag a" data-page-node-id="qFriJu1MrXPMR8fPDuIaUM">无事实层论据</span></div>
+        </div>
+      </div>
+      <div class="trace-item" data-page-node-id="dHv8murXhqxScPXkRbUXaD">
+        <div class="trace-time" data-page-node-id="hp43CxVK0U3HDbzK73TS0N">08-27 14:05<br data-page-node-id="7HGwqAvoaMVUMCYU25WVWV">贵州茅台</div>
+        <div class="bubble" data-page-node-id="IgCWHnKXdbhJ6qbyeHZACD">
+          <div class="who me" data-page-node-id="0tGvG0X3mCsJB7yKbmrH5m">你</div>
+          <div class="txt" data-page-node-id="n6tPZ9dWWafX6jm8hsRDif">跌了 15% 了，更便宜了，要不要补一点快点回本？</div>
+          <div class="tag-row" data-page-node-id="WO15Vux6wY3EHewj0a6VU7"><span class="mini-tag r" data-page-node-id="V8oEnvpLOXD625Rzx2r9hy">成本价锚定</span><span class="mini-tag a" data-page-node-id="hPtDw4gnOR7Anp0cZ2DP7z">补偿性加仓</span></div>
+        </div>
+      </div>
+      <div class="trace-item" data-page-node-id="72mwRWSE2UcNqeOyjrJCps">
+        <div class="trace-time" data-page-node-id="31hI1goOlYjtpuCd6V6fHs">08-27 14:08</div>
+        <div class="bubble" data-page-node-id="7wC3hyEKngQGOV27GlQmc3">
+          <div class="who ai" data-page-node-id="kf0KDPiEMyFLKppcMGtVzn">AI</div>
+          <div class="txt" data-page-node-id="36Ms3zHoE57YaJ4fKGMn1p">先做个清零测试：如果你今天没有持仓，看到 15% 的跌幅和当前的基本面，你会主动买入吗？你的"便宜"结论和你的成本价有关吗？</div>
+          <div class="tag-row" data-page-node-id="JoHTIJgNNXMbVROT9qSDHJ"><span class="mini-tag p" data-page-node-id="WCR22fcA0B1bOQKV29BT93">AI 引导拆解</span></div>
+        </div>
+      </div>
+      <div class="trace-item" data-page-node-id="PIyy9zLtFVWguBOhmPboZz">
+        <div class="trace-time" data-page-node-id="sc7hb5VOnbVVhWjNXHjp9z">09-02 21:18<br data-page-node-id="45CBXcmX8yFSshxbuPiE5W">宁德时代</div>
+        <div class="bubble" data-page-node-id="Z6U4MNn8KhiwNtLElIblpg">
+          <div class="who me" data-page-node-id="vbpM4DfG41dXpTLPMhTxHN">你</div>
+          <div class="txt" data-page-node-id="DBhbDaXH242w1JJwOJ3rNi">这次我想先想清楚再买：如果锂价企稳 + 排产数据确认，我才进；跌破前低就认错离场</div>
+          <div class="tag-row" data-page-node-id="VCSs1E5zJ3vAYG5APS4Zze"><span class="mini-tag g" data-page-node-id="pmmwmh8KsNlvmIDiVXobWG">正确直觉显现</span><span class="mini-tag g" data-page-node-id="K8pmBX5uFroGoM2fPD9uB6">预案前置</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 面板 4：学习路径 ============ -->
+  <div class="panel" id="p-path" data-page-node-id="UE8O90HwWgaderkWnjV6mp">
+    <div class="path" data-page-node-id="nLo1ZUEPFQHThR92EDtOGa">
+      <div class="step" data-page-node-id="TKcBVYIA2JgNGvLrLDCFvb">
+        <h4 data-page-node-id="A1awMAJofHQAv62jAp3GPh">第一步：给思维装上"三层过滤器" <span class="when" data-page-node-id="CCnbrqv1Dc89fVAg3lTer3">第 1-2 周</span></h4>
+        <p data-page-node-id="eBnCqCknP0syvMDpBdFN0d">把你说的每一个"逻辑"强制拆成【已验证事实 / 市场预期 / 纯猜测】。只允许事实层进入买卖决策。AI 在对话中实时标注你每一句话属于哪一层。</p>
+        <div class="drill" data-page-node-id="5EJxQ3sZg3HlZd1sB1poDB"><b data-page-node-id="mzjwEDcB5szOXc350iJFCY">练习：</b>每天挑 1 个热门股，写它的三层归因表，和 AI 对答案。</div>
+      </div>
+      <div class="step" data-page-node-id="Ewh5OjKqtHULkE8KVnCtcv">
+        <h4 data-page-node-id="P6wPMHQlHABbywGQxvjJWG">第二步：预案前置，消灭"先买再说" <span class="when" data-page-node-id="GsHAypbeov2ZO0mkUaJBsJ">第 3-4 周</span></h4>
+        <p data-page-node-id="cq9xeS7ApiLC1CEZzph5uY">每笔买入前填写：失效条件（什么情况说明我错了）+ 对应动作（减半/清仓）。未填预案的下单请求被 AI 拦截。这一步直接砍掉断链 ⑤。</p>
+        <div class="drill" data-page-node-id="gzhsL02VG5lbDlJPHa4e7u"><b data-page-node-id="n0gOBApGixTp4uUfv47a8D">练习：</b>回看过去 10 笔亏损交易，写出"当初如果预设了什么条件，会提前离场"。</div>
+      </div>
+      <div class="step" data-page-node-id="Qk7rtxzbkDnkXP8NLIVPER">
+        <h4 data-page-node-id="kHCLqjhrutibqpNdUbAZ56">第三步：成本清零测试，摆脱成本锚 <span class="when" data-page-node-id="rByo2fXIqj7PyR08oMHwTC">第 5-6 周</span></h4>
+        <p data-page-node-id="TbwDAsv1CHz2NOdijPO1XL">所有"补仓/回本"想法出现时，先做清零测试：空仓视角 + 当前信息，还买不买？把"回本"从词汇表里删掉——市场不知道你的成本。</p>
+        <div class="drill" data-page-node-id="doliGV5SHJf2ahKp8iosXh"><b data-page-node-id="7EtnN38gAS3epiMBhuH7xD">练习：</b>对每个浮亏持仓做一次清零测试并记录结论，AI 追踪你 4 周内的锚定频率变化。</div>
+      </div>
+      <div class="step" data-page-node-id="uKjRDzvAqayXxz6lEvCO4p">
+        <h4 data-page-node-id="TOmLXy4IPejBPwcHbbnJGD">第四步：闭环复盘，让每笔交易产生学习信号 <span class="when" data-page-node-id="KAq7z3a5HiF52s1Kbdp3kG">持续</span></h4>
+        <p data-page-node-id="hj5hyMlCIT1JC8IPNWAALM">平仓自动触发复盘：当初逻辑 → 实际走势 → 归因回填 → 沉淀为个人决策规则。规则库会出现在你的思维拓扑图上，断链逐次闭合。</p>
+        <div class="drill" data-page-node-id="V7eR0HfPV1IPSXL2IwgTAD"><b data-page-node-id="ypeM2woccDqiN7TGfFfVGK">练习：</b>每周日 20 分钟，和 AI 回顾本周决策链，标记"这周哪一次思考比上周进步了"。</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ===== Tabs =====
+  document.querySelectorAll('.tab').forEach(t => {
+    t.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      document.getElementById(t.dataset.panel).classList.add('active');
+    });
+  });
+
+  // ===== 节点数据 =====
+  const NODES = {
+    n1: {
+      pill: 'ok', pillText: '常态', name: '① 触发：热点/消息驱动',
+      desc: '你的入场起点几乎全部来自价格异动、榜单和消息面，而非自下而上的研究。触发本身没有错，问题在下一步。',
+      quote: '今天涨幅榜第一是谁？半导体这波什么情况，有没有能搞的？',
+      verdict: '从"看什么在涨"出发是散户最常见的起点。拓扑思维要求你意识到：榜单是别人的结论，不是你的输入。可以由它触发研究，但不能由它直接触发买入。',
+      sugg: ['保留热点作为"研究线索池"', '触发后进入归因前，先问：这是我发现的，还是别人已经买完的？']
+    },
+    n2: {
+      pill: 'weak', pillText: '薄弱', name: '② 快速归因："涨了 = 有逻辑"',
+      desc: '从触发到"它有逻辑"平均只隔 1-2 轮对话，且归因几乎全是事后解释。这是整条链路质量问题最大的环节。',
+      quote: '它都涨这么多了，肯定是有我们不知道的利好，跟着主力走总没错',
+      verdict: '"肯定有利好"是把未知填补成确定性。正确做法是把"为什么涨"拆成事实/预期/猜测三层——你会发现你说出的大部分属于第三层。',
+      sugg: ['任何逻辑先标注三层归属', '找不到事实层 → 该逻辑不可用于决策']
+    },
+    n3: {
+      pill: 'miss', pillText: '断链', name: '③ 验证环节缺失',
+      desc: '38 次买入冲动中仅 2 次涉及财报、估值或反方证据。验证是你决策链上最大的空洞。',
+      quote: '中际旭创又创新高了，CPO 这波逻辑很硬吧？我现在追进去还来得及吗',
+      verdict: '你把【价格强势】当成了【基本面证据】——后见之明 + 追涨合理化。正确顺序：先回答"它凭什么涨、涨到多少是合理的"，再看价格是否还留有余地。',
+      sugg: ['买入前强制回答三问：凭什么涨 / 已涨多少 / 我错了怎么知道', '为每笔买入写 2 条反方证据，找不到反方 = 没想清楚']
+    },
+    n4: {
+      pill: 'weak', pillText: '薄弱', name: '④ 买入决策：追涨 + 仓位随意',
+      desc: '进场时点集中在突破新高后 1-3 天，仓位由"感觉"和可用资金决定，与确信度无关。',
+      quote: '先买半仓试试水，感觉对了再加',
+      verdict: '"试试水"暴露了你自己都不确信。半仓试错的真正成本不是那半仓的亏损，而是它让你的注意力被一只自己都没想通的票占据。',
+      sugg: ['仓位 = 确信度 × 预案完整度，两者缺一仓位归零']
+    },
+    n5: {
+      pill: 'miss', pillText: '断链', name: '⑤ 预案缺失：无失效条件',
+      desc: '27 笔交易无任何事前止损/目标/失效条件。退出完全由临场情绪决定。',
+      quote: '先买进去再说，跌了我就扛，反正茅台不会一直跌',
+      verdict: '"反正不会一直跌"是安抚，不是论证。没有预案意味着：决策被推迟到你最不理性的时刻——亏损当中。',
+      sugg: ['下单前必须填写【失效条件 → 动作】清单', '产品层面：AI 拦截无预案的买入请求']
+    },
+    n6: {
+      pill: 'weak', pillText: '薄弱', name: '⑥ 持有期：情绪随波动',
+      desc: '持仓期间对话密度随股价波动剧烈变化，大跌日提问量是平日的 4 倍，内容以寻求安慰为主。',
+      quote: '今天又跌 3 个点，心态有点崩，是不是该跑了？',
+      verdict: '"心态崩"不是信息，是情绪。但你的提问方式表明你在把情绪当信号用。持有期的正确问题只有一个：当初的持有逻辑还在吗？',
+      sugg: ['波动日只回答一个问题：失效条件触发了吗？没有 → 不操作']
+    },
+    n7: {
+      pill: 'miss', pillText: '断链', name: '⑦ 复盘缺失：零归因闭环',
+      desc: '47 次会话 0 次主动复盘。同样错误 6-9 月重复 3 轮以上——这是"感觉交易很久但没变强"的直接原因。',
+      quote: '（无相关对话记录）',
+      verdict: '没有复盘，每笔交易都是孤立样本，不产生学习信号。拓扑思维的精髓就是闭合这个环：卖出 → 归因 → 更新规则 → 下次决策。',
+      sugg: ['平仓自动触发 AI 复盘对话', '沉淀个人"决策规则库"，断链逐次闭合']
+    },
+    n8: {
+      pill: 'weak', pillText: '薄弱', name: '⑧ 卖出：恐慌割 / 解套跑',
+      desc: '卖出的两大触发器：跌到受不了（恐慌）、回到成本价（解脱）。几乎没有"逻辑兑现"或"逻辑失效"驱动的卖出。',
+      quote: '终于回本了，清了清了，再也不碰它了',
+      verdict: '"再也不碰"说明这笔交易没有产生任何认知增量——你只是逃离了一次不适。回本卖出 = 用成本价而非标的逻辑做决策。',
+      sugg: ['卖出理由只能来自：逻辑兑现 / 逻辑失效 / 更好的机会', '每次卖出后立即回填当初的三层归因表']
+    }
+  };
+
+  // ===== 节点点击 =====
+  document.querySelectorAll('.tnode').forEach(g => {
+    g.addEventListener('click', () => {
+      document.querySelectorAll('.tnode').forEach(x => x.classList.remove('selected'));
+      g.classList.add('selected');
+      const d = NODES[g.dataset.node];
+      if (!d) return;
+      const pill = document.getElementById('dPill');
+      pill.className = 'pill ' + d.pill;
+      pill.textContent = d.pillText;
+      document.getElementById('dName').textContent = d.name;
+      document.getElementById('dDesc').textContent = d.desc;
+      const q = document.querySelector('#p-topo .quote');
+      q.className = 'quote' + (d.pill === 'miss' ? ' miss' : '');
+      q.innerHTML = '<div class="q-meta">聊天记录原文</div>' + d.quote;
+      document.getElementById('dVerdict').textContent = d.verdict;
+      document.getElementById('dSugg').innerHTML = d.sugg.map(s => '<li>' + s + '</li>').join('');
+    });
+  });
+  // 默认选中 n3
+  document.querySelector('.tnode[data-node="n3"]').classList.add('selected');
+</script>
+</body>
+</html>

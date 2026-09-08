@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="YjPfAAB7EGccXj7WP0OKDe">
+<head data-page-node-id="uGKNbg78IxpnFvnJSBGGzo">
+<meta charset="UTF-8" data-page-node-id="0S8A6zJJ2NfPwyWvtMEzwY">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="d8A5SQQvdHj9t7u8enGz0v">
+<title>选股思维导图 · 轻量版</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #fafbfc; color: #2b2f36; font-size: 14px;
+    min-height: 100vh;
+  }
+  .page { max-width: 960px; margin: 0 auto; padding: 20px 16px 40px; }
+
+  /* 顶栏：一行搞定 */
+  .top { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+  .top h1 { font-size: 17px; font-weight: 700; }
+  .top .r { font-size: 12px; color: #98a0ab; }
+  .top .r b { color: #e5484d; }
+  .sub { font-size: 12px; color: #98a0ab; margin-bottom: 10px; }
+
+  /* 导图卡片：白底 + 一根细边 */
+  .map {
+    background: #fff; border: 1px solid #e8ebef; border-radius: 12px;
+    padding: 8px 6px 4px;
+  }
+  svg { width: 100%; height: auto; display: block; }
+
+  .nd { cursor: pointer; }
+  .nd rect, .nd circle { transition: fill .12s; }
+  .nd:hover rect, .nd:hover circle { fill-opacity: .85; }
+  .nd text { pointer-events: none; }
+  .nd.sel rect, .nd.sel circle { stroke-width: 2; }
+  svg.focus .nd:not(.sel) { opacity: .35; }
+  svg.focus .lnk { opacity: .25; }
+  .nd, .lnk { transition: opacity .15s; }
+  .lnk { cursor: default; }
+
+  /* 下方解析条：普通文档流，无浮层 */
+  .detail {
+    display: none;
+    margin-top: 12px;
+    background: #fff; border: 1px solid #e8ebef; border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .detail.show { display: block; }
+  .d-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .d-head h3 { font-size: 15px; font-weight: 700; }
+  .badge { font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+  .badge.miss { background: #fdecec; color: #e5484d; }
+  .badge.weak { background: #fdf3e3; color: #b45309; }
+  .badge.ok   { background: #e8f7ef; color: #16a34a; }
+  .d-close { margin-left: auto; border: none; background: #f1f3f6; color: #6b7280;
+    width: 24px; height: 24px; border-radius: 50%; cursor: pointer; font-size: 12px; }
+
+  .d-row { display: flex; gap: 10px; margin-top: 10px; }
+  .d-row .k { flex: 0 0 52px; font-size: 11.5px; font-weight: 700; color: #98a0ab; padding-top: 2px; }
+  .d-row .v { flex: 1; font-size: 13px; line-height: 1.65; color: #444b55; }
+  .d-row .v.quote { color: #5c6470; background: #f6f7f9; border-left: 2px solid #d5dae1;
+    padding: 6px 10px; border-radius: 0 8px 8px 0; }
+  .d-row .v.ai b { color: #6d4fd0; }
+  .d-row .v.fix { color: #1c7c46; }
+  @media (max-width: 640px) { .d-row { flex-direction: column; gap: 2px; } }
+</style>
+</head>
+<body data-page-node-id="oeGB9y4bozmWikGblh6lPz">
+<div class="page" data-page-node-id="AnixwAlNIHIlblfOCoFDMp">
+
+  <div class="top" data-page-node-id="HrObEk5TQqQwBWZzFLm7Ny">
+    <h1 data-page-node-id="m8CV2reAvAaPBVLjDeZR6K">我的选股思维导图</h1>
+    <div class="r" data-page-node-id="1JzDZoK9xgM4xGTvkpUf7W">链路完整度 <b data-page-node-id="j2arAdDGAIe9Lwu8fIhPXJ">68%</b></div>
+  </div>
+  <div class="sub" data-page-node-id="SCjvHHNpdgB7LFDbCKJsZX">解析自 47 次对话 · 212 条思维片段 · 红色为断链，点击节点看解析</div>
+
+  <div class="map" data-page-node-id="CEQVOWyD4xqe2zSCNTnz5Y">
+    <svg viewBox="0 0 900 470" data-page-node-id="KXuj6c0bKytgxEkTcQBqMW">
+      <defs data-page-node-id="kYDOxSxRhBpdG33O7EivMn">
+        <marker id="a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse" data-page-node-id="AiVGWORPQtTOYeGNhFn5F5">
+          <path d="M0 0 L10 5 L0 10 z" fill="#b6bdc7" data-page-node-id="AkuQnhFfpAbiy4QSddLr4r"/>
+        </marker>
+        <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse" data-page-node-id="AQafhMed3tIHA8dP7nyDez">
+          <path d="M0 0 L10 5 L0 10 z" fill="#e8919a" data-page-node-id="NNJ0JE8Us7Xm8hvHYXUxgB"/>
+        </marker>
+      </defs>
+
+      <!-- ===== 主干：root → 四个分支 ===== -->
+      <path class="lnk" d="M 148 235 C 190 235, 190 90, 232 90"  stroke="#d5dae1" stroke-width="1.5" fill="none" data-page-node-id="y6Xy4JuCwDKB9eLq3ha78R"/>
+      <path class="lnk" d="M 148 235 C 190 235, 190 218, 232 218" stroke="#d5dae1" stroke-width="1.5" fill="none" data-page-node-id="0GFWAhGwn6N1Q6sSXmDx7z"/>
+      <path class="lnk" d="M 148 235 C 190 235, 190 338, 232 338" stroke="#d5dae1" stroke-width="1.5" fill="none" data-page-node-id="T7xh7sIKnYZcswrwjRHZrh"/>
+      <path class="lnk" d="M 148 235 C 190 235, 190 424, 232 424" stroke="#d5dae1" stroke-width="1.5" fill="none" data-page-node-id="y5ukFK2fecig0I8Ekr9jKb"/>
+
+      <!-- ===== 决策链（横向链式，挂在分支1下） ===== -->
+      <!-- 链接线 -->
+      <g class="lnk" data-page-node-id="O008YvQ1O20HmItcWTboiv">
+        <path d="M 366 84 C 396 84, 396 84, 420 84"  stroke="#b6bdc7" stroke-width="1.4" fill="none" marker-end="url(#a)" data-page-node-id="DpSyevgATC6vqSdMyCfvjO"/>
+        <path d="M 486 78 C 500 60, 516 60, 530 76"  stroke="#b6bdc7" stroke-width="1.4" fill="none" marker-end="url(#a)" data-page-node-id="Ii3NF0hTZYiQG6bgFldXiL"/>
+        <path d="M 596 84 C 620 84, 620 84, 642 84"  stroke="#e8919a" stroke-width="1.4" stroke-dasharray="4 4" fill="none" marker-end="url(#ar)" data-page-node-id="EXl79yajGnRbDKlV9Dv8vd"/>
+        <path d="M 708 90 C 722 106, 738 106, 750 92" stroke="#e8919a" stroke-width="1.4" stroke-dasharray="4 4" fill="none" marker-end="url(#ar)" data-page-node-id="N6gBGiWpuM4iSy8zVGM4i3"/>
+        <path d="M 812 96 C 826 112, 660 132, 596 128" stroke="#e8919a" stroke-width="1.4" stroke-dasharray="4 4" fill="none" marker-end="url(#ar)" data-page-node-id="FwGlt7N6kT4W49aQEABjId"/>
+        <path d="M 530 134 C 516 148, 500 148, 488 134" stroke="#e8919a" stroke-width="1.4" stroke-dasharray="4 4" fill="none" marker-end="url(#ar)" data-page-node-id="FJQc09SnPenzSWO4pKhQLc"/>
+        <path d="M 420 130 C 406 144, 390 144, 378 132" stroke="#e8919a" stroke-width="1.4" stroke-dasharray="4 4" fill="none" marker-end="url(#ar)" data-page-node-id="shjElWEwgQpJWuZMSXz85W"/>
+        <path d="M 318 122 C 300 118, 292 112, 288 106" stroke="#e8919a" stroke-width="1.4" stroke-dasharray="4 4" fill="none" marker-end="url(#ar)" data-page-node-id="bt5ZkXaYDChYy917EBeMQC"/>
+      </g>
+
+      <!-- root -->
+      <g class="nd" data-node="root" id="nd-root" data-page-node-id="PRsAOFnjEA0nEbA6WfUZnG">
+        <rect x="56" y="212" width="92" height="46" rx="12" fill="#2b2f36" data-page-node-id="qBWAvinkZtAsbcgs6IomUr"/>
+        <text x="102" y="233" text-anchor="middle" font-size="12.5" font-weight="700" fill="#fff" data-page-node-id="C32pSGH9CzFtF4ALVQawqE">我的选股</text>
+        <text x="102" y="249" text-anchor="middle" font-size="12.5" font-weight="700" fill="#fff" data-page-node-id="GiZ9dM0AlUuRpKdHllWCRA">思维</text>
+      </g>
+
+      <!-- 分支1：决策链路 -->
+      <g class="nd" data-node="b1" id="nd-b1" data-page-node-id="nNj39QBiezJ5fXu4msoYz4">
+        <rect x="232" y="72" width="92" height="34" rx="8" fill="#eef2f7" stroke="#c9d1db" stroke-width="1" data-page-node-id="EGnF6YKtFHiZbNF8zXEOhq"/>
+        <text x="278" y="93" text-anchor="middle" font-size="12" font-weight="700" fill="#2b2f36" data-page-node-id="5ZGX9M1VFk4yXvrq6YLQh7">决策链路</text>
+      </g>
+      <!-- 链上节点（第二排，环绕） -->
+      <g class="nd" data-node="n1" id="nd-n1" data-page-node-id="laB68dmJLt1E8ynKZas5Rc">
+        <rect x="288" y="96" width="78" height="26" rx="13" fill="#fff" stroke="#7f8b99" stroke-width="1.3" data-page-node-id="IyHuMhwrnXb7Ng37XdTCEu"/>
+        <text x="327" y="113" text-anchor="middle" font-size="11.5" fill="#2b2f36" data-page-node-id="zhlg9vteGGVNMr6CLNvd3e">① 触发</text>
+      </g>
+      <g class="nd" data-node="n2" id="nd-n2" data-page-node-id="t1Xtd5CbP8U3zWueGNMXhJ">
+        <rect x="420" y="71" width="66" height="26" rx="13" fill="#fff" stroke="#d9a441" stroke-width="1.3" data-page-node-id="WGGHGinptzOA95XDzyXHBw"/>
+        <text x="453" y="88" text-anchor="middle" font-size="11.5" fill="#2b2f36" data-page-node-id="F3MlUT0p2ZIaISIWOWSH0A">② 归因</text>
+      </g>
+      <g class="nd" data-node="n4" id="nd-n4" data-page-node-id="HIEwbOmOhMQY4HvOG3z5CC">
+        <rect x="530" y="66" width="66" height="26" rx="13" fill="#fff" stroke="#d9a441" stroke-width="1.3" data-page-node-id="28ZoKW3UZRlFOH4jAyxjlC"/>
+        <text x="563" y="83" text-anchor="middle" font-size="11.5" fill="#2b2f36" data-page-node-id="VrZRNdqjXwdCZniFpoZY0B">④ 买入</text>
+      </g>
+      <g class="nd" data-node="n6" id="nd-n6" data-page-node-id="ZzO1d9SSDHqbE6ipHCnsaz">
+        <rect x="642" y="71" width="66" height="26" rx="13" fill="#fff" stroke="#d9a441" stroke-width="1.3" data-page-node-id="6zfVcmLEjlL6KSBdhgKTqM"/>
+        <text x="675" y="88" text-anchor="middle" font-size="11.5" fill="#2b2f36" data-page-node-id="L2iQqmnlK7XP9kaq2Vxock">⑥ 持有</text>
+      </g>
+      <g class="nd" data-node="n8" id="nd-n8" data-page-node-id="Zf4SQoQlZl5kFE5rwhHwgy">
+        <rect x="750" y="66" width="62" height="26" rx="13" fill="#fff" stroke="#7f8b99" stroke-width="1.3" data-page-node-id="s2gHXrE8XBEBnOXv6y1cwn"/>
+        <text x="781" y="83" text-anchor="middle" font-size="11.5" fill="#2b2f36" data-page-node-id="947sIdleNFBsE1PlaQIl6Q">⑧ 卖出</text>
+      </g>
+      <!-- 断链虚节点 -->
+      <g class="nd" data-node="n3" id="nd-n3" data-page-node-id="Jwi6ACgvOGybRK6khZCzhZ">
+        <rect x="642" y="102" width="66" height="24" rx="12" fill="#fdf1f1" stroke="#e5484d" stroke-width="1.3" stroke-dasharray="4 3" data-page-node-id="uVyHaRS891SQZ7guhe7qZu"/>
+        <text x="675" y="118" text-anchor="middle" font-size="11" font-weight="700" fill="#e5484d" data-page-node-id="6zoHemWCAxoEnxa3p9ETKY">③ 验证?</text>
+      </g>
+      <g class="nd" data-node="n5" id="nd-n5" data-page-node-id="xbvKMdUbk0MxVKBh7lJAce">
+        <rect x="530" y="128" width="66" height="24" rx="12" fill="#fdf1f1" stroke="#e5484d" stroke-width="1.3" stroke-dasharray="4 3" data-page-node-id="QXFN5AfpAIFJEaPKonwxOy"/>
+        <text x="563" y="144" text-anchor="middle" font-size="11" font-weight="700" fill="#e5484d" data-page-node-id="z1CgelZAlEbigfZCPJRLdR">⑤ 预案?</text>
+      </g>
+      <g class="nd" data-node="n7" id="nd-n7" data-page-node-id="pcWPCYGcKYUNHcHlNf5Cni">
+        <rect x="318" y="122" width="60" height="24" rx="12" fill="#fdf1f1" stroke="#e5484d" stroke-width="1.3" stroke-dasharray="4 3" data-page-node-id="34mrUEAPMZ4S3xzfh2DLCO"/>
+        <text x="348" y="138" text-anchor="middle" font-size="11" font-weight="700" fill="#e5484d" data-page-node-id="NeGiB8bBHtGOu6R2wDn35X">⑦ 复盘?</text>
+      </g>
+      <text x="560" y="172" font-size="10.5" fill="#c0767c" data-page-node-id="NZah4OJolGEUACEeTRCXUT">红色虚线 = 你的信号从没走过的路</text>
+
+      <!-- ===== 分支2：三个断链 ===== -->
+      <g class="nd" data-node="b2" id="nd-b2" data-page-node-id="vslhb2BmP1kQutFID3Aows">
+        <rect x="232" y="200" width="92" height="34" rx="8" fill="#fdecec" stroke="#eeb4b7" stroke-width="1" data-page-node-id="J9vkf6WyfqQMm3O9aFkSHI"/>
+        <text x="278" y="221" text-anchor="middle" font-size="12" font-weight="700" fill="#c43c41" data-page-node-id="aZAyVPoHc56XY5KAP1MJCP">3 个断链</text>
+      </g>
+      <g class="lnk" data-page-node-id="MjPLreWohuWA3lMVppDXgy">
+        <path d="M 324 210 C 348 206, 348 206, 368 204" stroke="#e5b9bc" stroke-width="1.3" fill="none" marker-end="url(#ar)" data-page-node-id="Vn0Zj2PSvX3oYORKQCKGeE"/>
+        <path d="M 324 218 C 348 222, 348 222, 368 224" stroke="#e5b9bc" stroke-width="1.3" fill="none" marker-end="url(#ar)" data-page-node-id="3dkwLdQ3RpvIozHE9xVey3"/>
+        <path d="M 324 226 C 348 238, 348 238, 368 244" stroke="#e5b9bc" stroke-width="1.3" fill="none" marker-end="url(#ar)" data-page-node-id="l1bNDH192GsMb0XdogfLS4"/>
+      </g>
+      <g class="nd" data-node="n3b" id="nd-n3b" data-page-node-id="PxQYmz9IHkA3AnO4vzBtld">
+        <rect x="372" y="192" width="196" height="24" rx="7" fill="#fff" stroke="#eeb4b7" stroke-width="1.2" data-page-node-id="1lmsQoMQr67hzCBiuYRzTe"/>
+        <text x="382" y="208" font-size="11.5" fill="#c43c41" data-page-node-id="mh5oqSWVRV5ERESwDGJvr5">① 归因替代验证</text>
+        <text x="560" y="208" text-anchor="end" font-size="10.5" fill="#c0767c" data-page-node-id="0nlpUj1DGzXgZthPB3xsFd">38 次仅 2 次查证</text>
+      </g>
+      <g class="nd" data-node="n5b" id="nd-n5b" data-page-node-id="RQgqktAO8LB8cQbwdtVOkU">
+        <rect x="372" y="222" width="196" height="24" rx="7" fill="#fff" stroke="#eeb4b7" stroke-width="1.2" data-page-node-id="zUM5C7mohY2oYxbfQMXpcz"/>
+        <text x="382" y="238" font-size="11.5" fill="#c43c41" data-page-node-id="GqamD6zK7D3wYfLcWa43ke">② 无预案下单</text>
+        <text x="560" y="238" text-anchor="end" font-size="10.5" fill="#c0767c" data-page-node-id="g724aKvOeZugviqB0n09FP">27 笔 0 预案</text>
+      </g>
+      <g class="nd" data-node="n7b" id="nd-n7b" data-page-node-id="Spi4Lcb0b3Hfm9ivb5XiCq">
+        <rect x="372" y="252" width="196" height="24" rx="7" fill="#fff" stroke="#eeb4b7" stroke-width="1.2" data-page-node-id="maJizDnAPD4DGFzNAVDBFU"/>
+        <text x="382" y="268" font-size="11.5" fill="#c43c41" data-page-node-id="W0FrHC0oyOw4vUjT94QFJx">③ 零复盘闭环</text>
+        <text x="560" y="268" text-anchor="end" font-size="10.5" fill="#c0767c" data-page-node-id="oZE3uxitMXI7VbYgls7uO1">47 会话 0 复盘</text>
+      </g>
+
+      <!-- ===== 分支3：高频标的 ===== -->
+      <g class="nd" data-node="b3" id="nd-b3" data-page-node-id="uBScNfPQR7ZalykbXDlJ9u">
+        <rect x="232" y="322" width="92" height="34" rx="8" fill="#eef2f7" stroke="#c9d1db" stroke-width="1" data-page-node-id="RbFBGI84eRfEclRvvH7R1N"/>
+        <text x="278" y="343" text-anchor="middle" font-size="12" font-weight="700" fill="#2b2f36" data-page-node-id="A2mvX48BJVdwemkCJdcj7p">高频标的</text>
+      </g>
+      <g class="lnk" data-page-node-id="9it3GzE8uXoxFiYvIL8G1b">
+        <path d="M 324 332 C 348 328, 348 328, 368 326" stroke="#d5dae1" stroke-width="1.3" fill="none" marker-end="url(#a)" data-page-node-id="rdQE7ZL80DEOKgSvzFHEL2"/>
+        <path d="M 324 340 C 348 344, 348 344, 368 346" stroke="#d5dae1" stroke-width="1.3" fill="none" marker-end="url(#a)" data-page-node-id="3JkpxP6ZPwSP5uaicc5U63"/>
+        <path d="M 324 348 C 348 360, 348 360, 368 366" stroke="#d5dae1" stroke-width="1.3" fill="none" marker-end="url(#a)" data-page-node-id="epy9SYsSZdq3Czxq9fkNVg"/>
+      </g>
+      <g class="nd" data-node="s1" id="nd-s1" data-page-node-id="uiHZPykXw8fMO6F4GvEwsx">
+        <rect x="372" y="314" width="176" height="24" rx="7" fill="#fff" stroke="#c9d1db" stroke-width="1.2" data-page-node-id="ojGjTM2Hdvblr3lg9nSBZb"/>
+        <text x="382" y="330" font-size="11.5" fill="#2b2f36" data-page-node-id="yak5HUS6TD7VrAbjwrxe27">中际旭创</text>
+        <text x="540" y="330" text-anchor="end" font-size="10.5" fill="#98a0ab" data-page-node-id="e20QJA2UFW3fPXZ3wXvnOz">8 次讨论 · 全部追涨</text>
+      </g>
+      <g class="nd" data-node="s2" id="nd-s2" data-page-node-id="e72OVJ2mOd3PEtpsZ2Qvte">
+        <rect x="372" y="344" width="176" height="24" rx="7" fill="#fff" stroke="#c9d1db" stroke-width="1.2" data-page-node-id="wpZKVqLfh5RDggk2qzg70S"/>
+        <text x="382" y="360" font-size="11.5" fill="#2b2f36" data-page-node-id="kLpHoEIXpBaxJyxxq7k3rV">贵州茅台</text>
+        <text x="540" y="360" text-anchor="end" font-size="10.5" fill="#98a0ab" data-page-node-id="V3d7w2hwoCRuiCBThPJLhx">6 次 · "回本"×11</text>
+      </g>
+      <g class="nd" data-node="s3" id="nd-s3" data-page-node-id="nHQEsckZmNLG92TAUKcRmy">
+        <rect x="372" y="374" width="176" height="24" rx="7" fill="#fff" stroke="#c9d1db" stroke-width="1.2" data-page-node-id="juFzWrFF0ExTqL0a1imLRx"/>
+        <text x="382" y="390" font-size="11.5" fill="#2b2f36" data-page-node-id="5Kes2evag27opNQZS3wWUI">宁德时代</text>
+        <text x="540" y="390" text-anchor="end" font-size="10.5" fill="#16a34a" data-page-node-id="8p9WtqYCvxI4qHUieWoSUy">5 次 · 条件式思考萌芽</text>
+      </g>
+
+      <!-- ===== 分支4：进步信号 ===== -->
+      <g class="nd" data-node="b4" id="nd-b4" data-page-node-id="i8v0Zlkptf8TaGLj17Htae">
+        <rect x="232" y="408" width="92" height="34" rx="8" fill="#e8f7ef" stroke="#a7dcc0" stroke-width="1" data-page-node-id="U7PEfho9GMzAosHG4KCBDd"/>
+        <text x="278" y="429" text-anchor="middle" font-size="12" font-weight="700" fill="#1c7c46" data-page-node-id="w2ptmZjHBB36WCNw06Ecnk">进步信号</text>
+      </g>
+      <g class="lnk" data-page-node-id="B8vUDHAoOea1gVuB0kRIAq">
+        <path d="M 324 424 C 348 420, 348 420, 368 418" stroke="#a7dcc0" stroke-width="1.3" fill="none" marker-end="url(#a)" data-page-node-id="HeQErtYyeM2hF1Rzgjqj8X"/>
+      </g>
+      <g class="nd" data-node="p1" id="nd-p1" data-page-node-id="Q2NKdruK2odquZnk86yyV1">
+        <rect x="372" y="406" width="238" height="24" rx="7" fill="#fff" stroke="#a7dcc0" stroke-width="1.2" data-page-node-id="1rdYByPDCGpVlJEn19Yh8b"/>
+        <text x="382" y="422" font-size="11.5" fill="#1c7c46" data-page-node-id="uIxjtOgFMr6eL4UBXwdBcA">首次出现【条件 → 动作】式思考</text>
+        <text x="602" y="422" text-anchor="end" font-size="10.5" fill="#79b893" data-page-node-id="WvpsS2jpLjGj3kaKPlMUt4">09-02</text>
+      </g>
+    </svg>
+  </div>
+
+  <!-- 解析条 -->
+  <div class="detail" id="detail" data-page-node-id="Tuo2AEJ0Hqh0XJXFSSDHXh">
+    <div class="d-head" data-page-node-id="UyBaqJGurcKG52GJRDsxCe">
+      <span class="badge" id="dBadge" data-page-node-id="6GeOhngAN3xqcDhOucZao7"></span>
+      <h3 id="dTitle" data-page-node-id="T8jdOCEQ2skoWfOWGybxMA"></h3>
+      <button class="d-close" id="dClose" data-page-node-id="cNFNSM3f0JRheX73mG0ztK">✕</button>
+    </div>
+    <div class="d-row" data-page-node-id="MGPhRNTxOGTuHdsHEnkoTx"><div class="k" data-page-node-id="H87BfbMy44DEcqBGi2HSjf">原话</div><div class="v quote" id="dQuote" data-page-node-id="vSbGG4JGW7fgYd1DWJKsVW"></div></div>
+    <div class="d-row" data-page-node-id="DlGF7LzuQ3RMBzXJKE5KjJ"><div class="k" data-page-node-id="2u1NeAjqIgK4ULjiHhbJdX">AI 评判</div><div class="v ai" id="dAi" data-page-node-id="AdZxBqT7cjoeLbAJvI1lVp"></div></div>
+    <div class="d-row" data-page-node-id="slqJ1kt5L03aGACCAdmCc2"><div class="k" data-page-node-id="UR8e9WBAd99ahBLP4ECXGE">应该怎样</div><div class="v fix" id="dFix" data-page-node-id="TvLMMMwtuWmFkD30GaGjMW"></div></div>
+  </div>
+</div>
+
+<script>
+const D = {
+  root:{b:'ok',bt:'总览',t:'我的选股思维',q:'— 基于你 6–9 月与 AI 的全部对话自动生成 —',
+    ai:'你的回路 4 步走完一圈（触发→归因→买入→持有→卖出→换标的再来），本应 8 步。缺的 3 步正好是「想清楚」的部分：验证、预案、复盘。',
+    f:'下面红色虚线的三个节点，就是你最该补的地方'},
+  b1:{b:'weak',bt:'链路',t:'决策链路：4 步走完一圈',q:'"今天涨幅榜第一是谁？有没有能搞的？"',
+    ai:'你的决策速度极快、但几乎没有思考环节。整条链由价格异动驱动，而不是由研究驱动。',
+    f:'放慢：每个环节之间插入一个「我确认过什么？」'},
+  n1:{b:'ok',bt:'常态',t:'① 触发：热点 / 涨幅榜 / 消息',q:'"半导体这波什么情况，有没有能搞的？"',
+    ai:'榜单是别人的结论，不是你的输入。它可以触发研究，不能直接触发买入。',
+    f:'把热点当研究线索池，不当买入信号'},
+  n2:{b:'weak',bt:'薄弱',t:'② 快速归因："涨了 = 有逻辑"',q:'"它都涨这么多了，肯定是有我们不知道的利好"',
+    ai:'叙事谬误：大脑厌恶无因之涨，自动补一个故事。你的"逻辑"大多是涨完之后才存在的。',
+    f:'每个逻辑强制拆三层：事实 / 预期 / 猜测，只有事实层能进决策'},
+  n3:{b:'miss',bt:'断链',t:'③ 验证 —— 缺失',q:'"CPO 这波逻辑很硬吧？现在追进去还来得及吗"',
+    ai:'38 次买入冲动，只查过 2 次财报/估值。你把价格强势当成了基本面证据。',
+    f:'买入前三问：凭什么涨 / 已涨多少 / 我错了怎么知道'},
+  n4:{b:'weak',bt:'薄弱',t:'④ 买入：追涨 + 仓位随意',q:'"先买半仓试试水，感觉对了再加"',
+    ai:'"试试水"= 你自己都不确信。仓位与确信度、预案无关。',
+    f:'仓位 = 确信度 × 预案完整度，缺一归零'},
+  n5:{b:'miss',bt:'断链',t:'⑤ 预案 —— 缺失',q:'"先买进去再说，跌了我就扛，反正茅台不会一直跌"',
+    ai:'没有预案 = 真正的决策被推迟到亏损当中、你最不理性的时刻才做。',
+    f:'下单前必填【失效条件→动作】；未填不下单'},
+  n6:{b:'weak',bt:'薄弱',t:'⑥ 持有：情绪随波动',q:'"今天又跌 3 个点，心态有点崩，是不是该跑了？"',
+    ai:'大跌日提问量是平日 4 倍，内容以寻求安慰为主。情绪被你当信号用。',
+    f:'波动日只回答一个问题：失效条件触发了吗？没有就不动'},
+  n7:{b:'miss',bt:'断链',t:'⑦ 复盘 —— 缺失',q:'（47 次会话，0 条复盘记录——这本身就是答案）',
+    ai:'没有复盘，每笔交易都是孤立样本，不产生学习信号。这就是"交易很久但没变强"的原因。',
+    f:'平仓自动触发复盘；对错归因沉淀成个人规则库'},
+  n8:{b:'ok',bt:'常态',t:'⑧ 卖出：恐慌割 / 解套跑',q:'"终于回本了，清了清了，再也不碰它了"',
+    ai:'回本卖出 = 用成本价而非标的逻辑做决策。"再也不碰"说明这笔交易没留下任何认知。',
+    f:'卖出理由只能是：逻辑兑现 / 逻辑失效 / 更好的机会'},
+  n3b:{b:'miss',bt:'断链 1',t:'归因替代验证',q:'"涨得猛、板块都在涨、研报也在推，感觉错过就没了"',
+    ai:'用"感觉"补齐了本该由验证填的位置。38 次仅 2 次查证。',
+    f:'为每笔买入写 2 条反方证据；找不到反方 = 没想清楚'},
+  n5b:{b:'miss',bt:'断链 2',t:'无预案下单',q:'"跌了 15% 了，更便宜了，要不要补一点快点回本？"',
+    ai:'与断链①强相关：不验证的人也不会有预案。27 笔 0 预案。',
+    f:'清零测试：假设今天空仓，还会买吗？不会 = 只是怕认错'},
+  n7b:{b:'miss',bt:'断链 3',t:'零复盘闭环',q:'（无记录）',
+    ai:'同样的错误 6–9 月重复 3 轮以上。修复此环后，前两个断链会随复盘逐次闭合。',
+    f:'每周日 20 分钟，与 AI 回顾本周决策链'},
+  b3:{b:'ok',bt:'数据',t:'高频标的',q:'—',ai:'你讨论最多的三只票，恰好是三种模式的样本：追涨（旭创）、成本锚（茅台）、条件式思考（宁德）。',
+    f:'—'},
+  s1:{b:'weak',bt:'样本',t:'中际旭创',q:'"中际旭创又创新高了，CPO 这波逻辑很硬吧？"',
+    ai:'8 次讨论全部发生在创新高之后，全部结论是"逻辑硬"，0 次查估值。归因替代验证的头号样本。',
+    f:'下次点开它之前，先做完买入三问'},
+  s2:{b:'miss',bt:'样本',t:'贵州茅台',q:'"跌了 15% 了，更便宜了，要不要补一点快点回本？"',
+    ai:'"回本"出现 11 次。你的成本锚在这只票上最重——市场不知道你的成本。',
+    f:'把"回本"从决策词汇表里删掉'},
+  s3:{b:'ok',bt:'样本',t:'宁德时代',q:'"如果锂价企稳 + 排产数据确认，我才进；跌破前低就认错离场"',
+    ai:'212 条片段里第一次出现完整的【条件→动作】结构。正确直觉已发芽，下一步是让它成为默认习惯。',
+    f:'把这条消息的思考结构做成下单模板'},
+  b4:{b:'ok',bt:'进步',t:'进步信号',q:'"这次我想先想清楚再买：锂价企稳 + 排产确认才进，跌破前低就认错。"',
+    ai:'09-02 出现的这条，结构与断链②要求完全一致。说明你能做到，只是还没成为习惯。',
+    f:'AI 后续在每次买入对话中提示你复用这个结构'},
+  p1:{b:'ok',bt:'进步',t:'首次条件式思考',q:'"这次我想先想清楚再买：如果锂价企稳 + 排产数据确认，我才进；跌破前低就认错离场"',
+    ai:'这条消息包含：前置条件、失效条件、对应动作。这是把断链②③一次性补上的思考结构。',
+    f:'把它设为你的默认下单模板'}
+};
+// 断链行 → 同内容节点映射
+const ALIAS = { n3b:'n3', n5b:'n5', n7b:'n7' };
+
+const svg = document.querySelector('svg');
+const detail = document.getElementById('detail');
+let cur = null;
+
+function open(key) {
+  const d = D[ALIAS[key] || key] || D[key];
+  if (!d) return;
+  cur = key;
+  const badge = document.getElementById('dBadge');
+  badge.className = 'badge ' + d.b; badge.textContent = d.bt;
+  document.getElementById('dTitle').textContent = d.t;
+  document.getElementById('dQuote').textContent = '“' + d.q + '”';
+  document.getElementById('dAi').innerHTML = '<b>AI：</b>' + d.ai;
+  document.getElementById('dFix').textContent = d.f;
+  detail.classList.add('show');
+  document.querySelectorAll('.nd').forEach(n => n.classList.remove('sel'));
+  const el = document.getElementById('nd-' + key);
+  if (el) el.classList.add('sel');
+  svg.classList.add('focus');
+  detail.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function close() {
+  detail.classList.remove('show');
+  svg.classList.remove('focus');
+  document.querySelectorAll('.nd').forEach(n => n.classList.remove('sel'));
+  cur = null;
+}
+document.querySelectorAll('.nd').forEach(g => g.addEventListener('click', () => open(g.dataset.node)));
+document.getElementById('dClose').addEventListener('click', close);
+</script>
+</body>
+</html>

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>选股思维链路 · 移动端竖屏</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #e9ebef; color: #2b2f36; font-size: 14px;
+    display: flex; justify-content: center;
+  }
+  /* 手机画布 */
+  .phone {
+    width: 100%; max-width: 414px; min-height: 100vh;
+    background: #fafbfc; box-shadow: 0 0 0 1px #dfe3e8;
+  }
+  .inner { padding: 22px 20px 60px; }
+
+  /* ===== 顶部 ===== */
+  .head h1 { font-size: 20px; font-weight: 800; letter-spacing: .5px; }
+  .head .s { font-size: 12px; color: #98a0ab; margin-top: 4px; }
+  .score {
+    display: flex; align-items: center; gap: 10px; margin: 16px 0 22px;
+  }
+  .score .bar { flex: 1; height: 6px; border-radius: 3px; background: #e8ebef; overflow: hidden; }
+  .score .bar i { display: block; height: 100%; width: 68%; border-radius: 3px;
+    background: linear-gradient(90deg, #e5484d, #e8919a); }
+  .score .n { font-size: 13px; font-weight: 800; color: #e5484d; }
+  .score .t { font-size: 11px; color: #98a0ab; }
+
+  /* ===== 竖向链路 ===== */
+  .chain { position: relative; }
+  /* 每一段竖线由 step 的 ::before 承担 */
+  .step { position: relative; padding: 0 0 26px 40px; cursor: pointer; }
+  .step:last-child { padding-bottom: 0; }
+
+  /* 竖线：默认灰实线（真实路径） */
+  .step::before {
+    content: ""; position: absolute; left: 13px; top: 30px; bottom: -2px;
+    width: 2px; background: #d5dae1;
+  }
+  /* 断链段：红虚线（用背景平铺实现虚线竖线） */
+  .step.gap::before {
+    background: repeating-linear-gradient(#e8919a 0 5px, transparent 5px 10px);
+  }
+  .step.end::before { display: none; }
+
+  /* 节点圆 */
+  .dot {
+    position: absolute; left: 4px; top: 4px;
+    width: 20px; height: 20px; border-radius: 50%;
+    background: #fff; border: 2px solid #8a93a0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 800; color: #8a93a0;
+  }
+  .step.warn .dot { border-color: #d9a441; color: #b45309; }
+  .step.gap .dot {
+    border: 2px dashed #e5484d; color: #e5484d; background: #fdf1f1;
+    animation: none;
+  }
+  .step.end .dot {
+    background: #2b2f36; border-color: #2b2f36; color: #fff;
+  }
+
+  .step .t { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .step.gap .t { color: #e5484d; }
+  .tagx { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+    background: #fdecec; color: #e5484d; }
+  .tagw { font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+    background: #fdf3e3; color: #b45309; }
+  .step .d { font-size: 12.5px; color: #8a93a0; margin-top: 2px; }
+  .step.gap .d { color: #c0767c; }
+  .chev { margin-left: auto; font-size: 11px; color: #c3c9d1; transition: transform .2s; }
+  .step.open .chev { transform: rotate(90deg); }
+
+  /* 就地展开的解析 */
+  .more {
+    display: none; margin-top: 10px;
+    background: #fff; border: 1px solid #e8ebef; border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .step.open .more { display: block; }
+  .more .q {
+    font-size: 12.5px; color: #5c6470; line-height: 1.6;
+    background: #f6f7f9; border-left: 2px solid #d5dae1;
+    padding: 7px 10px; border-radius: 0 8px 8px 0; margin-bottom: 10px;
+  }
+  .more .v { font-size: 12.5px; line-height: 1.7; color: #444b55; margin-bottom: 8px; }
+  .more .v b.ai { color: #6d4fd0; }
+  .more .v b.fx { color: #1c7c46; }
+  .more .stat { font-size: 11px; color: #98a0ab; padding-top: 8px; border-top: 1px dashed #e8ebef; }
+
+  /* ===== 回环提示 ===== */
+  .loop {
+    margin-top: 22px; padding: 12px 14px;
+    border: 1px dashed #c9d1db; border-radius: 12px;
+    font-size: 12.5px; color: #8a93a0; text-align: center;
+  }
+  .loop b { color: #2b2f36; }
+
+  /* ===== 底部：标的与进步 ===== */
+  .sec { margin-top: 26px; }
+  .sec h2 { font-size: 13px; font-weight: 700; color: #6b7280; letter-spacing: 1px; margin-bottom: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    border: 1px solid #e0e4ea; background: #fff; border-radius: 999px;
+    padding: 6px 13px; font-size: 12.5px; color: #444b55; cursor: pointer;
+  }
+  .chip.bad { border-color: #eeb4b7; color: #c43c41; }
+  .chip.good { border-color: #a7dcc0; color: #1c7c46; }
+  .sprout {
+    margin-top: 12px; background: #e8f7ef; border-radius: 12px;
+    padding: 12px 14px; font-size: 12.5px; color: #1c7c46; line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="inner">
+
+    <div class="head">
+      <h1>我的选股思维链路</h1>
+      <div class="s">解析自 47 次对话 · 212 条思维片段</div>
+    </div>
+
+    <div class="score">
+      <span class="t">链路完整度</span>
+      <div class="bar"><i></i></div>
+      <span class="n">68%</span>
+    </div>
+
+    <div class="chain" id="chain">
+
+      <div class="step" data-k="n1">
+        <span class="dot">1</span>
+        <div class="t">触发 <span class="chev">›</span></div>
+        <div class="d">涨幅榜 · 热点 · 消息，每次都从这里出发</div>
+        <div class="more">
+          <div class="q">“今天涨幅榜第一是谁？半导体这波什么情况，有没有能搞的？”</div>
+          <div class="v"><b class="ai">AI：</b>榜单是别人的结论，不是你的输入。它可以触发研究，不能直接触发买入。</div>
+          <div class="v"><b class="fx">改：</b>把热点当研究线索池，不当买入信号。</div>
+          <div class="stat">关联：中际旭创 8 次 · 宁德时代 5 次 · 贵州茅台 6 次</div>
+        </div>
+      </div>
+
+      <div class="step warn" data-k="n2">
+        <span class="dot">2</span>
+        <div class="t">快速归因 <span class="tagw">平均 1.4 小时</span><span class="chev">›</span></div>
+        <div class="d">“涨了 = 有逻辑”，逻辑是涨完之后才存在的</div>
+        <div class="more">
+          <div class="q">“它都涨这么多了，肯定是有我们不知道的利好，跟着主力走总没错。”</div>
+          <div class="v"><b class="ai">AI：</b>叙事谬误——大脑厌恶无因之涨，自动补一个故事。你说的逻辑大多是事后解释，可靠性为零。</div>
+          <div class="v"><b class="fx">改：</b>每个逻辑强制拆三层：事实 / 预期 / 猜测，只有事实层能进决策。</div>
+          <div class="stat">212 条片段中此模式出现 38 次</div>
+        </div>
+      </div>
+
+      <div class="step gap" data-k="n3">
+        <span class="dot">✕</span>
+        <div class="t">验证 <span class="tagx">断链</span><span class="chev">›</span></div>
+        <div class="d">38 次买入冲动，只有 2 次查过财报或估值</div>
+        <div class="more">
+          <div class="q">“中际旭创又创新高了，CPO 这波逻辑很硬吧？现在追进去还来得及吗？”</div>
+          <div class="v"><b class="ai">AI：</b>你把【价格强势】当成了【基本面证据】。正确顺序：先回答“凭什么涨、涨到多少合理”，再看价格——你现在做的是反的。</div>
+          <div class="v"><b class="fx">改：</b>买入前三问：凭什么涨 / 已经涨了多少 / 我错了怎么知道。</div>
+          <div class="stat">整条链路最大的空洞 · 修复优先级 P0</div>
+        </div>
+      </div>
+
+      <div class="step warn" data-k="n4">
+        <span class="dot">4</span>
+        <div class="t">买入 <span class="tagw">追涨</span><span class="chev">›</span></div>
+        <div class="d">集中在新高后 1–3 天，仓位与确信度无关</div>
+        <div class="more">
+          <div class="q">“先买半仓试试水，感觉对了再加。”</div>
+          <div class="v"><b class="ai">AI：</b>“试试水”暴露了你自己都不确信。半仓试错的真实代价是注意力被一只没想通的票占住。</div>
+          <div class="v"><b class="fx">改：</b>仓位 = 确信度 × 预案完整度，缺一归零。</div>
+          <div class="stat">进场集中在突破新高后 1–3 天</div>
+        </div>
+      </div>
+
+      <div class="step gap" data-k="n5">
+        <span class="dot">✕</span>
+        <div class="t">预案 <span class="tagx">断链</span><span class="chev">›</span></div>
+        <div class="d">27 笔交易，0 条事前止损 / 目标 / 失效条件</div>
+        <div class="more">
+          <div class="q">“先买进去再说，跌了我就扛，反正茅台不会一直跌。”</div>
+          <div class="v"><b class="ai">AI：</b>“反正不会一直跌”是安抚，不是论证。没有预案 = 真正的决策被推迟到亏损当中、你最不理性的时刻才做。</div>
+          <div class="v"><b class="fx">改：</b>下单前必填【失效条件 → 动作】，未填不下单。</div>
+          <div class="stat">与断链①强相关 · P0</div>
+        </div>
+      </div>
+
+      <div class="step warn" data-k="n6">
+        <span class="dot">6</span>
+        <div class="t">持有 <span class="tagw">情绪化</span><span class="chev">›</span></div>
+        <div class="d">大跌日提问量是平日 4 倍，内容多为求安慰</div>
+        <div class="more">
+          <div class="q">“今天又跌 3 个点，心态有点崩，是不是该跑了？”</div>
+          <div class="v"><b class="ai">AI：</b>“心态崩”不是信息，是情绪，但你在把情绪当信号用。持有期唯一有效的问题：失效条件触发了吗？</div>
+          <div class="v"><b class="fx">改：</b>波动日只回答这一个问题，没有就不动。</div>
+          <div class="stat">持仓期对话占总量 41%</div>
+        </div>
+      </div>
+
+      <div class="step gap" data-k="n7">
+        <span class="dot">✕</span>
+        <div class="t">复盘 <span class="tagx">断链</span><span class="chev">›</span></div>
+        <div class="d">47 次会话，0 次主动复盘</div>
+        <div class="more">
+          <div class="q">（无相关记录——这恰恰是问题所在）</div>
+          <div class="v"><b class="ai">AI：</b>没有复盘，每笔交易都是孤立样本，不产生学习信号。这就是“交易很久但没变强”的直接原因。</div>
+          <div class="v"><b class="fx">改：</b>平仓自动触发复盘，对错归因沉淀成个人规则库。</div>
+          <div class="stat">修复后，前两个断链会随复盘逐次闭合</div>
+        </div>
+      </div>
+
+      <div class="step end" data-k="n8">
+        <span class="dot">8</span>
+        <div class="t">卖出 <span class="chev">›</span></div>
+        <div class="d">恐慌割 · 解套跑，然后换个标的原样再来</div>
+        <div class="more">
+          <div class="q">“终于回本了，清了清了，再也不碰它了。”</div>
+          <div class="v"><b class="ai">AI：</b>回本卖出 = 用成本价而非标的逻辑做决策。“再也不碰”说明这笔交易没留下任何认知增量。</div>
+          <div class="v"><b class="fx">改：</b>卖出理由只能是：逻辑兑现 / 逻辑失效 / 更好的机会。</div>
+          <div class="stat">恐慌性卖出占 62% · 逻辑驱动仅 9%</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="loop">↻ 卖出后回到顶部 <b>换个标的，原样再来</b> —— 一圈 4 步，本应 8 步</div>
+
+    <div class="sec">
+      <h2>常讨论的标的</h2>
+      <div class="chips">
+        <span class="chip bad">中际旭创 · 8 次</span>
+        <span class="chip bad">贵州茅台 · "回本"×11</span>
+        <span class="chip good">宁德时代 · 5 次</span>
+      </div>
+      <div class="sprout">🌱 进步信号：09-02 你第一次说出「锂价企稳 + 排产确认才进，跌破前低就认错」——正确的结构已经出现，下一步是让它成为默认习惯。</div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+document.querySelectorAll('.step').forEach(s => {
+  s.addEventListener('click', () => {
+    const was = s.classList.contains('open');
+    document.querySelectorAll('.step').forEach(x => x.classList.remove('open'));
+    if (!was) s.classList.add('open');
+  });
+});
+</script>
+</body>
+</html>

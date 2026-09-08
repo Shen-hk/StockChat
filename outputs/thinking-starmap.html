@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="ed7Cc4QuQFfJb5o4Aw7wls">
+<head data-page-node-id="4kvOeiIoaCprrlutYCfHy4">
+<meta charset="UTF-8" data-page-node-id="QDHjTC8IuD6RQw48hmKVbX">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="JhPW7S6tTlW0yuJjY2sq7w">
+<title>思维星图 · 你的选股决策回路</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #0b0e16;
+    color: #e8ecf4;
+    font-size: 14px;
+  }
+
+  /* ===== 星空背景 ===== */
+  .stars, .stars2 {
+    position: fixed; inset: 0; pointer-events: none;
+  }
+  .stars {
+    background-image:
+      radial-gradient(1px 1px at 12% 22%, rgba(255,255,255,.5) 50%, transparent 50%),
+      radial-gradient(1px 1px at 78% 12%, rgba(255,255,255,.35) 50%, transparent 50%),
+      radial-gradient(1.5px 1.5px at 32% 74%, rgba(255,255,255,.4) 50%, transparent 50%),
+      radial-gradient(1px 1px at 88% 62%, rgba(255,255,255,.3) 50%, transparent 50%),
+      radial-gradient(1px 1px at 55% 38%, rgba(255,255,255,.45) 50%, transparent 50%),
+      radial-gradient(1.5px 1.5px at 8% 82%, rgba(255,255,255,.3) 50%, transparent 50%),
+      radial-gradient(1px 1px at 68% 88%, rgba(255,255,255,.35) 50%, transparent 50%),
+      radial-gradient(1px 1px at 42% 8%, rgba(255,255,255,.4) 50%, transparent 50%),
+      radial-gradient(1.5px 1.5px at 93% 30%, rgba(255,255,255,.25) 50%, transparent 50%),
+      radial-gradient(1px 1px at 22% 48%, rgba(255,255,255,.3) 50%, transparent 50%);
+  }
+  .nebula {
+    position: fixed; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(600px 400px at 70% 30%, rgba(47,111,237,.08), transparent 70%),
+      radial-gradient(500px 380px at 25% 70%, rgba(124,92,255,.07), transparent 70%),
+      radial-gradient(700px 500px at 50% 50%, rgba(229,72,77,.03), transparent 70%);
+  }
+
+  /* ===== 顶部标题 ===== */
+  .head {
+    position: fixed; top: 22px; left: 28px; z-index: 10;
+  }
+  .head h1 {
+    font-size: 17px; font-weight: 700; letter-spacing: 1px;
+    color: #f2f5fb; display: flex; align-items: center; gap: 10px;
+  }
+  .head h1 .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #ff5a5f; box-shadow: 0 0 10px #ff5a5f;
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+  @keyframes breathe { 50% { opacity: .35; } }
+  .head p { font-size: 12px; color: #7d8798; margin-top: 5px; letter-spacing: .5px; }
+
+  .meta {
+    position: fixed; top: 24px; right: 28px; z-index: 10;
+    text-align: right; font-size: 11.5px; color: #6b7484; line-height: 1.9;
+  }
+  .meta b { color: #c6cedd; font-weight: 600; }
+
+  /* ===== 底部提示 ===== */
+  .hint {
+    position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+    z-index: 10; font-size: 12px; color: #66707f; letter-spacing: 1px;
+    display: flex; align-items: center; gap: 18px; white-space: nowrap;
+  }
+  .hint span { display: flex; align-items: center; gap: 6px; }
+  .lg { width: 14px; height: 14px; border-radius: 50%; display: inline-block; }
+  .lg.solid { background: radial-gradient(circle at 35% 35%, #bfe0ff, #3f8cff 70%); box-shadow: 0 0 8px rgba(80,150,255,.8); }
+  .lg.ghost { border: 1.5px dashed #ff5a5f; box-shadow: 0 0 8px rgba(255,90,95,.4); }
+  .lg.sat { background: #8fa0b8; width: 7px; height: 7px; }
+
+  /* ===== SVG 画布 ===== */
+  svg.canvas { position: fixed; inset: 0; width: 100%; height: 100%; }
+
+  .node { cursor: pointer; }
+  .node text { pointer-events: none; }
+  .node .halo { opacity: 0; transition: opacity .25s; }
+  .node:hover .halo, .node.sel .halo { opacity: 1; }
+  .node .body { transition: all .25s; }
+  .node.ghost .ring {
+    animation: ghostPulse 2.2s ease-in-out infinite;
+    transform-origin: center; transform-box: fill-box;
+  }
+  @keyframes ghostPulse {
+    0%, 100% { opacity: .55; }
+    50% { opacity: 1; }
+  }
+
+  /* 选中聚焦：其余暗掉 */
+  svg.focus .node:not(.sel) { opacity: .18; transition: opacity .3s; }
+  svg.focus .edge { opacity: .1; transition: opacity .3s; }
+  svg.focus .edge.lit { opacity: 1; }
+  svg.focus .satellite:not(.sel) { opacity: .12; }
+  .node, .edge, .satellite { transition: opacity .3s; }
+
+  .satellite { cursor: pointer; }
+  .satellite text { font-size: 10.5px; fill: #93a0b4; }
+
+  .edge-label { font-size: 10.5px; fill: #6b7484; letter-spacing: 1px; }
+  .broken-label {
+    font-size: 11px; fill: #ff7b80; font-weight: 600; letter-spacing: 1.5px;
+    animation: ghostPulse 2.2s ease-in-out infinite;
+  }
+
+  /* ===== 中央指标 ===== */
+  .center-num { font-size: 44px; font-weight: 800; fill: #f2f5fb; letter-spacing: -1px; }
+  .center-lab { font-size: 11.5px; fill: #7d8798; letter-spacing: 2px; }
+
+  /* ===== AI 解析浮层 ===== */
+  .panel {
+    position: fixed; right: 26px; top: 90px; width: 330px; z-index: 20;
+    background: rgba(17, 22, 34, .88);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(120, 140, 180, .18);
+    border-radius: 16px;
+    padding: 18px 20px 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    opacity: 0; transform: translateX(16px); pointer-events: none;
+    transition: all .3s cubic-bezier(.2,.8,.3,1);
+    max-height: calc(100vh - 130px); overflow-y: auto;
+  }
+  .panel.show { opacity: 1; transform: translateX(0); pointer-events: auto; }
+  .panel::-webkit-scrollbar { width: 4px; }
+  .panel::-webkit-scrollbar-thumb { background: #2c3444; border-radius: 4px; }
+
+  .p-tag {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: 2px;
+    padding: 3px 10px; border-radius: 999px; margin-bottom: 8px;
+  }
+  .p-tag.miss { background: rgba(255,90,95,.14); color: #ff7b80; border: 1px solid rgba(255,90,95,.3); }
+  .p-tag.weak { background: rgba(255,183,77,.12); color: #ffc46b; border: 1px solid rgba(255,183,77,.28); }
+  .p-tag.ok   { background: rgba(87,217,163,.12); color: #5fe0a8; border: 1px solid rgba(87,217,163,.28); }
+
+  .p-title { font-size: 17px; font-weight: 800; color: #f2f5fb; margin-bottom: 4px; }
+  .p-sub { font-size: 11px; color: #6b7484; margin-bottom: 12px; }
+
+  .p-quote {
+    border-left: 2px solid rgba(120,140,180,.35);
+    background: rgba(255,255,255,.035);
+    border-radius: 0 10px 10px 0;
+    padding: 9px 12px; margin-bottom: 12px;
+  }
+  .p-quote .q-meta { font-size: 10px; color: #5d6675; margin-bottom: 3px; }
+  .p-quote .q-txt { font-size: 12.5px; color: #c6cedd; line-height: 1.55; }
+
+  .p-ai {
+    background: linear-gradient(135deg, rgba(124,92,255,.13), rgba(47,111,237,.1));
+    border: 1px solid rgba(124,92,255,.25);
+    border-radius: 12px; padding: 11px 13px; margin-bottom: 12px;
+  }
+  .p-ai .v-head { font-size: 10.5px; font-weight: 700; letter-spacing: 2px; color: #b3a0ff; margin-bottom: 5px; }
+  .p-ai p { font-size: 12.5px; color: #d5dcea; line-height: 1.65; }
+
+  .p-fix .f-head { font-size: 10.5px; font-weight: 700; letter-spacing: 2px; color: #5fe0a8; margin-bottom: 6px; }
+  .p-fix li {
+    font-size: 12.5px; color: #aab4c6; line-height: 1.6;
+    margin-left: 16px; margin-bottom: 4px;
+  }
+  .p-freq { font-size: 11px; color: #6b7484; margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(120,140,180,.12); }
+  .p-freq b { color: #ff9a9e; }
+  .p-close {
+    position: absolute; top: 12px; right: 14px; width: 24px; height: 24px;
+    border-radius: 50%; border: none; background: rgba(255,255,255,.06);
+    color: #8a94a6; font-size: 13px; cursor: pointer; line-height: 1;
+  }
+  .p-close:hover { background: rgba(255,255,255,.12); color: #fff; }
+</style>
+</head>
+<body data-page-node-id="DJEP0ZZEi3z9XesOqJRyha">
+
+<div class="stars" data-page-node-id="4YyrkFMp8Tp2QOiBRNr9kP"></div>
+<div class="nebula" data-page-node-id="mkCCTmMqLMZgD4wMOH9OrX"></div>
+
+<div class="head" data-page-node-id="ydmlzmfeg66ynIJc3gDvHI">
+  <h1 data-page-node-id="GdJUsM7iAqZ6iMKC7Pf2VO"><span class="dot" data-page-node-id="7xK9KkHxIFoZrrQJxDPimd"></span>思维星图</h1>
+  <p data-page-node-id="5ZlnpkExKFegEsbb2sJWqw">你的 212 条聊天记录 · 画成一张决策回路</p>
+</div>
+
+<div class="meta" data-page-node-id="1OuPWOhRK409nUJ0A7U6oL">
+  解析自 <b data-page-node-id="Z8jHRUbFeFoO1ZZYCuCGLq">47</b> 次会话 · 2026.06 – 09<br data-page-node-id="fAjCjwXYHkx1W4CWvABR8x">
+  信号流速：<b style="color:#ffc46b" data-page-node-id="XEZCpOmWcWLs1TUyNU2od2">过快</b> · 断链 <b style="color:#ff7b80" data-page-node-id="UE4RnFrA6CpvDIpUOVJBcG">3</b> 处
+</div>
+
+<svg class="canvas" id="svg" viewBox="0 0 1000 640" preserveAspectRatio="xMidYMid meet" data-page-node-id="OcQalCPq7MNmLQk8k6YYXy">
+  <defs data-page-node-id="jjKk6bRvICPICBqAXyaBp6">
+    <radialGradient id="gSolid" cx="35%" cy="35%" data-page-node-id="blyCito05SO6Al8q6LbXeL">
+      <stop offset="0%" stop-color="#cfe6ff" data-page-node-id="N3Mt0O4l0Yg0fHSU46dnOg"/>
+      <stop offset="55%" stop-color="#4f95ff" data-page-node-id="PgeFzhJDuM9n3lOscAfmzW"/>
+      <stop offset="100%" stop-color="#1d5fd0" data-page-node-id="fAEI01VPmFKFy1b898sX4R"/>
+    </radialGradient>
+    <radialGradient id="gAmber" cx="35%" cy="35%" data-page-node-id="XE1msWakFZ41FPzFpHSXev">
+      <stop offset="0%" stop-color="#ffe9c2" data-page-node-id="DG6vmUjwzaZdQGK5nznsKG"/>
+      <stop offset="55%" stop-color="#ffb74d" data-page-node-id="bC9RrtrUqilGGdDzo78Ahi"/>
+      <stop offset="100%" stop-color="#d98a1f" data-page-node-id="MhH9YSxKoNXZT2lFeAo2Ya"/>
+    </radialGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%" data-page-node-id="jDgUvdTB5jK3eCc5V07JS7">
+      <feGaussianBlur stdDeviation="6" result="b" data-page-node-id="WYJ20VTQzSDH6Q1CpPRvgn"/>
+      <feMerge data-page-node-id="ccazNtILSb9xx7aO6V2Wou"><feMergeNode in="b" data-page-node-id="0ZD74VITnuLuvkZaj1Hnxm"/><feMergeNode in="SourceGraphic" data-page-node-id="pLPJE7fyS0ZZb1y9bblsrf"/></feMerge>
+    </filter>
+    <filter id="glowSoft" x="-80%" y="-80%" width="260%" height="260%" data-page-node-id="nMrFPsX0v7pE5TSvZkRtaw">
+      <feGaussianBlur stdDeviation="10" result="b" data-page-node-id="3uFsdfO3rlFLPGWpq3PvUe"/>
+      <feMerge data-page-node-id="9eQFRCJ0d0s5R0cS3IbKIN"><feMergeNode in="b" data-page-node-id="kDlFXdw1mErfZqYG0BoyiA"/><feMergeNode in="SourceGraphic" data-page-node-id="pNHp0CFC0BgH66sRKxj45C"/></feMerge>
+    </filter>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse" data-page-node-id="ruPRpwiTDItl5s0ncizomC">
+      <path d="M0 0 L10 5 L0 10 z" fill="#3a4a63" data-page-node-id="fPuvhtlGXUYICZZKpfnPGw"/>
+    </marker>
+    <!-- 信号沿真实回路流动的路径（粗略椭圆弧连接实节点） -->
+    <path id="flowPath" d="M 500 108
+      C 590 108, 680 122, 726 164
+      C 780 216, 790 420, 726 496
+      C 660 566, 340 566, 274 496
+      C 210 426, 226 200, 280 158
+      C 336 116, 430 106, 494 108" fill="none" data-page-node-id="S1TID6VCxBZ129ignJSSoy"/>
+  </defs>
+
+  <!-- ===== 边：真实路径（实线，你的信号真的走这条路） ===== -->
+  <g class="edge" id="e-n1-n2" data-page-node-id="nrr91JZo5RQzAFVtlvCUg4">
+    <path d="M 536 96 C 610 100, 668 118, 706 148" stroke="#33415c" stroke-width="1.6" fill="none" marker-end="url(#arr)" data-page-node-id="sEcYnPyEO0HEZVk7F6eAvU"/>
+    <text class="edge-label" x="600" y="88" data-page-node-id="FXNn1oAtUbnBAMqb5okGTw">1.4 小时内归因</text>
+  </g>
+  <g class="edge" id="e-n2-n4" data-page-node-id="A9VZrmbqd8stV884GAXJ9T">
+    <path d="M 748 196 C 786 260, 792 380, 756 452" stroke="#33415c" stroke-width="1.6" fill="none" marker-end="url(#arr)" data-page-node-id="9WMs1tsbuRAhehEBFVWI1V"/>
+    <text class="edge-label" x="792" y="330" transform="rotate(90 792 330)" data-page-node-id="QwPu0wyEk8lLlBjnbsdDsB">跳过验证，直接买入</text>
+  </g>
+  <g class="edge" id="e-n4-n6" data-page-node-id="SNj8Mafa5XIO8hCufxIW6L">
+    <path d="M 686 512 C 600 546, 400 546, 314 512" stroke="#33415c" stroke-width="1.6" fill="none" marker-end="url(#arr)" data-page-node-id="EF1buc7dlwy2gLzLrhDJjk"/>
+    <text class="edge-label" x="452" y="590" data-page-node-id="s2b3mvg0AK1ivZ0y5jtC6p">情绪化持有</text>
+  </g>
+  <g class="edge" id="e-n6-n8" data-page-node-id="NpPPfoakjgXTfHBTEQt4cH">
+    <path d="M 252 452 C 214 380, 208 260, 246 196" stroke="#33415c" stroke-width="1.6" fill="none" marker-end="url(#arr)" data-page-node-id="HD6X2vz5v81wVsQ952sgf1"/>
+    <text class="edge-label" x="160" y="330" transform="rotate(-90 160 330)" data-page-node-id="flNuVuycfAQISOXFpPm9qc">恐慌 / 解套离场</text>
+  </g>
+  <g class="edge" id="e-n8-n1" data-page-node-id="UFaBKUnJEbU4TbskTuXRBs">
+    <path d="M 262 148 C 330 106, 420 96, 462 104" stroke="#33415c" stroke-width="1.6" fill="none" marker-end="url(#arr)" stroke-dasharray="3 5" opacity=".6" data-page-node-id="l13yxxSAhQlnTeXVy8hnFO"/>
+    <text class="edge-label" x="300" y="92" data-page-node-id="HxmF8sBHPpX6G9HmlIASlo">换个标的，原样再来</text>
+  </g>
+
+  <!-- ===== 边：断链（通往红色虚影） ===== -->
+  <g class="edge" id="e-n2-n3" data-page-node-id="WSnaHX2HbYlzBLq2913G3B">
+    <path d="M 776 186 C 820 220, 840 260, 848 296" stroke="#ff5a5f" stroke-width="1.4" stroke-dasharray="5 6" fill="none" opacity=".75" data-page-node-id="2cqmokHrxUX9RRG9GGZEh1"/>
+  </g>
+  <g class="edge" id="e-n4-n5" data-page-node-id="00GKkK1VAaZDGupLaFKdX9">
+    <path d="M 682 530 C 620 556, 566 564, 534 562" stroke="#ff5a5f" stroke-width="1.4" stroke-dasharray="5 6" fill="none" opacity=".75" data-page-node-id="2SH05eKx2FFIBThm5lSspR"/>
+  </g>
+  <g class="edge" id="e-n6-n7" data-page-node-id="iceT79cSiE7ILMQhxNWGnq">
+    <path d="M 224 486 C 186 452, 168 400, 162 364" stroke="#ff5a5f" stroke-width="1.4" stroke-dasharray="5 6" fill="none" opacity=".75" data-page-node-id="gYW7VlxuNOPTjbfeOjHrS4"/>
+  </g>
+
+  <text class="broken-label" x="862" y="284" data-page-node-id="wMQdBjS84JN83YdPEEkXB4">断 ① 从未验证</text>
+  <text class="broken-label" x="470" y="612" data-page-node-id="HblZt6HForw80uQMhpRDfM">断 ② 从未预设退路</text>
+  <text class="broken-label" x="118" y="348" data-page-node-id="bouaNDtupqxFtb5IsvcE1b">断 ③ 从不归因</text>
+
+  <!-- ===== 流动信号 ===== -->
+  <g filter="url(#glow)" data-page-node-id="B6uIPBCwVgirhFLIhvgrmJ">
+    <circle r="4" fill="#8fd0ff" data-page-node-id="BTYUCj0u8ilNgK75YXBNm9">
+      <animateMotion dur="7s" repeatCount="indefinite" rotate="auto" data-page-node-id="N0tYe3BUpARGVRCPN1hQgP">
+        <mpath href="#flowPath" data-page-node-id="gFEzGMCx4RbBD1Z7t30pga"/>
+      </animateMotion>
+    </circle>
+  </g>
+  <circle r="1.8" fill="#ffffff" opacity=".9" data-page-node-id="pTB8BL0iNhIVwOqIoQMPB0">
+    <animateMotion dur="7s" begin="0.12s" repeatCount="indefinite" data-page-node-id="uw9vcnkeO5uWvu8FAaD6wL">
+      <mpath href="#flowPath" data-page-node-id="WYdd87Dbo6C4J3Mf5R8Vys"/>
+    </animateMotion>
+  </circle>
+
+  <!-- ===== 中央：链路完整度 ===== -->
+  <g data-page-node-id="3zUIHQYgVK9aTkGLQipecm">
+    <circle cx="500" cy="330" r="58" fill="none" stroke="#222b3d" stroke-width="5" data-page-node-id="4yGq7GQc2mSzzfP2LUQMNW"/>
+    <circle cx="500" cy="330" r="58" fill="none" stroke="#57d9a3" stroke-width="5"
+      stroke-linecap="round" stroke-dasharray="247.6 364.4"
+      transform="rotate(-90 500 330)" filter="url(#glowSoft)" opacity=".9" data-page-node-id="zqXSvpyfpKLUBREhlVQyc2"/>
+    <text class="center-num" x="500" y="338" text-anchor="middle" data-page-node-id="ygAowiaciIBY7JprRgpTIN">68%</text>
+    <text class="center-lab" x="500" y="362" text-anchor="middle" data-page-node-id="cYX6h933SIfK6F5iDxFi8C">链路完整度</text>
+    <text class="center-lab" x="500" y="284" text-anchor="middle" fill="#5d6675" font-size="10" data-page-node-id="6uQT7IoeE3dw38ZvAzHB1A">你的回路 4 步走完一圈</text>
+    <text class="center-lab" x="500" y="300" text-anchor="middle" fill="#5d6675" font-size="10" data-page-node-id="KNSOHE1StndHsppLJEm3b5">本应 8 步</text>
+  </g>
+
+  <!-- ===== 卫星：常被讨论的标的 ===== -->
+  <g class="satellite" data-node="s1" data-page-node-id="k9KeC5G62jXSPXcWpRtGBB">
+    <line x1="536" y1="88" x2="612" y2="42" stroke="#2a3346" stroke-width="1" data-page-node-id="Yk8G08reFVhpgb2LNdqMTw"/>
+    <circle cx="618" cy="40" r="4" fill="#8fa0b8" data-page-node-id="rqeTYrXQrseWMu4469KNMN"/>
+    <text x="628" y="44" data-page-node-id="4gtOsYruU4Hah4A4QEZ9ib">中际旭创 · 8 次</text>
+  </g>
+  <g class="satellite" data-node="s2" data-page-node-id="4ebPmo7E092xAMCagZhetL">
+    <line x1="740" y1="520" x2="800" y2="572" stroke="#2a3346" stroke-width="1" data-page-node-id="FCEDILTCGqVJ0SzwSmwPbA"/>
+    <circle cx="806" cy="574" r="4" fill="#8fa0b8" data-page-node-id="V2FO76k34G4OXf8B7u5izZ"/>
+    <text x="816" y="578" data-page-node-id="fZ2yL3kNMZmV9NCCuNk8JR">贵州茅台 · 6 次</text>
+  </g>
+  <g class="satellite" data-node="s3" data-page-node-id="cEgWSl5FmZktlEiI3s5qXl">
+    <line x1="330" y1="540" x2="268" y2="600" stroke="#2a3346" stroke-width="1" data-page-node-id="KVmrkISUzV66ZEbmAtFt9D"/>
+    <circle cx="262" cy="602" r="4" fill="#8fa0b8" data-page-node-id="WwuuI8gfk6wQRRNrkhpV3v"/>
+    <text x="272" y="620" data-page-node-id="ixGHeCMWRG1cOFSkcCydZ7">宁德时代 · 5 次</text>
+  </g>
+
+  <!-- ===== 节点：真实环节 ===== -->
+  <g class="node" data-node="n1" id="nd-n1" data-page-node-id="nGK1At0yvphO2ZI2eBAROI">
+    <circle class="halo" cx="500" cy="100" r="34" fill="rgba(79,149,255,.12)" data-page-node-id="LwC2kN8bknEcA7PaOMD4Zs"/>
+    <circle class="body" cx="500" cy="100" r="20" fill="url(#gSolid)" filter="url(#glow)" data-page-node-id="S1xEE4lGe3ZAOHuqbGHntk"/>
+    <text x="500" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="#e8ecf4" data-page-node-id="m7yqP21qBZq1Ob1TiXQSH2">触发</text>
+    <text x="500" y="146" text-anchor="middle" font-size="10.5" fill="#7d8798" data-page-node-id="UQ6EKdJatZjzkshu65C1sR">热点 · 涨幅榜 · 消息</text>
+  </g>
+  <g class="node" data-node="n2" id="nd-n2" data-page-node-id="yytYqTLFWjJIFosTMWPGzz">
+    <circle class="halo" cx="740" cy="172" r="34" fill="rgba(255,183,77,.12)" data-page-node-id="Yd3AqMeAu55E7ledsYKu8Y"/>
+    <circle class="body" cx="740" cy="172" r="20" fill="url(#gAmber)" filter="url(#glow)" data-page-node-id="ZDvgNaXEK0hb9GU2O9mSzJ"/>
+    <text x="740" y="142" text-anchor="middle" font-size="13" font-weight="700" fill="#e8ecf4" data-page-node-id="J5w1dCWWDBgg7dGxAUNd5d">快速归因</text>
+    <text x="752" y="218" text-anchor="middle" font-size="10.5" fill="#7d8798" data-page-node-id="sE3mCFF0HUVSE3yNWFaVPp">"涨了 = 有逻辑"</text>
+  </g>
+  <g class="node" data-node="n4" id="nd-n4" data-page-node-id="Rqib2UDvczyrUM4QaZsIQs">
+    <circle class="halo" cx="726" cy="500" r="34" fill="rgba(255,90,95,.13)" data-page-node-id="aqTOwtKZw0NyYD0A6iYcGP"/>
+    <circle class="body" cx="726" cy="500" r="20" fill="url(#gAmber)" filter="url(#glow)" data-page-node-id="Rkc7v2Asnwq2SUwGpX09FP"/>
+    <text x="726" y="470" text-anchor="middle" font-size="13" font-weight="700" fill="#e8ecf4" data-page-node-id="geCfZ44VXCoQdhHVIz68MN">买入</text>
+    <text x="714" y="546" text-anchor="middle" font-size="10.5" fill="#7d8798" data-page-node-id="qhQ2i8OujitBAw9ySU6YD8">追涨 · 仓位随意</text>
+  </g>
+  <g class="node" data-node="n6" id="nd-n6" data-page-node-id="NjmRhUeqDjOCB8tfiTD7Sp">
+    <circle class="halo" cx="274" cy="500" r="34" fill="rgba(255,183,77,.12)" data-page-node-id="cChvOfbxSRKrnBOKNSZ9nL"/>
+    <circle class="body" cx="274" cy="500" r="20" fill="url(#gAmber)" filter="url(#glow)" data-page-node-id="LZDAWPy2BmMZQRFrQfuSoU"/>
+    <text x="274" y="470" text-anchor="middle" font-size="13" font-weight="700" fill="#e8ecf4" data-page-node-id="BPKC8ySpvfvSv8hs5PV61V">持有</text>
+    <text x="286" y="546" text-anchor="middle" font-size="10.5" fill="#7d8798" data-page-node-id="pGhWPOmqzYkh4X0O441fbu">情绪随波动</text>
+  </g>
+  <g class="node" data-node="n8" id="nd-n8" data-page-node-id="zySYH4XBO1cv70fdLFFhBq">
+    <circle class="halo" cx="250" cy="172" r="34" fill="rgba(79,149,255,.12)" data-page-node-id="PdlwenS502JLGNelCQ2ZMl"/>
+    <circle class="body" cx="250" cy="172" r="20" fill="url(#gSolid)" filter="url(#glow)" data-page-node-id="tcK2Iimt94DQD6cfLTHepn"/>
+    <text x="250" y="142" text-anchor="middle" font-size="13" font-weight="700" fill="#e8ecf4" data-page-node-id="1ebx7ZF5g0diHSJQpAWVmw">卖出</text>
+    <text x="238" y="218" text-anchor="middle" font-size="10.5" fill="#7d8798" data-page-node-id="MogFPHxfRXly3vO72FDBiK">恐慌割 · 解套跑</text>
+  </g>
+
+  <!-- ===== 节点：断链虚影 ===== -->
+  <g class="node ghost" data-node="n3" id="nd-n3" data-page-node-id="3vAG04nCK9wIRBVurI3kLj">
+    <circle class="halo" cx="858" cy="330" r="36" fill="rgba(255,90,95,.08)" data-page-node-id="TzDr7lB2OiMnHl6PY0C1qo"/>
+    <circle class="ring" cx="858" cy="330" r="21" fill="rgba(255,90,95,.05)" stroke="#ff5a5f" stroke-width="1.6" stroke-dasharray="5 4" data-page-node-id="Ac6Iw37hahWdC7TyTBRbpC"/>
+    <text x="858" y="298" text-anchor="middle" font-size="13" font-weight="700" fill="#ff8a8e" data-page-node-id="woGFgRV4cGEKVD7FX75iJh">验证</text>
+    <text x="858" y="378" text-anchor="middle" font-size="10.5" fill="#8a5a5e" data-page-node-id="J5qwjrFGHK5WlAROjzuVbS">38 次只做 2 次</text>
+  </g>
+  <g class="node ghost" data-node="n5" id="nd-n5" data-page-node-id="s84yzsE0NUXyyWg2tjU8EF">
+    <circle class="halo" cx="500" cy="556" r="36" fill="rgba(255,90,95,.08)" data-page-node-id="DflfkjYVcRKl2FxMcJu9av"/>
+    <circle class="ring" cx="500" cy="556" r="21" fill="rgba(255,90,95,.05)" stroke="#ff5a5f" stroke-width="1.6" stroke-dasharray="5 4" data-page-node-id="t5ef9yhGHgnrnJtY6eedW6"/>
+    <text x="500" y="524" text-anchor="middle" font-size="13" font-weight="700" fill="#ff8a8e" data-page-node-id="v4RB83He4K22XGK4nAab6j">预案</text>
+  </g>
+  <g class="node ghost" data-node="n7" id="nd-n7" data-page-node-id="sptkazH1RYTpgYPyUpGVvd">
+    <circle class="halo" cx="152" cy="330" r="36" fill="rgba(255,90,95,.08)" data-page-node-id="P1BNG5F4HfcLEhhEffavo8"/>
+    <circle class="ring" cx="152" cy="330" r="21" fill="rgba(255,90,95,.05)" stroke="#ff5a5f" stroke-width="1.6" stroke-dasharray="5 4" data-page-node-id="UsiSIQzDWBaVUV6F5R3CQn"/>
+    <text x="152" y="298" text-anchor="middle" font-size="13" font-weight="700" fill="#ff8a8e" data-page-node-id="pw940dxs5niwMwp1a4xnT4">复盘</text>
+    <text x="152" y="378" text-anchor="middle" font-size="10.5" fill="#8a5a5e" data-page-node-id="s6zLXTrhRoeBueLcaHUqnD">47 次会话 · 0 次</text>
+  </g>
+</svg>
+
+<div class="hint" data-page-node-id="rRDP7I4p7t2bXxFLGC7mWI">
+  <span data-page-node-id="M2VdCtsHoa4eyLPDxpoy5B"><i class="lg solid" data-page-node-id="9PZt2QccmjeeTx4Cl9G9pl"></i>你在走的环节</span>
+  <span data-page-node-id="xebPnxBLzj7YqWLAjhCHJ8"><i class="lg ghost" data-page-node-id="2u1w8j5B33zjYxikF7GwyO"></i>断链 · 信号绕不过去</span>
+  <span data-page-node-id="2bbCBI3H8LCMca0CLeWGp7"><i class="lg sat" data-page-node-id="kHxefAkFLL1Fc0D6iWnd9G"></i>常讨论的标的</span>
+  <span style="color:#4d5867" data-page-node-id="2uGxXA5ogtURWv6wdYVM9Q">｜</span>
+  <span style="color:#9aa6ba" data-page-node-id="L5CMCriLGgXSXC0Zo4o9o0">点击任意节点 → AI 解析 + 你的原话</span>
+</div>
+
+<!-- ===== AI 解析浮层 ===== -->
+<div class="panel" id="panel" data-page-node-id="26dd6YUB042UUSTx43cRS2">
+  <button class="p-close" id="pClose" data-page-node-id="90AjTeVRHF4C99bl725Y1Z">✕</button>
+  <span class="p-tag" id="pTag" data-page-node-id="ktQiso7SeBe1AGp3KHqfrh">断链</span>
+  <div class="p-title" id="pTitle" data-page-node-id="rZl7dbVBtoaN1oSW5m3gaD"></div>
+  <div class="p-sub" id="pSub" data-page-node-id="F3qAKbzvduiUQAD8gC5JWN"></div>
+  <div class="p-quote" data-page-node-id="biRtyiXidDm0HXBHTyooeG">
+    <div class="q-meta" data-page-node-id="bLz66IQMCwuv1YdC7qeYe5">来自你的聊天记录</div>
+    <div class="q-txt" id="pQuote" data-page-node-id="FcFzbZ6F9MgCZxEcnXIfKl"></div>
+  </div>
+  <div class="p-ai" data-page-node-id="FOCMILYQCnlfcZOWpwz8ul">
+    <div class="v-head" data-page-node-id="tAyngDUTggu0gu8lmFy5Fi">AI 评判</div>
+    <p id="pAi" data-page-node-id="O2EVyB5PDRcimVl4GB6eMo"></p>
+  </div>
+  <div class="p-fix" data-page-node-id="IFQwPdmeGOur43rffFQ6Gs">
+    <div class="f-head" data-page-node-id="RiGgFPFaYpPXg2emzvyjrt">应该怎样</div>
+    <ul id="pFix" data-page-node-id="HincVuYORwVh8RWDGm1pTF"></ul>
+  </div>
+  <div class="p-freq" id="pFreq" data-page-node-id="Bf5ArDPQDdNIheOmSqBZFv"></div>
+</div>
+
+<script>
+const NODES = {
+  n1: { tag:'ok', tagText:'常态环节', title:'① 触发', sub:'决策链起点 · 每次交易的第一颗星',
+    quote:'今天涨幅榜第一是谁？半导体这波什么情况，有没有能搞的？',
+    ai:'从"看什么在涨"出发没有错，但要想清楚：榜单是别人的结论，不是你的输入。它可以触发研究，不能直接触发买入。',
+    fix:['把热点当"研究线索池"，而不是"买入信号"','触发后先问：这是我发现的，还是别人已经买完的？'],
+    freq:'关联标的：中际旭创 8 次 · 宁德时代 5 次 · 贵州茅台 6 次' },
+  n2: { tag:'weak', tagText:'薄弱环节', title:'② 快速归因', sub:'从触发到"它有逻辑"平均只隔 1.4 小时',
+    quote:'它都涨这么多了，肯定是有我们不知道的利好，跟着主力走总没错',
+    ai:'"肯定有利好"是把未知填补成确定性——叙事谬误。大脑厌恶无因之涨，会自动补一个故事，而故事可靠性为零。你说的逻辑大多是涨完之后才存在的。',
+    fix:['每个"逻辑"强制拆三层：已验证事实 / 市场预期 / 纯猜测','只允许事实层进入决策，猜测层直接丢弃'],
+    freq:'212 条思维片段中此模式出现 38 次' },
+  n3: { tag:'miss', tagText:'断链 ①', title:'验证 · 缺失', sub:'38 次买入冲动，只有 2 次查过财报或估值',
+    quote:'中际旭创又创新高了，CPO 这波逻辑很硬吧？我现在追进去还来得及吗',
+    ai:'你把【价格强势】当成了【基本面证据】。正确顺序：先回答"它凭什么涨、涨到多少合理"，再看价格是否还留有余地——你现在做的是反的。',
+    fix:['买入前三问：凭什么涨 / 已经涨了多少 / 我错了怎么知道','为每笔买入写 2 条反方证据，找不到反方 = 没想清楚'],
+    freq:'这是整条链路上最大的空洞 · 修复优先级 P0' },
+  n4: { tag:'weak', tagText:'薄弱环节', title:'④ 买入', sub:'进场集中在突破新高后 1–3 天，仓位与确信度无关',
+    quote:'先买半仓试试水，感觉对了再加',
+    ai:'"试试水"暴露了你自己都不确信。半仓试错的真实代价不是那半仓的亏损，而是它让你的注意力被一只自己都没想通的票占住。',
+    fix:['仓位 = 确信度 × 预案完整度，两者缺一，仓位归零'],
+    freq:'关联标的：中际旭创 · 宁德时代 · 贵州茅台' },
+  n5: { tag:'miss', tagText:'断链 ②', title:'预案 · 缺失', sub:'27 笔交易没有任何事前的止损 / 目标 / 失效条件',
+    quote:'先买进去再说，跌了我就扛，反正茅台不会一直跌',
+    ai:'"反正不会一直跌"是安抚，不是论证。没有预案意味着：真正的决策被推迟到你最不理性的时刻——亏损当中才做。',
+    fix:['下单前必须填写【失效条件 → 动作】清单','产品内：AI 拦截一切无预案的买入请求'],
+    freq:'与断链①强相关：不验证的人也不会有预案 · P0' },
+  n6: { tag:'weak', tagText:'薄弱环节', title:'⑥ 持有', sub:'大跌日的提问量是平日 4 倍，内容以寻求安慰为主',
+    quote:'今天又跌 3 个点，心态有点崩，是不是该跑了？',
+    ai:'"心态崩"不是信息，是情绪，但你在把情绪当信号用。持有期唯一有效的问题只有一个：当初的失效条件触发了吗？没有 → 不操作。',
+    fix:['波动日只回答一个问题：失效条件触发了吗？'],
+    freq:'持仓期对话占总对话量 41%' },
+  n7: { tag:'miss', tagText:'断链 ③', title:'复盘 · 缺失', sub:'47 次会话，0 次主动复盘。同样错误 6–9 月重复 3 轮以上',
+    quote:'（无相关记录——这恰恰是问题所在）',
+    ai:'没有复盘，每笔交易都是孤立样本，不产生任何学习信号。这就是"感觉交易了很久但没变强"的直接原因。拓扑思维的核心就是闭合这一环。',
+    fix:['平仓自动触发 AI 复盘：当初逻辑 vs 实际走势','对错归因回填，沉淀为你的个人决策规则库'],
+    freq:'结构性缺失 · 修复后断链可闭合 · P0' },
+  n8: { tag:'ok', tagText:'常态环节', title:'⑧ 卖出', sub:'两大触发器：跌到受不了（恐慌）、回到成本价（解脱）',
+    quote:'终于回本了，清了清了，再也不碰它了',
+    ai:'"再也不碰"说明这笔交易没产生认知增量——你只是逃离了一次不适。回本卖出 = 用成本价而非标的逻辑做决策。卖出理由只能来自：逻辑兑现 / 逻辑失效 / 更好的机会。',
+    fix:['每次卖出后立即回填当初的三层归因表','把"回本"从决策词汇表里删掉'],
+    freq:'恐慌性卖出占 62% · 逻辑驱动卖出占 9%' },
+  s1: { tag:'weak', tagText:'高频标的', title:'中际旭创', sub:'被讨论 8 次 · 追涨进场 3 次 · 无一次查过估值',
+    quote:'中际旭创又创新高了，CPO 这波逻辑很硬吧？',
+    ai:'它是你"归因替代验证"模式的头号样本：每次讨论都发生在创新高之后，每次结论都是"逻辑硬"。',
+    fix:['下次再点开它之前，先做完买入三问'],
+    freq:'讨论 8 次 · 实际操作 3 次 · 复盘 0 次' },
+  s2: { tag:'miss', tagText:'高频标的', title:'贵州茅台', sub:'被讨论 6 次 · "回本"一词出现 11 次',
+    quote:'跌了 15% 了，更便宜了，要不要补一点快点回本？',
+    ai:'你的成本锚在这只票上最重："便宜"的参照系是你的成本价而非基本面。市场不知道你的成本。',
+    fix:['做清零测试：假设今天空仓，还会买吗？'],
+    freq:'讨论 6 次 · "回本" 11 次 · 清零测试 0 次' },
+  s3: { tag:'ok', tagText:'高频标的', title:'宁德时代', sub:'被讨论 5 次 · 9 月起出现条件式思考',
+    quote:'这次我想先想清楚再买：如果锂价企稳 + 排产数据确认，我才进；跌破前低就认错离场',
+    ai:'这是你 212 条片段里第一次出现完整的【条件 → 动作】结构。正确直觉已经发芽——下一步是让它成为默认习惯，而不是偶然。',
+    fix:['把这条消息的思考结构做成你的下单模板'],
+    freq:'讨论 5 次 · 正确结构出现 1 次（最新）' }
+};
+
+const svg = document.getElementById('svg');
+const panel = document.getElementById('panel');
+let current = null;
+
+function openNode(key) {
+  const d = NODES[key];
+  if (!d) return;
+  current = key;
+  const tag = document.getElementById('pTag');
+  tag.className = 'p-tag ' + d.tag;
+  tag.textContent = d.tagText;
+  document.getElementById('pTitle').textContent = d.title;
+  document.getElementById('pSub').textContent = d.sub;
+  document.getElementById('pQuote').textContent = '“' + d.quote + '”';
+  document.getElementById('pAi').textContent = d.ai;
+  document.getElementById('pFix').innerHTML = d.fix.map(f => '<li>' + f + '</li>').join('');
+  document.getElementById('pFreq').innerHTML = d.freq;
+  panel.classList.add('show');
+  // 聚焦：点亮自身与相连边
+  document.querySelectorAll('.node, .satellite').forEach(n => n.classList.remove('sel'));
+  const el = document.querySelector('[data-node="' + key + '"]');
+  if (el) el.classList.add('sel');
+  svg.classList.add('focus');
+  document.querySelectorAll('.edge').forEach(e => e.classList.remove('lit'));
+  const litMap = { n1:['e-n1-n2'], n2:['e-n1-n2','e-n2-n4','e-n2-n3'], n3:['e-n2-n3'],
+    n4:['e-n2-n4','e-n4-n6','e-n4-n5'], n5:['e-n4-n5'], n6:['e-n4-n6','e-n6-n7','e-n6-n8'],
+    n7:['e-n6-n7'], n8:['e-n6-n8','e-n8-n1'] };
+  (litMap[key] || []).forEach(id => { const e = document.getElementById(id); if (e) e.classList.add('lit'); });
+}
+
+document.querySelectorAll('.node, .satellite').forEach(g => {
+  g.addEventListener('click', e => { e.stopPropagation(); openNode(g.dataset.node); });
+});
+
+function closePanel() {
+  panel.classList.remove('show');
+  svg.classList.remove('focus');
+  document.querySelectorAll('.node, .satellite').forEach(n => n.classList.remove('sel'));
+  current = null;
+}
+document.getElementById('pClose').addEventListener('click', closePanel);
+svg.addEventListener('click', () => { if (current) closePanel(); });
+
+// 入场：默认 1.5s 后自动打开最大断链，引导视线
+setTimeout(() => { if (!current) openNode('n3'); }, 1600);
+</script>
+</body>
+</html>
