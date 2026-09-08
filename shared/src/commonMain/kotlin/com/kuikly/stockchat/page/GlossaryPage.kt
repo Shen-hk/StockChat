@@ -560,10 +560,13 @@ internal class GlossaryPage : BasePager() {
         container.View {
             attr { flex(1f); flexDirectionColumn() }
             page.renderFlowCardHeader(entry, this)
-            // 内容区：定高卡片内纵向滚动，进阶展开也不溢出
-            Scroller {
+            // 内容区：直接纵向排列（旧版 TermCardDeckPage 同款）。不能用内层 Scroller——
+            // 内层滚动容器会抢走触摸事件，视口上的横向 pan 再也收不到，卡片无法左右滑。
+            // 代价：进阶展开后超长内容在定高卡内裁剪（旧版同款取舍）。
+            View {
                 attr {
                     flex(1f)
+                    flexDirectionColumn()
                     marginTop(10f)
                     paddingLeft(16f)
                     paddingRight(16f)
@@ -1295,8 +1298,11 @@ internal class GlossaryPage : BasePager() {
         const val VIEW_MAP = "map"
         const val VIEW_LIST = "list"
 
-        /** 卡片定高：内容超长时卡片内纵向滚动（无测高 API，不追求逐卡贴合）。 */
-        const val FLOW_CARD_HEIGHT = 388f
+        /**
+         * 卡片定高（无测高 API，不追求逐卡贴合）。不能加内层 Scroller——内层滚动容器
+         * 会抢走触摸事件导致横向 pan 失效，因此内容超长时按定高裁剪（旧版同款取舍）。
+         */
+        const val FLOW_CARD_HEIGHT = 400f
         const val FLOW_ANIM_MS = 420L
 
         /** 甩动测速窗口（ms）。 */
