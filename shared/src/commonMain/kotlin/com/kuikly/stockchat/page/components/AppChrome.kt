@@ -25,6 +25,7 @@ import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.Canvas
+import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -600,8 +601,9 @@ private fun ViewContainer<*, *>.StockIsland(
                 }
                 View {
                     attr { flexDirectionRow(); alignItemsCenter() }
-                    Text { attr { text(quote()?.name ?: "贵州茅台"); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
-                    Text { attr { text(quote()?.symbol ?: "600519.SH"); marginLeft(6f); fontSize(10f); color(theme.textTertiary) } }
+                    // 真实行情未返回前不给占位名称/代码（不得用示例股票冒充）。
+                    Text { attr { text(quote()?.name ?: "行情加载中"); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text(quote()?.symbol ?: ""); marginLeft(6f); fontSize(10f); color(theme.textTertiary) } }
                     View { attr { flex(1f) } }
                     View { attr { size(5f, 5f); borderRadius(3f); backgroundColor(if (liveData()) Color(0xFF34C759) else theme.textTertiary) } }
                     Text { attr { text(if (liveData()) "实时" else "模拟"); marginLeft(4f); fontSize(9f); color(theme.textTertiary) } }
@@ -1196,11 +1198,12 @@ fun ViewContainer<*, *>.ChatDrawer(
     statusBarHeight: Float,
     bottomInset: Float,
     theme: StockChatTheme,
-    liveData: Boolean,
     renderer: GlassRenderer = GlassRenderer.Default,
     visualLabel: String = renderer.statusLabel(),
     sessions: List<ChatSessionSummary> = emptyList(),
-    activeSessionId: String = "",
+    // 历史会话搜索词（取值闭包，R1）：vbind 内现场读取，输入时列表实时过滤。
+    historyQuery: () -> String = { "" },
+    onHistoryQuery: (String) -> Unit = {},
     // Double-state presentation (CardSheet pattern): mounted via vif at the call
     // site, presented drives the open/close transition. Lambdas, not Boolean
     // params: the attr block must read the observable in place (island-button
@@ -1212,7 +1215,6 @@ fun ViewContainer<*, *>.ChatDrawer(
     gestureMotion: () -> DrawerGestureMotion = { DrawerGestureMotion() },
     onPan: (String, Float) -> Unit = { _, _ -> },
     onClose: () -> Unit,
-    onToggleDataMode: () -> Unit,
     onCycleVisualMode: () -> Unit = {},
     onNewChat: () -> Unit = {},
     onOpenSession: (String) -> Unit = {},
@@ -1259,7 +1261,7 @@ fun ViewContainer<*, *>.ChatDrawer(
             paddingTop(statusBarHeight + 16f)
             paddingLeft(16f)
             paddingRight(16f)
-            paddingBottom(bottomInset + 14f)
+            paddingBottom(bottomInset + 4f)
             // Solid white sheet instead of frosted glass (2026-09-04): blur on
             // Android reads muddy at this size, a flat surface keeps rows legible.
             backgroundColor(Color(0xFFFFFFFF))
@@ -1279,7 +1281,7 @@ fun ViewContainer<*, *>.ChatDrawer(
             // 跟手拖拽发生在面板上，此阶段必须可触（即便 drawerOpen 还没翻转）。
             touchEnable(active || motion.phase != DrawerGesturePhase.IDLE)
             // R2/R3：每个分支恰好一次 animate，且分支互斥；实参位置现场再读一次
-            // observable，保证 animate 绑定到正确的驱动 key（SwipeActionRow 范式）。
+            // observable，保证 animate 绑定到正确的驱动 key（RowGestureLayer 范式）。
             when (motion.phase) {
                 DrawerGesturePhase.IDLE ->
                     // 菜单按钮开合：开先快后慢（easeOut），关先慢后快（easeIn）。
@@ -1304,121 +1306,141 @@ fun ViewContainer<*, *>.ChatDrawer(
             pan { params -> onPan(params.state, params.pageX) }
         }
 
-        // Brand header: gradient logo mark, wordmark and close button.
+        // 顶部一行（2026-09-08 四轮）：历史搜索框 + 右侧「＋」小按钮（原
+        // 新会话大按钮与头部行合并）。wordmark 移到底部固定栏的头像标题。
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
             View {
                 attr {
-                    size(38f, 38f)
-                    borderRadius(12f)
-                    allCenter()
-                    backgroundLinearGradient(
-                        Direction.TO_RIGHT,
-                        ColorStop(theme.brand, 0f),
-                        ColorStop(theme.term, 1f),
-                    )
+                    flex(1f)
+                    height(36f)
+                    paddingLeft(10f)
+                    paddingRight(10f)
+                    flexDirectionRow()
+                    alignItemsCenter()
+                    borderRadius(18f)
+                    backgroundColor(theme.surfaceMuted)
                 }
-                Text { attr { text("S"); fontSize(18f); fontWeightBold(); color(Color(0xFFFFFFFF)) } }
+                LineIconSearch(theme.textTertiary, 15f)
+                Input {
+                    attr {
+                        flex(1f)
+                        // 横向容器 + alignItemsCenter 下 flex 只管宽度，高度必须显式给，
+                        // 否则输入框塌 0 点不中（ApiConfig 是纵向容器 flex 即满高，无此问题）。
+                        height(32f)
+                        marginLeft(6f)
+                        fontSize(13f)
+                        color(theme.textPrimary)
+                        placeholder("搜索历史会话")
+                        placeholderColor(theme.textTertiary)
+                    }
+                    event { textDidChange { onHistoryQuery(it.text) } }
+                }
             }
             View {
-                attr { flex(1f); marginLeft(10f) }
-                Text { attr { text("StockChat"); fontSize(18f); fontWeightBold(); color(theme.textPrimary) } }
-            }
-            View {
-                attr { size(30f, 30f); allCenter(); borderRadius(15f); backgroundColor(theme.surfaceMuted) }
-                Text { attr { text("×"); fontSize(17f); color(theme.textSecondary) } }
-                event { click { onClose() } }
-            }
-        }
-
-        // Primary action: start a new conversation.
-        View {
-            attr {
-                marginTop(16f)
-                height(44f)
-                borderRadius(14f)
-                flexDirectionRow()
-                allCenter()
-                backgroundLinearGradient(
-                    Direction.TO_RIGHT,
-                    ColorStop(theme.brand, 0f),
-                    ColorStop(theme.term, 1f),
-                )
-            }
-            Text { attr { text("＋"); fontSize(20f); fontWeightSemiBold(); color(Color(0xFFFFFFFF)) } }
-            Text { attr { text("新会话"); marginLeft(6f); fontSize(16f); fontWeightSemiBold(); color(Color(0xFFFFFFFF)) } }
-            event { click { onClose(); onNewChat() } }
-        }
-
-        // Session search affordance, backed by the same local history as the list below.
-        View {
-            attr {
-                marginTop(12f)
-                height(34f)
-                paddingLeft(11f)
-                flexDirectionRow()
-                alignItemsCenter()
-                borderRadius(10f)
-                backgroundColor(theme.surfaceMuted)
-            }
-            Text { attr { text("⌕"); fontSize(15f); color(theme.textTertiary) } }
-            Text {
                 attr {
-                    text(if (sessions.isEmpty()) "暂无历史会话" else "历史会话 · ${sessions.size}")
-                    marginLeft(6f)
-                    fontSize(14f)
-                    color(theme.textTertiary)
+                    size(36f, 36f)
+                    marginLeft(8f)
+                    allCenter()
+                    borderRadius(12f)
+                    backgroundColor(theme.brand)
+                    boxShadow(BoxShadow(0f, 4f, 10f, theme.brand.opacity(0.35f)))
                 }
+                LineIconPlus(theme.onBrand, 17f)
+                event { click { onClose(); onNewChat() } }
             }
+        }
+
+        // 整合后的功能入口：个人空间 / 市场行情 两组磁贴（3 列）。历史会话
+        // 沉到底部（2026-09-08 二轮：高频入口靠上，会话记录靠下）。
+        DrawerGroupTitle("个人空间", theme)
+        View {
+            attr { flexDirectionRow() }
+            DrawerTile("自选股", theme, icon = { LineIconStar(theme.textPrimary, 22f) }) { onClose(); onOpenWatchlist() }
+            View { attr { width(8f) } }
+            DrawerTile("风险地图", theme, icon = { LineIconShieldCheck(theme.textPrimary, 22f) }) { onClose(); onOpenRiskMap() }
+            View { attr { width(8f) } }
+            DrawerTile("术语表", theme, icon = { LineIconBook(theme.textPrimary, 22f) }) { onClose(); onOpenGlossary() }
+        }
+        DrawerGroupTitle("市场行情", theme)
+        View {
+            attr { flexDirectionRow() }
+            DrawerTile("市场总览", theme, icon = { LineIconBarChart(theme.textPrimary, 22f) }) { onClose(); onOpenMarket() }
+            View { attr { width(8f) } }
+            DrawerTile("异动预警", theme, icon = { LineIconBell(theme.textPrimary, 22f) }) { onClose(); onOpenAlerts() }
+            // 全局搜索入口已移到底部固定栏（2026-09-08 五轮）。
         }
 
         // Conversation history, grouped by recency. It owns the remaining
-        // height so the footer cards stay pinned to the bottom.
+        // height so it stays pinned to the bottom of the drawer. 搜索框已
+        // 上移到顶部一行；列表包 vbind 现场 read historyQuery（R1），输入
+        // 即时过滤。条目去背景、只展示总结标题（2026-09-08 三轮）。
         Scroller {
-            attr { flex(1f); marginTop(4f) }
-            if (sessions.isEmpty()) {
-                DrawerEmptyHistory(theme)
-            } else {
-                var lastGroup = ""
-                sessions.forEach { session ->
-                    if (session.groupTitle != lastGroup) {
-                        DrawerGroupTitle(session.groupTitle, theme)
-                        lastGroup = session.groupTitle
+            attr { flex(1f); marginTop(14f) }
+            vbind({ historyQuery() }) {
+                val q = historyQuery().trim()
+                val visible = if (q.isEmpty()) sessions else sessions.filter {
+                    it.title.contains(q, ignoreCase = true)
+                }
+                if (sessions.isEmpty()) {
+                    DrawerEmptyHistory(theme)
+                } else if (visible.isEmpty()) {
+                    Text {
+                        attr {
+                            text("没有匹配的会话")
+                            marginTop(14f)
+                            fontSize(13f)
+                            color(theme.textTertiary)
+                        }
                     }
-                    DrawerSessionItem(
-                        title = session.title,
-                        preview = session.preview,
-                        theme = theme,
-                        active = session.id == activeSessionId,
-                    ) {
-                        onClose()
-                        onOpenSession(session.id)
+                } else {
+                    var lastGroup = ""
+                    visible.forEach { session ->
+                        if (session.groupTitle != lastGroup) {
+                            DrawerGroupTitle(session.groupTitle, theme)
+                            lastGroup = session.groupTitle
+                        }
+                        DrawerSessionItem(title = session.title, theme = theme) {
+                            onClose()
+                            onOpenSession(session.id)
+                        }
                     }
                 }
             }
         }
 
-        // Quick entries with tinted icon tiles, grouped by intent so the white
-        // sheet reads as sections instead of one flat 8-row stack (LDRS-R).
-        DrawerGroupTitle("行情与工具", theme)
-        DrawerMenuItem("◉", theme.term, theme.brandSoft, "灵动岛行情-测试开关", theme) { onClose(); onToggleIsland() }
-        DrawerMenuItem("⌕", theme.brand, theme.brandSoft, "全局搜索-测试入口", theme) { onClose(); onOpenSearch() }
-        DrawerMenuItem("▥", theme.term, theme.brandSoft, "市场总览", theme) { onClose(); onOpenMarket() }
-        DrawerMenuItem("⌁", theme.term, theme.brandSoft, "异动预警-功能预览", theme) { onClose(); onOpenAlerts() }
-        // doc 23 信息架构：自选 → 风险地图 → 知识库是一条闭环，成组呈现
-        DrawerGroupTitle("投资闭环", theme)
-        DrawerMenuItem("★", theme.brand, theme.brandSoft, "自选股", theme) { onClose(); onOpenWatchlist() }
-        DrawerMenuItem("◈", theme.brand, theme.brandSoft, "风险地图", theme) { onClose(); onOpenRiskMap() }
-        DrawerMenuItem("⌘", theme.term, theme.brandSoft, "术语表", theme) { onClose(); onOpenGlossary() }
-        DrawerMenuItem("⚙", theme.textSecondary, theme.surfaceMuted, "设置", theme, onClick = onSettings)
-
-        Text {
+        // Bottom fixed bar（2026-09-08 四轮）：头像 + 标题在左、设置在右，
+        // 均固定不随会话列表滚动。
+        View {
             attr {
-                text("StockChat v1.0 · 数据仅供参考")
-                marginTop(10f)
-                fontSize(10f)
-                color(theme.textTertiary)
-                textAlignCenter()
+                marginTop(8f)
+                height(44f)
+                flexDirectionRow()
+                alignItemsCenter()
+            }
+            View {
+                attr { size(26f, 26f); borderRadius(8f); allCenter(); backgroundColor(theme.brand) }
+                Text { attr { text("S"); fontSize(13f); fontWeightBold(); color(Color(0xFFFFFFFF)) } }
+            }
+            Text {
+                attr {
+                    text("StockChat")
+                    marginLeft(8f)
+                    flex(1f)
+                    fontSize(14f)
+                    fontWeightSemiBold()
+                    color(theme.textPrimary)
+                }
+            }
+            View {
+                attr { size(32f, 32f); allCenter() }
+                LineIconSearch(theme.textSecondary, 19f)
+                event { click { onClose(); onOpenSearch() } }
+            }
+            View {
+                attr { size(32f, 32f); marginLeft(6f); allCenter() }
+                LineIconSliders(theme.textSecondary, 19f)
+                event { click { onSettings() } }
             }
         }
     }
@@ -1428,42 +1450,28 @@ private fun ViewContainer<*, *>.DrawerGroupTitle(text: String, theme: StockChatT
     Text { attr { text(text); marginTop(14f); marginBottom(4f); marginLeft(4f); fontSize(11f); fontWeightSemiBold(); color(theme.textTertiary) } }
 }
 
+/**
+ * 历史会话条目：纯文字行（无背景、无 preview），只展示总结标题
+ * （2026-09-08 三轮：去背景 + 仅题目）。标题超长时单行截断。
+ */
 private fun ViewContainer<*, *>.DrawerSessionItem(
     title: String,
-    preview: String,
     theme: StockChatTheme,
-    active: Boolean = false,
-    onClick: () -> Unit = {},
+    onClick: () -> Unit,
 ) {
     View {
         attr {
-            height(52f)
+            height(38f)
             marginTop(2f)
             flexDirectionRow()
             alignItemsCenter()
-            borderRadius(10f)
-            if (active) backgroundColor(theme.brandSoft)
         }
-        if (active) {
-            View { attr { width(3f); height(14f); marginLeft(6f); borderRadius(2f); backgroundColor(theme.brand) } }
-        }
-        View {
-            attr { flex(1f); marginLeft(if (active) 8f else 12f); marginRight(10f) }
-            Text {
-                attr {
-                    text(title)
-                    fontSize(15f)
-                    if (active) fontWeightMedium()
-                    color(if (active) theme.brand else theme.textPrimary)
-                }
-            }
-            Text {
-                attr {
-                    text(preview)
-                    marginTop(3f)
-                    fontSize(12f)
-                    color(theme.textTertiary)
-                }
+        Text {
+            attr {
+                text(title)
+                fontSize(14f)
+                color(theme.textPrimary)
+                lines(1)
             }
         }
         event { click { onClick() } }
@@ -1486,15 +1494,30 @@ private fun ViewContainer<*, *>.DrawerEmptyHistory(theme: StockChatTheme) {
     }
 }
 
-private fun ViewContainer<*, *>.DrawerMenuItem(glyph: String, glyphColor: Color, glyphBg: Color, label: String, theme: StockChatTheme, onClick: () -> Unit = {}) {
+/**
+ * 抽屉功能磁贴：白卡 + 细描边 + 浅投影，线条图标（LineIcons，Lucide 对齐）
+ * 大尺寸 + 小标签（2026-09-08 五轮：图标 22 / 文字 10，修正"图标小字大"
+ * 的比例失调）。icon 传绘制闭包，onClick 普通闭包，无 R2-R5 涉及。
+ */
+private fun ViewContainer<*, *>.DrawerTile(
+    label: String,
+    theme: StockChatTheme,
+    icon: ViewContainer<*, *>.() -> Unit,
+    onClick: () -> Unit,
+) {
     View {
-        attr { height(42f); marginTop(2f); flexDirectionRow(); alignItemsCenter(); borderRadius(10f) }
-        View {
-            attr { size(28f, 28f); marginLeft(6f); allCenter(); borderRadius(8f); backgroundColor(glyphBg) }
-            Text { attr { text(glyph); fontSize(14f); color(glyphColor) } }
+        attr {
+            flex(1f)
+            height(64f)
+            flexDirectionColumn()
+            allCenter()
+            borderRadius(13f)
+            backgroundColor(theme.surface)
+            border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+            boxShadow(BoxShadow(0f, 2f, 8f, Color(0x000000, 0.06f)))
         }
-        Text { attr { text(label); marginLeft(10f); fontSize(15f); color(theme.textPrimary); flex(1f) } }
-        Text { attr { text("›"); marginRight(10f); fontSize(15f); color(theme.textTertiary) } }
+        icon()
+        Text { attr { text(label); marginTop(5f); fontSize(10f); color(theme.textSecondary) } }
         event { click { onClick() } }
     }
 }
@@ -1519,6 +1542,8 @@ fun ViewContainer<*, *>.AppTopBar(
     reduceMotion: Boolean = false,
     compactMetrics: () -> List<AppTopBarMetric> = { emptyList() },
     actions: List<Pair<String, () -> Unit>> = emptyList(),
+    // 2026-09-08：顶栏统一去毛玻璃，改为 theme.surface 实色 + 发丝分隔线
+    // （与详情页原型一致）。renderer 参数保留以兼容既有调用点，当前不参与绘制。
 ) {
     View {
         attr {
@@ -1528,7 +1553,13 @@ fun ViewContainer<*, *>.AppTopBar(
             height(statusBarHeight + 57f)
             paddingTop(statusBarHeight)
         }
-        GlassBackdrop(theme.glass.sheet, renderer)
+        View {
+            attr {
+                absolutePositionAllZero()
+                backgroundColor(theme.surface)
+                touchEnable(false)
+            }
+        }
         View {
             attr {
                 height(56f)
@@ -1539,8 +1570,16 @@ fun ViewContainer<*, *>.AppTopBar(
             }
             if (backLabel != null) {
                 View {
-                    attr { paddingRight(12f); height(44f); justifyContentCenter() }
-                    Text { attr { text(backLabel); fontSize(14f); fontWeightMedium(); color(theme.brand) } }
+                    attr { paddingRight(8f); minWidth(44f); height(44f); justifyContentCenter() }
+                    Text {
+                        attr {
+                            text(backLabel)
+                            // 单字符（‹）按大号图形字号渲染，文字标签（返回）保持常规。
+                            fontSize(if (backLabel.length == 1) 22f else 15f)
+                            fontWeightMedium()
+                            color(theme.brand)
+                        }
+                    }
                     event { click { onBack() } }
                 }
             }
@@ -1561,10 +1600,10 @@ fun ViewContainer<*, *>.AppTopBar(
                             animate(Animation.easeOut(0.20f), compactVisible())
                         }
                     }
-                    Text { attr { text(title); fontSize(18f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text(title); fontSize(19f); fontWeightBold(); color(theme.textPrimary) } }
                     View {
-                        attr { flexDirectionRow(); alignItemsCenter(); marginTop(1f) }
-                        Text { attr { text(subtitle); fontSize(10f); color(theme.textTertiary) } }
+                        attr { flexDirectionRow(); alignItemsCenter(); marginTop(2f) }
+                        Text { attr { text(subtitle); fontSize(10.5f); color(theme.textTertiary) } }
                         vif({ compactLine() != null }) {
                             Text {
                                 attr {
@@ -1627,37 +1666,35 @@ fun ViewContainer<*, *>.AppTopBar(
                 }
             }
             actions.forEach { (label, action) ->
+                // 2026-09-08：去圈圈框框，动作只保留实体字形、放大到 44pt 触控区，
+                // 靠字号与字重撑住存在感，不再用底色/描边圈住。
                 View {
                     attr {
-                        marginLeft(6f)
-                        minWidth(32f)
-                        height(32f)
+                        marginLeft(4f)
+                        minWidth(44f)
+                        height(44f)
                         allCenter()
-                        borderRadius(16f)
-                        backgroundColor(if (label == "+" || label == "✓") theme.brandSoft else theme.surfaceMuted)
-                        border(Border(1f, BorderStyle.SOLID, if (label == "+" || label == "✓") theme.brand.opacity(0.20f) else theme.divider))
                     }
                     Text {
                         attr {
                             text(label)
-                            fontSize(13f)
+                            // 符号字形（＋ ✓ ⋯）给图形级字号；两字以上是文字动作。
+                            fontSize(if (label.length > 1) 15f else 21f)
                             fontWeightSemiBold()
-                            color(if (label == "+" || label == "✓") theme.brand else theme.textSecondary)
+                            color(if (label == "+" || label == "✓") theme.brand else theme.textPrimary)
                         }
                     }
                     event { click { action() } }
                 }
             }
         }
-        vif({ progress() == null }) {
-            View { attr { height(1f); backgroundColor(theme.divider) } }
-        }
         vif({ progress() != null }) {
             View {
                 attr {
                     height(2f)
                     flexDirectionRow()
-                    backgroundColor(theme.divider)
+                    // 轨道只做暗示不做分割感：淡到几乎不可见，进度填充才是主角。
+                    backgroundColor(theme.divider.opacity(0.30f))
                 }
                 // Read inside attr so scroll progress actually tracks; the two
                 // flex weights are one fact, so both read the same closure.
