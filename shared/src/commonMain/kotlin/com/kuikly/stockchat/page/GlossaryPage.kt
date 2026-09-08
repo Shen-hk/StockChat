@@ -11,13 +11,13 @@ import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
-import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.data.GlossaryEncounter
 import com.kuikly.stockchat.data.GlossaryStore
 import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.GlossaryCategory
 import com.kuikly.stockchat.data.entity.GlossaryEntry
+import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.SegmentBar
@@ -25,8 +25,13 @@ import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.Rotate
+import com.tencent.kuikly.core.base.Scale
+import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.attr.CaptureRule
+import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
@@ -36,22 +41,27 @@ import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.TextArea
 import com.tencent.kuikly.core.views.View
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
- * 知识库 v2（doc 24 §6.3 重构规格）：首页从「词表」→「地图」。
+ * 知识库 v3（doc 34 定稿 → 真机）：首页即卡片流。
+ *
+ * 交互契约（取代 doc 30 独立闪卡页 TermCardDeckPage，已删除）：
+ * - **首页即卡片流**：左右滑动/甩动直接在知识库首页翻卡，无独立复习页；
+ *   轻点两侧卡片让它居中，居中卡自动展开详情。
+ * - **翻过即已读**：卡片居中展示即记「已读」（[GlossaryStore.markKnown]），
+ *   没有自评/测验/掌握度环——状态只影响推荐顺序，不做任何能力评价。
+ * - 出牌顺序：recommend()（依赖就绪的词领读）打头 + 未读按 hitCount 降序；
+ *   最后一页再往前 → 完成面板（再顺一遍含已读 / 浏览词表）。
+ * - 知识页零涨跌色：状态点用 SegmentBar 同一明度阶梯（surfaceMuted →
+ *   glossarySeen → brandSoft → brand）。
  *
  * 层次结构（z 轴从后到前）：
- * - z0 氛围底：极淡品牌色（知识页不用涨跌色），高约 180px。
- * - z3 主卡玻璃（唯一）：「下一步该懂什么」推荐卡——推荐引擎纯本地规则
- *   （候选 = 未读 且 全部前置已理解；排序 = hitCount 降序 → 最近触发 →
- *   所属域已读比例），依赖路径「先懂 / 看懂后」第一次被画出来。
- * - z1 衬后：5 个概念域层叠面板 + 四段状态条（明度编码，零新增饱和色）。
- * - z2 常规面：最近遇到 chips（×N 是触发次数，不是分）。
+ * - 卡片流区：进度头（全库已读 N / M + 细条）→ 轮播视口 → 一行操作提示。
+ * - z1 五域面板 + 四段状态条（SegmentBar，明度编码）。
+ * - z2 最近在聊天里遇到 chips（×N 是触发次数，不是分）。
  * - z1 底部：完整词表折叠为二级（just-in-case 浏览不是主路径）。
- *
- * 「遇到」的定义保持克制（见 [GlossaryStore]）：只有用户真实撞上术语才算
- * ——聊天里点术语高亮（ChatPage 埋点）、在词表里展开词条。零记录新用户
- * 落到「从第一个概念开始」的兜底推荐，无白屏。
  */
 @Page(Routes.GLOSSARY, supportInLocal = true)
 internal class GlossaryPage : BasePager() {
@@ -78,6 +88,23 @@ internal class GlossaryPage : BasePager() {
     /** 遇到记录快照；observable 驱动地图重渲染，真数据源在 [glossaryStore]。 */
     private var encounterSnapshot: Map<String, GlossaryEncounter> by observable(emptyMap())
 
+    // ── 首页卡片流（doc 34）：翻页即已读，无自评 ──
+    private var flowQueue: ObservableList<String> by observableList()
+    private var flowVisible: ObservableList<Int> by observableList()
+    private var flowScrollPos: Float by observable(0f)
+    private var flowAnimating: Boolean by observable(false)
+    private var flowFinished: Boolean by observable(false)
+    private var flowAdvancedOpen: Boolean by observable(false)
+
+    /** 本轮翻过（首次记为已读）的概念数；完成面板用。 */
+    private var flowSessionCount: Int by observable(0)
+
+    // ── 手势瞬时量，不驱动重绘：pan 回调不带 velocity，用时间戳采样测速 ──
+    private var flowIndex = 0
+    private var flowPanStartX = 0f
+    private var flowPanStartScroll = 0f
+    private val flowDragSamples = mutableListOf<Pair<Long, Float>>()
+
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
@@ -91,6 +118,7 @@ internal class GlossaryPage : BasePager() {
         }
         refreshEncounters()
         applyFilter()
+        startFlow(includeRead = false)
     }
 
     override fun body(): ViewBuilder {
@@ -133,7 +161,7 @@ internal class GlossaryPage : BasePager() {
             AppTopBar(
                 title = if (page.viewMode == VIEW_MAP) "知识库" else "全部概念",
                 subtitle = if (page.viewMode == VIEW_MAP) {
-                    "你遇到过的概念都会出现在这里"
+                    "从你遇到过的词，顺到还没懂的词"
                 } else {
                     "共 ${Glossary.all.size} 个概念，点击展开例子与进阶解释"
                 },
@@ -153,198 +181,11 @@ internal class GlossaryPage : BasePager() {
 
     private fun renderKnowledgeMap(container: ViewContainer<*, *>) {
         val page = this@GlossaryPage
-        val rec = page.recommend()
         container.View {
             attr { marginTop(6f) }
 
-            // 卡片轮学入口（doc 30）：掌握度驱动的出牌顺序，挂在地图首屏最上方。
-            View {
-                attr {
-                    marginBottom(10f)
-                    paddingTop(13f)
-                    paddingBottom(13f)
-                    paddingLeft(14f)
-                    paddingRight(14f)
-                    borderRadius(14f)
-                    backgroundColor(page.theme.surface)
-                    boxShadow(BoxShadow(0f, 4f, 12f, Color(0x000000, 0.06f)))
-                }
-                event { click { page.openPage(Routes.TERM_DECK) } }
-                View {
-                    attr { flexDirectionRow(); alignItemsCenter() }
-                    Text {
-                        attr {
-                            text("卡片轮学")
-                            fontSize(14f)
-                            fontWeightSemiBold()
-                            color(page.theme.textPrimary)
-                        }
-                    }
-                    View { attr { flex(1f) } }
-                    Text {
-                        attr {
-                            text("›")
-                            fontSize(15f)
-                            color(page.theme.textTertiary)
-                        }
-                    }
-                }
-                Text {
-                    attr {
-                        text("按「没记住 → 模糊 → 新词」轮番出卡，甩动翻页，答「会了」才算过关")
-                        fontSize(11f)
-                        color(page.theme.textTertiary)
-                        marginTop(4f)
-                    }
-                }
-            }
-
-            // z0 氛围底：极淡品牌色（不用涨跌色），承载 z3 主卡。
-            View {
-                attr {
-                    paddingTop(18f)
-                    paddingBottom(26f)
-                    paddingLeft(12f)
-                    paddingRight(12f)
-                    borderRadius(20f)
-                    backgroundColor(page.theme.brandSoft)
-                }
-
-                // z3 主卡玻璃（唯一）：下一步该懂什么。
-                View {
-                    attr {
-                        marginLeft(12f)
-                        marginRight(12f)
-                        marginTop(14f)
-                        padding(16f)
-                        borderRadius(16f)
-                        backgroundColor(page.theme.marketGlass)
-                        boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.10f)))
-                    }
-                    Text {
-                        attr {
-                            text("下一步该懂什么")
-                            fontSize(11f)
-                            color(page.theme.textTertiary)
-                        }
-                    }
-                    vif({ rec != null }) {
-                        val entry = rec!!.entry
-                        Text {
-                            attr {
-                                text(entry.term)
-                                marginTop(8f)
-                                fontSize(20f)
-                                fontWeightSemiBold()
-                                color(page.theme.textPrimary)
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(entry.plain)
-                                marginTop(6f)
-                                fontSize(13f)
-                                lineHeight(20f)
-                                color(page.theme.textSecondary)
-                            }
-                        }
-                        // 依赖路径：先懂 / 看懂后——有向关系第一次被画出来（LDRS-R）。
-                        vif({ page.hasPrereqOrDependent(entry.key) }) {
-                            View {
-                                attr {
-                                    marginTop(12f)
-                                    paddingTop(10f)
-                                    paddingBottom(2f)
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                }
-                                // 容器顶部分隔线
-                                View {
-                                    attr {
-                                        absolutePosition()
-                                        top(0f)
-                                        left(0f)
-                                        right(0f)
-                                        height(1f)
-                                        backgroundColor(page.theme.divider)
-                                    }
-                                }
-                                vif({ page.prereqLabel(entry.key).isNotEmpty() }) {
-                                    Text {
-                                        attr {
-                                            text(page.prereqLabel(entry.key))
-                                            fontSize(11f)
-                                            color(page.theme.textTertiary)
-                                        }
-                                    }
-                                    event {
-                                        click { page.openEntryInList(page.firstUnreadPrereq(entry.key)) }
-                                    }
-                                }
-                                vif({ page.dependentLabel(entry.key).isNotEmpty() }) {
-                                    Text {
-                                        attr {
-                                            text(page.dependentLabel(entry.key))
-                                            marginLeft(14f)
-                                            fontSize(11f)
-                                            color(page.theme.textTertiary)
-                                        }
-                                    }
-                                    event {
-                                        click { page.openEntryInList(page.firstUnreadDependent(entry.key)) }
-                                    }
-                                }
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(rec!!.reason)
-                                marginTop(10f)
-                                fontSize(10.5f)
-                                color(page.theme.textTertiary)
-                            }
-                        }
-                        // 已理解：唯一显式的状态推进入口（不搞积分、不搞评分）。
-                        View {
-                            attr {
-                                marginTop(12f)
-                                alignSelfFlexEnd()
-                                paddingLeft(14f)
-                                paddingRight(14f)
-                                height(30f)
-                                allCenter()
-                                borderRadius(9f)
-                                backgroundColor(page.theme.brandSoft)
-                            }
-                            Text {
-                                attr {
-                                    text("已理解")
-                                    fontSize(12f)
-                                    fontWeightSemiBold()
-                                    color(page.theme.brand)
-                                }
-                            }
-                            event {
-                                click {
-                                    page.glossaryStore.markKnown(entry.key)
-                                    page.refreshEncounters()
-                                }
-                            }
-                        }
-                    }
-                    vif({ rec == null }) {
-                        Text {
-                            attr {
-                                text("全部概念都已理解。词表仍在二级页，随时可以回来翻。")
-                                marginTop(8f)
-                                fontSize(13f)
-                                lineHeight(20f)
-                                color(page.theme.textSecondary)
-                            }
-                        }
-                    }
-                }
-            }
+            // 首页即卡片流（doc 34）：左右滑动直接翻页，翻过即记「已读」，无自评。
+            page.renderFlowArea(this)
 
             // z1 五域面板：按未遇到数降序——缺口最大的域排最前。
             page.domainStats().forEach { stat ->
@@ -396,13 +237,13 @@ internal class GlossaryPage : BasePager() {
                 }
             }
 
-            // z2 最近遇到：触发次数是事实标注，不是分数。
-            vif({ page.recentEncounters().isNotEmpty() }) {
+            // z2 最近在聊天里遇到：按触发次数降序，×N 是事实标注，不是分数。
+            vif({ page.recentByHits().isNotEmpty() }) {
                 View {
                     attr { marginTop(16f) }
                     Text {
                         attr {
-                            text("最近遇到")
+                            text("最近在聊天里遇到")
                             fontSize(12f)
                             fontWeightSemiBold()
                             color(page.theme.term)
@@ -410,7 +251,7 @@ internal class GlossaryPage : BasePager() {
                     }
                     View {
                         attr { marginTop(8f); flexDirectionRow(); flexWrapWrap() }
-                        page.recentEncounters().forEach { enc ->
+                        page.recentByHits().forEach { enc ->
                             val term = Glossary.byKey(enc.key)?.term ?: enc.key
                             View {
                                 attr {
@@ -456,7 +297,678 @@ internal class GlossaryPage : BasePager() {
                     }
                 }
             }
+
+            // 合规脚注（doc 34）：状态只影响推荐顺序，不做任何能力评价。
+            Text {
+                attr {
+                    text("状态只影响推荐顺序，不做任何能力评价 · 记录仅存本地")
+                    marginTop(10f)
+                    fontSize(10.5f)
+                    lineHeight(16f)
+                    color(page.theme.textTertiary)
+                }
+            }
         }
+    }
+
+    // ── 首页卡片流（doc 34 定稿 → 真机）──
+    //
+    // 实现约束（AGENTS.md R1-R5，原 TermCardDeckPage 已验证的同款几何）：
+    // - 唯一动画驱动是 flowScrollPos。收尾顺序固定：先 flowAnimating=true 注册动画，
+    //   再写 flowScrollPos 目标值——R5「本圈注册、下圈消费」；跟手阶段直接落位。
+    // - 卡片窗口化渲染（±3），window 变更只在收尾时发生，拖拽每帧只改 transform。
+    // - pan 回调不带 velocity：platformCurrentTimeMillis 采样、end 取最近 ~100ms 平均。
+
+    private fun renderFlowArea(container: ViewContainer<*, *>) {
+        val page = this
+        container.View {
+            attr { marginBottom(4f) }
+            // 进度头：读一张刷一次（encounterSnapshot 驱动）
+            View {
+                attr { flexDirectionRow(); alignItemsCenter(); marginBottom(8f) }
+                Text {
+                    attr {
+                        text("下一步该懂什么")
+                        fontSize(12f)
+                        fontWeightSemiBold()
+                        color(page.theme.term)
+                    }
+                }
+                View { attr { flex(1f) } }
+                Text {
+                    attr {
+                        text("全库已读 ${page.flowReadCount()} / ${Glossary.all.size}")
+                        fontSize(11f)
+                        color(page.theme.textTertiary)
+                    }
+                }
+            }
+            View {
+                attr {
+                    height(6f)
+                    borderRadius(3f)
+                    backgroundColor(page.theme.surfaceMuted)
+                    overflow(true)
+                }
+                View {
+                    attr {
+                        height(6f)
+                        borderRadius(3f)
+                        backgroundColor(page.theme.brand)
+                        width(page.flowReadRatio() * page.flowViewportWidth())
+                    }
+                }
+            }
+            // 轮播视口：横向 pan 捕获，纵向滚动让给外层 Scroller
+            View {
+                attr {
+                    marginTop(10f)
+                    height(FLOW_CARD_HEIGHT + 12f)
+                    capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
+                }
+                vfor({ page.flowVisible }) { idx ->
+                    page.renderFlowCard(idx, this)
+                }
+                vif({ page.flowFinished }) {
+                    page.renderFlowDone(this)
+                }
+                event {
+                    pan { params ->
+                        when (params.state) {
+                            "start" -> page.onFlowPanStart(params.x)
+                            "move" -> page.onFlowPanMove(params.x)
+                            "end" -> page.onFlowPanEnd(params.x)
+                        }
+                    }
+                }
+            }
+            Text {
+                attr {
+                    text("左右滑动或甩动翻页 · 翻过的词自动记为「已读」，仅影响推荐顺序")
+                    marginTop(8f)
+                    fontSize(10.5f)
+                    color(page.theme.textTertiary)
+                }
+            }
+        }
+    }
+
+    private fun renderFlowCard(idx: Int, container: ViewContainer<*, *>) {
+        val page = this
+        if (idx < 0 || idx >= flowQueue.size) return
+        val key = flowQueue[idx]
+        val entry = Glossary.byKey(key) ?: return
+        container.View {
+            attr {
+                absolutePosition(left = 0f, top = 6f)
+                size(page.flowCardWidth(), FLOW_CARD_HEIGHT)
+                borderRadius(20f)
+                backgroundColor(page.theme.surface)
+                boxShadow(BoxShadow(0f, 10f, 26f, Color(0x000000, 0.08f)))
+                page.applyFlowCardTransform(this, idx)
+            }
+            event {
+                click {
+                    // 轻点两侧卡片 → 居中；居中卡片的点击交给内部元素
+                    if (abs(idx * page.flowStep() - page.flowScrollPos) >= page.flowStep() / 2f) {
+                        page.animateFlowTo(idx)
+                    }
+                }
+            }
+            // 紧凑态：大字术语（未居中）
+            vif({ abs(idx * page.flowStep() - page.flowScrollPos) >= page.flowStep() / 2f }) {
+                page.renderFlowCardFront(entry, this)
+            }
+            // 详情态：居中自动展开
+            vif({ abs(idx * page.flowStep() - page.flowScrollPos) < page.flowStep() / 2f }) {
+                page.renderFlowCardDetail(entry, this)
+            }
+        }
+    }
+
+    /**
+     * 卡片位移/缩放/透明度全部由 [flowScrollPos] 单一驱动：
+     * off = idx×step − flowScrollPos，off=0 即居中。跟手时 flowAnimating=false 直接落位；
+     * 收尾时先注册动画（flowAnimating=true 一拍）再改 flowScrollPos（R5）。
+     */
+    private fun applyFlowCardTransform(attr: com.tencent.kuikly.core.base.Attr, idx: Int) {
+        val step = flowStep()
+        val off = idx * step - flowScrollPos
+        val near = (abs(off) / step).coerceAtMost(1f)
+        val expand = 1f - near
+        val scale = 0.88f + 0.12f * expand
+        attr.zIndex((100f - abs(off)).roundToInt(), useOutline = false)
+        attr.opacity(if (abs(off) > step * 1.7f) 0f else 0.45f + 0.55f * expand)
+        attr.transform(
+            rotate = Rotate.DEFAULT,
+            scale = Scale(scale, scale),
+            translate = Translate(0f, 0f, flowViewportWidth() / 2f - flowCardWidth() / 2f + off, near * 14f),
+        )
+        if (flowAnimating && !reduceMotion) {
+            // animate 绑定最后读到的 observable：此处实参位置再读一次 flowScrollPos
+            attr.animate(Animation.springEaseOut(0.34f, 0.86f, 0.9f), flowScrollPos)
+        }
+    }
+
+    /** 分类 tag + 状态点（明度阶梯与 SegmentBar 同一语言，知识页零涨跌色）。 */
+    private fun renderFlowCardHeader(entry: GlossaryEntry, container: ViewContainer<*, *>) {
+        val page = this
+        container.View {
+            attr {
+                flexDirectionRow()
+                alignItemsCenter()
+                paddingTop(14f)
+                paddingLeft(16f)
+                paddingRight(16f)
+            }
+            View {
+                attr {
+                    paddingTop(3f)
+                    paddingBottom(3f)
+                    paddingLeft(9f)
+                    paddingRight(9f)
+                    borderRadius(9f)
+                    backgroundColor(page.theme.brandSoft)
+                }
+                Text {
+                    attr {
+                        text(entry.category.label)
+                        fontSize(10.5f)
+                        color(page.theme.brand)
+                    }
+                }
+            }
+            View { attr { flex(1f) } }
+            View {
+                attr {
+                    size(8f, 8f)
+                    borderRadius(4f)
+                    backgroundColor(page.flowStageColor(entry.key))
+                }
+            }
+        }
+    }
+
+    private fun renderFlowCardFront(entry: GlossaryEntry, container: ViewContainer<*, *>) {
+        val page = this
+        container.View {
+            attr { flex(1f); flexDirectionColumn() }
+            page.renderFlowCardHeader(entry, this)
+            View {
+                attr { flex(1f); justifyContentCenter(); alignItemsCenter() }
+                Text {
+                    attr {
+                        text(entry.term)
+                        fontSize(if (entry.term.length <= 6) 32f else 25f)
+                        fontWeightBold()
+                        color(page.theme.textPrimary)
+                        textAlignCenter()
+                    }
+                }
+                if (entry.ascii.isNotEmpty()) {
+                    Text {
+                        attr {
+                            text(entry.ascii)
+                            fontSize(14f)
+                            color(page.theme.textTertiary)
+                            marginTop(6f)
+                            textAlignCenter()
+                        }
+                    }
+                }
+                if (entry.aliases.isNotEmpty()) {
+                    Text {
+                        attr {
+                            text("又叫：${entry.aliases.joinToString(" · ")}")
+                            fontSize(11.5f)
+                            color(page.theme.textTertiary)
+                            marginTop(8f)
+                            textAlignCenter()
+                        }
+                    }
+                }
+            }
+            // 前置概念 chips：紧凑态也把依赖路径画出来（LDRS-R）
+            vif({ Glossary.prerequisitesOf(entry.key).isNotEmpty() }) {
+                View {
+                    attr {
+                        flexDirectionRow()
+                        flexWrapWrap()
+                        alignItemsCenter()
+                        paddingLeft(16f)
+                        paddingRight(16f)
+                        paddingBottom(14f)
+                    }
+                    Text {
+                        attr {
+                            text("先懂")
+                            fontSize(10.5f)
+                            color(page.theme.textTertiary)
+                        }
+                    }
+                    Glossary.prerequisitesOf(entry.key).forEach { preKey ->
+                        val pre = Glossary.byKey(preKey) ?: return@forEach
+                        FlowChip("${pre.term} ›", page.theme, { page.jumpToFlowKey(preKey) }, this)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun renderFlowCardDetail(entry: GlossaryEntry, container: ViewContainer<*, *>) {
+        val page = this
+        container.View {
+            attr { flex(1f); flexDirectionColumn() }
+            page.renderFlowCardHeader(entry, this)
+            // 内容区：定高卡片内纵向滚动，进阶展开也不溢出
+            Scroller {
+                attr {
+                    flex(1f)
+                    marginTop(10f)
+                    paddingLeft(16f)
+                    paddingRight(16f)
+                    paddingBottom(14f)
+                }
+                Text {
+                    attr {
+                        text(entry.term + if (entry.ascii.isNotEmpty()) "  ${entry.ascii}" else "")
+                        fontSize(19f)
+                        fontWeightSemiBold()
+                        color(page.theme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        text("人话解释")
+                        fontSize(10f)
+                        letterSpacing(2f)
+                        color(page.theme.textTertiary)
+                        marginTop(10f)
+                    }
+                }
+                Text {
+                    attr {
+                        text(entry.plain)
+                        fontSize(14.5f)
+                        lineHeight(22f)
+                        color(page.theme.textPrimary)
+                        marginTop(5f)
+                    }
+                }
+                // 一行归因：为什么是这张（端侧模板，事实性陈述）
+                Text {
+                    attr {
+                        text("为什么是这张：${page.flowWhyText(entry)}")
+                        fontSize(10.5f)
+                        lineHeight(16f)
+                        color(page.theme.textTertiary)
+                        marginTop(7f)
+                    }
+                }
+                Text {
+                    attr {
+                        text("A 股语境例子")
+                        fontSize(10f)
+                        letterSpacing(2f)
+                        color(page.theme.textTertiary)
+                        marginTop(11f)
+                    }
+                }
+                View {
+                    attr {
+                        marginTop(5f)
+                        paddingTop(9f)
+                        paddingBottom(9f)
+                        paddingLeft(10f)
+                        paddingRight(10f)
+                        borderRadius(0f, 8f, 8f, 0f)
+                        backgroundColor(page.theme.surfaceMuted)
+                    }
+                    Text {
+                        attr {
+                            text(entry.example)
+                            fontSize(12.5f)
+                            lineHeight(19f)
+                            color(page.theme.textSecondary)
+                        }
+                    }
+                }
+                // 进阶解释：默认收起（克制），点开才占位
+                if (entry.advanced.isNotEmpty()) {
+                    View {
+                        attr {
+                            alignSelfFlexStart()
+                            marginTop(10f)
+                            paddingTop(4f)
+                            paddingBottom(4f)
+                            paddingLeft(9f)
+                            paddingRight(9f)
+                            borderRadius(9f)
+                            backgroundColor(page.theme.brandSoft)
+                        }
+                        event { click { page.flowAdvancedOpen = !page.flowAdvancedOpen } }
+                        Text {
+                            attr {
+                                text(if (page.flowAdvancedOpen) "收起进阶 ▴" else "进阶解释 ▾")
+                                fontSize(11f)
+                                color(page.theme.brand)
+                            }
+                        }
+                    }
+                    vif({ page.flowAdvancedOpen }) {
+                        Text {
+                            attr {
+                                text(entry.advanced)
+                                fontSize(12f)
+                                lineHeight(19f)
+                                color(page.theme.textSecondary)
+                                marginTop(6f)
+                            }
+                        }
+                    }
+                }
+                // 先懂 / 看懂后：依赖路径 chips，点击 = 滑到那张卡
+                vif({ page.hasFlowDeps(entry.key) }) {
+                    View {
+                        attr {
+                            marginTop(12f)
+                            paddingTop(10f)
+                            paddingBottom(2f)
+                            flexDirectionRow()
+                            flexWrapWrap()
+                            alignItemsCenter()
+                        }
+                        // 容器顶部分隔线
+                        View {
+                            attr {
+                                absolutePosition()
+                                top(0f)
+                                left(0f)
+                                right(0f)
+                                height(1f)
+                                backgroundColor(page.theme.divider)
+                            }
+                        }
+                        vif({ Glossary.prerequisitesOf(entry.key).isNotEmpty() }) {
+                            Text {
+                                attr {
+                                    text("先懂")
+                                    fontSize(10.5f)
+                                    color(page.theme.textTertiary)
+                                }
+                            }
+                            Glossary.prerequisitesOf(entry.key).forEach { preKey ->
+                                val pre = Glossary.byKey(preKey) ?: return@forEach
+                                FlowChip("${pre.term} ›", page.theme, { page.jumpToFlowKey(preKey) }, this)
+                            }
+                        }
+                        vif({ Glossary.dependentsOf(entry.key).isNotEmpty() }) {
+                            Text {
+                                attr {
+                                    text("看懂后")
+                                    marginLeft(if (Glossary.prerequisitesOf(entry.key).isEmpty()) 0f else 14f)
+                                    marginTop(4f)
+                                    fontSize(10.5f)
+                                    color(page.theme.textTertiary)
+                                }
+                            }
+                            Glossary.dependentsOf(entry.key).take(3).forEach { depKey ->
+                                val dep = Glossary.byKey(depKey) ?: return@forEach
+                                FlowChip("${dep.term} ›", page.theme, { page.jumpToFlowKey(depKey) }, this)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 完成面板：这一遍顺完了（无庆祝表情、无连胜、无作答统计——不做能力评价）。 */
+    private fun renderFlowDone(container: ViewContainer<*, *>) {
+        val page = this
+        container.View {
+            attr { absolutePositionAllZero(); allCenter() }
+            View {
+                attr {
+                    width(page.flowCardWidth())
+                    padding(20f)
+                    borderRadius(20f)
+                    backgroundColor(page.theme.surface)
+                    boxShadow(BoxShadow(0f, 10f, 26f, Color(0x000000, 0.08f)))
+                    alignItemsCenter()
+                }
+                Text {
+                    attr {
+                        text("这一遍顺完了")
+                        fontSize(19f)
+                        fontWeightBold()
+                        color(page.theme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        text("这一遍翻过 ${page.flowSessionCount} 个概念 · 全库已读 ${page.flowReadCount()} / ${Glossary.all.size}")
+                        fontSize(12f)
+                        color(page.theme.textTertiary)
+                        marginTop(6f)
+                        textAlignCenter()
+                    }
+                }
+                View {
+                    attr {
+                        marginTop(16f)
+                        paddingTop(11f)
+                        paddingBottom(11f)
+                        paddingLeft(28f)
+                        paddingRight(28f)
+                        borderRadius(999f)
+                        backgroundColor(page.theme.brand)
+                        allCenter()
+                    }
+                    event { click { page.startFlow(includeRead = true) } }
+                    Text {
+                        attr {
+                            text("再顺一遍（含已读）")
+                            fontSize(14f)
+                            fontWeightSemiBold()
+                            color(page.theme.onBrand)
+                        }
+                    }
+                }
+                View {
+                    attr {
+                        marginTop(8f)
+                        paddingTop(10f)
+                        paddingBottom(10f)
+                        paddingLeft(22f)
+                        paddingRight(22f)
+                        borderRadius(999f)
+                        backgroundColor(page.theme.surfaceMuted)
+                        allCenter()
+                    }
+                    event { click { page.viewMode = VIEW_LIST } }
+                    Text {
+                        attr {
+                            text("浏览词表与搜索")
+                            fontSize(13f)
+                            color(page.theme.textSecondary)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 一行归因文案（doc 34 whyText）：只陈述事实，不做判断。 */
+    private fun flowWhyText(entry: GlossaryEntry): String {
+        val hits = encounterSnapshot[entry.key]?.hitCount ?: 0
+        if (hits > 0) return "你在自选与风险地图里遇到过「${entry.term}」$hits 次"
+        val readPres = Glossary.prerequisitesOf(entry.key).filter { encounterSnapshot[it]?.isKnown == true }
+        if (readPres.isNotEmpty()) {
+            return "前置的「${readPres.mapNotNull { Glossary.byKey(it)?.term }.joinToString("、")}」你都已读过"
+        }
+        val domainRead = Glossary.byCategory(entry.category).count { encounterSnapshot[it.key]?.isKnown == true }
+        if (domainRead > 0) return "「${entry.category.label}」里你已读过 $domainRead 个，顺着补齐这一域"
+        return "还没遇到过，从最基础的概念开始"
+    }
+
+    private fun hasFlowDeps(key: String): Boolean =
+        Glossary.prerequisitesOf(key).isNotEmpty() || Glossary.dependentsOf(key).isNotEmpty()
+
+    // ── 卡片流队列与手势 ──
+
+    private fun flowCardWidth(): Float = (pagerData.pageViewWidth - 52f).coerceAtMost(330f)
+    private fun flowStep(): Float = flowCardWidth() + 14f
+    private fun flowViewportWidth(): Float = pagerData.pageViewWidth - 28f
+
+    private fun flowReadCount(): Int = encounterSnapshot.values.count { it.isKnown }
+
+    private fun flowReadRatio(): Float =
+        if (Glossary.all.isEmpty()) 0f else flowReadCount().toFloat() / Glossary.all.size
+
+    private fun flowStageColor(key: String): Color {
+        val stage = encounterSnapshot[key]?.displayStage() ?: GlossaryEncounter.STAGE_UNSEEN
+        return when (stage) {
+            GlossaryEncounter.STAGE_KNOWN -> theme.brand
+            GlossaryEncounter.STAGE_COMMON -> theme.brandSoft
+            GlossaryEncounter.STAGE_SEEN -> theme.glossarySeen
+            else -> theme.surfaceMuted
+        }
+    }
+
+    /**
+     * 建队（doc 34 buildFlowQueue）：未读（或全部）按 hitCount 降序；
+     * 非重刷流让 recommend()（依赖就绪的词）领读第一张。
+     */
+    private fun startFlow(includeRead: Boolean) {
+        val known: (String) -> Boolean = { encounterSnapshot[it]?.isKnown == true }
+        val ordered = Glossary.all
+            .filter { includeRead || !known(it.key) }
+            .sortedWith(
+                compareByDescending<GlossaryEntry> { encounterSnapshot[it.key]?.hitCount ?: 0 }
+                    .thenBy { domainReadRatio(it.category) }
+                    .thenBy { -Glossary.all.indexOf(it) },
+            )
+            .map { it.key }
+        flowQueue.clear()
+        if (!includeRead) {
+            recommend()?.let { rec -> flowQueue.add(rec.entry.key) }
+        }
+        ordered.forEach { key -> if (!flowQueue.contains(key)) flowQueue.add(key) }
+        flowIndex = 0
+        flowSessionCount = 0
+        flowAdvancedOpen = false
+        flowAnimating = false
+        flowFinished = flowQueue.isEmpty()
+        flowVisible.clear()
+        if (!flowFinished) {
+            rebuildFlowWindow(0)
+            flowScrollPos = 0f
+            syncFlowRead()
+        }
+    }
+
+    /** 居中展示即记「已读」（翻过即已读，仅影响推荐顺序；不重复计数与落盘）。 */
+    private fun syncFlowRead() {
+        if (flowFinished || flowQueue.isEmpty() || flowIndex >= flowQueue.size) return
+        val key = flowQueue[flowIndex]
+        if (encounterSnapshot[key]?.isKnown == true) return
+        glossaryStore.markKnown(key)
+        flowSessionCount++
+        refreshEncounters() // 进度头 / 五域 / 最近遇到 chips 即时刷新
+    }
+
+    private fun rebuildFlowWindow(center: Int) {
+        if (flowQueue.isEmpty()) {
+            flowVisible.clear()
+            return
+        }
+        val lo = (center - 3).coerceAtLeast(0)
+        val hi = (center + 3).coerceAtMost(flowQueue.size - 1)
+        val want = (lo..hi).toList()
+        if (flowVisible.toList() == want) return
+        flowVisible.clear()
+        want.forEach { flowVisible.add(it) }
+    }
+
+    /** 收尾翻页：先建窗口、再注册动画、最后写目标偏移（R5 顺序不能反）。 */
+    private fun animateFlowTo(target: Int) {
+        if (flowQueue.isEmpty()) return
+        val clamped = target.coerceIn(0, flowQueue.size - 1)
+        rebuildFlowWindow(clamped)
+        flowAdvancedOpen = false
+        flowIndex = clamped
+        if (reduceMotion) {
+            flowAnimating = false
+            flowScrollPos = clamped * flowStep()
+            syncFlowRead()
+            return
+        }
+        flowAnimating = true
+        flowScrollPos = clamped * flowStep()
+        setTimeout(FLOW_ANIM_MS.toInt()) {
+            flowAnimating = false
+            rebuildFlowWindow(flowIndex)
+        }
+        syncFlowRead()
+    }
+
+    /** 先懂 / 看懂后 chips：在队列里就滑过去，不在就插到当前卡后面。 */
+    private fun jumpToFlowKey(key: String) {
+        if (flowFinished || flowQueue.isEmpty()) return
+        val idx = flowQueue.indexOf(key)
+        if (idx >= 0) {
+            if (idx != flowIndex) animateFlowTo(idx)
+            return
+        }
+        flowQueue.add(flowIndex + 1, key)
+        animateFlowTo(flowIndex + 1)
+    }
+
+    // ── 手势：翻页 = 拖拽距离 + 甩动速度（pan 不带 velocity，自行采样）──
+
+    private fun onFlowPanStart(x: Float) {
+        // 打断进行中的收尾动画，从当前位置继续跟手
+        flowAnimating = false
+        flowPanStartX = x
+        flowPanStartScroll = flowScrollPos
+        flowDragSamples.clear()
+        flowDragSamples.add(platformCurrentTimeMillis() to 0f)
+    }
+
+    private fun onFlowPanMove(x: Float) {
+        val dx = x - flowPanStartX
+        val now = platformCurrentTimeMillis()
+        flowDragSamples.add(now to dx)
+        if (flowDragSamples.size > 6) flowDragSamples.removeAt(0)
+        // 手指右移（dx>0）→ 内容右移 → flowScrollPos 减小
+        flowScrollPos = flowPanStartScroll - dx
+    }
+
+    private fun onFlowPanEnd(x: Float) {
+        if (flowQueue.isEmpty()) return
+        val dx = x - flowPanStartX
+        val now = platformCurrentTimeMillis()
+        // 速度：取最近 ~100ms 的样本求平均
+        var velocityDpS = 0f
+        val base = flowDragSamples.firstOrNull { now - it.first <= FLOW_FLING_SAMPLE_MS }
+            ?: flowDragSamples.firstOrNull()
+        if (base != null) {
+            val dt = (now - base.first) / 1000f
+            if (dt > 0.004f) velocityDpS = (dx - base.second) / dt
+        }
+        val step = flowStep()
+        // 位移 + 惯性外推（160ms）共同决定翻几页
+        val projected = -(dx + velocityDpS * FLOW_FLING_HORIZON_S)
+        var steps = (projected / step).roundToInt()
+        if (steps == 0 && abs(dx) > step * 0.3f) steps = if (dx < 0) 1 else -1
+        if (flowIndex == flowQueue.size - 1 && steps > 0) {
+            // 最后一页再往前 → 完成面板
+            flowVisible.clear()
+            flowFinished = true
+            return
+        }
+        animateFlowTo(flowIndex + steps)
     }
 
     // ── 二级词表（v1 结构保留，搜索框在二级页顶部 = §6.3 改动 #5）──
@@ -711,30 +1223,9 @@ internal class GlossaryPage : BasePager() {
         }.sortedByDescending { it.unseen }
     }
 
-    private fun recentEncounters(): List<GlossaryEncounter> = glossaryStore.recent(limit = 5)
-
-    // ── 依赖路径标签 ──
-
-    private fun hasPrereqOrDependent(key: String): Boolean =
-        Glossary.prerequisitesOf(key).isNotEmpty() || Glossary.dependentsOf(key).isNotEmpty()
-
-    private fun prereqLabel(key: String): String {
-        val names = Glossary.prerequisitesOf(key).mapNotNull { Glossary.byKey(it)?.term }
-        return if (names.isEmpty()) "" else "先懂：${names.joinToString("、")} ›"
-    }
-
-    private fun dependentLabel(key: String): String {
-        val names = Glossary.dependentsOf(key).mapNotNull { Glossary.byKey(it)?.term }
-        return if (names.isEmpty()) "" else "看懂后：${names.first()} ›"
-    }
-
-    private fun firstUnreadPrereq(key: String): String? =
-        Glossary.prerequisitesOf(key).firstOrNull { encounterSnapshot[it]?.isKnown != true }
-            ?: Glossary.prerequisitesOf(key).firstOrNull()
-
-    private fun firstUnreadDependent(key: String): String? =
-        Glossary.dependentsOf(key).firstOrNull { encounterSnapshot[it]?.isKnown != true }
-            ?: Glossary.dependentsOf(key).firstOrNull()
+    /** 最近在聊天里遇到（按触发次数降序，×N 是事实标注不是分）。 */
+    private fun recentByHits(): List<GlossaryEncounter> =
+        encounterSnapshot.values.filter { it.hitCount > 0 }.sortedByDescending { it.hitCount }.take(6)
 
     // ── 状态与跳转 ──
 
@@ -803,6 +1294,16 @@ internal class GlossaryPage : BasePager() {
     private companion object {
         const val VIEW_MAP = "map"
         const val VIEW_LIST = "list"
+
+        /** 卡片定高：内容超长时卡片内纵向滚动（无测高 API，不追求逐卡贴合）。 */
+        const val FLOW_CARD_HEIGHT = 388f
+        const val FLOW_ANIM_MS = 420L
+
+        /** 甩动测速窗口（ms）。 */
+        const val FLOW_FLING_SAMPLE_MS = 100L
+
+        /** 惯性外推时长（s）：松手后按此时间以出射速度继续滑。 */
+        const val FLOW_FLING_HORIZON_S = 0.16f
     }
 }
 
@@ -827,6 +1328,35 @@ private fun GlossarySectionTitle(
                 color(theme.term)
             }
         }
+    }
+}
+
+/** 卡片流依赖路径 chip（先懂 / 看懂后）。 */
+private fun FlowChip(
+    label: String,
+    theme: StockChatTheme,
+    onTap: () -> Unit,
+    container: ViewContainer<*, *>,
+) {
+    container.View {
+        attr {
+            marginLeft(6f)
+            marginTop(4f)
+            paddingTop(3f)
+            paddingBottom(3f)
+            paddingLeft(9f)
+            paddingRight(9f)
+            borderRadius(9f)
+            backgroundColor(theme.brandSoft)
+        }
+        Text {
+            attr {
+                text(label)
+                fontSize(11f)
+                color(theme.brand)
+            }
+        }
+        event { click { onTap() } }
     }
 }
 
