@@ -23,6 +23,8 @@ import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.SegmentBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
+import com.tencent.kuikly.core.base.Border
+import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Rotate
@@ -30,8 +32,7 @@ import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
-import com.tencent.kuikly.core.base.attr.CaptureRule
-import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
@@ -138,14 +139,14 @@ internal class GlossaryPage : BasePager() {
                     animate(Animation.easeOut(0.22f), "glossary-handoff")
                 }
             }
-            // 首页取消垂直滚动（用户指定）：View 直排、内容超屏裁剪。
-            // 卡片流必须是页面上唯一的滚动/手势层，纵向滚动容器彻底退出手势竞争。
+            // 地图内容可纵向滚动；卡片区不再独占手势，纵向拖动会交给这个 Scroller。
             vif({ page.viewMode == VIEW_MAP }) {
-                View {
+                Scroller {
                     attr {
                         flex(1f)
+                        // 竖向 Scroller 水平 padding 会被双倍扣除，右 padding 留 0 对齐（同 ChatPage）。
                         paddingLeft(14f)
-                        paddingRight(14f)
+                        paddingRight(0f)
                         paddingTop(page.pagerData.statusBarHeight + 73f)
                         paddingBottom(32f)
                     }
@@ -159,7 +160,7 @@ internal class GlossaryPage : BasePager() {
                     attr {
                         flex(1f)
                         paddingLeft(14f)
-                        paddingRight(14f)
+                        paddingRight(0f)
                         paddingTop(page.pagerData.statusBarHeight + 73f)
                         paddingBottom(32f)
                     }
@@ -196,89 +197,92 @@ internal class GlossaryPage : BasePager() {
             // 首页即卡片流（doc 34）：左右滑动直接翻页，翻过即记「已读」，无自评。
             page.renderFlowArea(this)
 
-            // z1 五域面板：按未遇到数降序——缺口最大的域排最前。
-            page.domainStats().forEach { stat ->
-                View {
-                    attr {
-                        marginTop(10f)
-                        padding(14f)
-                        borderRadius(14f)
-                        backgroundColor(page.theme.surface)
-                    }
-                    event { click { page.openCategoryInList(stat.category) } }
+            // 统计区必须在 reactive closure 内读取快照，读卡后才会立即重建。
+            vbind({ page.encounterSnapshot }) {
+                // z1 五域面板：按未遇到数降序——缺口最大的域排最前。
+                page.domainStats().forEach { stat ->
                     View {
-                        attr { flexDirectionRow(); alignItemsCenter() }
-                        Text {
-                            attr {
-                                text(stat.category.label)
-                                fontSize(13.5f)
-                                fontWeightSemiBold()
-                                color(page.theme.textPrimary)
+                        attr {
+                            marginTop(10f)
+                            padding(14f)
+                            borderRadius(14f)
+                            backgroundColor(page.theme.surface)
+                        }
+                        event { click { page.openCategoryInList(stat.category) } }
+                        View {
+                            attr { flexDirectionRow(); alignItemsCenter() }
+                            Text {
+                                attr {
+                                    text(stat.category.label)
+                                    fontSize(13.5f)
+                                    fontWeightSemiBold()
+                                    color(page.theme.textPrimary)
+                                }
+                            }
+                            View { attr { flex(1f) } }
+                            Text {
+                                attr {
+                                    text("已遇 ${stat.encountered} / 共 ${stat.total}")
+                                    fontSize(11f)
+                                    color(page.theme.textTertiary)
+                                }
                             }
                         }
-                        View { attr { flex(1f) } }
+                        View {
+                            attr { marginTop(10f) }
+                            SegmentBar(
+                                theme = page.theme,
+                                unseen = stat.unseen,
+                                seen = stat.seen,
+                                common = stat.common,
+                                known = stat.known,
+                            )
+                        }
                         Text {
                             attr {
-                                text("已遇 ${stat.encountered} / 共 ${stat.total}")
-                                fontSize(11f)
+                                text("未遇到 ${stat.unseen} · 见过 ${stat.seen} · 常见 ${stat.common} · 已读 ${stat.known}")
+                                marginTop(7f)
+                                fontSize(10f)
                                 color(page.theme.textTertiary)
                             }
                         }
                     }
-                    View {
-                        attr { marginTop(10f) }
-                        SegmentBar(
-                            theme = page.theme,
-                            unseen = stat.unseen,
-                            seen = stat.seen,
-                            common = stat.common,
-                            known = stat.known,
-                        )
-                    }
-                    Text {
-                        attr {
-                            text("未遇到 ${stat.unseen} · 见过 ${stat.seen} · 常见 ${stat.common} · 已读 ${stat.known}")
-                            marginTop(7f)
-                            fontSize(10f)
-                            color(page.theme.textTertiary)
-                        }
-                    }
                 }
-            }
 
-            // z2 最近在聊天里遇到：按触发次数降序，×N 是事实标注，不是分数。
-            vif({ page.recentByHits().isNotEmpty() }) {
-                View {
-                    attr { marginTop(16f) }
-                    Text {
-                        attr {
-                            text("最近在聊天里遇到")
-                            fontSize(12f)
-                            fontWeightSemiBold()
-                            color(page.theme.term)
-                        }
-                    }
+                // z2 最近在聊天里遇到：按触发次数降序，×N 是事实标注，不是分数。
+                vif({ page.recentByHits().isNotEmpty() }) {
                     View {
-                        attr { marginTop(8f); flexDirectionRow(); flexWrapWrap() }
-                        page.recentByHits().forEach { enc ->
-                            val term = Glossary.byKey(enc.key)?.term ?: enc.key
-                            View {
-                                attr {
-                                    marginRight(7f)
-                                    marginBottom(7f)
-                                    paddingLeft(10f)
-                                    paddingRight(10f)
-                                    height(26f)
-                                    allCenter()
-                                    borderRadius(8f)
-                                    backgroundColor(page.theme.surfaceMuted)
-                                }
-                                event { click { page.openEntryInList(enc.key) } }
-                                Text {
+                        attr { marginTop(16f) }
+                        Text {
+                            attr {
+                                text("最近在聊天里遇到")
+                                fontSize(12f)
+                                fontWeightSemiBold()
+                                color(page.theme.term)
+                            }
+                        }
+                        View {
+                            attr { marginTop(8f); flexDirectionRow(); flexWrapWrap() }
+                            page.recentByHits().forEach { enc ->
+                                val term = Glossary.byKey(enc.key)?.term ?: enc.key
+                                View {
                                     attr {
-                                        text("$term ×${enc.hitCount}")
-                                        fontSize(11f)
-                                        color(page.theme.textSecondary)
+                                        marginRight(7f)
+                                        marginBottom(7f)
+                                        paddingLeft(10f)
+                                        paddingRight(10f)
+                                        height(26f)
+                                        allCenter()
+                                        borderRadius(8f)
+                                        backgroundColor(page.theme.surfaceMuted)
+                                    }
+                                    event { click { page.openEntryInList(enc.key) } }
+                                    Text {
+                                        attr {
+                                            text("$term ×${enc.hitCount}")
+                                            fontSize(11f)
+                                            color(page.theme.textSecondary)
+                                        }
                                     }
                                 }
                             }
@@ -368,12 +372,11 @@ internal class GlossaryPage : BasePager() {
                     }
                 }
             }
-            // 轮播视口：横向 pan 捕获，纵向滚动让给外层 Scroller
+            // 轮播视口：touch 只跟踪横向位移，不申请 capture，避免锁死外层纵向滚动。
             View {
                 attr {
                     marginTop(10f)
                     height(FLOW_CARD_HEIGHT + 12f)
-                    capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
                 }
                 vfor({ page.flowVisible }) { idx ->
                     page.renderFlowCard(idx, this)
@@ -382,12 +385,18 @@ internal class GlossaryPage : BasePager() {
                     page.renderFlowDone(this)
                 }
                 event {
-                    pan { params ->
-                        when (params.state) {
-                            "start" -> page.onFlowPanStart(params.x)
-                            "move" -> page.onFlowPanMove(params.x)
-                            "end" -> page.onFlowPanEnd(params.x)
-                        }
+                    // 横向跟手用原生 touch 而非 pan 事件：pan 在 Android 上 DOWN 时会
+                    // requestDisallowInterceptTouchEvent(true)，锁死外层 Scroller 的纵向
+                    // 滚动（2026-09-08 回归）。touch 事件不做 disallow——纵向拖动会被外层
+                    // Scroller 拦截（touchUp 兼容模式收到 cancel 收尾），横向拖动自然放行。
+                    touchDown { e -> page.onFlowPanStart(e.x) }
+                    touchMove { e -> page.onFlowPanMove(e.x) }
+                    touchUp { e -> page.onFlowPanEnd(e.x) }
+                    // 轻点 → 居中所点的卡片（含卡片本体）。click 必须挂在视口上而非卡片根节点：
+                    // 可触摸的子 View 会吞掉整条触摸流，视口收不到（Android 实测），
+                    // 卡片根节点不挂事件才能让整个卡体的拖拽/点击落到视口上。
+                    click { params ->
+                        page.onFlowTap(params.x)
                     }
                 }
             }
@@ -416,17 +425,11 @@ internal class GlossaryPage : BasePager() {
                 boxShadow(BoxShadow(0f, 10f, 26f, Color(0x000000, 0.08f)))
                 page.applyFlowCardTransform(this, idx)
             }
-            event {
-                click {
-                    // 轻点两侧卡片 → 居中；居中卡片的点击交给内部元素
-                    if (abs(idx * page.flowStep() - page.flowScrollPos) >= page.flowStep() / 2f) {
-                        page.animateFlowTo(idx)
-                    }
-                }
-            }
-            // 紧凑态：大字术语（未居中）
+            // 注意：卡片根节点不挂任何事件（点击居中由视口 click 反算，见 onFlowTap）。
+            // 卡片内小交互元素（前置 chip / 进阶展开）各自保留 click，不受影响。
+            // 侧卡（未居中）：不渲染任何内容，只留「实体卡背」边框占位（2026-09-09 用户要求）
             vif({ abs(idx * page.flowStep() - page.flowScrollPos) >= page.flowStep() / 2f }) {
-                page.renderFlowCardFront(entry, this)
+                page.renderFlowCardGhost(this)
             }
             // 详情态：居中自动展开
             vif({ abs(idx * page.flowStep() - page.flowScrollPos) < page.flowStep() / 2f }) {
@@ -436,9 +439,16 @@ internal class GlossaryPage : BasePager() {
     }
 
     /**
-     * 卡片位移/缩放/透明度全部由 [flowScrollPos] 单一驱动：
+     * 卡片位移/缩放/旋转/透明度全部由 [flowScrollPos] 单一驱动：
      * off = idx×step − flowScrollPos，off=0 即居中。跟手时 flowAnimating=false 直接落位；
      * 收尾时先注册动画（flowAnimating=true 一拍）再改 flowScrollPos（R5）。
+     *
+     * Coverflow 化（2026-09-08 用户要求「能看到左右卡片一部分、缩小带角度」）：
+     * - step 收窄为卡宽 0.6 → 两侧卡探入视口各 ~100dp，一眼可知是轮播；
+     * - 侧卡绕竖直中轴 rotateY（Android 渲染层已确认支持：KRCSSTransform.rotateY +
+     *   setCameraDistance 透视，Rotate(angle,xAngle,yAngle) 第三参即 yAngle），
+     *   右卡正角、左卡负角 = 外缘后退、内缘迎向中心（CoverFlow 贴圆柱朝内语义）；
+     * - 缩放 0.88 + 透明度 0.62 地板，侧卡呈「退后的阴影卡」质感。
      */
     private fun applyFlowCardTransform(attr: com.tencent.kuikly.core.base.Attr, idx: Int) {
         val step = flowStep()
@@ -446,10 +456,11 @@ internal class GlossaryPage : BasePager() {
         val near = (abs(off) / step).coerceAtMost(1f)
         val expand = 1f - near
         val scale = 0.88f + 0.12f * expand
-        attr.zIndex((100f - abs(off)).roundToInt(), useOutline = false)
-        attr.opacity(if (abs(off) > step * 1.7f) 0f else 0.45f + 0.55f * expand)
+        val yAngle = FLOW_MAX_Y_ANGLE * near * if (off > 0f) 1f else -1f
+        attr.zIndex((1000f - abs(off)).roundToInt(), useOutline = false)
+        attr.opacity(if (abs(off) > step * 1.7f) 0f else 0.75f + 0.25f * expand)
         attr.transform(
-            rotate = Rotate.DEFAULT,
+            rotate = Rotate(0f, 0f, yAngle),
             scale = Scale(scale, scale),
             translate = Translate(0f, 0f, flowViewportWidth() / 2f - flowCardWidth() / 2f + off, near * 14f),
         )
@@ -498,68 +509,18 @@ internal class GlossaryPage : BasePager() {
         }
     }
 
-    private fun renderFlowCardFront(entry: GlossaryEntry, container: ViewContainer<*, *>) {
+    /**
+     * 侧卡「实体卡背」：不渲染任何内容（2026-09-09 用户要求：不用露出术语，只留边框有实感）。
+     * 根节点已带 surface 底 + 20f 圆角 + 基础投影，这里叠描边 + 更深的投影制造厚度。
+     */
+    private fun renderFlowCardGhost(container: ViewContainer<*, *>) {
         val page = this
         container.View {
-            attr { flex(1f); flexDirectionColumn() }
-            page.renderFlowCardHeader(entry, this)
-            View {
-                attr { flex(1f); justifyContentCenter(); alignItemsCenter() }
-                Text {
-                    attr {
-                        text(entry.term)
-                        fontSize(if (entry.term.length <= 6) 32f else 25f)
-                        fontWeightBold()
-                        color(page.theme.textPrimary)
-                        textAlignCenter()
-                    }
-                }
-                if (entry.ascii.isNotEmpty()) {
-                    Text {
-                        attr {
-                            text(entry.ascii)
-                            fontSize(14f)
-                            color(page.theme.textTertiary)
-                            marginTop(6f)
-                            textAlignCenter()
-                        }
-                    }
-                }
-                if (entry.aliases.isNotEmpty()) {
-                    Text {
-                        attr {
-                            text("又叫：${entry.aliases.joinToString(" · ")}")
-                            fontSize(11.5f)
-                            color(page.theme.textTertiary)
-                            marginTop(8f)
-                            textAlignCenter()
-                        }
-                    }
-                }
-            }
-            // 前置概念 chips：紧凑态也把依赖路径画出来（LDRS-R）
-            vif({ Glossary.prerequisitesOf(entry.key).isNotEmpty() }) {
-                View {
-                    attr {
-                        flexDirectionRow()
-                        flexWrapWrap()
-                        alignItemsCenter()
-                        paddingLeft(16f)
-                        paddingRight(16f)
-                        paddingBottom(14f)
-                    }
-                    Text {
-                        attr {
-                            text("先懂")
-                            fontSize(10.5f)
-                            color(page.theme.textTertiary)
-                        }
-                    }
-                    Glossary.prerequisitesOf(entry.key).forEach { preKey ->
-                        val pre = Glossary.byKey(preKey) ?: return@forEach
-                        FlowChip("${pre.term} ›", page.theme, { page.jumpToFlowKey(preKey) }, this)
-                    }
-                }
+            attr {
+                flex(1f)
+                borderRadius(20f)
+                border(Border(1.2f, BorderStyle.SOLID, page.theme.divider))
+                boxShadow(BoxShadow(0f, 14f, 32f, Color(0x000000, 0.13f)))
             }
         }
     }
@@ -830,7 +791,9 @@ internal class GlossaryPage : BasePager() {
     // ── 卡片流队列与手势 ──
 
     private fun flowCardWidth(): Float = (pagerData.pageViewWidth - 52f).coerceAtMost(330f)
-    private fun flowStep(): Float = flowCardWidth() + 14f
+
+    /** Coverflow 步距 = 卡宽 0.6：侧卡探入视口（卡宽+14 的旧值会把侧卡整个推出屏幕）。 */
+    private fun flowStep(): Float = flowCardWidth() * 0.6f
     private fun flowViewportWidth(): Float = pagerData.pageViewWidth - 28f
 
     private fun flowReadCount(): Int = encounterSnapshot.values.count { it.isKnown }
@@ -939,7 +902,22 @@ internal class GlossaryPage : BasePager() {
 
     // ── 手势：翻页 = 拖拽距离 + 甩动速度（pan 不带 velocity，自行采样）──
 
+    /**
+     * 轻点视口（含卡片本体）→ 反算所点卡片并居中。
+     * 卡片几何：第 idx 张卡中心 x = 视口宽/2 + idx×step − flowScrollPos（见 applyFlowCardTransform）。
+     */
+    private fun onFlowTap(x: Float) {
+        if (flowFinished || flowQueue.isEmpty()) return
+        val step = flowStep()
+        val idx = ((x - flowViewportWidth() / 2f + flowScrollPos) / step).roundToInt()
+        // 与旧卡片点击同一判定：点的已是居中卡则不动（交给卡内元素）
+        if (idx in flowQueue.indices && abs(idx * step - flowScrollPos) >= step / 2f) {
+            animateFlowTo(idx)
+        }
+    }
+
     private fun onFlowPanStart(x: Float) {
+        if (flowFinished) return
         // 打断进行中的收尾动画，从当前位置继续跟手
         flowAnimating = false
         flowPanStartX = x
@@ -949,6 +927,7 @@ internal class GlossaryPage : BasePager() {
     }
 
     private fun onFlowPanMove(x: Float) {
+        if (flowFinished) return
         val dx = x - flowPanStartX
         val now = platformCurrentTimeMillis()
         flowDragSamples.add(now to dx)
@@ -958,7 +937,7 @@ internal class GlossaryPage : BasePager() {
     }
 
     private fun onFlowPanEnd(x: Float) {
-        if (flowQueue.isEmpty()) return
+        if (flowFinished || flowQueue.isEmpty()) return
         val dx = x - flowPanStartX
         val now = platformCurrentTimeMillis()
         // 速度：取最近 ~100ms 的样本求平均
@@ -1312,6 +1291,9 @@ internal class GlossaryPage : BasePager() {
          * 会抢走触摸事件导致横向 pan 失效，因此内容超长时按定高裁剪（旧版同款取舍）。
          */
         const val FLOW_CARD_HEIGHT = 400f
+
+        /** 侧卡 rotateY 最大角度（度）：绕竖直轴的「发牌轴点」，0.6 步距下侧卡内缘探入 ~100dp。 */
+        const val FLOW_MAX_Y_ANGLE = 26f
         const val FLOW_ANIM_MS = 420L
 
         /** 甩动测速窗口（ms）。 */
