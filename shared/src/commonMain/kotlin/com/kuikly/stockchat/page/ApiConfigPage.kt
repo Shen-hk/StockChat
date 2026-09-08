@@ -6,13 +6,21 @@ import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.data.config.AiConfig
 import com.kuikly.stockchat.data.config.AiConfigStore
+import com.kuikly.stockchat.data.config.ModelPreset
+import com.kuikly.stockchat.data.config.ModelPresets
 import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
+import com.tencent.kuikly.core.base.Border
+import com.tencent.kuikly.core.base.BorderStyle
+import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.attr.ImageUri
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.handler.observable
+import com.tencent.kuikly.core.views.Image
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
@@ -27,6 +35,8 @@ internal class ApiConfigPage : BasePager() {
     private var testing: Boolean by observable(false)
     private var statusMessage: String by observable("")
     private var statusSuccess: Boolean by observable(false)
+    private var selectedPresetId: String by observable(ModelPresets.all.first().id)
+    private var slotVersion: Int by observable(0)
     private val configStore by lazy { AiConfigStore(pagerId) }
     private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
 
@@ -42,11 +52,36 @@ internal class ApiConfigPage : BasePager() {
             Scroller {
                 attr {
                     flex(1f)
+                    // 竖向 Scroller 水平 padding 会被双倍扣除，padding(16f) 后右 padding 清 0 对齐（同 ChatPage）。
                     padding(16f)
+                    paddingRight(0f)
                     paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(28f + page.pagerData.safeAreaInsets.bottom)
                 }
-                ConfigSectionTitle("DeepSeek API", "聊天回答将直接调用这里配置的接口。", page.theme)
+                ConfigSectionTitle("选择模型服务", "选中服务商后自动填好接口地址和模型名，再填 API Key 即可使用。", page.theme)
+                Scroller {
+                    // 横向 Scroller 必须写显式 height，否则内容层塌 0 被外层裁掉
+                    attr { flexDirectionRow(); height(94f); marginTop(12f) }
+                    ModelPresets.all.forEach { preset ->
+                        PresetCard(
+                            preset = preset,
+                            theme = page.theme,
+                            dark = page.isNightMode(),
+                            isSelected = { page.selectedPresetId == preset.id },
+                            hasSavedKey = { page.hasSavedKey(preset.id) },
+                            onClick = { page.applyPreset(preset) },
+                        )
+                    }
+                }
+                Text {
+                    attr {
+                        text(page.selectedPreset()?.keyHint.orEmpty())
+                        marginTop(9f)
+                        fontSize(10f)
+                        lineHeight(16f)
+                        color(page.theme.textTertiary)
+                    }
+                }
                 ConfigField(
                     label = "API 地址",
                     hint = "例如 https://api.deepseek.com/chat/completions",
@@ -61,6 +96,26 @@ internal class ApiConfigPage : BasePager() {
                     theme = page.theme,
                     onChange = { page.model = it },
                 )
+                vbind({ page.selectedPreset()?.id.orEmpty() }) {
+                    val models = page.selectedPreset()?.models.orEmpty()
+                    if (models.size > 1) {
+                        View {
+                            attr {
+                                marginTop(8f)
+                                flexDirectionRow()
+                                flexWrapWrap()
+                            }
+                            models.forEach { modelId ->
+                                ModelVariantChip(
+                                    modelId = modelId,
+                                    theme = page.theme,
+                                    isSelected = { page.model == modelId },
+                                    onClick = { page.model = modelId },
+                                )
+                            }
+                        }
+                    }
+                }
                 Text {
                     attr {
                         text("API Key")
@@ -203,6 +258,7 @@ internal class ApiConfigPage : BasePager() {
         }
         configStore.save(config)
         applyConfig(config)
+        persistCurrentSlot()
         showStatus(true, "配置已保存在当前设备，下次发送消息时会直接调用该接口。")
     }
 
@@ -223,9 +279,10 @@ internal class ApiConfigPage : BasePager() {
     }
 
     private fun clearConfig() {
-        configStore.clear()
+        configStore.clearAll()
         applyConfig(AiConfig())
         revealKey = false
+        slotVersion++
         showStatus(true, "已清除当前设备上的 API 配置。")
     }
 
@@ -233,11 +290,151 @@ internal class ApiConfigPage : BasePager() {
         endpoint = config.endpoint
         model = config.model
         apiKey = config.apiKey
+        selectedPresetId = ModelPresets.matchEndpoint(config.endpoint)?.id ?: "custom"
+    }
+
+    private fun selectedPreset(): ModelPreset? = ModelPresets.byId(selectedPresetId)
+
+    /** 该厂商槽位里是否已保存过 API Key（读 slotVersion 建立响应式依赖） */
+    private fun hasSavedKey(presetId: String): Boolean {
+        val version = slotVersion
+        return version >= 0 && configStore.loadPresetConfig(presetId)?.apiKey?.isNotEmpty() == true
+    }
+
+    /** 把当前表单配置写入当前所选厂商的槽位（自定义预设除外） */
+    private fun persistCurrentSlot() {
+        val preset = selectedPreset() ?: return
+        if (preset.endpoint.isEmpty()) return
+        configStore.savePresetConfig(preset.id, currentConfig())
+        slotVersion++
+    }
+
+    private fun applyPreset(preset: ModelPreset) {
+        if (preset.id == selectedPresetId) return
+        // 先把当前厂商的配置（含 API Key）存进它的槽位，再恢复目标厂商的
+        persistCurrentSlot()
+        selectedPresetId = preset.id
+        val saved = if (preset.endpoint.isNotEmpty()) configStore.loadPresetConfig(preset.id) else null
+        if (saved != null) {
+            endpoint = saved.endpoint
+            model = saved.model
+            apiKey = saved.apiKey
+        } else if (preset.endpoint.isNotEmpty()) {
+            endpoint = preset.endpoint
+            model = preset.models.firstOrNull().orEmpty()
+            apiKey = ""
+        }
+        // 自定义预设：不改动手填的地址与模型名
+        showStatus(false, "")
     }
 
     private fun showStatus(success: Boolean, message: String) {
         statusSuccess = success
         statusMessage = message
+    }
+}
+
+private fun logoAsset(preset: ModelPreset, dark: Boolean): String =
+    (if (dark) "dark-" else "light-") + preset.logo + ".png"
+
+private fun ViewContainer<*, *>.PresetCard(
+    preset: ModelPreset,
+    theme: StockChatTheme,
+    dark: Boolean,
+    isSelected: () -> Boolean,
+    hasSavedKey: () -> Boolean,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            // isSelected / hasSavedKey 在 attr·vif 闭包内读取，保证选中态与配置态随 observable 变化重渲染（R1）
+            val selected = isSelected()
+            marginRight(8f)
+            width(92f)
+            height(94f)
+            allCenter()
+            borderRadius(14f)
+            backgroundColor(if (selected) theme.brandSoft else theme.surface)
+            if (selected) border(Border(1f, BorderStyle.SOLID, theme.brand))
+        }
+        vif({ preset.logo.isNotEmpty() }) {
+            Image {
+                attr {
+                    src(ImageUri.pageAssets(logoAsset(preset, dark)))
+                    size(40f, 40f)
+                }
+            }
+        }
+        vif({ preset.logo.isEmpty() }) {
+            View {
+                attr {
+                    size(40f, 40f)
+                    allCenter()
+                    borderRadius(12f)
+                    backgroundColor(Color(preset.badgeColor))
+                }
+                Text {
+                    attr {
+                        text(preset.badge)
+                        fontSize(14f)
+                        fontWeightBold()
+                        color(Color(0xFFFFFF))
+                    }
+                }
+            }
+        }
+        Text {
+            attr {
+                text(preset.name)
+                marginTop(7f)
+                fontSize(11f)
+                fontWeightMedium()
+                color(theme.textPrimary)
+            }
+        }
+        vif({ hasSavedKey() }) {
+            View {
+                attr {
+                    absolutePosition(top = 8f, right = 8f)
+                    size(6f, 6f)
+                    borderRadius(3f)
+                    backgroundColor(theme.brand)
+                }
+            }
+        }
+        event { click { onClick() } }
+    }
+}
+
+private fun ViewContainer<*, *>.ModelVariantChip(
+    modelId: String,
+    theme: StockChatTheme,
+    isSelected: () -> Boolean,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            val selected = isSelected()
+            marginRight(8f)
+            marginBottom(8f)
+            paddingLeft(10f)
+            paddingRight(10f)
+            height(26f)
+            allCenter()
+            borderRadius(13f)
+            backgroundColor(if (selected) theme.brandSoft else theme.surface)
+            if (selected) border(Border(1f, BorderStyle.SOLID, theme.brand))
+        }
+        Text {
+            attr {
+                // selected 在各自 attr 闭包内读取，保证选中态随选中项变化重渲染（R1）
+                val selected = isSelected()
+                text(modelId)
+                fontSize(11f)
+                color(if (selected) theme.brand else theme.textSecondary)
+            }
+        }
+        event { click { onClick() } }
     }
 }
 

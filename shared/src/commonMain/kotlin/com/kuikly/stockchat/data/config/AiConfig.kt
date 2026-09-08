@@ -69,7 +69,52 @@ class AiConfigStore(
         preferences.setString(STORAGE_KEY, "")
     }
 
+    /**
+     * 按厂商预设分槽位保存完整配置（endpoint/model/apiKey），
+     * 切换厂商时各自恢复自己的配置，互不覆盖。
+     */
+    fun loadPresetConfig(presetId: String): AiConfig? {
+        val raw = preferences.getString(SLOT_STORAGE_KEY)
+        if (raw.isEmpty()) return null
+        return try {
+            val slot = JSONObject(raw).optJSONObject(presetId) ?: return null
+            AiConfig(
+                endpoint = slot.optString("endpoint"),
+                model = slot.optString("model"),
+                apiKey = slot.optString("apiKey"),
+            ).normalized()
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    fun savePresetConfig(presetId: String, config: AiConfig) {
+        val raw = preferences.getString(SLOT_STORAGE_KEY)
+        val root = try {
+            if (raw.isEmpty()) JSONObject() else JSONObject(raw)
+        } catch (_: Throwable) {
+            JSONObject()
+        }
+        val value = config.normalized()
+        root.put(
+            presetId,
+            JSONObject().apply {
+                put("endpoint", value.endpoint)
+                put("model", value.model)
+                put("apiKey", value.apiKey)
+            },
+        )
+        preferences.setString(SLOT_STORAGE_KEY, root.toString())
+    }
+
+    /** 清除当前生效配置与所有厂商槽位 */
+    fun clearAll() {
+        clear()
+        preferences.setString(SLOT_STORAGE_KEY, "")
+    }
+
     companion object {
         private const val STORAGE_KEY = "stockchat_ai_config_v1"
+        private const val SLOT_STORAGE_KEY = "stockchat_ai_config_slots_v1"
     }
 }
