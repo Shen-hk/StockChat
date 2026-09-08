@@ -44,14 +44,23 @@ internal class GlobalSearchPage : BasePager() {
         return {
             attr { backgroundColor(page.theme.page) }
             Scroller {
-                attr { flex(1f); paddingLeft(14f); paddingRight(14f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(70f) }
+                // 竖向 Scroller 水平 padding 会被双倍扣除（子项测量宽 = 视宽 - 2×(左+右)），
+                // 14/14 时右侧实测多出 28dp 留白；右 padding 留 0，左右各 14dp 对齐（同 ChatPage）。
+                attr { flex(1f); paddingLeft(14f); paddingRight(0f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(70f) }
                 View {
                     attr { height(42f); flexDirectionRow(); alignItemsCenter(); paddingLeft(12f); paddingRight(12f); borderRadius(12f); backgroundColor(page.theme.surfaceMuted) }
                     Text { attr { text("⌕"); fontSize(18f); color(page.theme.textTertiary) } }
                     TextArea {
                         attr {
-                            flex(1f); height(40f); marginLeft(7f); fontSize(14f)
+                            flex(1f); marginLeft(7f); fontSize(14f); lineHeight(21f)
                             color(page.theme.textPrimary); backgroundColor(Color(0xFFFFFFFF, 0f))
+                            // 垂直居中关键（同 ChatPage 折叠态范式）：原生 TextArea 恒为
+                            // TOP|START 顶对齐（KRTextAreaView setGravity(51)），固定 40 高
+                            // 盒子会让文本贴顶。让盒子收缩到单行内容高度（21f），顶对齐即
+                            // 等于居中，再由外层 alignItemsCenter 把盒子放进 42 高的行里。
+                            // minHeight 兜空态：空文本时原生内容高度为 0，占位符需可见。
+                            minHeight(21f)
+                            maxHeight(40f)
                             placeholder("代码 / 名称 / 拼音首字母 / 术语")
                             placeholderColor(page.theme.textTertiary); tintColor(page.theme.brand); selectionColor(page.theme.brand)
                         }
