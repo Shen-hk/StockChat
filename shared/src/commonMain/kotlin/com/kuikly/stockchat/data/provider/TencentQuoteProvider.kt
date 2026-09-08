@@ -1,6 +1,5 @@
 package com.kuikly.stockchat.data.provider
 
-import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
@@ -155,9 +154,14 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
         "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$code,${interval.requestPeriod},,,$count,qfq"
 }
 
+/**
+ * 行情降级链：在线 → 会话内缓存 → 终点。
+ * 真实模式（DataSourceConfig.USE_REAL_MARKET_DATA = true）终点为空；模拟模式终点回落 MockQuoteProvider（原状态）。
+ */
 class FallbackQuoteProvider(pagerId: String) : QuoteProvider {
     private val online = TencentQuoteProvider(pagerId)
-    private val offline = MockQuoteProvider()
+    private val offline: QuoteProvider? =
+        if (com.kuikly.stockchat.data.config.DataSourceConfig.USE_REAL_MARKET_DATA) null else com.kuikly.stockchat.data.mock.MockQuoteProvider()
     private val cache = mutableMapOf<String, Quote>()
     private var currentMode = DataMode.AUTO
     override val mode: DataMode get() = currentMode
@@ -173,7 +177,7 @@ class FallbackQuoteProvider(pagerId: String) : QuoteProvider {
                 currentMode = if (cached != null) DataMode.CACHE else DataMode.OFFLINE
                 onResult(cached ?: run {
                     var fallback: Quote? = null
-                    offline.snapshot(symbol) { fallback = it }
+                    offline?.snapshot(symbol) { fallback = it }
                     fallback
                 })
             }
@@ -183,14 +187,16 @@ class FallbackQuoteProvider(pagerId: String) : QuoteProvider {
     override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) {
         online.timeline(symbol) { points ->
             if (points.isNotEmpty()) onResult(points)
-            else offline.timeline(symbol, onResult)
+            else if (offline != null) offline.timeline(symbol, onResult)
+            else onResult(emptyList())
         }
     }
 
     override fun kLines(symbol: String, count: Int, interval: KLineInterval, onResult: (List<KLinePoint>) -> Unit) {
         online.kLines(symbol, count, interval) { points ->
             if (points.isNotEmpty()) onResult(points)
-            else offline.kLines(symbol, count, interval, onResult)
+            else if (offline != null) offline.kLines(symbol, count, interval, onResult)
+            else onResult(emptyList())
         }
     }
 }

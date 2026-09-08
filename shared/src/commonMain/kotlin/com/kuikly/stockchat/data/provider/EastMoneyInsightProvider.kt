@@ -184,6 +184,31 @@ object EastMoneyInsightParser {
         return Triple(rising, falling, flat)
     }
 
+    /**
+     * 按市场大类解析宽度样本（2026-09-08）。f3 带不上数值（停牌等 "-"）的行不参与
+     * 涨跌判定，计入 total 与 counted 的差额（uncovered）；data.total 为该大类全部
+     * 证券数，f6 求和为该大类成交额。
+     */
+    fun parseBreadthSample(root: JSONObject, name: String): BreadthSample {
+        var rising = 0
+        var falling = 0
+        var flat = 0
+        var amount = 0.0
+        root.rows("data", "diff").forEach { row ->
+            val change = row.optString("f3").toDoubleOrNull()
+            amount += row.double("f6")
+            when {
+                change == null -> Unit
+                change > 0.0 -> rising++
+                change < 0.0 -> falling++
+                else -> flat++
+            }
+        }
+        val counted = rising + falling + flat
+        val total = root.optJSONObject("data")?.optString("total")?.toIntOrNull() ?: counted
+        return BreadthSample(name, rising, falling, flat, total, amount)
+    }
+
     /** The broad market list carries the market-wide成交额 in f6 for every row. */
     fun parseMarketTotals(root: JSONObject): MarketTotals {
         val amount = root.rows("data", "diff").sumOf { it.double("f6") }
@@ -357,30 +382,33 @@ class EastMoneyInsightProvider(
     override fun overview(onResult: (MarketOverview?) -> Unit) {
         scope.launch {
             val indices = request("https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&fields=f12,f14,f2,f3,f15,f16&secids=1.000001,0.399001,0.399006,1.000688,0.899050,1.000300,1.000016,1.000905,100.HSI")
-            val breadth = request("https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6000&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23&fields=f3,f6")
+            // 2026-09-08：宽度样本按市场大类分别拉取（沪主板/科创板/深主板/创业板/北交所），
+            // 情绪算法覆盖全市场；每类 total 与可判定家数的差额（停牌等）按大类透传给页底标注。
+            val breadthSamples = breadthCategories.mapNotNull { (name, fs) ->
+                request(breadthCategoryUrl(fs))?.let { EastMoneyInsightParser.parseBreadthSample(it, name) }
+            }
             val sectors = request(sectorUrl(20))
             val date = platformCurrentDate(compact = true)
             val upPool = request(limitPoolUrl(false, date, 100))
             val downPool = request(limitPoolUrl(true, date, 100))
             val indexValues = indices?.let(EastMoneyInsightParser::parseIndices).orEmpty()
-            val breadthValue = breadth?.let(EastMoneyInsightParser::parseBreadth) ?: Triple(0, 0, 0)
-            val totals = breadth?.let(EastMoneyInsightParser::parseMarketTotals)
             val sectorValues = sectors?.let(EastMoneyInsightParser::parseSectors).orEmpty()
             val limitUps = upPool?.let(EastMoneyInsightParser::parseLimitUps).orEmpty()
             val result = MarketOverview(
                 indices = indexValues,
-                risingCount = breadthValue.first,
-                fallingCount = breadthValue.second,
-                flatCount = breadthValue.third,
+                risingCount = breadthSamples.sumOf { it.rising },
+                fallingCount = breadthSamples.sumOf { it.falling },
+                flatCount = breadthSamples.sumOf { it.flat },
                 limitUpCount = upPool?.let(EastMoneyInsightParser::parsePoolCount) ?: 0,
                 limitDownCount = downPool?.let(EastMoneyInsightParser::parsePoolCount) ?: 0,
                 sectors = sectorValues,
                 stamp = SourceStamp("东方财富公开行情", platformCurrentDate(), SourceTier.MARKET_DATA),
-                turnoverAmount = totals?.turnoverAmount?.takeIf { it > 0.0 },
+                turnoverAmount = breadthSamples.sumOf { it.amount }.takeIf { it > 0.0 },
                 sealRate = limitUps.takeIf { it.isNotEmpty() }?.let { rows -> rows.count { it.openCount == 0 }.toDouble() / rows.size },
                 brokenBoardCount = limitUps.sumOf { it.openCount },
                 highestBoard = limitUps.maxOfOrNull { it.consecutiveBoards },
-            ).takeIf { it.indices.isNotEmpty() || it.sectors.isNotEmpty() }
+                breadthSamples = breadthSamples,
+            ).takeIf { it.indices.isNotEmpty() || it.sectors.isNotEmpty() || it.breadthSamples.isNotEmpty() }
             deliver { onResult(result) }
         }
     }
@@ -455,11 +483,28 @@ class EastMoneyInsightProvider(
 
     private fun secId(symbol: String): String {
         val code = symbol.substringBefore('.')
-        return if (symbol.endsWith(".SH", ignoreCase = true)) "1.$code" else "0.$code"
+        return when (symbol.substringAfter('.', "").uppercase()) {
+            "SH" -> "1.$code"
+            // 港股在东财 secid 体系里是 116 前缀；此前港股资金流/基本面全部静默失败。
+            "HK" -> "116.$code"
+            else -> "0.$code"
+        }
     }
 
     private fun dataCenterUrl(report: String, filter: String, sort: String, size: Int, ascending: Boolean = false): String =
         "https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=$report&columns=ALL&filter=$filter&pageNumber=1&pageSize=$size&sortTypes=${if (ascending) 1 else -1}&sortColumns=$sort"
+
+    /** 宽度样本的市场大类拆分（fs 口径）：沪主板/科创板/深主板/创业板/北交所，覆盖全部 A 股。 */
+    private val breadthCategories = listOf(
+        "沪市主板" to "m:1+t:2",
+        "科创板" to "m:1+t:23",
+        "深市主板" to "m:0+t:6",
+        "创业板" to "m:0+t:80",
+        "北交所" to "m:0+t:81",
+    )
+
+    private fun breadthCategoryUrl(fs: String): String =
+        "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=6000&po=1&np=1&fltt=2&invt=2&fid=f3&fs=$fs&fields=f3,f6"
 
     private fun sectorUrl(size: Int): String =
         "https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=$size&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3,f62,f104,f105,f106"

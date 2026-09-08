@@ -6,7 +6,8 @@ fun DataMode.quoteLabel(): String = when (this) {
     DataMode.AUTO -> "自动数据模式"
     DataMode.ONLINE -> "实时行情"
     DataMode.CACHE -> "缓存行情"
-    DataMode.OFFLINE -> "离线演示模式"
+    // 真实模式：OFFLINE = 网络失败且无缓存的真实空态；模拟模式：OFFLINE = 离线演示。
+    DataMode.OFFLINE -> if (com.kuikly.stockchat.data.config.DataSourceConfig.USE_REAL_MARKET_DATA) "离线 · 暂无数据" else "离线演示模式"
 }
 
 /** The provider-native K-line series. WEEK and MONTH are not derived from daily rows. */
@@ -108,6 +109,23 @@ interface QuoteProvider {
         interval: KLineInterval = KLineInterval.DAY,
         onResult: (List<KLinePoint>) -> Unit,
     )
+}
+
+/**
+ * 空数据源：离线降级链的终点（2026-09-08 起替代 MockQuoteProvider 作为默认降级）。
+ * 全部行情走真实数据源；网络失败且无缓存时返回空，由 UI 呈现"待接入/暂无数据"，
+ * 不再用模拟数据冒充真实行情。
+ */
+object NullQuoteProvider : QuoteProvider {
+    override val mode: DataMode = DataMode.OFFLINE
+    override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) = onResult(null)
+    override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) = onResult(emptyList())
+    override fun kLines(
+        symbol: String,
+        count: Int,
+        interval: KLineInterval,
+        onResult: (List<KLinePoint>) -> Unit,
+    ) = onResult(emptyList())
 }
 
 /** 详情页新闻弹幕带的数据源（东财个股资讯；空列表 = 无可展示内容，UI 整条隐藏）。 */

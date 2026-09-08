@@ -394,7 +394,9 @@ internal class MarketPage : BasePager() {
         return {
             attr { backgroundColor(page.theme.page) }
             Scroller {
-                attr { flex(1f); paddingLeft(14f); paddingRight(14f); paddingTop(page.pagerData.statusBarHeight + 68f); paddingBottom(78f) }
+                // 竖向 Scroller 水平 padding 会被双倍扣除，14/14 时右侧多出 28dp 留白；
+                // 右 padding 留 0，左右各 14dp 对齐（同 ChatPage）。
+                attr { flex(1f); paddingLeft(14f); paddingRight(0f); paddingTop(page.pagerData.statusBarHeight + 68f); paddingBottom(78f) }
                 // Kuikly names the vertical content offset `offsetX`; `offsetY`
                 // is horizontal. Reading the latter kept this state at zero on
                 // real Android devices even while the page visibly scrolled.
@@ -492,7 +494,7 @@ internal class MarketPage : BasePager() {
                             }
                         }
                         View { attr { flex(1f) }
-                            Text { attr { text(page.overview.indices.firstOrNull()?.name ?: "上证指数"); fontSize(12f); color(theme.textSecondary) } }
+                            Text { attr { text(page.overview.indices.firstOrNull()?.name ?: "行情接入中"); fontSize(12f); color(theme.textSecondary) } }
                             View {
                                 attr {
                                     marginTop(4f); paddingLeft(4f); paddingRight(4f); borderRadius(4f)
@@ -963,6 +965,27 @@ internal class MarketPage : BasePager() {
                         }
                     }
                 }
+                // 2026-09-08 情绪算法样本标注：宽度样本按市场大类拆分后，"搜不到"
+                // 的证券（停牌、无涨跌幅数据等）按大类在页底标注，不静默丢失。
+                vbind({ page.overview }) {
+                    val samples = page.overview.breadthSamples
+                    if (samples.isNotEmpty()) {
+                        val uncoveredTotal = samples.sumOf { it.uncovered }
+                        Text {
+                            attr {
+                                text(
+                                    "情绪算法样本（按大类）：" + samples.joinToString(" · ") { sample ->
+                                        "${sample.name} ${sample.counted}/${sample.total}"
+                                    } + if (uncoveredTotal > 0) "；停牌等未计入 ${uncoveredTotal} 只" else "，全部计入"
+                                )
+                                marginTop(14f)
+                                fontSize(10f)
+                                lineHeight(15f)
+                                color(theme.textTertiary)
+                            }
+                        }
+                    }
+                }
                 vbind({ page.overview.stamp }) {
                     SourceStampLine(page.overview.stamp, theme)
                 }
@@ -1088,7 +1111,15 @@ internal class MarketPage : BasePager() {
 
     private fun turnoverText(value: Double): String = "${Format.decimal(value / 1_000_000_000_000.0, 2)}万亿"
     private fun moodLabel(score: Int): String = when (score) { in 0..25 -> "偏冷"; in 26..45 -> "偏弱"; in 46..60 -> "均衡"; in 61..80 -> "偏暖"; else -> "较热" }
-    private fun moodHeadline(data: MarketOverview): String = when (data.moodScore) { in 0..25 -> "情绪走弱，个股承压"; in 26..45 -> "指数与情绪同步偏弱"; in 46..60 -> "多空均衡，结构分化"; in 61..80 -> "上涨占优，热度回升"; else -> "市场热度较高，分化仍在" }
+    private fun moodHeadline(data: MarketOverview): String = when {
+        // 空数据（初始/离线空态）不产出"情绪走弱"这类假结论。
+        data.indices.isEmpty() && data.risingCount == 0 && data.fallingCount == 0 -> "行情接入中，数据马上就位"
+        data.moodScore in 0..25 -> "情绪走弱，个股承压"
+        data.moodScore in 26..45 -> "指数与情绪同步偏弱"
+        data.moodScore in 46..60 -> "多空均衡，结构分化"
+        data.moodScore in 61..80 -> "上涨占优，热度回升"
+        else -> "市场热度较高，分化仍在"
+    }
     private fun moodColor(score: Int): Color = if (score >= 50) theme.rise else theme.fall
     private fun threshold(change: Double?): String = when { change == null -> "关口待接入"; change <= -2 -> "关键关口承压"; change >= 2 -> "关键关口走强"; else -> "关口附近震荡" }
     private fun marketPhase(): MarketPhase = when (platformCurrentHour().coerceIn(0, 23)) { in 0..8 -> MarketPhase("盘前准备", false, "开盘前数据不代表成交结果"); 9 -> MarketPhase("集合竞价", true, "竞价阶段可能出现虚假大单，需以连续交易为准"); in 10..11 -> MarketPhase("早盘连续交易", true, null); 12 -> MarketPhase("午间休市", false, "休市期间行情静止，并非数据故障"); in 13..14 -> MarketPhase("午后连续交易", true, null); 15 -> MarketPhase("收盘集合 / 复盘", false, "收盘数据正在汇总"); in 16..18 -> MarketPhase("盘后静默期", false, "盘后数据可能陆续修订"); else -> MarketPhase("非交易时段", false, "显示最近一个交易日数据") }

@@ -33,6 +33,7 @@ internal class HotspotPage : BasePager() {
 
     override fun created() {
         super.created()
+        // 数据源开关：模拟模式预填演示数据（原状态）；真实模式 provider 返回空 = 空态。
         apply(OfflineMarketInsightProvider().hotspotValue())
         dependencies.insightRepository.loadHotspots(::apply)
     }
@@ -48,7 +49,9 @@ internal class HotspotPage : BasePager() {
         return {
             attr { backgroundColor(page.theme.page) }
             Scroller {
-                attr { flex(1f); paddingLeft(14f); paddingRight(14f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(70f) }
+                // 竖向 Scroller 水平 padding 会被双倍扣除，14/14 时右侧多出 28dp 留白；
+                // 右 padding 留 0，左右各 14dp 对齐（同 ChatPage）。
+                attr { flex(1f); paddingLeft(14f); paddingRight(0f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(70f) }
                 ExplanationCard(page.snapshot.explanation, page.snapshot.stamp, page.theme)
 
                 InsightSectionTitle("板块排行", "涨幅不是推荐，结合资金与涨跌家数看", page.theme)

@@ -2,12 +2,16 @@ package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.entity.Security
-import com.kuikly.stockchat.data.mock.MockQuoteProvider
 
 /** A page-independent source of truth for quotes, their short-lived cache, and offline fallback. */
 class QuoteRepository(
     private val online: QuoteProvider,
-    private val offline: QuoteProvider = MockQuoteProvider(),
+    // 数据源开关：真实模式降级终点 = NullQuoteProvider（空态）；模拟模式 = MockQuoteProvider（原状态）。
+    private val offline: QuoteProvider = if (com.kuikly.stockchat.data.config.DataSourceConfig.USE_REAL_MARKET_DATA) {
+        NullQuoteProvider
+    } else {
+        com.kuikly.stockchat.data.mock.MockQuoteProvider()
+    },
     private val cacheStore: QuoteCacheStore = NoOpQuoteCacheStore,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
 ) {

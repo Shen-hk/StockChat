@@ -20,7 +20,10 @@ import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
+import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.data.config.DataSourceConfig
 import com.kuikly.stockchat.data.mock.MockDataBank
+import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.CardSheetHost
 import com.kuikly.stockchat.protocol.AttributionIntent
@@ -28,6 +31,7 @@ import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
@@ -48,79 +52,97 @@ internal class CardGalleryPage : BasePager() {
     private var subThreadCardKey: String by observable("")
     private var subThreadCollapsed: Boolean by observable(false)
     private var accordionShowcaseExpandedKey: String by observable("")
+    // 2026-09-08：卡片画廊同样接真实行情（QuoteRepository 三级链），组件回归
+    // 用真数字跑；数据未返回前用 Quote.placeholder 占位（价格 0，不含假数据）。
+    private var liveQuote: Quote? by observable(null)
+    private var liveCompare: Quote? by observable(null)
 
     override fun created() {
         super.created()
         StockCardRenderers.ensureRegistered()
         MarketCardRenderers.ensureRegistered()
+        if (!DataSourceConfig.USE_REAL_MARKET_DATA) {
+            // 模拟模式（原状态）：直接取 MockDataBank 种子行情。
+            liveQuote = MockDataBank.quote("600519.SH")
+            liveCompare = MockDataBank.quote("000858.SZ")
+            return
+        }
+        // 真实模式：QuoteRepository 三级链，数据未返回前用 Quote.placeholder 占位（价格 0）。
+        val dependencies = MarketDependencies.forPager(pagerId)
+        dependencies.quoteRepository.load("600519.SH") { liveQuote = it.quote ?: Quote.placeholder("600519.SH", "贵州茅台") }
+        dependencies.quoteRepository.load("000858.SZ") { liveCompare = it.quote ?: Quote.placeholder("000858.SZ", "五粮液") }
     }
 
     override fun body(): ViewBuilder {
         val page = this
-        val quote = MockDataBank.quote("600519.SH")!!
-        val attribution = CardPayloadParser.parse("attribution", "{\"symbol\":\"600519.SH\"}") as AttributionIntent
-        val models = listOf(
-            StockQuoteCardModel(quote),
-            StockChartCardModel(quote),
-            AttributionCardModel(quote, attribution.direction, attribution.factors),
-            DefinitionCardModel("市盈率 PE", "股价相对于每股收益的倍数，用来观察估值水平。", "同行业比较通常比跨行业比较更有意义。"),
-            InsightCardModel(quote, "这是卡片画廊中的示例解读，用于独立验证卡片外壳、主题和密度。"),
-            StockCompareCardModel(listOf(quote, MockDataBank.quote("000858.SZ")!!)),
-            NewsCardModel(quote, listOf(
-                NewsItem("公司发布近期经营情况说明", "公司公告", "2 小时前"),
-                NewsItem("白酒板块盘中震荡，龙头股表现分化", "公开资讯", "3 小时前"),
-            )),
-            ProductConceptCardModel(
-                title = "交易台账 / AI 复盘",
-                value = "买入前只记录事实与原始理由，卖出或复盘时逐条核对哪些逻辑已经变化。",
-                flow = listOf("记录日期、标的与三条原始理由", "自动关联后续公告和财报", "复盘只核对逻辑变化，不评价买卖对错"),
-                boundary = "不连接券商、不代下单、不输出收益承诺。",
-                cardId = "concept:journal",
-            ),
-            ProductConceptCardModel(
-                title = "持仓结构分析",
-                value = "导入持仓后只解释集中度、行业分布和共同风险暴露，让用户看见组合里重复承担的风险。",
-                flow = listOf("本地录入持仓与成本", "聚合行业、市值与波动暴露", "用中性语言解释集中风险"),
-                boundary = "不推荐调仓比例，不给个股买卖建议。",
-                cardId = "concept:portfolio",
-            ),
-        )
         return {
             attr { backgroundColor(page.theme.page) }
             Scroller {
-                attr { flex(1f); padding(14f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(32f) }
-                AccordionShowcase(
-                    quote = quote,
-                    theme = page.theme,
-                    expandedKey = { page.accordionShowcaseExpandedKey },
-                    onToggleExpanded = { key ->
-                        page.accordionShowcaseExpandedKey = if (page.accordionShowcaseExpandedKey == key) "" else key
-                    },
-                )
-                Text {
-                    attr {
-                        text("同一套模型与渲染器可在聊天、详情和迷你预览中复用。")
-                        marginTop(16f)
-                        fontSize(12f)
-                        lineHeight(18f)
-                        color(page.theme.textSecondary)
-                    }
-                }
-                models.forEach { model ->
-                    GalleryCard(
-                        model = model,
-                        theme = page.theme,
-                        expandedCardKey = { page.expandedCardKey },
-                        drilledKeys = page.drilledKeys.toSet(),
-                        subThreadCardKey = page.subThreadCardKey,
-                        subThreadCollapsed = page.subThreadCollapsed,
-                        onToggleExpanded = { page.expandedCardKey = if (page.expandedCardKey == it) "" else it },
-                        onOpenSheet = { page.openSheet(it) },
-                        onToggleDrill = { page.toggleDrill(it) },
-                        onStartSubThread = { page.openSubThread(it.cardId) },
-                        onToggleSubThread = { page.subThreadCollapsed = !page.subThreadCollapsed },
-                        glass = page.hostGlassRenderer,
+                // 竖向 Scroller 水平 padding 会被双倍扣除，padding(14f) 后右 padding 清 0 对齐（同 ChatPage）。
+                attr { flex(1f); padding(14f); paddingRight(0f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(32f) }
+                vbind({ page.liveQuote to page.liveCompare }) {
+                    val quote = page.liveQuote ?: Quote.placeholder("600519.SH", "贵州茅台")
+                    val compare = page.liveCompare ?: Quote.placeholder("000858.SZ", "五粮液")
+                    val attribution = CardPayloadParser.parse("attribution", "{\"symbol\":\"600519.SH\"}") as AttributionIntent
+                    val models = listOf(
+                        StockQuoteCardModel(quote),
+                        StockChartCardModel(quote),
+                        AttributionCardModel(quote, attribution.direction, attribution.factors),
+                        DefinitionCardModel("市盈率 PE", "股价相对于每股收益的倍数，用来观察估值水平。", "同行业比较通常比跨行业比较更有意义。"),
+                        InsightCardModel(quote, "这是卡片画廊中的示例解读，用于独立验证卡片外壳、主题和密度。"),
+                        StockCompareCardModel(listOf(quote, compare)),
+                        NewsCardModel(quote, listOf(
+                            NewsItem("公司发布近期经营情况说明", "公司公告", "2 小时前"),
+                            NewsItem("白酒板块盘中震荡，龙头股表现分化", "公开资讯", "3 小时前"),
+                        )),
+                        ProductConceptCardModel(
+                            title = "交易台账 / AI 复盘",
+                            value = "买入前只记录事实与原始理由，卖出或复盘时逐条核对哪些逻辑已经变化。",
+                            flow = listOf("记录日期、标的与三条原始理由", "自动关联后续公告和财报", "复盘只核对逻辑变化，不评价买卖对错"),
+                            boundary = "不连接券商、不代下单、不输出收益承诺。",
+                            cardId = "concept:journal",
+                        ),
+                        ProductConceptCardModel(
+                            title = "持仓结构分析",
+                            value = "导入持仓后只解释集中度、行业分布和共同风险暴露，让用户看见组合里重复承担的风险。",
+                            flow = listOf("本地录入持仓与成本", "聚合行业、市值与波动暴露", "用中性语言解释集中风险"),
+                            boundary = "不推荐调仓比例，不给个股买卖建议。",
+                            cardId = "concept:portfolio",
+                        ),
                     )
+                    AccordionShowcase(
+                        quote = quote,
+                        theme = page.theme,
+                        expandedKey = { page.accordionShowcaseExpandedKey },
+                        onToggleExpanded = { key ->
+                            page.accordionShowcaseExpandedKey = if (page.accordionShowcaseExpandedKey == key) "" else key
+                        },
+                    )
+                    Text {
+                        attr {
+                            text("同一套模型与渲染器可在聊天、详情和迷你预览中复用。")
+                            marginTop(16f)
+                            fontSize(12f)
+                            lineHeight(18f)
+                            color(page.theme.textSecondary)
+                        }
+                    }
+                    models.forEach { model ->
+                        GalleryCard(
+                            model = model,
+                            theme = page.theme,
+                            expandedCardKey = { page.expandedCardKey },
+                            drilledKeys = page.drilledKeys.toSet(),
+                            subThreadCardKey = page.subThreadCardKey,
+                            subThreadCollapsed = page.subThreadCollapsed,
+                            onToggleExpanded = { page.expandedCardKey = if (page.expandedCardKey == it) "" else it },
+                            onOpenSheet = { page.openSheet(it) },
+                            onToggleDrill = { page.toggleDrill(it) },
+                            onStartSubThread = { page.openSubThread(it.cardId) },
+                            onToggleSubThread = { page.subThreadCollapsed = !page.subThreadCollapsed },
+                            glass = page.hostGlassRenderer,
+                        )
+                    }
                 }
             }
             AppTopBar(

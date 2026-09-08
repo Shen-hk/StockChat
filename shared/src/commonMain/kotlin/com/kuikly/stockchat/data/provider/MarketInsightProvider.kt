@@ -123,6 +123,25 @@ data class MarketIndex(
     val low: Double? = null,
 )
 
+/**
+ * 情绪算法（恐贪/宽度）的样本按市场大类拆分（2026-09-08）。
+ * [total] 为东财 clist 返回的该大类证券总数；rising/falling/flat 为样本内可判定
+ * 涨跌的家数。差额 [uncovered] 即"搜不到"的部分（停牌、无涨跌幅数据等），
+ * 按大类在市场页底部标注，不静默丢失。
+ */
+data class BreadthSample(
+    val name: String,
+    val rising: Int,
+    val falling: Int,
+    val flat: Int,
+    val total: Int,
+    /** 该大类当日成交额合计（f6 求和），供量能口径复用。 */
+    val amount: Double = 0.0,
+) {
+    val counted: Int get() = rising + falling + flat
+    val uncovered: Int get() = (total - counted).coerceAtLeast(0)
+}
+
 data class SectorRank(
     val code: String,
     val name: String,
@@ -160,6 +179,8 @@ data class MarketOverview(
     val highestBoard: Int? = null,
     val yesterdayHighestBoard: Int? = null,
     val northboundFlow: Double? = null,
+    /** 宽度样本按市场大类拆分（沪主板/科创板/深主板/创业板/北交所），供页底标注。 */
+    val breadthSamples: List<BreadthSample> = emptyList(),
 ) {
     val moodScore: Int
         get() {
@@ -167,12 +188,18 @@ data class MarketOverview(
             return (breadth * 0.7 + (50 + (limitUpCount - limitDownCount).coerceIn(-50, 50)) * 0.3).toInt().coerceIn(0, 100)
         }
     val explanation: String
-        get() = when (moodScore) {
-            in 0..25 -> "市场情绪偏冷，多数个股承压。先区分指数下跌与持仓所在板块的差异，不宜只看单一指数。"
-            in 26..45 -> "市场情绪偏弱，下跌家数相对更多。当前数据说明风险偏好回落，不预测下一交易日方向。"
-            in 46..60 -> "市场多空相对均衡，结构分化比指数方向更重要。可继续查看领涨板块与涨停分布。"
-            in 61..80 -> "市场情绪偏暖，上涨家数占优。热度主要集中在哪些板块，仍需结合资金流确认。"
-            else -> "市场情绪较热，涨停与上涨家数集中。热度高不等同于追涨依据，应留意拥挤和分化。"
+        get() {
+            // 空数据（在线失败且无缓存）不产出"情绪偏冷"这类假结论。
+            if (indices.isEmpty() && risingCount == 0 && fallingCount == 0) {
+                return "行情数据尚未接入，市场情绪暂无法计算。请下拉刷新或稍后再试。"
+            }
+            return when (moodScore) {
+                in 0..25 -> "市场情绪偏冷，多数个股承压。先区分指数下跌与持仓所在板块的差异，不宜只看单一指数。"
+                in 26..45 -> "市场情绪偏弱，下跌家数相对更多。当前数据说明风险偏好回落，不预测下一交易日方向。"
+                in 46..60 -> "市场多空相对均衡，结构分化比指数方向更重要。可继续查看领涨板块与涨停分布。"
+                in 61..80 -> "市场情绪偏暖，上涨家数占优。热度主要集中在哪些板块，仍需结合资金流确认。"
+                else -> "市场情绪较热，涨停与上涨家数集中。热度高不等同于追涨依据，应留意拥挤和分化。"
+            }
         }
 }
 
@@ -183,6 +210,8 @@ data class HotspotSnapshot(
 ) {
     val explanation: String
         get() {
+            // 空数据（在线失败且无缓存）给诚实的空态文案，不产出假归因。
+            if (sectors.isEmpty() && limitUps.isEmpty()) return "暂无可用的板块与涨停池数据，请下拉刷新或稍后再试。"
             val lead = sectors.firstOrNull()?.name ?: "暂无明确主线"
             val clustered = limitUps.groupBy { it.sector }.maxByOrNull { it.value.size }
             return if (clustered != null) "$lead 领涨，涨停主要聚集在${clustered.key}（${clustered.value.size} 只）。这是当日热度归因，不是选股建议。"
