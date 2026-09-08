@@ -138,22 +138,31 @@ internal class GlossaryPage : BasePager() {
                     animate(Animation.easeOut(0.22f), "glossary-handoff")
                 }
             }
-            Scroller {
-                attr {
-                    flex(1f)
-                    paddingLeft(14f)
-                    paddingRight(14f)
-                    paddingTop(page.pagerData.statusBarHeight + 73f)
-                    paddingBottom(32f)
-                }
-
-                // ── 地图首页 ──
-                vif({ page.viewMode == VIEW_MAP }) {
+            // 首页取消垂直滚动（用户指定）：View 直排、内容超屏裁剪。
+            // 卡片流必须是页面上唯一的滚动/手势层，纵向滚动容器彻底退出手势竞争。
+            vif({ page.viewMode == VIEW_MAP }) {
+                View {
+                    attr {
+                        flex(1f)
+                        paddingLeft(14f)
+                        paddingRight(14f)
+                        paddingTop(page.pagerData.statusBarHeight + 73f)
+                        paddingBottom(32f)
+                    }
                     page.renderKnowledgeMap(this)
                 }
+            }
 
-                // ── 二级词表（折叠降级）──
-                vif({ page.viewMode == VIEW_LIST }) {
+            // ── 二级词表（折叠降级）──
+            vif({ page.viewMode == VIEW_LIST }) {
+                Scroller {
+                    attr {
+                        flex(1f)
+                        paddingLeft(14f)
+                        paddingRight(14f)
+                        paddingTop(page.pagerData.statusBarHeight + 73f)
+                        paddingBottom(32f)
+                    }
                     page.renderListTopBar(this, searchSeed)
                     page.renderWordList(this)
                 }
