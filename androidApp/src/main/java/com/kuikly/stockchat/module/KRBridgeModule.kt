@@ -305,7 +305,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             val height = (textLayout.height + 420).coerceAtLeast(1200)
             val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(bitmap)
-            canvas.drawColor(Color.rgb(245, 247, 252))
+            canvas.drawColor(Color.WHITE)
             val paint = Paint(Paint.ANTI_ALIAS_FLAG)
             paint.color = Color.rgb(47, 107, 255)
             canvas.drawRoundRect(RectF(58f, 58f, 1022f, 238f), 42f, 42f, paint)
