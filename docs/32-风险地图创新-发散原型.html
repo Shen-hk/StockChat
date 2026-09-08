@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>32 · 风险地图创新 · 一张图多图层 · 发散原型</title>
+<style>
+/* finesse · register=product+h5(morph A) · token 沿用 doc 25 权威口径
+ * SOUL=6 SPECTACLE=6(SVG 星图引擎) DENSITY=6 */
+:root{
+  --page:#F5F6F8; --surface:#FFFFFF; --muted:#EEF1F5;
+  --t1:#1A1D23; --t2:#5B6573; --t3:#5F6B82;
+  --brand:#1E5BD6; --brandSoft:#EAF1FD;
+  --rise:#D92E2E; --riseSoft:#FCEDED;
+  --fall:#0C7A45; --fallSoft:#E9F4EE;
+  --flat:#8A93A3; --divider:#E2E8F0;
+  --glass:rgba(255,255,255,.82); --glassEdge:rgba(255,255,255,.72);
+  --sh1:0 1px 2px rgba(24,34,56,.05);
+  --sh2:0 4px 14px rgba(24,34,56,.07);
+  --sh3:0 10px 30px rgba(24,34,56,.12);
+  --mono:'SF Mono',ui-monospace,'Roboto Mono',Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-font-smoothing:antialiased}
+html,body{overflow-x:clip}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;
+  background:#EDEFF3;color:var(--t1);padding:0 0 64px;
+}
+.wrap{max-width:1440px;margin:0 auto;padding:0 24px}
+header{padding:28px 0 20px;border-bottom:1px solid #DDE1E8;margin-bottom:20px}
+.kicker{font-size:11px;letter-spacing:.14em;color:var(--t3);text-transform:uppercase;margin-bottom:8px}
+h1{font-size:24px;font-weight:700;letter-spacing:-.01em}
+.sub{font-size:13px;color:var(--t2);margin-top:6px;line-height:1.7}
+.sub b{color:var(--brand);font-weight:600}
+
+/* 视图切换 */
+.tabs{display:flex;gap:8px;margin-top:18px;flex-wrap:wrap}
+.tab{
+  padding:8px 16px;border-radius:9px;border:1px solid #DDE1E8;background:#fff;
+  font-size:13px;font-weight:500;color:var(--t2);cursor:pointer;transition:.18s;font-family:inherit;
+}
+.tab:hover{border-color:#C3CBDA;color:var(--t1)}
+.tab.on{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 2px 8px rgba(30,91,214,.28)}
+.tab .n{font-family:var(--mono);font-size:11px;opacity:.72;margin-left:6px}
+.view{display:none;animation:fade .32s ease}
+.view.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+/* 舞台 */
+.stage{display:flex;gap:34px;justify-content:center;align-items:flex-start;flex-wrap:wrap;margin-top:10px}
+.cell{width:392px;flex:0 0 auto}
+.cell.wide{width:880px;flex:0 0 auto;max-width:100%}
+.cell-label{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:12px;font-weight:600;color:var(--t2);letter-spacing:.02em}
+.dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.dot.bad{background:var(--rise)}
+.dot.good{background:var(--fall)}
+.dot.info{background:var(--brand)}
+.cell-note{font-size:11.5px;color:var(--t3);line-height:1.7;margin-top:12px;padding-left:14px;border-left:2px solid var(--divider)}
+.cell-note b{color:var(--t1);font-weight:600}
+.vs{align-self:center;width:44px;height:44px;border-radius:50%;flex:0 0 auto;background:#fff;border:1px solid var(--divider);display:flex;align-items:center;justify-content:center;color:var(--brand);font-size:15px;font-weight:600;box-shadow:var(--sh1);margin-top:-40px}
+
+/* 手机壳 */
+.phone{
+  width:360px;height:768px;border-radius:34px;background:var(--page);margin:0 auto;
+  border:1px solid #D9DEE7;box-shadow:var(--sh3),0 0 0 6px #E4E7EE;
+  position:relative;overflow:hidden;
+}
+.pbar{position:absolute;top:0;left:0;right:0;height:44px;z-index:60;display:flex;align-items:flex-end;justify-content:space-between;padding:0 20px 7px;font-size:12px;font-weight:600;color:var(--t1)}
+.pbar .time{font-family:var(--mono);font-size:12px}
+.pbar .icons{display:flex;gap:4px;font-size:9px;color:var(--t1);letter-spacing:.02em}
+.screen{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;padding-bottom:28px}
+.screen::-webkit-scrollbar{width:0}
+
+/* AppTopBar */
+.atb{position:sticky;top:0;z-index:50;padding:46px 16px 10px;background:linear-gradient(180deg,var(--page) 62%,rgba(245,246,248,0))}
+.atb-back{font-size:11.5px;color:var(--brand);font-weight:500;margin-bottom:5px;cursor:default}
+.atb-t{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.atb-s{font-size:11px;color:var(--t3);margin-top:3px;line-height:1.45}
+
+/* 氛围底 z0 */
+.amb{position:relative;margin:-6px -1px 0;padding:0 16px 18px;overflow:visible}
+.amb.neutral{background:radial-gradient(120% 100% at 20% 0%,rgba(90,100,120,.07) 0%,rgba(245,246,248,0) 62%)}
+.headline{font-size:17px;font-weight:600;line-height:1.5;letter-spacing:-.01em}
+.headline em{font-style:normal;color:var(--brand)}
+.meta{font-size:10px;color:var(--t3);margin-top:7px;font-family:var(--mono);letter-spacing:.01em}
+.meta .up{color:var(--t2)}
+
+/* z 层 */
+.z3{background:var(--glass);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-radius:16px;box-shadow:var(--sh3);border:1px solid var(--glassEdge);position:relative;z-index:30}
+.z2{background:var(--surface);border-radius:14px;box-shadow:var(--sh1);border:1px solid var(--divider);position:relative;z-index:20}
+.z1{background:var(--surface);opacity:.92;border-radius:14px;position:relative;z-index:10}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+
+/* 改前面板 */
+.oldpanel{margin:10px 12px 0;padding:13px 14px;background:var(--surface);border-radius:14px;box-shadow:var(--sh1);border:1px solid var(--divider)}
+.oldpanel .pt{display:flex;align-items:center;font-size:12.5px;font-weight:600}
+.oldpanel .pt .what{margin-left:auto;font-size:10px;color:var(--brand);background:var(--brandSoft);border-radius:8px;padding:2px 8px}
+.oldpanel .pd{font-size:10.5px;color:var(--t3);margin-top:7px}
+.bar{height:6px;border-radius:3px;background:var(--muted);margin-top:6px;position:relative;overflow:hidden}
+.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--flat)}
+.matrix{display:grid;grid-template-columns:repeat(5,18px);gap:2.5px;margin-top:8px;margin-left:auto}
+.matrix b{width:18px;height:18px;border-radius:4px;display:block}
+.dim{font-size:10.5px;color:var(--t3);margin-top:10px;line-height:1.6}
+.dim.ai{padding-left:9px;border-left:2px solid var(--brand);color:var(--t2);margin-top:9px}
+
+/* 标注卡 */
+.flag{display:flex;gap:10px;padding:12px 14px;background:var(--surface);border-radius:14px;border:1px solid var(--divider);box-shadow:var(--sh1);margin-bottom:10px}
+.flag .fi{width:22px;height:22px;border-radius:7px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:#fff}
+.flag .fi.b{background:var(--rise)}
+.flag .fi.g{background:var(--fall)}
+.flag .fi.k{background:var(--brand)}
+.flag .ft{font-size:12px;font-weight:600;line-height:1.5}
+.flag .fd{font-size:11px;color:var(--t3);line-height:1.65;margin-top:3px}
+
+/* ── 星图主态 ── */
+.skyclip{margin:8px 12px 0;position:relative}
+.sky{position:relative;border-radius:16px;overflow:hidden;background:linear-gradient(178deg,#F7F9FC 0%,#EFF3F9 100%);border:1px solid var(--divider)}
+.sky svg{display:block;width:100%;height:auto}
+.layertip{position:absolute;left:12px;top:10px;right:12px;z-index:5;pointer-events:none}
+.layertip .lt{display:inline-block;font-size:10.5px;color:var(--t2);background:rgba(255,255,255,.86);backdrop-filter:blur(6px);border:1px solid var(--glassEdge);border-radius:8px;padding:3px 9px;box-shadow:var(--sh1)}
+.chips{display:flex;gap:6px;margin:12px 12px 0;flex-wrap:wrap}
+.chip{flex:1;min-width:58px;height:34px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;border-radius:10px;background:var(--surface);border:1px solid var(--divider);font-size:11.5px;color:var(--t2);cursor:pointer;transition:.18s;user-select:none}
+.chip small{font-size:8.5px;color:var(--t3);font-family:var(--mono);letter-spacing:.06em}
+.chip:hover{border-color:#C3CBDA}
+.chip.act{background:var(--brandSoft);border-color:rgba(30,91,214,.35);color:var(--brand);font-weight:600}
+.chip.act small{color:var(--brand);opacity:.7}
+
+/* 成员抽屉 / 解读抽屉 */
+.drawer{
+  position:absolute;left:10px;right:10px;bottom:10px;z-index:40;border-radius:14px;
+  background:var(--glass);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  border:1px solid var(--glassEdge);box-shadow:var(--sh3);
+  padding:12px 14px 12px;transform:translateY(12px);opacity:0;pointer-events:none;transition:.24s cubic-bezier(.32,.72,.24,1);
+}
+.drawer.on{transform:none;opacity:1;pointer-events:auto}
+.drawer .dt{display:flex;align-items:center;font-size:12.5px;font-weight:600}
+.drawer .dx{margin-left:auto;font-size:11px;color:var(--t3);cursor:pointer;padding:2px 6px;border-radius:6px}
+.drawer .dx:hover{background:var(--muted)}
+.mrow{display:flex;align-items:center;gap:8px;padding:8px 2px;border-top:1px solid var(--divider);margin-top:8px}
+.mrow:first-of-type{border-top:0}
+.mrow .nm{font-size:12px;font-weight:500}
+.mrow .sub{font-size:10px;color:var(--t3);margin-top:1px}
+.mrow .px{margin-left:auto;text-align:right}
+.mrow .px b{font-size:12px;font-weight:600;font-family:var(--mono)}
+.mrow .px s{display:block;text-decoration:none;font-size:9.5px;color:var(--t3)}
+.up{color:var(--rise)}.down{color:var(--fall)}
+.go{font-size:10.5px;color:var(--brand);margin-left:10px;white-space:nowrap}
+.fact{font-size:11px;color:var(--t2);line-height:1.7;margin-top:8px;padding-left:10px;border-left:2px solid var(--brand)}
+.fact b{color:var(--t1);font-weight:600}
+.ask{display:inline-flex;align-items:center;gap:4px;margin-top:10px;font-size:11px;color:var(--brand);background:var(--brandSoft);border-radius:9px;padding:6px 11px;cursor:pointer}
+
+/* 焦点注释（AI 跟随） */
+.focus-note{
+  position:absolute;left:12px;right:12px;bottom:12px;z-index:38;
+  display:flex;gap:8px;align-items:flex-start;
+  background:rgba(255,255,255,.9);backdrop-filter:blur(14px);
+  border:1px solid var(--glassEdge);border-radius:12px;box-shadow:var(--sh2);
+  padding:9px 12px;font-size:11px;color:var(--t2);line-height:1.6;
+  opacity:0;transform:translateY(8px);transition:.22s;pointer-events:none;
+}
+.focus-note.on{opacity:1;transform:none}
+.focus-note::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:2px;border-radius:1px;background:var(--brand)}
+.focus-note b{color:var(--t1);font-weight:600}
+
+/* 引路星脉冲 */
+@keyframes pulse{0%{transform:scale(.92);opacity:.55}70%{transform:scale(1.28);opacity:0}100%{transform:scale(1.28);opacity:0}}
+@keyframes halo{0%,100%{opacity:.5}50%{opacity:.14}}
+@keyframes breathe{0%,100%{r:var(--r1)}50%{r:var(--r2)}}
+@keyframes dashin{to{stroke-dashoffset:0}}
+@keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes blip{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.15);opacity:1}100%{transform:scale(1);opacity:1}}
+
+/* 时间刷 */
+.tbrush{margin:10px 12px 0;background:var(--surface);border:1px solid var(--divider);border-radius:12px;padding:10px 12px 12px;box-shadow:var(--sh1)}
+.tbrush .tb-head{display:flex;align-items:center;font-size:11px;color:var(--t2)}
+.tbrush .tb-head .cur{font-family:var(--mono);font-size:11px;color:var(--brand);font-weight:600}
+.tbrush .tb-head .hint{margin-left:auto;font-size:9.5px;color:var(--t3)}
+.tb-track{position:relative;height:34px;margin-top:8px;cursor:pointer}
+.tb-line{position:absolute;left:0;right:0;top:17px;height:2px;border-radius:1px;background:var(--divider)}
+.tb-ev{position:absolute;top:11px;width:14px;height:14px;border-radius:50%;background:#fff;border:2px solid var(--flat);transform:translateX(-7px);transition:.2s}
+.tb-ev.lit{border-color:var(--brand);background:var(--brandSoft);box-shadow:0 0 0 4px rgba(30,91,214,.14)}
+.tb-ev span{position:absolute;top:16px;left:50%;transform:translateX(-50%);font-size:8.5px;color:var(--t3);white-space:nowrap}
+.tb-knob{position:absolute;top:7px;width:22px;height:22px;border-radius:50%;background:#fff;border:2px solid var(--brand);box-shadow:var(--sh2);transform:translateX(-11px);cursor:grab;transition:box-shadow .15s}
+.tb-knob:active{cursor:grabbing;box-shadow:0 0 0 6px rgba(30,91,214,.16)}
+.tb-day{font-size:10.5px;color:var(--t2);line-height:1.6;margin-top:4px;min-height:17px}
+.tb-day b{color:var(--brand);font-weight:600;font-family:var(--mono)}
+
+/* ── 视图3 演示画布 ── */
+.demo{background:var(--surface);border:1px solid var(--divider);border-radius:18px;box-shadow:var(--sh2);padding:18px}
+.demo h4{font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.demo h4 .tag{font-size:9.5px;color:var(--brand);background:var(--brandSoft);border-radius:7px;padding:2px 8px;font-weight:600}
+.demo .dsub{font-size:11.5px;color:var(--t3);margin-top:4px;line-height:1.65}
+.demo svg{display:block;width:100%;height:auto;margin-top:12px;touch-action:none;user-select:none}
+.ctxbar{
+  margin-top:14px;border-radius:14px;padding:10px 12px;
+  background:rgba(255,255,255,.88);backdrop-filter:blur(16px);
+  border:1px solid var(--glassEdge);box-shadow:var(--sh2);
+  opacity:.28;transition:.25s;
+}
+.ctxbar.on{opacity:1}
+.ctxbar .cbt{font-size:10px;color:var(--t3)}
+.ctxbar .cchips{display:flex;gap:7px;margin-top:7px;flex-wrap:wrap}
+.ctxbar .cc{font-size:11px;color:var(--brand);background:var(--brandSoft);border-radius:9px;padding:6px 11px;cursor:pointer;transition:.15s}
+.ctxbar .cc:hover{filter:brightness(.97)}
+.ctxbar .cin{flex:1;min-width:120px;border:1px solid var(--divider);border-radius:9px;height:30px;display:flex;align-items:center;padding:0 10px;font-size:11px;color:var(--t3)}
+
+/* 规格表 */
+table.spec{width:100%;border-collapse:collapse;font-size:11.5px;margin-top:10px;background:var(--surface);border-radius:14px;overflow:hidden;box-shadow:var(--sh1);border:1px solid var(--divider)}
+table.spec th{background:var(--muted);text-align:left;font-size:10.5px;color:var(--t2);font-weight:600;padding:8px 12px}
+table.spec td{padding:8px 12px;border-top:1px solid var(--divider);color:var(--t2);line-height:1.6;vertical-align:top}
+table.spec td:first-child{color:var(--t1);font-weight:500;white-space:nowrap}
+table.spec .ok{color:var(--fall);font-weight:600}
+table.spec .mono{font-family:var(--mono);font-size:10.5px}
+
+/* AI 形态卡 */
+.ai-card{background:var(--surface);border:1px solid var(--divider);border-radius:16px;box-shadow:var(--sh1);padding:16px;margin-bottom:14px}
+.ai-card .ah{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600}
+.ai-card .ah .old{font-size:9.5px;color:#fff;background:var(--rise);border-radius:7px;padding:2px 8px}
+.ai-card .ah .new{font-size:9.5px;color:#fff;background:var(--fall);border-radius:7px;padding:2px 8px}
+.ai-card .ad{font-size:11.5px;color:var(--t2);line-height:1.75;margin-top:8px}
+.ai-card .ad b{color:var(--t1)}
+.mini-scroll{border:1px solid var(--divider);border-radius:12px;background:var(--muted);padding:10px;margin-top:10px}
+.mini-scroll .mp{background:var(--surface);border-radius:10px;padding:9px 11px;margin-top:7px;box-shadow:var(--sh1)}
+.mini-scroll .mp:first-child{margin-top:0}
+.mini-scroll .mp .t{font-size:11px;font-weight:600;color:var(--t2)}
+.mini-scroll .mp .a{font-size:10.5px;color:var(--t3);margin-top:4px;padding-left:8px;border-left:2px solid var(--brand);line-height:1.55}
+.stateflow{display:flex;align-items:center;gap:6px;margin-top:12px;flex-wrap:wrap}
+.st{font-size:10.5px;padding:6px 10px;border-radius:9px;background:var(--muted);color:var(--t2);border:1px solid var(--divider)}
+.st.hot{background:var(--brandSoft);border-color:rgba(30,91,214,.35);color:var(--brand);font-weight:600}
+.arw{color:var(--t3);font-size:11px}
+
+/* 降级档 */
+.deg{display:flex;gap:10px;margin-top:12px}
+.deg .dg{flex:1;border:1px solid var(--divider);border-radius:12px;padding:12px;background:var(--surface)}
+.deg .dg b{font-size:11.5px;display:flex;align-items:center;gap:6px}
+.deg .dg b i{width:8px;height:8px;border-radius:50%;font-style:normal}
+.deg .dg p{font-size:10.5px;color:var(--t3);line-height:1.65;margin-top:6px}
+
+footer{margin-top:40px;padding-top:16px;border-top:1px solid #DDE1E8;font-size:11px;color:var(--t3);line-height:1.8}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="kicker">StockChat · doc 32 · Risk Map Reimagination</div>
+  <h1>风险地图创新 · 一张图，多图层</h1>
+  <div class="sub">
+    根因：风险地图的信息本是一张<b>关系网</b>（股票 × 变量 × 相关 × 事件），v1 却把它切成六个竖向面板——
+    9 个名字在滚动流里重复出现 6 次，读完还要自己拼回一张网。<b>堆叠感不是视觉粗糙，是网被切成了竖条。</b><br>
+    定案：六个维度收成同一张<b>持仓星图</b>的五种投影（抱团 · 牵连 · 颠簸 · 日程 · 热度），
+    交互上「拖一颗星，看它带谁动」，AI 从滚动流里的注释变成<b>地图上的位置（引路星）</b>和<b>跟随探索焦点的观察</b>。
+  </div>
+  <div class="tabs">
+    <button class="tab on" data-v="v1">① 改前 · 堆叠的根因<span class="n">诊断</span></button>
+    <button class="tab" data-v="v2">② 星图 · 五种投影<span class="n">可交互</span></button>
+    <button class="tab" data-v="v3">③ 交互创新 · 拖星牵引<span class="n">可玩</span></button>
+    <button class="tab" data-v="v4">④ AI 形态与规格<span class="n">定案</span></button>
+  </div>
+</header>
+
+<!-- ══════════════ 视图1 改前诊断 ══════════════ -->
+<div class="view on" id="v1">
+  <div class="stage">
+    <div class="cell">
+      <div class="cell-label"><span class="dot bad"></span>改前 · 六条竖条（现状 v1，2026-09-08）</div>
+      <div class="phone">
+        <div class="pbar"><span class="time">10:16</span><span class="icons">▲●▪</span></div>
+        <div class="screen">
+          <div class="atb">
+            <div class="atb-back">‹ 返回</div>
+            <div class="atb-t">风险地图</div>
+            <div class="atb-s">你的自选押注了哪些共同变量</div>
+          </div>
+          <div class="amb neutral">
+            <div class="headline">你关注的 9 只，有 4 只押在同一条链上（CPO 算力）</div>
+            <div class="meta">等权估算 · 非真实仓位 · 共 9 只自选 <span class="up">· 实时行情</span></div>
+          </div>
+          <div class="oldpanel">
+            <div class="pt">行业重叠<span class="what">这是什么 ›</span></div>
+            <div class="pd">4 只同属「CPO 算力链」，占 44%</div>
+            <div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:8px">
+              <i style="flex:.44;background:var(--t3)"></i><i style="flex:.22;background:var(--flat)"></i><i style="flex:.34;background:var(--divider)"></i>
+            </div>
+            <div class="dim ai">前三大行业合计 66%——同一变量一波动，这几只常常一起动</div>
+          </div>
+          <div class="oldpanel">
+            <div class="pt">集中度<span class="what">这是什么 ›</span></div>
+            <div class="pd">市值加权口径（非你的真实仓位）：Top3 占 58%</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="width:52px;font-size:10px;color:var(--t3)">中际旭创</span><div class="bar" style="flex:1;margin-top:0"><i style="flex:.31"></i></div><span class="num" style="width:34px;font-size:9.5px;color:var(--t3)">31%</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="width:52px;font-size:10px;color:var(--t3)">寒武纪</span><div class="bar" style="flex:1;margin-top:0"><i style="flex:.27"></i></div><span class="num" style="width:34px;font-size:9.5px;color:var(--t3)">27%</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="width:52px;font-size:10px;color:var(--t3)">新易盛</span><div class="bar" style="flex:1;margin-top:0"><i style="flex:.19"></i></div><span class="num" style="width:34px;font-size:9.5px;color:var(--t3)">19%</span></div>
+          </div>
+          <div class="oldpanel">
+            <div class="pt">相关性<span class="what">这是什么 ›</span></div>
+            <div class="pd">近 60 个交易日 · 点格子看配对解读 · 色深 = 同涨同跌程度</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:8px">
+              <span style="font-size:9px;color:var(--t3);width:44px">中际旭创</span>
+              <div class="matrix"><b style="background:var(--t3)"></b><b style="background:var(--flat)"></b><b style="background:var(--divider)"></b><b style="background:var(--muted)"></b><b style="background:var(--muted)"></b></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
+              <span style="font-size:9px;color:var(--t3);width:44px">新易盛</span>
+              <div class="matrix"><b style="background:var(--flat)"></b><b style="background:var(--t3)"></b><b style="background:var(--flat)"></b><b style="background:var(--divider)"></b><b style="background:var(--muted)"></b></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:2px">
+              <span style="font-size:9px;color:var(--t3);width:44px">天孚通信</span>
+              <div class="matrix"><b style="background:var(--divider)"></b><b style="background:var(--flat)"></b><b style="background:var(--t3)"></b><b style="background:var(--muted)"></b><b style="background:var(--divider)"></b></div>
+            </div>
+          </div>
+          <div class="oldpanel">
+            <div class="pt">波动暴露<span class="what">这是什么 ›</span></div>
+            <div class="pd">近 60 个交易日 · 日收益率标准差（等权）</div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:8px"><span style="width:76px;font-size:10px;color:var(--t3)">你的自选（等权）</span><div class="bar" style="flex:1;margin-top:0"><i style="flex:1"></i></div><span class="num" style="width:40px;font-size:9.5px;color:var(--t3)">1.44%</span></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-top:6px"><span style="width:76px;font-size:10px;color:var(--t3)">沪深300</span><div class="bar" style="flex:1;margin-top:0"><i style="flex:.69"></i></div><span class="num" style="width:40px;font-size:9.5px;color:var(--t3)">1.00%</span></div>
+            <div class="dim ai">自选组合的日波动约为大盘的 1.44 倍——涨的时候更快，跌的时候也更急</div>
+          </div>
+          <div class="oldpanel">
+            <div class="pt">事件时间轴<span class="what">这是什么 ›</span></div>
+            <div style="display:flex;align-items:center;margin-top:9px;gap:8px">
+              <span class="num" style="width:34px;font-size:10px;color:var(--t3)">09-12</span><i style="width:6px;height:6px;border-radius:50%;background:var(--flat)"></i>
+              <span style="font-size:11px;color:var(--t2)">天孚通信 · 财报<span style="color:var(--t3)"> · 预约披露</span></span>
+            </div>
+            <div style="display:flex;align-items:center;margin-top:8px;gap:8px">
+              <span class="num" style="width:34px;font-size:10px;color:var(--t3)">09-18</span><i style="width:6px;height:6px;border-radius:50%;background:var(--flat)"></i>
+              <span style="font-size:11px;color:var(--t2)">宁德时代 · 解禁<span style="color:var(--t3)"> · 进入 30 天窗口</span></span>
+            </div>
+            <div style="display:flex;align-items:center;margin-top:8px;gap:8px">
+              <span class="num" style="width:34px;font-size:10px;color:var(--t3)">09-25</span><i style="width:6px;height:6px;border-radius:50%;background:var(--flat)"></i>
+              <span style="font-size:11px;color:var(--t2)">五粮液 · 分红<span style="color:var(--t3)"> · 除权安排</span></span>
+            </div>
+          </div>
+          <div class="oldpanel">
+            <div class="pt">情绪暴露<span class="what">这是什么 ›</span></div>
+            <div class="pd">自选中有 1 只在今日涨停池</div>
+            <div style="display:flex;align-items:center;margin-top:8px;background:var(--muted);border-radius:9px;height:30px;padding:0 10px;gap:8px">
+              <span style="font-size:11px;color:var(--t2)">寒武纪</span><span style="font-size:9.5px;color:var(--t3)">2 连板 · 半导体</span>
+            </div>
+          </div>
+          <div style="margin:14px 14px 0;font-size:10.5px;color:var(--t3);line-height:1.6">本页只翻译共同暴露，不判定风险等级，不构成投资建议。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="vs">→</div>
+
+    <div class="cell" style="padding-top:34px">
+      <div class="cell-label"><span class="dot info"></span>四条根因（不是视觉粗糙，是结构问题）</div>
+      <div class="flag"><div class="fi b">1</div><div><div class="ft">一张网被切成六条竖条</div><div class="fd">股票×行业×相关×事件本是一张关系网，六个面板各自为政、形态各异却互不相连——用户读完要自己拼回网。</div></div></div>
+      <div class="flag"><div class="fi b">2</div><div><div class="ft">同一个名字重复出现 6 次</div><div class="fd">「中际旭创」在行业 chip、集中度条、相关矩阵、波动、事件、情绪里反复出现——重复感 = 堆叠感。</div></div></div>
+      <div class="flag"><div class="fi b">3</div><div><div class="ft">信息只能"读"，不能"探"</div><div class="fd">全部结论预先铺在页面上，用户是读者不是探索者；相关性明明可以体感（拖拽牵引），却只是矩阵里的一个色块。</div></div></div>
+      <div class="flag"><div class="fi b">4</div><div><div class="ft">AI 是插在滚动流里的静态文字</div><div class="fd">3 处注释位置固定、与用户行为无关——AI 没有参与探索，只参与了排版。</div></div></div>
+      <div class="cell-note" style="margin-top:16px"><b>反向说明：</b>改前的六个维度、口径角标、合规文案全部保留——这一版不删信息，只换信息的<b>组织方式</b>：六个维度变成同一张图的五种投影。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 视图2 星图主态（可交互） ══════════════ -->
+<div class="view" id="v2">
+  <div class="stage">
+    <div class="cell">
+      <div class="cell-label"><span class="dot good"></span>改后 · 持仓星图（点图层 chips 切换投影 · 点星看焦点 · 点蓝色光环看引路星）</div>
+      <div class="phone">
+        <div class="pbar"><span class="time">10:16</span><span class="icons">▲●▪</span></div>
+        <div class="screen" id="v2screen">
+          <div class="atb">
+            <div class="atb-back">‹ 返回</div>
+            <div class="atb-t">风险地图</div>
+            <div class="atb-s">你的自选押注了哪些共同变量</div>
+          </div>
+          <div class="amb neutral">
+            <div class="headline">你关注的 9 只，有 4 只押在算力这<em>同一件事</em>上</div>
+            <div class="meta">等权估算 · 非真实仓位 · 共 9 只自选 <span class="up">· 实时行情</span> · CR3 较上周 39% → 44%</div>
+          </div>
+
+          <div class="skyclip">
+            <div class="sky">
+              <div class="layertip"><span class="lt" id="layerTip">抱团：圈 = 一条链，圈越大挤得越多 · 光晕 = 单只波动</span></div>
+              <svg id="skySvg" viewBox="0 0 336 440" xmlns="http://www.w3.org/2000/svg"></svg>
+
+              <!-- 解读抽屉（引路星展开） -->
+              <div class="drawer" id="beaconDrawer">
+                <div class="dt">最挤的一团：算力链 · 4 只<span class="dx" data-close="beacon">收起 ✕</span></div>
+                <div class="fact"><b>中际旭创、新易盛、天孚通信、寒武纪</b>同押算力一个变量，近 60 日两两相关最高 <b>0.86</b>；今日 4 只同跌，占你自选波动贡献的 <b>71%</b>（等权估算）。</div>
+                <div class="ask" data-close="beacon">继续问「算力链共振意味着什么」 → 跳对话页（带焦点上下文） ›</div>
+              </div>
+
+              <!-- 成员抽屉（星团/星点开） -->
+              <div class="drawer" id="memberDrawer">
+                <div class="dt" id="mdTitle">星团成员<span class="dx" data-close="member">收起 ✕</span></div>
+                <div id="mdRows"></div>
+              </div>
+            </div>
+
+            <!-- 图层 chips（拇指区） -->
+            <div class="chips" id="layerChips">
+              <div class="chip act" data-layer="cluster">抱团<small>CLUSTER</small></div>
+              <div class="chip" data-layer="link">牵连<small>LINK</small></div>
+              <div class="chip" data-layer="wave">颠簸<small>WAVE</small></div>
+              <div class="chip" data-layer="cal">日程<small>CALENDAR</small></div>
+              <div class="chip" data-layer="heat">热度<small>HEAT</small></div>
+            </div>
+
+            <!-- 时间刷（日程层激活时出现） -->
+            <div class="tbrush" id="tbrush" style="display:none">
+              <div class="tb-head">拖动手柄看未来 30 天 · <span class="cur" id="tbCur">09/08</span><span class="hint">轴上的点 = 自选的已预约事件</span></div>
+              <div class="tb-track" id="tbTrack">
+                <div class="tb-line"></div>
+                <div class="tb-knob" id="tbKnob"></div>
+              </div>
+              <div class="tb-day" id="tbDay">今天：9 只都在正常走。</div>
+            </div>
+          </div>
+
+          <div style="margin:12px 14px 0;font-size:10.5px;color:var(--t3);line-height:1.6;position:relative;z-index:20">本页只翻译共同暴露，不判定风险等级，不构成投资建议。星图为等权估算的示意投影。</div>
+        </div>
+      </div>
+      <div class="cell-note">星图规则：<b>位置 = 行业聚类</b>（同链挤成一团，替代堆叠条+等级条）；<b>连线 = 相关系数</b>（|r|≥0.5 才画，粗细=强度，替代热力矩阵）；<b>光晕 = 波动倍率</b>（替代双条）；<b>徽标 = 事件</b>（财/解/息，替代时间轴）；<b>环纹 = 连板数</b>（替代列表）。<b>一颗星承载全部五个维度</b>，名字只出现一次。</div>
+    </div>
+
+    <div class="cell" style="padding-top:34px">
+      <div class="cell-label"><span class="dot info"></span>五种投影 · 同一张图（点上面 chips 逐个试）</div>
+      <div class="flag"><div class="fi k">抱团</div><div><div class="ft">行业重叠 + 集中度 → 空间聚类</div><div class="fd">默认层。淡色圈域 = 一条链；圈的大小就是集中度。替代：堆叠条、Top3 等级条。</div></div></div>
+      <div class="flag"><div class="fi k">牵连</div><div><div class="ft">相关性 → 连线</div><div class="fd">|r|≥0.5 的星之间画线，粗细/亮度 = 强度；孤星自动浮现（谁也不连谁）。替代：共现矩阵。</div></div></div>
+      <div class="flag"><div class="fi k">颠簸</div><div><div class="ft">波动暴露 → 光晕呼吸</div><div class="fd">光晕按波动倍率呼吸，标出「2.1×大盘」；页面起伏感 = 组合波动画像。替代：同轴双条。</div></div></div>
+      <div class="flag"><div class="fi k">日程</div><div><div class="ft">事件 → 时间刷</div><div class="fd">拖动手柄扫未来 30 天，扫到哪天、那颗星就亮——事件从"列表"变成"预演"。替代：竖向时间轴。</div></div></div>
+      <div class="flag"><div class="fi k">热度</div><div><div class="ft">情绪暴露 → 环纹</div><div class="fd">连板星出现弧线环纹（一圈=一连板），其余星退暗。替代：涨停行列表。</div></div></div>
+      <div class="cell-note"><b>为什么是"投影"不是"面板"：</b>切换图层时星星不换位置、不刷新页面，只是高亮方式变形——五个维度在<b>同一套空间记忆</b>里展开，读完五层，网已在脑中。列表形态（改前）保留为降级投影，见视图 ④。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 视图3 交互创新（可玩） ══════════════ -->
+<div class="view" id="v3">
+  <div class="stage">
+    <div class="cell wide">
+      <div class="demo">
+        <h4>拖星牵引 · 相关系数的体感化<span class="tag">用鼠标拖「新易盛」试试 · 按住它 0.5 秒 = 长按，会弹出提问条</span></h4>
+        <div class="dsub">
+          长按任意星拖动：与它相关的星被<b>牵引</b>跟随——牵引幅度 = 相关系数（r=0.86 的中际旭创几乎贴着走，r=0.42 的宁德时代只是微微一动）。
+          相关系数不再是矩阵里的色块，而是<b>手感</b>：松手，所有星弹回原位。这是 doc 07「手势即提问」基因在风险地图的落法。
+        </div>
+        <svg id="pullSvg" viewBox="0 0 820 400" xmlns="http://www.w3.org/2000/svg"></svg>
+        <div class="ctxbar" id="ctxBar">
+          <div class="cbt">长按「新易盛」后 · Context Bar（弹条原地出现不跳页；点任一问题 → 跳对话页预填发送，自动带上「风险地图 · 牵连层 · 新易盛」焦点上下文）</div>
+          <div class="cchips">
+            <span class="cc">它和谁抱团？</span>
+            <span class="cc">新易盛为什么这么颠？</span>
+            <span class="cc">同链 4 只最近怎么样</span>
+            <span class="cin">问点别的…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="stage" style="margin-top:26px">
+    <div class="cell">
+      <div class="cell-label"><span class="dot info"></span>手势三则 · 全部单手拇指可达</div>
+      <div class="flag"><div class="fi k">拖</div><div><div class="ft">拖星 = 问"谁带谁"</div><div class="fd">只在「牵连」层开放，避免误触；牵引位移封顶 0.6×拖距，防过度拉伸。</div></div></div>
+      <div class="flag"><div class="fi k">按</div><div><div class="ft">长按星 = Context Bar</div><div class="fd">提问 chips 按<b>当前图层</b>生成：抱团层问"谁和谁一团"，日程层问"解禁那天会发生什么"。</div></div></div>
+      <div class="flag"><div class="fi k">刷</div><div><div class="ft">时间刷 = 问"接下来哪天最颠"</div><div class="fd">扫到事件日，星亮起+一句事实（解禁≠下跌，但可流通筹码增加）。当天星图可分享为一张图。</div></div></div>
+    </div>
+    <div class="cell">
+      <div class="cell-label"><span class="dot info"></span>Kuikly 端落地提示（对照 .workbuddy 实测基线）</div>
+      <table class="spec">
+        <tr><th>能力</th><th>方案</th></tr>
+        <tr><td>星图绘制</td><td>Kuikly Canvas 自绘（同 doc 26 分时图范式，弃 ChartKit）；DPR 适配，静态帧 + 按需重绘，无常驻循环</td></tr>
+        <tr><td>拖星牵引</td><td>CaptureRuleDirection + PanGestureParams 实测可用；位移用 attr 直改，回弹用三条 animate（注意 R5：注册滞后一周期）</td></tr>
+        <tr><td>长按 0.5s</td><td>长按事件 + 移动阈值 8px 取消；Context Bar 复用 ChatPage 同款组件</td></tr>
+        <tr><td>时间刷</td><td>横向 Scroller + knob 跟手；事件命中判定用日期→x 线性映射，端侧纯函数可单测</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ 视图4 AI 形态与规格 ══════════════ -->
+<div class="view" id="v4">
+  <div class="stage">
+    <div class="cell wide">
+      <div class="cell-label"><span class="dot info"></span>AI 交互创新：从"插在流里的文字"到"地图上的位置"</div>
+
+      <div class="ai-card">
+        <div class="ah">旧形态：静态注释 <span class="old">现 v1</span></div>
+        <div class="ad">3 处一行注释固定插在滚动流里（行业下、波动下、事件下），与用户行为无关——AI 参与了排版，没参与探索。平静时虽有 0 触点的优点，但出现时用户经常根本没滚到那里。</div>
+        <div class="mini-scroll">
+          <div class="mp"><div class="t">波动暴露</div><div class="a">自选组合的日波动约为大盘的 1.44 倍——涨的时候更快，跌的时候也更急</div></div>
+          <div class="mp"><div class="t">事件时间轴</div><div class="a">未来 30 天内自选有解禁安排——解禁不等于下跌，但意味着可流通筹码增加</div></div>
+        </div>
+      </div>
+
+      <div class="ai-card">
+        <div class="ah">新形态 ①：引路星（Beacon）<span class="new">条件触发 ≤2</span></div>
+        <div class="ad">AI 的产出不是一段文字，而是<b>星图上的一个脉冲光环</b>——圈出"今天最该看的那一团"（规则判定：最挤/最颠/最热的一团）。光环旁 ≤28 字事实句；点击光环，下半屏升起<b>解读抽屉</b>：3 行规则生成的事实 + 一个追问出口。AI 变成了<b>位置</b>：你顺着地图的光走，而不是读一段插在流里的话。</div>
+        <div class="stateflow">
+          <span class="st">规则引擎判定异常团</span><span class="arw">→</span>
+          <span class="st hot">星图该团外圈脉冲光环</span><span class="arw">→</span>
+          <span class="st">点光环 · 解读抽屉升起</span><span class="arw">→</span>
+          <span class="st">追问出口 → 对话页归因卡</span>
+        </div>
+      </div>
+
+      <div class="ai-card">
+        <div class="ah">新形态 ②：焦点跟随（Spotlight）<span class="new">条件触发 1</span></div>
+        <div class="ad">选中任何东西（星 / 星团 / 时间刷上的某天），一句<b>跟到选中对象旁边的观察</b>浮现；取消选中即收起。<b>AI 跟随手电筒，不铺满页面</b>——你看哪，它才说哪；不看，整页 AI 元素为 0。同时最多 1 处，叠加引路星后全页 AI 触点 ≤3，与 FR-R4 预算持平，平静时仍为 0。</div>
+        <div class="stateflow">
+          <span class="st">无选中 · 无注释</span><span class="arw">→</span>
+          <span class="st hot">选中星/团/日期</span><span class="arw">→</span>
+          <span class="st hot">一句事实观察浮现</span><span class="arw">→</span>
+          <span class="st">取消选中 · 收起</span>
+        </div>
+        <div class="ad" style="margin-top:10px">示例：选中「新易盛」→ <b>"与 3 只相关系数 >0.6，同链共振里最颠的一颗（2.1×大盘）"</b>；日程层选中 09/18 → <b>"宁德时代解禁日：可流通筹码增加，解禁≠减持"</b>。句子全部端侧模板生成，数字来自 Provider，零幻觉（ADR-11）。</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage" style="margin-top:24px">
+    <div class="cell">
+      <div class="cell-label"><span class="dot info"></span>AI 预算账本（对齐 FR-R4：≤3，平静时 0）</div>
+      <table class="spec">
+        <tr><th>触点</th><th>形态</th><th>条件</th><th>预算</th></tr>
+        <tr><td>L1 头部句</td><td>规则生成，非 AI</td><td>常驻</td><td class="mono">0</td></tr>
+        <tr><td>引路星</td><td>光环 + ≤28 字 + 解读抽屉</td><td>最挤/最颠/最热团成立</td><td class="mono">≤2</td></tr>
+        <tr><td>焦点跟随</td><td>选中对象旁一行观察</td><td>用户有选中且该对象有异常</td><td class="mono">1</td></tr>
+        <tr><td><b>合计</b></td><td colspan="2">行情平静 + 无选中时</td><td class="mono"><b>0</b></td></tr>
+      </table>
+      <div class="cell-note">追问出口统一走 <b>openChatWithQuestion</b>，归因复用 AttributionIntent 卡片（FR-R9 通路不变）；注释文本端侧模板，不走 LLM——与 doc 23「暴露指标零幻觉」一致。</div>
+    </div>
+
+    <div class="cell">
+      <div class="cell-label"><span class="dot info"></span>合规对照（doc 23 §4.1 九条红线逐条落法）</div>
+      <table class="spec">
+        <tr><th>红线</th><th>星图方案的落法</th></tr>
+        <tr><td>不做分级 / 匹配</td><td class="ok">✓ 无等级、无匹配词；"抱团/牵连/颠簸/日程/热度"全为事实语态</td></tr>
+        <tr><td>不做总分（N-R5）</td><td class="ok">✓ 星图无综合评分；五种投影各自成立，不给"一个数"</td></tr>
+        <tr><td>不判高=坏</td><td class="ok">✓ 全图中性明度阶梯 + brand 蓝仅用于交互态，不引入涨跌情绪色</td></tr>
+        <tr><td>口径诚实（C-4）</td><td class="ok">✓ 角标常驻 + 每层小字自带口径（等权估算 / 60 日 / 预约口径）</td></tr>
+        <tr><td>零幻觉（G-R2）</td><td class="ok">✓ 位置/连线/光晕全部由 Provider 数字线性映射，端侧纯函数 + 单测固化</td></tr>
+        <tr><td>术语可达（G-R4）</td><td class="ok">✓ 每层 tip 一词可点 → GlossaryStore.encounter → 知识库（C-2 不变）</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="stage" style="margin-top:24px">
+    <div class="cell wide">
+      <div class="cell-label"><span class="dot info"></span>降级三档（星图是投影，不是唯一形态）</div>
+      <div class="deg">
+        <div class="dg"><b><i style="background:var(--fall)"></i>档 1 · 完整星图</b><p>自选 ≥3 且行情/行业数据齐：五种投影全开，拖星牵引在牵连层开放。</p></div>
+        <div class="dg"><b><i style="background:#C9A227"></i>档 2 · 聚合模式</b><p>自选 >15 只：同团星合并为团点（团点大小=成员数），点开才见成员——防蜘蛛网过载；时间刷照常。</p></div>
+        <div class="dg"><b><i style="background:var(--rise)"></i>档 3 · 列表投影</b><p>数据不足 / 低性能 / 读屏模式：回落为改前的面板流（v1 全部保留），头部标注"图形投影暂不可用"。</p></div>
+      </div>
+      <table class="spec" style="margin-top:16px">
+        <tr><th>LDRS 自评（doc 24，阈值 ≥8）</th><th>得分</th></tr>
+        <tr><td>L 语义层 · 一句话测试：这页在回答"我的自选抱团了吗，抱在哪"</td><td class="mono">3</td></tr>
+        <tr><td>D 视觉层 · z 预算：氛围底(z0) / 星图主卡玻璃唯一(z3) / 图层 chips+抽屉(z2) / Context Bar(z4)；无等高卡阵</td><td class="mono">3</td></tr>
+        <tr><td>R 结构层 · 关系→图形：相关→连线 / 集中→聚类 / 波动→光晕 / 事件→徽标 / 情绪→环纹，8 类映射命中 5 类</td><td class="mono">3</td></tr>
+        <tr><td>S 行为层 · chips 底部拇指区；两次点击到详情（星→成员抽屉→详情）；拖/按/刷均有撤销或回弹</td><td class="mono">2</td></tr>
+        <tr><td><b>总分</b></td><td class="mono"><b>11 / 12（v1 为 8）</b></td></tr>
+      </table>
+      <div class="cell-note" style="margin-top:14px"><b>实施映射：</b>RiskMapPage 星图区 = Canvas 自绘星图 + chips 状态机（单 observable driver，注意 R2/R5）；六个维度计算函数（industryStats/pearson/portfolioStd…）<b>原样复用</b>，只换渲染层——数据链与三级降级不动，联动契约 C-1~C-4 不动。预估：原型验收后 2 个工作日星图层 + 1.5 日牵引/时间刷 + 1 日引路星与焦点注释。</div>
+    </div>
+  </div>
+
+  <footer>
+    口径：演示数据为硬编码示意（2026-09-08），上线以 QuoteRepository 三级降级链真实数据为准 · 相关系数=近 60 交易日日收益 Pearson · 波动倍率=组合等权日波动 ÷ 沪深300 · CR3=前三大行业只数占比。<br>
+    本页只翻译共同暴露，不判定风险等级，不构成投资建议。
+  </footer>
+</div>
+</div>
+
+<script>
+/* ── 视图切换 ── */
+document.querySelectorAll('.tab').forEach(function(t){
+  t.addEventListener('click',function(){
+    document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('on')});
+    document.querySelectorAll('.view').forEach(function(x){x.classList.remove('on')});
+    t.classList.add('on');
+    document.getElementById(t.dataset.v).classList.add('on');
+  });
+});
+document.querySelectorAll('[data-close]').forEach(function(x){
+  x.addEventListener('click',function(){
+    var id=x.getAttribute('data-close');
+    document.getElementById(id==='beacon'?'beaconDrawer':'memberDrawer').classList.remove('on');
+  });
+});
+
+/* ══════════ 视图2 星图引擎 ══════════
+ * 数据（演示口径 2026-09-08）：9 只自选；位置=行业聚类；r=近60日Pearson（|r|≥0.5 连线）
+ * 波动倍率=组合等权日波动÷沪深300；事件=预约日历；连板=涨停池 */
+var STARS=[
+  {id:'zjxc', name:'中际旭创', x:216,y:112,  cl:'cpo', pct:-2.1, vol:1.8, lb:0, ev:null},
+  {id:'xys',  name:'新易盛',   x:262,y:150,  cl:'cpo', pct:-2.8, vol:2.1, lb:0, ev:null},
+  {id:'tftx', name:'天孚通信', x:188,y:172,  cl:'cpo', pct:-1.9, vol:1.6, lb:0, ev:{d:'09/12',t:'财报预约披露'}},
+  {id:'cwj',  name:'寒武纪',   x:250,y:242,  cl:'cpo', pct:20.0, vol:2.6, lb:2, ev:{d:'09/28',t:'财报预约披露'}},
+  {id:'gzmt', name:'贵州茅台', x:88, y:308,  cl:'wine',pct:0.4,  vol:0.9, lb:0, ev:null},
+  {id:'wly',  name:'五粮液',   x:136,y:338,  cl:'wine',pct:0.2,  vol:1.0, lb:0, ev:{d:'09/25',t:'分红除权'}},
+  {id:'cjsd', name:'宁德时代', x:168,y:262,  cl:null,  pct:-1.2, vol:1.3, lb:0, ev:{d:'09/18',t:'解禁进入窗口'}},
+  {id:'cjdl', name:'长江电力', x:78, y:92,   cl:null,  pct:0.1,  vol:0.6, lb:0, ev:null},
+  {id:'zupa', name:'中国平安', x:62, y:204,  cl:null,  pct:0.6,  vol:0.8, lb:0, ev:null}
+];
+var LINKS=[
+  ['zjxc','xys',0.86],['zjxc','tftx',0.79],['xys','tftx',0.74],
+  ['cwj','zjxc',0.72],['cwj','xys',0.65],['gzmt','wly',0.81]
+];
+var CLUSTERS={
+  cpo:{cx:222,cy:160,rx:104,ry:96,label:'算力链 · 4 只'},
+  wine:{cx:112,cy:322,rx:74,ry:58,label:'白酒 · 2 只'}
+};
+var SVGNS='http://www.w3.org/2000/svg';
+var svg=document.getElementById('skySvg');
+var layer='cluster', selected=null;
+function el(tag,attrs,parent){var e=document.createElementNS(SVGNS,tag);for(var k in attrs)e.setAttribute(k,attrs[k]);(parent||svg).appendChild(e);return e;}
+var gCluster=el('g',{}),gLinks=el('g',{}),gStars=el('g',{}),gEvents=el('g',{}),gBeacon=el('g',{}),gRing=el('g',{});
+
+/* 星团晕域 */
+Object.keys(CLUSTERS).forEach(function(key){
+  var c=CLUSTERS[key];
+  var g=el('g',{'data-cl':key},gCluster);
+  el('ellipse',{cx:c.cx,cy:c.cy,rx:c.rx,ry:c.ry,fill:'rgba(30,91,214,.05)',stroke:'rgba(30,91,214,.20)','stroke-dasharray':'3 4','stroke-width':1},g);
+  var t=el('text',{x:c.cx,y:c.cy-c.ry-7,'text-anchor':'middle','font-size':10,fill:'#5F6B82','font-weight':600},g);
+  t.textContent=c.label;
+  c.node=g;
+});
+
+/* 连线 */
+var linkNodes=[];
+LINKS.forEach(function(l){
+  var a=STAR(l[0]),b=STAR(l[1]);
+  var w=0.8+ (l[2]-0.5)*4.2;
+  var ln=el('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'rgba(30,91,214,'+(0.22+(l[2]-0.5)*0.5)+')','stroke-width':w,'stroke-linecap':'round','stroke-dasharray':'140','stroke-dashoffset':'140'},gLinks);
+  linkNodes.push({ln:ln,a:a,b:b});
+  var midx=(a.x+b.x)/2, midy=(a.y+b.y)/2;
+  var tl=el('text',{x:midx,y:midy-5,'text-anchor':'middle','font-size':8.5,fill:'#5F6B82','font-family':'var(--mono)'},gLinks);
+  tl.textContent=l[2].toFixed(2);
+});
+function STAR(id){for(var i=0;i<STARS.length;i++)if(STARS[i].id===id)return STARS[i];}
+
+/* 星体 */
+STARS.forEach(function(s){
+  var g=el('g',{'data-id':s.id,cursor:'pointer'},gStars);
+  var haloR=10+(s.vol-0.5)*9;
+  s.haloNode=el('circle',{cx:s.x,cy:s.y,r:haloR,fill:'rgba(90,100,120,.10)'},g);
+  el('circle',{cx:s.x,cy:s.y,r:13,fill:'#FFFFFF',stroke:'#D5DCE6','stroke-width':1},g);
+  var t=el('text',{x:s.x,y:s.y+3.5,'text-anchor':'middle','font-size':8.5,'font-weight':700,fill:'#5B6573'},g);
+  t.textContent=s.name.slice(0,2);
+  var nm=el('text',{x:s.x,y:s.y-21,'text-anchor':'middle','font-size':9.5,fill:'#5B6573','font-weight':600},g);
+  nm.textContent=s.name;
+  var px=el('text',{x:s.x,y:s.y+26,'text-anchor':'middle','font-size':8.5,'font-family':'var(--mono)','font-weight':600,fill:s.pct>=0?'#D92E2E':'#0C7A45'},g);
+  px.textContent=(s.pct>=0?'+':'')+s.pct.toFixed(1)+'%';
+  s.node=g;
+  /* 连板环纹（存引用：热度层提亮） */
+  if(s.lb>0){
+    s.ringNodes=[];
+    for(var i=1;i<=s.lb;i++){
+      s.ringNodes.push(el('circle',{cx:s.x,cy:s.y,r:16+i*5,fill:'none',stroke:'rgba(138,147,163,.45)','stroke-width':1.4,'stroke-dasharray':(i===s.lb?'':'40 10')},g));
+    }
+  }
+  /* 事件徽标 */
+  if(s.ev){
+    var eg=el('g',{'data-ev':s.id,cursor:'pointer',opacity:.6},gEvents);
+    el('rect',{x:s.x+9,y:s.y-30,width:30,height:14,rx:4,fill:'#EEF1F5'},eg);
+    var et=el('text',{x:s.x+24,y:s.y-20.5,'text-anchor':'middle','font-size':8,fill:'#5F6B82'},eg);
+    et.textContent=s.ev.d+' '+(s.ev.t==='财报预约披露'?'财':s.ev.t==='解禁进入窗口'?'解':'息');
+    s.evNode=eg;
+  }
+});
+
+/* 引路星（引路光环圈住 CPO 团） */
+var beacon=el('g',{cursor:'pointer',id:'beaconRing'},gBeacon);
+el('circle',{cx:222,cy:160,r:118,fill:'none',stroke:'rgba(30,91,214,.5)','stroke-width':1.6,'stroke-dasharray':'6 6',style:'animation:halo 2.6s ease-in-out infinite'},beacon);
+var bpc=el('circle',{cx:222,cy:160,r:118,fill:'none',stroke:'rgba(30,91,214,.55)','stroke-width':2,style:'transform-origin:222px 160px;animation:pulse 2.6s ease-out infinite'},beacon);
+var bt=el('text',{x:222,y:292,'text-anchor':'middle','font-size':9.5,fill:'#1E5BD6','font-weight':600},beacon);
+bt.textContent='最挤的一团 · 点我看 3 行事实';
+
+/* 选中环 */
+var selRing=el('circle',{r:19,fill:'none',stroke:'#1E5BD6','stroke-width':1.8,opacity:0},gRing);
+function moveRing(s){
+  if(!s){selRing.setAttribute('opacity',0);return;}
+  selRing.setAttribute('cx',s.x);selRing.setAttribute('cy',s.y);selRing.setAttribute('opacity',1);
+}
+
+/* 图层状态机 */
+var TIPS={
+  cluster:'抱团：圈 = 一条链，圈越大挤得越多 · 光晕 = 单只波动',
+  link:'牵连：线 = 近 60 日相关系数，粗亮 = 同涨同跌更狠（|r|≥0.5 才画）',
+  wave:'颠簸：光晕呼吸 = 波动倍率 · 数字 = 日波动 ÷ 沪深300（等权）',
+  cal:'日程：拖下方手柄扫未来 30 天，扫到哪天、那颗星就亮',
+  heat:'热度：环纹一圈 = 一个连板 · 其余星退暗（只看风头上的）'
+};
+function setLayer(L){
+  layer=L; selected=null; moveRing(null); hideNote();
+  document.getElementById('beaconDrawer').classList.remove('on');
+  document.getElementById('memberDrawer').classList.remove('on');
+  document.querySelectorAll('#layerChips .chip').forEach(function(c){c.classList.toggle('act',c.dataset.layer===L)});
+  document.getElementById('layerTip').textContent=TIPS[L];
+  document.getElementById('tbrush').style.display=(L==='cal')?'block':'none';
+  if(L==='cal')setKnob(tbPos);
+
+  var linkOn=(L==='link');
+  linkNodes.forEach(function(o,i){
+    o.ln.style.transition='opacity .3s, stroke-dashoffset .5s '+(i*0.06)+'s ease';
+    if(linkOn){o.ln.style.strokeDashoffset='0';o.ln.style.opacity='1';}
+    else{o.ln.style.opacity='0';o.ln.style.strokeDashoffset='140';}
+  });
+  STARS.forEach(function(s){
+    var iso=!LINKS.some(function(l){return l[0]===s.id||l[1]===s.id;});
+    var dim=(L==='link'&&iso)||(L==='heat'&&s.lb===0);
+    s.node.style.transition='opacity .3s';
+    s.node.style.opacity=dim?'0.28':'1';
+    /* 光晕 */
+    if(L==='wave'){
+      s.haloNode.style.transformOrigin=s.x+'px '+s.y+'px';
+      var k=(s.vol-0.5)/2.1;
+      s.haloNode.style.animation='none';void s.haloNode.getBBox();
+      s.haloNode.setAttribute('style','transform-origin:'+s.x+'px '+s.y+'px;animation:breathe '+(2.4-1.4*k)+'s ease-in-out infinite;--r1:'+(10+(s.vol-0.5)*9)+'px;--r2:'+(10+(s.vol-0.5)*9+4+4*k)+'px');
+      s.waveLabel=s.waveLabel||addWaveLabel(s);
+      s.waveLabel.setAttribute('opacity',1);
+      s.waveLabel.textContent=s.vol.toFixed(1)+'×大盘';
+    }else{
+      s.haloNode.style.animation='none';
+      s.haloNode.setAttribute('style','');
+      if(s.waveLabel)s.waveLabel.setAttribute('opacity',0);
+    }
+    /* 热度环纹高亮 */
+    if(s.ringNodes)s.ringNodes.forEach(function(r,i){
+      r.setAttribute('opacity',L==='heat'?1:0.5);
+    });
+    /* 事件徽标：日程层默认淡显 */
+    if(s.evNode)s.evNode.setAttribute('opacity',L==='cal'?0.85:0.6);
+  });
+  CLUSTERS.cpo.node.style.opacity=(L==='cluster')?1:0.25;
+  CLUSTERS.wine.node.style.opacity=(L==='cluster')?1:0.25;
+  beacon.style.opacity=(L==='cluster')?1:0.35;
+}
+function addWaveLabel(s){
+  var t=el('text',{x:s.x,y:s.y+37,'text-anchor':'middle','font-size':8,'fill':'#5F6B82','font-family':'var(--mono)','opacity':0},gStars);
+  return t;
+}
+document.getElementById('layerChips').addEventListener('click',function(e){
+  var c=e.target.closest('.chip');if(c)setLayer(c.dataset.layer);
+});
+
+/* 点星：焦点注释 + 成员抽屉 */
+var note=document.createElement('div');note.className='focus-note';document.getElementById('v2screen').querySelector('.sky').appendChild(note);
+function showNote(html){note.innerHTML=html;note.classList.add('on');}
+function hideNote(){note.classList.remove('on');}
+var FOCUS={
+  zjxc:'<b>中际旭创</b>：与 3 只相关系数 >0.6，同链共振里权重最大的一颗（Top3 之一，等权估算）',
+  xys:'<b>新易盛</b>：与 3 只相关系数 >0.6，同链共振里最颠的一颗（2.1×大盘）',
+  tftx:'<b>天孚通信</b>：同链成员 · 09/12 财报预约披露，披露前后波动可能放大',
+  cwj:'<b>寒武纪</b>：今日 2 连板 · 与算力链 2 只相关 >0.6——热度与牵连叠加的一颗',
+  gzmt:'<b>贵州茅台</b>：与五粮液相关 0.81，几乎同涨同跌',
+  wly:'<b>五粮液</b>：与茅台几乎同涨同跌（0.81）· 09/25 分红除权',
+  cjsd:'<b>宁德时代</b>：孤星，与全自选最相关也只有 0.42 · 09/18 解禁进入窗口',
+  cjdl:'<b>长江电力</b>：全图波动最小（0.6×大盘），防御属性的一颗孤星',
+  zupa:'<b>中国平安</b>：与谁都不连（最高 0.31），独立变量'
+};
+gStars.addEventListener('click',function(e){
+  var g=e.target.closest('[data-id]');if(!g)return;
+  var s=STAR(g.getAttribute('data-id'));
+  selected=(selected&&selected.id===s.id)?null:s;
+  if(!selected){moveRing(null);hideNote();document.getElementById('memberDrawer').classList.remove('on');return;}
+  moveRing(s);
+  showNote(FOCUS[s.id]);
+  /* 成员抽屉=单星详情行 */
+  var d=document.getElementById('memberDrawer');
+  document.getElementById('mdTitle').firstChild.textContent=s.name+' · 今天';
+  var upcls=s.pct>=0?'up':'down';
+  document.getElementById('mdRows').innerHTML=
+    '<div class="mrow"><div><div class="nm">'+s.name+'</div><div class="sub">'+(s.ev?s.ev.d+' '+s.ev.t:'无近期事件')+(s.lb?' · '+s.lb+' 连板':'')+'</div></div>'+
+    '<div class="px"><b class="'+upcls+'">'+(s.pct>=0?'+':'')+s.pct.toFixed(1)+'%</b><s>波动 '+s.vol.toFixed(1)+'×大盘 · 等权估算</s></div><span class="go">进详情 ›</span></div>';
+  d.classList.add('on');
+});
+beacon.addEventListener('click',function(){
+  document.getElementById('memberDrawer').classList.remove('on');
+  document.getElementById('beaconDrawer').classList.add('on');
+});
+
+/* 时间刷 */
+var TB_START=new Date(2026,8,8).getTime(), TB_DAYS=30;
+var EVPOINTS=[
+  {d:'09/12',t:'天孚通信 · 财报预约披露',id:'tftx',off:4},
+  {d:'09/18',t:'宁德时代 · 解禁进入窗口（解禁≠减持，但可流通筹码增加）',id:'cjsd',off:10},
+  {d:'09/25',t:'五粮液 · 分红除权安排',id:'wly',off:17},
+  {d:'09/28',t:'寒武纪 · 财报预约披露',id:'cwj',off:20}
+];
+var track=document.getElementById('tbTrack'),knob=document.getElementById('tbKnob'),tbDay=document.getElementById('tbDay'),tbCur=document.getElementById('tbCur');
+var tbPos=0;
+EVPOINTS.forEach(function(ev){
+  var d=document.createElement('div');d.className='tb-ev';d.style.left=(ev.off/30*100)+'%';
+  d.innerHTML='<span>'+ev.d+'</span>';d.setAttribute('data-d',ev.d);track.appendChild(d);ev.node=d;
+});
+function paintCal(day){
+  var lit=null;
+  EVPOINTS.forEach(function(ev){
+    var on=(ev.d===day);
+    ev.node.classList.toggle('lit',on);
+    if(on)lit=ev;
+    var s=STAR(ev.id);
+    if(s&&s.evNode){
+      s.evNode.setAttribute('opacity',on?1:0.3);
+      s.evNode.querySelectorAll('rect').forEach(function(r){r.setAttribute('fill',on?'#EAF1FD':'#EEF1F5')});
+      s.node.style.opacity=on?1:(lit?0.55:1);
+    }
+  });
+  tbDay.innerHTML=lit?('那天：<b>'+lit.d+'</b> '+lit.t):'那天：自选没有已预约事件，正常走。';
+  STARS.forEach(function(s){ if(!EVPOINTS.some(function(e){return e.id===s.id;})) s.node.style.opacity=1; });
+  if(!lit){EVPOINTS.forEach(function(ev){var s=STAR(ev.id);if(s.evNode)s.evNode.setAttribute('opacity',0.85)});}
+}
+function setKnob(pct){
+  tbPos=Math.max(0,Math.min(1,pct));
+  knob.style.left=(tbPos*100)+'%';
+  var day=Math.round(tbPos*TB_DAYS);
+  var dt=new Date(TB_START+day*864e5);
+  var label=('0'+(dt.getMonth()+1)).slice(-2)+'/'+('0'+dt.getDate()).slice(-2);
+  tbCur.textContent=label;
+  var ev=EVPOINTS.find(function(e){return e.d===label;});
+  paintCal(ev?ev.d:null);
+}
+setKnob(0);
+var tbDrag=false;
+function tbMove(clientX){
+  var r=track.getBoundingClientRect();
+  setKnob((clientX-r.left-11)/(r.width-22));
+}
+track.addEventListener('pointerdown',function(e){tbDrag=true;try{track.setPointerCapture(e.pointerId);}catch(_){/* 合成事件无活跃指针 */}tbMove(e.clientX);});
+track.addEventListener('pointermove',function(e){if(tbDrag)tbMove(e.clientX);});
+track.addEventListener('pointerup',function(){tbDrag=false;});
+setLayer('cluster');
+
+/* ══════════ 视图3 拖星牵引 ══════════ */
+var P_STARS=[
+  {id:'zjxc',name:'中际旭创',x:300,y:130},
+  {id:'xys', name:'新易盛',  x:430,y:150,drag:true},
+  {id:'tftx',name:'天孚通信',x:280,y:230},
+  {id:'cwj', name:'寒武纪',  x:470,y:250},
+  {id:'cjsd',name:'宁德时代',x:560,y:180},
+  {id:'gzmt',name:'贵州茅台',x:120,y:300},
+  {id:'wly', name:'五粮液',  x:180,y:330},
+  {id:'cjdl',name:'长江电力',x:110,y:90}
+];
+var P_LINKS=[['zjxc','xys',.86],['zjxc','tftx',.79],['xys','tftx',.74],['cwj','xys',.65],['cjsd','xys',.42],['gzmt','wly',.81]];
+var psvg=document.getElementById('pullSvg');
+function pel(tag,attrs,parent){var e=document.createElementNS(SVGNS,tag);for(var k in attrs)e.setAttribute(k,attrs[k]);(parent||psvg).appendChild(e);return e;}
+var pgLinks=el2('g'),pgStars=el2('g');
+function el2(tag){var e=document.createElementNS(SVGNS,tag);psvg.appendChild(e);return e;}
+/* 拖拽目标底座 */
+pel('circle',{cx:430,cy:150,r:34,fill:'rgba(30,91,214,.055)',stroke:'rgba(30,91,214,.22)','stroke-dasharray':'3 4'},pgLinks);
+var ph=el2('text');ph.setAttribute('x',430);ph.setAttribute('y',196);ph.setAttribute('text-anchor','middle');ph.setAttribute('font-size',10);ph.setAttribute('fill','#1E5BD6');ph.setAttribute('font-weight',600);ph.textContent='拖我';
+var pLinks=P_LINKS.map(function(l){
+  var a=P_STAR(l[0]),b=P_STAR(l[1]);
+  var ln=pel('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,stroke:'rgba(30,91,214,'+(0.2+(l[2]-0.4)*0.5)+')','stroke-width':0.8+(l[2]-0.4)*4,'stroke-linecap':'round'},pgLinks);
+  var tl=pel('text',{x:(a.x+b.x)/2,y:(a.y+b.y)/2-5,'text-anchor':'middle','font-size':9,fill:'#5F6B82','font-family':'var(--mono)'},pgLinks);
+  tl.textContent=l[2].toFixed(2);
+  return {ln:ln,tl:tl,a:a,b:b,r:l[2]};
+});
+var pNodes=P_STARS.map(function(s){
+  var g=pel('g',{cursor:s.drag?'grab':'default'},pgStars);
+  pel('circle',{cx:s.x,cy:s.y,r:15,fill:'#fff',stroke:s.drag?'#1E5BD6':'#D5DCE6','stroke-width':s.drag?1.6:1},g);
+  var t=pel('text',{x:s.x,y:s.y+4,'text-anchor':'middle','font-size':9,'font-weight':700,fill:'#5B6573'},g);t.textContent=s.name.slice(0,2);
+  var nm=pel('text',{x:s.x,y:s.y-24,'text-anchor':'middle','font-size':10.5,fill:'#5B6573','font-weight':600},g);nm.textContent=s.name;
+  if(s.drag){
+    var sub=pel('text',{x:s.x,y:s.y+30,'text-anchor':'middle','font-size':8.5,fill:'#8A93A3'},g);sub.textContent='r 越大的星跟得越紧';
+  }
+  s.node=g;s.dx=0;s.dy=0;s.vx=0;s.vy=0;
+  return g;
+});
+function P_STAR(id){for(var i=0;i<P_STARS.length;i++)if(P_STARS[i].id===id)return P_STARS[i];}
+var pull={on:false,sx:0,sy:0,tx:0,ty:0,pressTimer:null,longpress:false};
+var dragStar=P_STAR('xys');
+var psvgBox=document.getElementById('pullSvg');
+function svgPt(e){
+  var r=psvgBox.getBoundingClientRect();
+  return {x:(e.clientX-r.left)/r.width*820,y:(e.clientY-r.top)/r.height*400};
+}
+psvgBox.addEventListener('pointerdown',function(e){
+  var p=svgPt(e);
+  /* 命中判定：星当前渲染位置（原位 + 已有位移）半径 30 内 */
+  if(Math.hypot(p.x-(dragStar.x+dragStar.dx),p.y-(dragStar.y+dragStar.dy))>30)return;
+  pull.on=true;pull.sx=p.x;pull.sy=p.y;pull.tx=p.x;pull.ty=p.y;pull.longpress=false;
+  try{psvgBox.setPointerCapture(e.pointerId);}catch(_){/* 合成事件无活跃指针，忽略 */}
+  pull.pressTimer=setTimeout(function(){
+    if(pull.on&&Math.hypot(pull.tx-pull.sx,pull.ty-pull.sy)<10){
+      pull.longpress=true;
+      document.getElementById('ctxBar').classList.add('on');
+    }
+  },550);
+});
+psvgBox.addEventListener('pointermove',function(e){
+  if(!pull.on)return;
+  var p=svgPt(e);pull.tx=p.x;pull.ty=p.y;
+  var moved=Math.hypot(pull.tx-pull.sx,pull.ty-pull.sy);
+  if(moved>10&&pull.pressTimer){clearTimeout(pull.pressTimer);pull.pressTimer=null;}
+});
+function releasePull(){
+  if(pull.pressTimer){clearTimeout(pull.pressTimer);pull.pressTimer=null;}
+  if(pull.on&&!pull.longpress){/* 弹簧回弹交给 rAF */}
+  pull.on=false;
+}
+psvgBox.addEventListener('pointerup',releasePull);
+psvgBox.addEventListener('pointercancel',releasePull);
+/* 弹簧：拖动=直接跟手 + 相关星按 r 跟随；松手=阻尼弹簧回 0 */
+var RM=window.matchMedia&&matchMedia('(prefers-reduced-motion:reduce)').matches;
+function tick(){
+  if(pull.on){
+    var dx=pull.tx-pull.sx, dy=pull.ty-pull.sy;
+    dragStar.dx=dx;dragStar.dy=dy;
+    P_STARS.forEach(function(s){
+      if(s===dragStar)return;
+      var link=P_LINKS.find(function(l){return (l[0]===s.id&&l[1]===dragStar.id)||(l[1]===s.id&&l[0]===dragStar.id);});
+      var r=link?link[2]:0;
+      s.tx=dx*r*0.6; s.ty=dy*r*0.6;
+      s.dx+=(s.tx-s.dx)*0.35; s.dy+=(s.ty-s.dy)*0.35;
+    });
+  }else{
+    P_STARS.forEach(function(s){
+      s.vx=(s.dx)*-0.18+s.vx*0.72; s.vy=(s.dy)*-0.18+s.vy*0.72;
+      if(Math.abs(s.dx)>0.3||Math.abs(s.vx)>0.01){s.dx+=s.vx;}else{s.dx=0;s.vx=0;}
+      if(Math.abs(s.dy)>0.3||Math.abs(s.vy)>0.01){s.dy+=s.vy;}else{s.dy=0;s.vy=0;}
+    });
+  }
+  P_STARS.forEach(function(s){
+    s.node.setAttribute('transform','translate('+s.dx+','+s.dy+')');
+  });
+  pLinks.forEach(function(l){
+    l.ln.setAttribute('x1',l.a.x+l.a.dx);l.ln.setAttribute('y1',l.a.y+l.a.dy);
+    l.ln.setAttribute('x2',l.b.x+l.b.dx);l.ln.setAttribute('y2',l.b.y+l.b.dy);
+    l.tl.setAttribute('x',(l.a.x+l.a.dx+l.b.x+l.b.dx)/2);
+    l.tl.setAttribute('y',(l.a.y+l.a.dy+l.b.y+l.b.dy)/2-5);
+  });
+  requestAnimationFrame(tick);
+}
+if(!RM)requestAnimationFrame(tick);
+document.querySelectorAll('#ctxBar .cc').forEach(function(c){
+  c.addEventListener('click',function(){document.getElementById('ctxBar').classList.remove('on');});
+});
+</script>
+</body>
+</html>
