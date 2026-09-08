@@ -24,9 +24,14 @@ import com.kuikly.stockchat.common.Format
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.reactive.handler.observable
+import com.tencent.kuikly.core.timer.setTimeout
 import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import kotlin.math.PI
+import kotlin.math.max
+import kotlin.math.roundToInt
 
 object StockCardRenderers {
     private var registered = false
@@ -67,7 +72,9 @@ object StockQuoteCardRenderer : CardRenderer {
             }
             MiniTimeline(container, model, context, height = 42f)
             container.Text { attr { text("${quote.source} · ${quote.timestamp}"); marginTop(4f); fontSize(9f); color(theme.textTertiary) } }
-            container.event { click { context.onOpenStock(quote.symbol) } }
+            if (context.cardClickable) {
+                container.event { click { context.onOpenStock(quote.symbol) } }
+            }
             return
         }
         container.View {
@@ -126,7 +133,7 @@ object StockQuoteCardRenderer : CardRenderer {
         }
         container.Text {
             attr {
-                text("分时走势 · 虚线为昨收基准")
+                text("分时走势 · 虚线为昨收基准与均价，红绿为量能")
                 marginTop(12f)
                 fontSize(10f)
                 color(theme.textTertiary)
@@ -168,7 +175,9 @@ object StockChartCardRenderer : CardRenderer {
                 Text { attr { text(Format.percent(model.quote.changePercent)); fontSize(12f); color(if (model.quote.rising) theme.rise else theme.fall) } }
             }
             if (model.mode == StockChartMode.TIMELINE) MiniTimeline(container, StockQuoteCardModel(model.quote), context, height = 34f)
-            container.event { click { context.onOpenStock(model.quote.symbol) } }
+            if (context.cardClickable) {
+                container.event { click { context.onOpenStock(model.quote.symbol) } }
+            }
             return
         }
         container.View {
@@ -194,7 +203,7 @@ object StockChartCardRenderer : CardRenderer {
         if (model.mode == StockChartMode.TIMELINE) KuiklyTimelineChart(container, model.quote, context, height = 132f)
         else KLineChart(container, model, context)
         container.Text {
-            attr { text(if (model.mode == StockChartMode.TIMELINE) "虚线为昨收基准" else "显示 MA5 / MA10 / MA20；日线数据可能存在延迟"); marginTop(6f); fontSize(10f); color(theme.textTertiary) }
+            attr { text(if (model.mode == StockChartMode.TIMELINE) "虚线为昨收基准与均价，红绿为量能" else "显示 MA5 / MA10 / MA20；日线数据可能存在延迟"); marginTop(6f); fontSize(10f); color(theme.textTertiary) }
         }
     }
 }
@@ -612,6 +621,18 @@ object NewsCardRenderer : CardRenderer {
     }
 }
 
+/**
+ * 迷你分时走势（自选卡 MINI、图表卡 MINI/COMPACT 共用）。
+ *
+ * 缩放走 [TimeLineCalculator.calculate] 自适应 min/max：迷你图只表意当日形态，
+ * 波动有多大就铺多满（2026-09-09 用户反馈"全是平线"后收紧了 padding 下限）。
+ *
+ * 入场/刷新为 draw-on 生长动画：progress 0→1 的 setTimeout 链 + 900ms 安全兜底
+ * 强制 1f（防断链卡死），draw 闭包读 progress observable 建立依赖（R1），无 attr
+ * animate、不涉及 R5。同签名数据（分时点数 + 最新价）的重建不重播——QuoteRepository
+ * 一次 load 会连发 snapshot/timeline/klines 多个回调触发整页重建，不加防抖的话
+ * 动画会被反复打断；数据真的变了（点数或现价更新）才重新从左往右生长。
+ */
 internal fun MiniTimeline(
     container: ViewContainer<*, *>,
     model: StockQuoteCardModel,
@@ -620,30 +641,92 @@ internal fun MiniTimeline(
 ) {
     val quote = model.quote
     val theme = context.theme
+    val pts = quote.timeline
+    val state = MiniChartState()
+    val signature = pts.size to (pts.lastOrNull()?.price ?: 0.0)
+    val trackerKey = "${model.cardId}#$height"
+    if (pts.isEmpty() || miniDrawOnTracker[trackerKey] == signature) {
+        state.progress = 1f
+    } else {
+        miniDrawOnTracker[trackerKey] = signature
+        if (miniDrawOnTracker.size > 128) miniDrawOnTracker.clear()
+        var i = 0
+        fun tick() {
+            i++
+            state.progress = (i.toFloat() / MINI_DRAW_ON_STEPS).coerceIn(0f, 1f)
+            if (state.progress < 1f) setTimeout(MINI_DRAW_ON_STEP_MS) { tick() }
+        }
+        tick()
+        setTimeout(MINI_DRAW_ON_SAFETY_MS) { state.progress = 1f }
+    }
+
     container.Canvas({
         attr { height(height); marginTop(10f); alignSelfStretch() }
     }) { canvas, width, canvasHeight ->
         val geometry = TimeLineCalculator.calculate(quote.timeline, width, canvasHeight, quote.previousClose)
-        if (geometry.points.isNotEmpty()) {
+        if (geometry.points.isEmpty()) return@Canvas
+        val progress = state.progress
+        val visible = if (progress >= 1f) geometry.points.size
+        else max(2, (geometry.points.size * progress).roundToInt())
+
+        // 昨收基准虚线（结构层，直接全量呈现，不参与生长）
+        canvas.beginPath()
+        canvas.moveTo(0f, geometry.baselineY)
+        canvas.lineTo(width, geometry.baselineY)
+        canvas.setLineDash(listOf(3f, 4f))
+        canvas.strokeStyle(theme.divider)
+        canvas.lineWidth(1f)
+        canvas.stroke()
+        canvas.setLineDash(emptyList())
+
+        val tone = if (quote.rising) theme.rise else theme.fall
+
+        // 面积淡渐变：闭合到昨收基准，随线头一同生长（迷你图只做单侧轻渐变）
+        if (visible >= 2) {
+            val fill = canvas.createLinearGradient(0f, 0f, 0f, canvasHeight)
+            fill.addColorStop(0f, tone.opacity(0.14f))
+            fill.addColorStop(1f, tone.opacity(0.02f))
             canvas.beginPath()
-            canvas.moveTo(0f, geometry.baselineY)
-            canvas.lineTo(width, geometry.baselineY)
-            canvas.setLineDash(listOf(3f, 4f))
-            canvas.strokeStyle(theme.divider)
-            canvas.lineWidth(1f)
-            canvas.stroke()
-            canvas.setLineDash(emptyList())
-            canvas.beginPath()
-            geometry.points.forEachIndexed { index, point ->
-                if (index == 0) canvas.moveTo(point.x, point.y) else canvas.lineTo(point.x, point.y)
-            }
-            canvas.strokeStyle(if (quote.rising) theme.rise else theme.fall)
-            canvas.lineWidth(2f)
-            canvas.lineCapRound()
-            canvas.stroke()
+            canvas.moveTo(geometry.points[0].x, geometry.baselineY)
+            for (i in 0 until visible) canvas.lineTo(geometry.points[i].x, geometry.points[i].y)
+            canvas.lineTo(geometry.points[visible - 1].x, geometry.baselineY)
+            canvas.closePath()
+            canvas.fillStyle(fill)
+            canvas.fill()
         }
+
+        // 价格折线：只画前 visible 个点 → 线头从左向右推进
+        canvas.beginPath()
+        for (i in 0 until visible) {
+            val point = geometry.points[i]
+            if (i == 0) canvas.moveTo(point.x, point.y) else canvas.lineTo(point.x, point.y)
+        }
+        canvas.strokeStyle(tone)
+        canvas.lineWidth(2f)
+        canvas.lineCapRound()
+        canvas.stroke()
+
+        // 生长头/now 点：动画中是线头，走完后落在现价位置
+        val tip = geometry.points[visible - 1]
+        canvas.beginPath()
+        canvas.arc(tip.x, tip.y, 2.2f, 0f, (2 * PI).toFloat(), false)
+        canvas.fillStyle(tone)
+        canvas.fill()
     }
 }
+
+/** 迷你分时 draw-on 参数：18 步 × 20ms ≈ 360ms；900ms 兜底强制走完。 */
+private const val MINI_DRAW_ON_STEPS = 18
+private const val MINI_DRAW_ON_STEP_MS = 20
+private const val MINI_DRAW_ON_SAFETY_MS = 900
+
+/** draw-on 进度状态（R1：draw 闭包读 progress observable 驱动逐帧重绘）。 */
+private class MiniChartState {
+    var progress by observable(0f)
+}
+
+/** 已播动画签名表：key = cardId#height，value = (分时点数, 最新价)，数据变了才重播。 */
+private val miniDrawOnTracker = mutableMapOf<String, Pair<Int, Double>>()
 
 private fun Metric(
     label: String,

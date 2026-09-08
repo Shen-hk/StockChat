@@ -12,8 +12,7 @@ import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
-import com.tencent.kuikly.core.base.attr.CaptureRule
-import com.tencent.kuikly.core.base.attr.CaptureRuleDirection
+import com.tencent.kuikly.core.layout.FlexPositionType
 import com.tencent.kuikly.core.reactive.handler.observable // 集成修复：observable 在 reactive.handler 包，base 包无此符号
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
@@ -97,11 +96,14 @@ internal fun ViewContainer<*, *>.RevisitCard(
 
     View {
         attr {
-            marginTop(theme.spacing.lg)
-            padding(16f)
-            borderRadius(theme.cardRadius)
+            // 对齐原型：A1 是 Hero 下的一行可展开条，不做第二张“大卡”。
+            marginTop(10f)
+            paddingLeft(12f); paddingRight(12f)
+            paddingTop(9f); paddingBottom(9f)
+            borderRadius(14f)
             backgroundColor(theme.surface)
             border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+            boxShadow(BoxShadow(0f, 4f, 14f, theme.textPrimary.opacity(0.05f)))
         }
 
         // 头部：始终可见，点击展开/收起
@@ -112,8 +114,9 @@ internal fun ViewContainer<*, *>.RevisitCard(
             }
             Text {
                 attr {
-                    text("★ 当初理由")
-                    fontSize(theme.type.label)
+                    // 合并为一条，避免窄屏把日期和值拆成两列造成 2 行高度。
+                    text("★  当初理由 · $entryTimeLabel 加自选 · 当时 " + if (entryPrice > 0) Format.price(entryPrice) else "—")
+                    fontSize(11f)
                     fontWeightSemiBold()
                     color(theme.textSecondary)
                     flex(1f)
@@ -121,18 +124,10 @@ internal fun ViewContainer<*, *>.RevisitCard(
             }
             Text {
                 attr {
-                    text("$entryTimeLabel 加自选 · 当时 ${Format.price(entryPrice)}")
-                    fontSize(theme.type.meta)
-                    color(theme.textTertiary)
-                    flex(1f)
-                }
-            }
-            Text {
-                attr {
-                    text(if (expanded()) "⌄" else "›")
+                    text(if (expanded()) "⌃" else "›")
                     marginLeft(8f)
-                    fontSize(theme.type.body)
-                    color(theme.brand)
+                    fontSize(12f)
+                    color(theme.textTertiary)
                 }
             }
             event { click { onToggle() } }
@@ -373,7 +368,16 @@ private fun ViewContainer<*, *>.dotView(theme: StockChatTheme, color: () -> Colo
  * - 分色比例条：各段宽度 = count 占比；选中段高亮（提亮），圆形滑块（白底 brand 描边）居中于选中段。
  * - 两端「多/空」小字（多=涨色 / 空=跌色）。
  * - 下方当前评级观点引用区：背景 surfaceMuted、10px 文本，随 selected 切换淡入 180ms（vbind 重挂载两帧）。
- * 交互：在比例条上点按或水平拖动切换到对应段（用 touch x 算命中段，参考 DetailTimelineChart 的 pan 处理范式）。
+ * 交互：在比例条上点按或水平拖动切换到对应段。
+ *
+ * 手势实现（2026-09-09 修正，RowGestureLayer 同款范式）：
+ * - **用原生 touchDown/Move/Up 而非 pan**：pan 在 Android DOWN 时即
+ *   `requestDisallowInterceptTouchEvent(true)`，会把外层纵向 Scroller 锁死——详情页
+ *   滑过这里滚不动的「手感差」就是它。touch 不做 disallow：纵向拖动被 Scroller 拦截后
+ *   以 touchCancel 收尾（页面照常滚），横向拖动自然放行给本层。
+ * - **色条高 18f 完整容纳 18f 滑块**：Kuikly 子视图默认被父容器裁剪（overflow），
+ *   且圆角容器 `overflow(true)` 失效——旧版 12f 色条把 18f 滑块上下各裁 3f，
+ *   只剩一条缝（「按钮被遮住」的根因）。触控层另加上下 8f padding 扩大命中区。
  */
 internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
     theme: StockChatTheme,
@@ -381,12 +385,15 @@ internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
     initialIndex: Int = 0,
     containerWidth: Float,
     reduceMotion: Boolean,
+    /** 并入「公告与研报」大卡（原型 .balance 在 .ann-card 内）时置 true：去掉自身卡底与描边。 */
+    inset: Boolean = false,
 ) {
     // 集成修复：局部 observable 委托 → BlockState
     val selected = BlockState(
         initialIndex.coerceIn(0, (segments.size - 1).coerceAtLeast(0)),
     )
-    val barW = (containerWidth - 32f).coerceAtLeast(40f)
+    // 命中映射宽：inset 模式下外卡自带 12f 左右内距，色条实宽 = containerWidth - 24f
+    val barW = (containerWidth - (if (inset) 24f else 32f)).coerceAtLeast(40f)
 
     // 命中段：touch x（相对比例条左缘）→ 占比 → 落在哪段
     fun selectAt(x: Float) {
@@ -403,21 +410,43 @@ internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
         selected.value = segments.lastIndex
     }
 
+    // 手势期间的瞬时量，不驱动重绘，普通局部变量即可（RowGestureLayer 同款）。
+    var downX = 0f
+    var downY = 0f
+    /** 0 = 未仲裁，1 = 横向（本组件接管），2 = 纵向（交给外层 Scroller）。 */
+    var axis = 0
+    /** 本手势发生过横向拖动：吞掉紧随其后的 click。 */
+    var dragged = false
+    /** 收尾幂等标记：touchUp 与 touchCancel 只生效一次。 */
+    var gestureDone = false
+
     View {
         attr {
-            marginTop(theme.spacing.lg)
-            paddingLeft(16f)
-            paddingRight(16f)
-            paddingTop(12f)
-            paddingBottom(12f)
-            borderRadius(theme.cardRadius)
-            backgroundColor(theme.surface)
-            border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+            if (inset) {
+                // 并卡模式：卡底/描边/水平内距由外层「公告与研报」卡提供
+                marginTop(12f)
+            } else {
+                // F3 独立成卡时的原样式
+                marginTop(8f)
+                paddingLeft(12f)
+                paddingRight(12f)
+                paddingTop(10f)
+                paddingBottom(10f)
+                borderRadius(14f)
+                backgroundColor(theme.surface)
+                border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+            }
         }
 
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            Text { attr { text("研报评级光谱 · 拖动看观点"); flex(1f); fontSize(9f); color(theme.textTertiary) } }
+            Text { attr { text("近 90 天 ${segments.sumOf { it.count }} 份"); fontSize(9f); color(theme.textTertiary) } }
+        }
         // 两端多/空
         View {
             attr {
+                marginTop(6f)
                 flexDirectionRow()
                 justifyContentSpaceBetween()
             }
@@ -425,43 +454,82 @@ internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
             Text { attr { text("空"); fontSize(theme.type.meta); color(theme.fall) } }
         }
 
-        // 比例条 + 滑块（嵌套 flex 居中，避免绝对定位依赖）
+        // 触控层：上下各扩 8f 命中区；touch 事件挂本层（色条子树不挂事件，
+        // 保证 Android 上触摸流能到达本层——RowGestureLayer 同款约束）
         View {
             attr {
-                marginTop(8f)
-                height(12f)
-                flexDirectionRow()
-                borderRadius(6f)
-                // 集成修复：capture 属 attr 作用域方法，不能挂在视图构建作用域
-                capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
+                marginTop(2f)
+                paddingTop(8f)
+                paddingBottom(8f)
             }
-            segments.forEachIndexed { i, seg ->
-                View {
-                    attr {
-                        flex(seg.count.toFloat())
-                        allCenter()
-                        backgroundColor(seg.color)
-                        opacity(if (i == selected.value) 1f else 0.72f)
-                    }
-                    vif({ i == selected.value }) {
-                        View {
-                            attr {
-                                width(18f)
-                                height(18f)
-                                borderRadius(9f)
-                                backgroundColor(theme.surface)
-                                border(Border(1.5f, BorderStyle.SOLID, theme.brand))
-                                boxShadow(BoxShadow(0f, 2f, 8f, theme.brand.opacity(0.25f)))
+
+            // 色条 + 滑块：18f 高完整容纳 18f 滑块，无任何溢出裁剪
+            View {
+                attr {
+                    height(18f)
+                    flexDirectionRow()
+                    borderRadius(9f)
+                }
+                segments.forEachIndexed { i, seg ->
+                    View {
+                        attr {
+                            flex(seg.count.toFloat())
+                            allCenter()
+                            backgroundColor(seg.color)
+                            opacity(if (i == selected.value) 1f else 0.72f)
+                        }
+                        vif({ i == selected.value }) {
+                            View {
+                                attr {
+                                    width(18f)
+                                    height(18f)
+                                    borderRadius(9f)
+                                    backgroundColor(theme.surface)
+                                    border(Border(1.5f, BorderStyle.SOLID, theme.brand))
+                                    boxShadow(BoxShadow(0f, 2f, 8f, theme.brand.opacity(0.25f)))
+                                }
                             }
                         }
                     }
                 }
             }
+
             event {
-                pan { params ->
-                    if (params.state == "start" || params.state == "move") selectAt(params.x)
+                click { params ->
+                    // 拖动过的手势不触发点选（click 在 touchUp 之后到达）
+                    if (!dragged) selectAt(params.x)
                 }
-                click { params -> selectAt(params.x) }
+                touchDown { e ->
+                    downX = e.x
+                    downY = e.y
+                    axis = 0
+                    dragged = false
+                    gestureDone = false
+                }
+                touchMove { e ->
+                    if (gestureDone || axis == 2) return@touchMove
+                    val dx = e.x - downX
+                    val dy = e.y - downY
+                    if (axis == 0) {
+                        if (abs(dx) <= RowGesture.AXIS_SLOP && abs(dy) <= RowGesture.AXIS_SLOP) return@touchMove
+                        // 横竖轴仲裁：横向占优才接管，打平让给纵向滚动
+                        axis = if (abs(dx) > abs(dy)) 1 else 2
+                    }
+                    if (axis == 1) {
+                        dragged = true
+                        selectAt(e.x)
+                    }
+                    // axis == 2：外层 Scroller 接管纵向滚动，随后以 touchCancel 收尾
+                }
+                touchUp { e ->
+                    if (gestureDone) return@touchUp
+                    gestureDone = true
+                    if (axis == 1) selectAt(e.x)
+                }
+                touchCancel { _ ->
+                    // 被外层 Scroller 拦截等系统取消：selected 已随最后位置落定，无需回滚
+                    gestureDone = true
+                }
             }
         }
 
@@ -541,9 +609,9 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
 
     View {
         attr {
-            marginTop(theme.spacing.lg)
-            padding(16f)
-            borderRadius(theme.cardRadius)
+            marginTop(8f)
+            padding(12f)
+            borderRadius(14f)
             backgroundColor(theme.surface)
             border(Border(0.5f, BorderStyle.SOLID, theme.divider))
         }
@@ -573,32 +641,88 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
                         color(theme.textSecondary)
                     }
                 }
-                // 轨道（嵌套 flex 定位 knob：前 spacer=flex(weight)，knob 固定，后 spacer=flex(2-weight)）
+                // 触控区：上下各扩 6f 命中区；touch 事件挂本层，轨道子树不挂事件。
+                // 不用 pan：Android 上 pan DOWN 即 disallow 拦截，四条轨道一排会把
+                // 整页纵向滚动锁死（滑动卡顿感来源）——RowGestureLayer 同款 touch 范式。
                 View {
                     attr {
                         width(trackW)
-                        height(8f)
-                        alignItemsCenter()
-                        borderRadius(4f)
-                        backgroundColor(theme.surfaceMuted)
-                        // 集成修复：capture 属 attr 作用域方法，不能挂在视图构建作用域
-                        capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
+                        paddingTop(6f)
+                        paddingBottom(6f)
                     }
-                    View { attr { flex(weights.value[i].toFloat().coerceAtLeast(0.001f)) } }
+                    // 轨道：高 16f 完整容纳 16f knob——Kuikly 子视图默认被父容器裁剪
+                    // （overflow），且圆角容器 overflow(true) 失效，旧版 8f 轨道把
+                    // knob 上下各裁 4f 只剩一条缝（「按钮被遮住」的根因）。
                     View {
                         attr {
-                            width(16f)
+                            width(trackW)
                             height(16f)
-                            borderRadius(8f)
-                            backgroundColor(theme.brand)
+                            alignItemsCenter()
                         }
+                        // 细轨线：绝对定位铺底（对齐原型 3px 细线；本层无圆角不会被裁）
+                        View {
+                            attr {
+                                positionType(FlexPositionType.ABSOLUTE)
+                                left(0f)
+                                right(0f)
+                                top(6.5f)
+                                height(3f)
+                                borderRadius(1.5f)
+                                backgroundColor(theme.surfaceMuted)
+                            }
+                        }
+                        View { attr { flex(weights.value[i].toFloat().coerceAtLeast(0.001f)) } }
+                        View {
+                            attr {
+                                width(16f)
+                                height(16f)
+                                borderRadius(8f)
+                                backgroundColor(theme.brand)
+                            }
+                        }
+                        View { attr { flex((2.0 - weights.value[i]).coerceAtLeast(0.001).toFloat()) } }
                     }
-                    View { attr { flex((2.0 - weights.value[i]).coerceAtLeast(0.001).toFloat()) } }
+                    // 手势瞬时量（每行独立，普通局部变量即可，不驱动重绘）
+                    var downX = 0f
+                    var downY = 0f
+                    /** 0 = 未仲裁，1 = 横向（本轨道接管），2 = 纵向（交给外层 Scroller）。 */
+                    var axis = 0
+                    var dragged = false
+                    var gestureDone = false
                     event {
-                        pan { params ->
-                            if (params.state == "start" || params.state == "move") handleTrack(i, params.x)
+                        click { params ->
+                            if (!dragged) handleTrack(i, params.x)
                         }
-                        click { params -> handleTrack(i, params.x) }
+                        touchDown { e ->
+                            downX = e.x
+                            downY = e.y
+                            axis = 0
+                            dragged = false
+                            gestureDone = false
+                        }
+                        touchMove { e ->
+                            if (gestureDone || axis == 2) return@touchMove
+                            val dx = e.x - downX
+                            val dy = e.y - downY
+                            if (axis == 0) {
+                                if (abs(dx) <= RowGesture.AXIS_SLOP && abs(dy) <= RowGesture.AXIS_SLOP) return@touchMove
+                                // 横竖轴仲裁：横向占优才接管，打平让给纵向滚动
+                                axis = if (abs(dx) > abs(dy)) 1 else 2
+                            }
+                            if (axis == 1) {
+                                dragged = true
+                                handleTrack(i, e.x)
+                            }
+                        }
+                        touchUp { e ->
+                            if (gestureDone) return@touchUp
+                            gestureDone = true
+                            if (axis == 1) handleTrack(i, e.x)
+                        }
+                        touchCancel { _ ->
+                            // 被外层 Scroller 拦截等系统取消：权重已随最后位置落定
+                            gestureDone = true
+                        }
                     }
                 }
                 Text {

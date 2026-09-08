@@ -24,4 +24,11 @@ data class CardContext(
     val onCardEvent: ((String, CardEvent) -> Unit)? = null,
     /** Shared visual-quality decision. Card renderers consume it, never platform APIs directly. */
     val glass: GlassRenderer = GlassRenderer.Default,
+    /**
+     * 行情卡本体是否自己挂 click（打开详情）。嵌入横向手势容器（RowGestureLayer、
+     * 卡片流视口）时必须传 false：Android 上可触摸子 View 会吞掉整条触摸流，
+     * 外层容器的 touch/pan 收不到 → 滑不动。点击改由外层容器统一承担。
+     * 放在参数表末尾：CardContext 有大量按位置传参的调用点，中途插参会错位。
+     */
+    val cardClickable: Boolean = true,
 )

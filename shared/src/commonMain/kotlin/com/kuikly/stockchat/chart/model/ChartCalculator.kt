@@ -24,7 +24,10 @@ object TimeLineCalculator {
         }
         val rawMin = minOf(quotes.minOf { it.price }, baseline)
         val rawMax = maxOf(quotes.maxOf { it.price }, baseline)
-        val padding = ((rawMax - rawMin) * 0.12).coerceAtLeast(baseline * 0.002)
+        // 2026-09-09 用户反馈迷你走势"全是平线"：padding 下限原为昨收 0.2%，会把日内
+        // ±0.2% 以内的小波动股压到不足半高；降到 0.02% 只作全同价退化的防零保护，
+        // 让自适应缩放真正把波动铺满高度（详情页对称几何走 calculateSymmetric，不受影响）。
+        val padding = ((rawMax - rawMin) * 0.12).coerceAtLeast(baseline * 0.0002)
         val min = rawMin - padding
         val max = rawMax + padding
         val range = (max - min).coerceAtLeast(0.0001)

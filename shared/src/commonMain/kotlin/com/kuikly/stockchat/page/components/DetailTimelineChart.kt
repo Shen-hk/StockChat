@@ -21,6 +21,7 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * 详情页分时主图上的「新闻旗标」数据（doc 29 §4.3 B2 / 图侧）。
@@ -88,6 +89,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     onScrubPause: (Int) -> Unit = {},                  // ⑤ scrub 停顿 600ms 回调
     onScrubLeave: () -> Unit = {},                     // ⑤ 松手离开 scrub（页面 2s 后清预填）
     onBlankTap: () -> Unit = {},                       // U1 点空白（非声呐、非拖动的轻点）回调
+    sonarDrift: () -> Float = { 0f },                  // ④ 声呐气泡横向漂移相位（0..1 循环，页面步进驱动）
 ) {
     // ── 新增交互的内部状态 ──
     // 响应式字段放进一个小类（与 StockDetailPage 的 `by observable(...)` 同来源/同形态，
@@ -268,7 +270,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
             else TimeLineCalculator.calculateSymmetric(points, plotW, PRICE_HEIGHT, q.previousClose)
             val slotX: (Int) -> Float = { AXIS_LEFT + it / 240f * plotW }
 
-            // ── 网格：横 4 条（昨收 ±d、±d/2）+ 竖 5 条 ──
+            // ── 轻网格：不再常驻两侧价格刻度，留出横向空间给价格曲线。──
             if (geometry != null) {
                 val d = geometry.upper - q.previousClose
                 canvas.lineWidth(0.5f)
@@ -421,7 +423,10 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     Triple(lowIndex, "低 ${Format.price(points[lowIndex].price)}", false),
                 ).forEach { (index, label, isHigh) ->
                     val x = slotX(index)
-                    val y = PRICE_TOP + geometry.points[index].y + if (isHigh) -10f else 16f
+                    // 纵向 clamp：PRICE_TOP=0 后「高」的标注不能顶出画布，
+                    // 「低」的标注不能压过量能带顶（VOL_TOP - 4）。
+                    val y = (PRICE_TOP + geometry.points[index].y + if (isHigh) -10f else 16f)
+                        .coerceIn(10f, VOL_TOP - 4f)
                     val anchorX = x.coerceIn(AXIS_LEFT + 26f, AXIS_LEFT + plotW - 26f)
                     canvas.textAlign(
                         when {
@@ -466,6 +471,11 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     canvas.lineWidth(0.8f)
                     canvas.strokeStyle(theme.textTertiary)
                     canvas.stroke()
+                    // 横线：过当前价位的水平虚线（此前缺失，十字只有竖线）
+                    canvas.beginPath()
+                    canvas.moveTo(AXIS_LEFT, priceY)
+                    canvas.lineTo(AXIS_LEFT + plotW, priceY)
+                    canvas.stroke()
                     canvas.setLineDash(emptyList())
                     listOf(priceY, avgY).forEach { y ->
                         canvas.beginPath()
@@ -476,15 +486,28 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         canvas.strokeStyle(tone)
                         canvas.stroke()
                     }
+                    // 十字线两端读数：只在交互时出现，替代挤压绘图区的常驻双侧坐标轴。
+                    val pct = (points[scrubIndex].price - q.previousClose) / q.previousClose * 100.0
+                    canvas.font(9f)
+                    canvas.fillStyle(tone)
+                    canvas.textAlign(TextAlign.LEFT)
+                    canvas.fillText(Format.price(points[scrubIndex].price), 3f, priceY + 3f)
+                    canvas.textAlign(TextAlign.RIGHT)
+                    canvas.fillText(axisPercent(pct), width - 3f, priceY + 3f)
+                    canvas.textAlign(TextAlign.LEFT)
                 }
 
                 // ── ④ 异动声呐点：brand 实心点 + 呼吸圆环（复用 pulse 驱动；selected 白心蓝边）──
+                // 漂移：整颗气泡（环+点）绕锚点沿 X 轴小幅往返流动（不同 index 相位错开），
+                // 呼吸动效不变；reduceMotion 下相位恒 0，原地呼吸。
                 val sonar = sonarIndices()
                 if (sonar.isNotEmpty()) {
                     val selSonar = selectedSonarIndex()
+                    val driftPhase = if (reduceMotion) 0f else sonarDrift()
                     sonar.forEach { idx ->
                         if (idx !in points.indices) return@forEach
-                        val sx = slotX(idx)
+                        val wobble = sin(driftPhase * 2f * PI.toFloat() + idx * 1.9f) * 12f
+                        val sx = slotX(idx) + wobble
                         val sy = PRICE_TOP + geometry.points[idx].y
                         if (!reduceMotion && pulse()) {
                             canvas.beginPath()
@@ -558,22 +581,27 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                 }
             }
 
-            // ── 左右轴刻度 + 时间轴标注（Canvas fillText） ──
+            // ── 只保留时间轴；价格/涨跌幅跟随十字线贴边显示。──
+            // 网格已全幅铺满（AXIS_LEFT/RIGHT=0），两端标签改贴边对齐避免被裁半。
             if (geometry != null) {
-                val d = geometry.upper - q.previousClose
                 canvas.font(9f)
                 canvas.fillStyle(theme.textTertiary)
-                listOf(1.0, 0.5, 0.0, -0.5, -1.0).forEach { ratio ->
-                    val level = q.previousClose + d * ratio
-                    val y = PRICE_TOP + geometry.yFor(level) + 3f
-                    canvas.textAlign(TextAlign.LEFT)
-                    canvas.fillText(Format.price(level), 2f, y)
-                    canvas.textAlign(TextAlign.RIGHT)
-                    canvas.fillText(axisPercent(d * ratio / q.previousClose * 100.0), width - 2f, y)
-                }
-                canvas.textAlign(TextAlign.CENTER)
                 listOf("09:30", "10:30", "11:30/13:00", "14:00", "15:00").forEachIndexed { i, label ->
-                    canvas.fillText(label, slotX(i * 60), VOL_TOP + VOL_HEIGHT + 14f)
+                    val x = slotX(i * 60)
+                    when (i) {
+                        0 -> {
+                            canvas.textAlign(TextAlign.LEFT)
+                            canvas.fillText(label, x + 2f, VOL_TOP + VOL_HEIGHT + 14f)
+                        }
+                        4 -> {
+                            canvas.textAlign(TextAlign.RIGHT)
+                            canvas.fillText(label, x - 2f, VOL_TOP + VOL_HEIGHT + 14f)
+                        }
+                        else -> {
+                            canvas.textAlign(TextAlign.CENTER)
+                            canvas.fillText(label, x, VOL_TOP + VOL_HEIGHT + 14f)
+                        }
+                    }
                 }
                 canvas.textAlign(TextAlign.LEFT)
             }
@@ -661,13 +689,15 @@ private fun axisPercent(pct: Double): String =
     if (abs(pct) < 0.005) "0.00%"
     else (if (pct > 0) "+" else "-") + Format.decimal(abs(pct), 2) + "%"
 
-private const val CHART_HEIGHT = 340f
-private const val PRICE_TOP = 12f
-private const val PRICE_HEIGHT = 220f
-private const val VOL_TOP = 246f
-private const val VOL_HEIGHT = 60f
-private const val AXIS_LEFT = 38f
-private const val AXIS_RIGHT = 40f
+// 2026-09-08 版式调整：网格全幅铺满（AXIS_LEFT/RIGHT=0、PRICE_TOP=0，不留内边距），
+// 分段控件缩小悬浮到图左上后，卡头整行高度折给绘图区（PRICE 260→290、VOL 66→70）。
+private const val CHART_HEIGHT = 396f
+private const val PRICE_TOP = 0f
+private const val PRICE_HEIGHT = 290f
+private const val VOL_TOP = 296f
+private const val VOL_HEIGHT = 70f
+private const val AXIS_LEFT = 0f
+private const val AXIS_RIGHT = 0f
 private const val TOOLTIP_WIDTH = 148f
 private const val TOOLTIP_HALF = TOOLTIP_WIDTH / 2f
 

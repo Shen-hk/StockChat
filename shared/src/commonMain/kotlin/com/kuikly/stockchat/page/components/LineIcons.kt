@@ -425,3 +425,251 @@ fun ViewContainer<*, *>.LineIconChevronUp(color: Color, size: Float) {
         stroke()
     }
 }
+
+/**
+ * Trash (Lucide `trash-2` 对齐)：滑动动作「移除」。
+ * 桶盖横杆 + 圆角桶身 + 提手 + 两道内部竖线。
+ */
+fun ViewContainer<*, *>.LineIconTrash(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // 盖杆 M3 6h18。
+        beginPath()
+        moveTo(3f, 6f)
+        lineTo(21f, 6f)
+        stroke()
+        // 桶身 M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6（圆角用 arc 转写）。
+        beginPath()
+        moveTo(19f, 6f)
+        lineTo(19f, 20f)
+        arc(17f, 20f, 2f, 0f, (PI / 2).toFloat(), false)
+        lineTo(7f, 22f)
+        arc(7f, 20f, 2f, (PI / 2).toFloat(), PI.toFloat(), false)
+        lineTo(5f, 6f)
+        stroke()
+        // 提手 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2。
+        beginPath()
+        moveTo(8f, 6f)
+        lineTo(8f, 4f)
+        arc(10f, 4f, 2f, PI.toFloat(), (2 * PI).toFloat(), false)
+        lineTo(14f, 2f)
+        arc(14f, 4f, 2f, (PI * 1.5f).toFloat(), (2 * PI).toFloat(), false)
+        lineTo(16f, 6f)
+        stroke()
+        // 内部竖线 x1=10 x2=10 y1=11 y2=17 / x=14 同。
+        beginPath()
+        moveTo(10f, 11f)
+        lineTo(10f, 17f)
+        moveTo(14f, 11f)
+        lineTo(14f, 17f)
+        stroke()
+    }
+}
+
+/**
+ * Copy（Lucide `copy` 对齐）：复制消息正文。
+ * 前景圆角矩形 + 后景 sheet 的三段圆角路径。
+ */
+fun ViewContainer<*, *>.LineIconCopy(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // 后景 sheet：M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2。
+        beginPath()
+        moveTo(4f, 16f)
+        arc(4f, 14f, 2f, (PI / 2).toFloat(), PI.toFloat(), false)
+        lineTo(2f, 4f)
+        arc(4f, 4f, 2f, PI.toFloat(), (PI * 1.5f).toFloat(), false)
+        lineTo(14f, 2f)
+        arc(14f, 4f, 2f, (PI * 1.5f).toFloat(), (2 * PI).toFloat(), false)
+        stroke()
+        // 前景：rect x=8.5 y=8.5 w=13 h=13 rx=2.5。
+        beginPath()
+        roundRectPath(8.5f, 8.5f, 13f, 13f, 2.5f)
+        stroke()
+    }
+}
+
+/**
+ * Refresh（Lucide `refresh-cw` 对齐）：重新生成回复。
+ * 两段圆弧 + 两个 L 形箭头。
+ */
+fun ViewContainer<*, *>.LineIconRefresh(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // 上弧：M3 12a9 9 0 0 1 9-9 …L21 8。
+        beginPath()
+        arc(12f, 12f, 9f, PI.toFloat(), (PI * 1.5f).toFloat(), false)
+        lineTo(18.7f, 5.7f)
+        lineTo(21f, 8f)
+        // 箭头 M21 3v5h-5。
+        moveTo(21f, 3f)
+        lineTo(21f, 8f)
+        lineTo(16f, 8f)
+        stroke()
+        // 下弧（镜像）：M21 12a9 9 0 0 1-9 9 …L3 16。
+        beginPath()
+        arc(12f, 12f, 9f, 0f, (PI * 0.5f).toFloat(), false)
+        lineTo(5.3f, 18.3f)
+        lineTo(3f, 16f)
+        // 箭头 M8 16H3v5。
+        moveTo(8f, 16f)
+        lineTo(3f, 16f)
+        lineTo(3f, 21f)
+        stroke()
+    }
+}
+
+/**
+ * Share（Lucide `share` 对齐）：分享回复。
+ * 上开口方盒 + 上出箭头。
+ */
+fun ViewContainer<*, *>.LineIconShare(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // 盒身：M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8。
+        beginPath()
+        moveTo(4f, 12f)
+        lineTo(4f, 20f)
+        arc(6f, 20f, 2f, PI.toFloat(), (PI / 2).toFloat(), true)
+        lineTo(18f, 22f)
+        arc(18f, 20f, 2f, (PI / 2).toFloat(), 0f, true)
+        lineTo(20f, 12f)
+        stroke()
+        // 箭头：polyline 16 6 12 2 8 6 + line 12 2 12 15。
+        beginPath()
+        moveTo(16f, 6f)
+        lineTo(12f, 2f)
+        lineTo(8f, 6f)
+        moveTo(12f, 2f)
+        lineTo(12f, 15f)
+        stroke()
+    }
+}
+
+/**
+ * Pin (Lucide `pin` 对齐)：滑动动作「置顶」。
+ * 圆角头部（上宽下窄）→ 外张弧 → 底座横板 → 下方针脚。
+ */
+fun ViewContainer<*, *>.LineIconPin(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // 头部：两侧 x=9/15 自 y≈10.8 上收至 y=6，顶部经两个 r=2 圆角连 y=2 横边。
+        beginPath()
+        moveTo(9f, 10.8f)
+        lineTo(9f, 6f)
+        lineTo(8f, 6f)
+        arc(8f, 4f, 2f, (PI / 2).toFloat(), (PI * 1.5f).toFloat(), false)
+        lineTo(16f, 2f)
+        arc(16f, 4f, 2f, (PI * 1.5f).toFloat(), (PI / 2).toFloat(), false)
+        lineTo(15f, 6f)
+        lineTo(15f, 10.8f)
+        stroke()
+        // 外张 + 底座：M9 10.76 经弧/线到 (5,15.24)V16，横过 (19,16)，镜像收回到 (15,10.76)。
+        beginPath()
+        moveTo(9f, 10.8f)
+        lineTo(7.9f, 12.55f)
+        lineTo(6.1f, 13.45f)
+        lineTo(5f, 15.2f)
+        lineTo(5f, 16f)
+        lineTo(19f, 16f)
+        lineTo(19f, 15.2f)
+        lineTo(17.9f, 13.45f)
+        lineTo(16.1f, 12.55f)
+        lineTo(15f, 10.8f)
+        stroke()
+        // 针脚 M12 17v5。
+        beginPath()
+        moveTo(12f, 17f)
+        lineTo(12f, 22f)
+        stroke()
+    }
+}
+
+/** Search (Lucide `search`): magnifier. */
+fun ViewContainer<*, *>.LineIconSearch(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        arc(11f, 11f, 7f, 0f, (PI * 2).toFloat(), false)
+        stroke()
+        beginPath()
+        moveTo(21f, 21f)
+        lineTo(16.35f, 16.35f)
+        stroke()
+    }
+}
+
+/** Star (Lucide `star`): watchlist / favorites. */
+fun ViewContainer<*, *>.LineIconStar(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        moveTo(12f, 2.5f)
+        lineTo(14.85f, 8.28f)
+        lineTo(21.22f, 9.2f)
+        lineTo(16.61f, 13.69f)
+        lineTo(17.7f, 20.04f)
+        lineTo(12f, 17.05f)
+        lineTo(6.3f, 20.04f)
+        lineTo(7.39f, 13.69f)
+        lineTo(2.78f, 9.2f)
+        lineTo(9.15f, 8.28f)
+        closePath()
+        stroke()
+    }
+}
+
+/** Bell (Lucide `bell`): alerts. */
+fun ViewContainer<*, *>.LineIconBell(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        // 钟体：M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9。
+        beginPath()
+        moveTo(6f, 8f)
+        arc(12f, 8f, 6f, PI.toFloat(), 0f, false)
+        bezierCurveTo(18f, 15f, 21f, 17f, 21f, 17f)
+        lineTo(3f, 17f)
+        bezierCurveTo(6f, 15f, 6f, 8f, 6f, 8f)
+        stroke()
+        // 钟摆：M10.3 21a1.94 1.94 0 0 0 3.4 0。
+        beginPath()
+        moveTo(10.3f, 21f)
+        quadraticCurveTo(12f, 23f, 13.7f, 21f)
+        stroke()
+    }
+}
+
+/** Bar chart (Lucide `chart-column`): market overview. */
+fun ViewContainer<*, *>.LineIconBarChart(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        moveTo(3f, 3f)
+        lineTo(3f, 19f)
+        arc(5f, 19f, 2f, PI.toFloat(), (PI / 2).toFloat(), true)
+        lineTo(21f, 21f)
+        stroke()
+        beginPath()
+        moveTo(7f, 16f)
+        lineTo(7f, 13f)
+        moveTo(11f, 16f)
+        lineTo(11f, 9f)
+        moveTo(15f, 16f)
+        lineTo(15f, 11f)
+        moveTo(19f, 16f)
+        lineTo(19f, 7f)
+        stroke()
+    }
+}
+
+/** Sliders horizontal (Lucide `sliders-horizontal`): settings. */
+fun ViewContainer<*, *>.LineIconSliders(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        // 横线三段。
+        moveTo(21f, 4f); lineTo(14f, 4f)
+        moveTo(10f, 4f); lineTo(3f, 4f)
+        moveTo(21f, 12f); lineTo(12f, 12f)
+        moveTo(8f, 12f); lineTo(3f, 12f)
+        moveTo(21f, 20f); lineTo(16f, 20f)
+        moveTo(12f, 20f); lineTo(3f, 20f)
+        stroke()
+        // 竖向滑块。
+        beginPath()
+        moveTo(14f, 2f); lineTo(14f, 6f)
+        moveTo(8f, 10f); lineTo(8f, 14f)
+        moveTo(16f, 18f); lineTo(16f, 22f)
+        stroke()
+    }
+}

@@ -64,8 +64,6 @@ kotlin {
                 implementation("io.ktor:ktor-client-core:3.0.3")
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
-                // 详情页分时图：KuiklyChartKit DSL（K线仍用自研 KLineChart）
-                implementation(project(":chartkit"))
 
             }
         }

@@ -70,9 +70,16 @@ internal fun ViewContainer<*, *>.NewsTape(
                 }
             }
             // 胶囊条目行：横向滚动（Kuikly Scroller 方向随 flexDirection）
+            // ⚠️ 横向 Scroller 的内容层以 absolutePosition(top0,left0,bottom0) 挂载
+            // （core ScrollerView.initScrollerContentComponentIfNeed），不参与
+            // Scroller 自身 auto 高度测量——不写显式 height 整层塌 0，胶囊被卡片
+            // overflow(true) 裁掉（「相关资讯展示不完全」根因，2026-09-08）。
+            // 42f = 原型 .tape-row padding 4/12/10 + 胶囊 28。
             Scroller {
                 attr {
                     flexDirectionRow()
+                    height(42f)
+                    paddingTop(4f)
                     paddingLeft(12f); paddingRight(12f); paddingBottom(10f)
                     showScrollerIndicator(false)
                 }
