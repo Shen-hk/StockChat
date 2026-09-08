@@ -821,7 +821,7 @@ internal class StockDetailPage : BasePager() {
                     }
                     }
 
-                    // ---- 次级指标：卡下 muted 两行（替代原 8 格 MetricGrid + 关键指标格） ----
+                    // ---- 次级指标：单行 4 项（原型对齐：换手率/主力资金/成交量/总市值） ----
                     // 悬浮数据板：白 surface + 主页同款浮起阴影（AppChrome 按钮
                     // 0/6/18 黑 14%）+ 0.5 极细描边，从页面底色上"浮"出来。
                     RevealBlock(1, { page.entranceVisible }, page.reduceMotion) {
@@ -835,29 +835,43 @@ internal class StockDetailPage : BasePager() {
                             paddingTop(10f); paddingBottom(10f)
                             paddingLeft(14f); paddingRight(14f)
                         }
-                        vbind({ page.quote }) {
-                            SecondaryMetricRow(
-                                listOf(
-                                    DetailMetric("成交量", Format.compactAmount(page.quote.volume)),
-                                    DetailMetric("成交额", Format.compactAmount(page.quote.amount)),
-                                    DetailMetric("总市值", Format.compactAmount(page.quote.marketCap)),
-                                ),
-                                page.theme,
-                                onGrabCell = { page.grabMetric(it.label, it.value) },
-                            )
-                            SecondaryMetricRow(
-                                listOf(
-                                    DetailMetric("昨收", Format.price(page.quote.previousClose)),
-                                    DetailMetric("PE(TTM)", Format.decimal(page.quote.peTtm, 2)),
-                                    DetailMetric("PB", Format.decimal(page.quote.pb, 2)),
-                                    DetailMetric("振幅", Format.decimal(page.amplitudePercent(), 2) + "%"),
-                                ),
-                                page.theme,
-                                marginTop = 8f,
-                                onGrabCell = { page.grabMetric(it.label, it.value) },
-                            )
+                        // 主力资金取自 insight.fundFlow → 外层 vbind(insight)：insight 加载后整行重建（R1）。
+                        // 涨红/跌绿遵循 A 股配色约定。
+                        vbind({ page.insight }) {
+                            val main = page.insight.fundFlow?.main
+                            vbind({ page.quote }) {
+                                SecondaryMetricRow(
+                                    listOf(
+                                        DetailMetric("换手率", Format.decimal(page.quote.turnoverRate, 2) + "%"),
+                                        DetailMetric(
+                                            "主力资金",
+                                            if (main == null) "--" else Format.compactAmount(main),
+                                            valueColor = when {
+                                                main == null -> null
+                                                main > 0 -> page.theme.rise
+                                                else -> page.theme.fall
+                                            },
+                                        ),
+                                        DetailMetric("成交量", Format.compactAmount(page.quote.volume)),
+                                        DetailMetric("总市值", Format.compactAmount(page.quote.marketCap)),
+                                    ),
+                                    page.theme,
+                                    onGrabCell = { page.grabMetric(it.label, it.value) },
+                                )
+                            }
                         }
                     }
+                    }
+
+                    // 指标合规小字：紧跟指标行（提示对象即指标，原型外补充的合规文案）
+                    Text {
+                        attr {
+                            text("指标要结合行业、增长与盈利质量一起看，单个数值不构成结论。")
+                            marginTop(page.theme.spacing.sm)
+                            fontSize(page.theme.type.label)
+                            lineHeight(17f)
+                            color(page.theme.textTertiary)
+                        }
                     }
 
                     // ---- AI 一行归因：全页唯一常驻 AI 触点（端侧模板，纯事实） ----
@@ -891,13 +905,21 @@ internal class StockDetailPage : BasePager() {
                     }
                     }
 
-                    Text {
-                        attr {
-                            text("指标要结合行业、增长与盈利质量一起看，单个数值不构成结论。")
-                            marginTop(page.theme.spacing.md)
-                            fontSize(page.theme.type.label)
-                            lineHeight(17f)
-                            color(page.theme.textTertiary)
+                    // ---- AI 解读（原型叙事位：紧贴一行归因，先给解读再看业务数据）----
+                    // ② 句图联动：点句子 → 走势图区间带高亮
+                    RevealBlock(3, { page.entranceVisible }, page.reduceMotion) {
+                        SectionLabel("AI 解读 · 点句子，图会亮", page.theme)
+                        vbind({ page.aiRevealLimit to page.aiRevealSource }) {
+                            AiInsightBlock(
+                                summary = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
+                                revealLimit = { page.aiRevealLimit },
+                                retryActive = { page.aiRetryActive },
+                                theme = page.theme,
+                                reduceMotion = page.reduceMotion,
+                                onRetry = { page.retryAiReveal() },
+                                selectedSentence = { page.selectedSentence },
+                                onPickSentence = { page.pickSentence(it) },
+                            )
                         }
                     }
 
@@ -942,7 +964,7 @@ internal class StockDetailPage : BasePager() {
                             context = ctx,
                             theme = page.theme,
                             wide = wide,
-                            baseIndex = 3,
+                            baseIndex = 4,
                             entranceVisible = { page.entranceVisible },
                             reduceMotion = page.reduceMotion,
                             // E2 注脚点击 → 展示判定依据（U3 两步溯源）
@@ -950,7 +972,7 @@ internal class StockDetailPage : BasePager() {
                         )
                     }
 
-                    RevealBlock(8, { page.entranceVisible }, page.reduceMotion) {
+                    RevealBlock(9, { page.entranceVisible }, page.reduceMotion) {
                         SectionLabel("公告与研报", page.theme)
                         // vbind({insight})：公告列表随 insight 加载重建（R1：builder 闭包不追踪 observable）
                         vbind({ page.insight }) {
@@ -963,43 +985,34 @@ internal class StockDetailPage : BasePager() {
                             }
                             CardShell(DisclosureCardModel(page.insight.disclosures, "disclosures:${page.symbol}"), ctx)
                         }
-                    }
 
-                    // ---- F3 多空平衡光谱（示例 · 演示数据，摘要中性客观） ----
-                    SectionLabel("多空观点光谱 · 示例 · 演示数据", page.theme)
-                    BalanceSpectrumBlock(
-                        theme = page.theme,
-                        segments = listOf(
-                            BalanceSegment("买入", 4, page.theme.rise, "示例 · 演示数据：偏多观点的占位引用，仅用于展示评级光谱交互，不构成任何建议。"),
-                            BalanceSegment("增持", 3, page.theme.rise.opacity(0.55f), "示例 · 演示数据：谨慎看多的占位引用，观点切换仅为形态演示。"),
-                            BalanceSegment("中性", 2, page.theme.textTertiary, "示例 · 演示数据：中性观点的占位引用，等待更多数据验证。"),
-                            BalanceSegment("减持", 1, page.theme.fall, "示例 · 演示数据：偏空观点的占位引用，仅展示光谱另一端。"),
-                        ),
-                        initialIndex = 0,
-                        containerWidth = page.pagerData.pageViewWidth - 28f,
-                        reduceMotion = page.reduceMotion,
-                    )
-
-                    // ---- AI 解读：要点卡片（方案 C）＋ ② 句图联动 ----
-                    RevealBlock(9, { page.entranceVisible }, page.reduceMotion) {
-                        SectionLabel("AI 解读", page.theme)
-                        vbind({ page.aiRevealLimit to page.aiRevealSource }) {
-                            val fullSummary = if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource
-                            AiInsightBlock(
-                                summary = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
-                                revealLimit = { page.aiRevealLimit },
-                                retryActive = { page.aiRetryActive },
-                                theme = page.theme,
-                                reduceMotion = page.reduceMotion,
-                                onRetry = { page.retryAiReveal() },
-                                selectedSentence = { page.selectedSentence },
-                                onPickSentence = { page.pickSentence(it) },
-                            )
+                        // ---- F3 多空观点光谱：并入公告与研报同节（原型 .balance 在 ann-card 内） ----
+                        Text {
+                            attr {
+                                text("研报评级光谱 · 示例 · 演示数据")
+                                marginTop(10f)
+                                fontSize(page.theme.type.meta)
+                                fontWeightSemiBold()
+                                color(page.theme.textTertiary)
+                            }
                         }
+                        BalanceSpectrumBlock(
+                            theme = page.theme,
+                            segments = listOf(
+                                BalanceSegment("买入", 4, page.theme.rise, "示例 · 演示数据：偏多观点的占位引用，仅用于展示评级光谱交互，不构成任何建议。"),
+                                BalanceSegment("增持", 3, page.theme.rise.opacity(0.55f), "示例 · 演示数据：谨慎看多的占位引用，观点切换仅为形态演示。"),
+                                BalanceSegment("中性", 2, page.theme.textTertiary, "示例 · 演示数据：中性观点的占位引用，等待更多数据验证。"),
+                                BalanceSegment("减持", 1, page.theme.fall, "示例 · 演示数据：偏空观点的占位引用，仅展示光谱另一端。"),
+                            ),
+                            initialIndex = 0,
+                            containerWidth = page.pagerData.pageViewWidth - 28f,
+                            reduceMotion = page.reduceMotion,
+                        )
                     }
 
-                    // ---- 涨跌归因：列表 + 分隔线 ----
+                    // ---- 涨跌归因 · 因子权重重放（原型 G1：因子列表在上、重放卡在下） ----
                     RevealBlock(10, { page.entranceVisible }, page.reduceMotion) {
+                        SectionLabel("涨跌归因 · 因子权重重放", page.theme)
                         AttributionBlock(
                             AttributionCardModel(page.quote, attribution.direction, attribution.factors),
                             page.theme,
@@ -1010,22 +1023,29 @@ internal class StockDetailPage : BasePager() {
                         ) { key ->
                             page.expandedAttributionKey = if (page.expandedAttributionKey == key) "" else key
                         }
-                    }
 
-                    // ---- G1 因子权重重放（数学重算非预测；权重为示例 · 演示数据） ----
-                    SectionLabel("因子权重重放 · 示例 · 演示数据", page.theme)
-                    FactorReplayBlock(
-                        theme = page.theme,
-                        factors = listOf(
-                            FactorSpec("资金面", -0.30),
-                            FactorSpec("板块联动", -0.14),
-                            FactorSpec("市场整体", 0.05),
-                            FactorSpec("个股事件", -0.23),
-                        ),
-                        actualPct = { page.quote.changePercent },
-                        containerWidth = page.pagerData.pageViewWidth - 28f,
-                        reduceMotion = page.reduceMotion,
-                    )
+                        // 因子基准值为示例 · 演示数据（诚实标注：重算数学真实、输入是演示样本）
+                        Text {
+                            attr {
+                                text("因子基准值为示例 · 演示数据，重算为真实数学，非预测")
+                                marginTop(8f)
+                                fontSize(page.theme.type.meta)
+                                color(page.theme.textTertiary)
+                            }
+                        }
+                        FactorReplayBlock(
+                            theme = page.theme,
+                            factors = listOf(
+                                FactorSpec("资金面", -0.30),
+                                FactorSpec("板块联动", -0.14),
+                                FactorSpec("市场整体", 0.05),
+                                FactorSpec("个股事件", -0.23),
+                            ),
+                            actualPct = { page.quote.changePercent },
+                            containerWidth = page.pagerData.pageViewWidth - 28f,
+                            reduceMotion = page.reduceMotion,
+                        )
+                    }
 
                 }
 
@@ -1606,6 +1626,36 @@ private fun ViewContainer<*, *>.SectionLabel(text: String, theme: StockChatTheme
     }
 }
 
+/**
+ * 业务数据节头（原型 .sec-head）：标题 + 右侧 brand 提示。
+ * E1 为自动置顶（无 FLIP 重放，见 doc 29 §9 有意偏差），提示用陈述文案、不做假按钮。
+ */
+private fun ViewContainer<*, *>.BusinessDataHeader(theme: StockChatTheme) {
+    View {
+        attr {
+            marginTop(theme.spacing.x3)
+            flexDirectionRow()
+            alignItemsCenter()
+        }
+        Text {
+            attr {
+                text("业务数据")
+                fontSize(theme.type.label)
+                fontWeightSemiBold()
+                color(theme.textTertiary)
+                flex(1f)
+            }
+        }
+        Text {
+            attr {
+                text("今日相关 · 自动置顶")
+                fontSize(theme.type.meta)
+                color(theme.brand)
+            }
+        }
+    }
+}
+
 private fun ViewContainer<*, *>.TickerText(
     // 可变状态一律传 lambda：observable 读取延迟到 attr/vif 闭包内（R1），
     // 行情 tick 时文本/颜色随 attr 重跑刷新，lift 动画才有驱动 key（R2）。
@@ -1794,7 +1844,7 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
     onFootnoteClick: (CardFootnote) -> Unit = {},
 ) {
     if (items.isEmpty()) {
-        SectionLabel("业务数据", theme)
+        BusinessDataHeader(theme)
         View {
             attr {
                 marginTop(theme.spacing.lg)
@@ -1814,7 +1864,7 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
         return
     }
     if (wide) {
-        SectionLabel("业务数据", theme)
+        BusinessDataHeader(theme)
         items.chunked(2).forEachIndexed { rowIndex, row ->
             View {
                 attr {
@@ -1841,6 +1891,7 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
         }
         return
     }
+    BusinessDataHeader(theme)
     items.forEachIndexed { index, item ->
         RevealBlock(baseIndex + index, entranceVisible, reduceMotion) {
             BusinessCardSlot(item, theme, onFootnoteClick) {
