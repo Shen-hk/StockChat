@@ -182,8 +182,10 @@ internal class RiskMapPage : BasePager() {
             Scroller {
                 attr {
                     flex(1f)
+                    // 竖向 Scroller 水平 padding 会被双倍扣除，14/14 时右侧多出 28dp 留白；
+                    // 右 padding 留 0，左右各 14dp 对齐（同 ChatPage）。
                     paddingLeft(14f)
-                    paddingRight(14f)
+                    paddingRight(0f)
                     paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(32f)
                 }

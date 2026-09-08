@@ -64,7 +64,10 @@ class GlossaryStore(
 
     fun get(key: String): GlossaryEncounter? = cache[key]
 
-    fun all(): Map<String, GlossaryEncounter> = cache
+    /**
+     * 返回独立快照，避免观察者的新旧值共享同一个可变缓存而漏掉更新。
+     */
+    fun all(): Map<String, GlossaryEncounter> = cache.toMap()
 
     /** 记录一次真实遇到：hitCount+1，时间刷新，未记录过的升级为 SEEN。 */
     fun encounter(key: String) {

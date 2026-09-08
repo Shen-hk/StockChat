@@ -130,8 +130,8 @@ class WatchlistStore(
     }
 
     /**
-     * FR-W7 手动排序：沿 sortOrder 整列重排（不做拖动手势——与左滑行/滚动手势
-     * 叠加时误触率高，菜单步进是有意取舍）。delta = -1 上移一位，+1 下移一位。
+     * FR-W7 手动排序：沿 sortOrder 整列重排。delta = -1 上移一位，+1 下移一位。
+     * 步进入口在长按菜单；连续拖拽排序走 [moveToIndex]。
      */
     fun moveBy(symbol: String, delta: Int) {
         if (delta == 0) return
@@ -139,6 +139,22 @@ class WatchlistStore(
         val index = rows.indexOfFirst { it.symbol == symbol }
         if (index < 0) return
         val target = (index + delta).coerceIn(0, rows.lastIndex)
+        if (target == index) return
+        val reordered = rows.toMutableList()
+        val item = reordered.removeAt(index)
+        reordered.add(target, item)
+        writeRows(reordered.mapIndexed { i, row -> row.copy(sortOrder = i) })
+    }
+
+    /**
+     * 长按拖拽排序：把标的直接落到目标槽位（等价于连续 moveBy 的终态，一次落盘）。
+     * 调用方（WatchlistPage）保证 targetIndex 与无过滤视图的行索引同口径。
+     */
+    fun moveToIndex(symbol: String, targetIndex: Int) {
+        val rows = readRows()
+        val index = rows.indexOfFirst { it.symbol == symbol }
+        if (index < 0) return
+        val target = targetIndex.coerceIn(0, rows.lastIndex)
         if (target == index) return
         val reordered = rows.toMutableList()
         val item = reordered.removeAt(index)
