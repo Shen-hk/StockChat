@@ -53,11 +53,13 @@ import com.kuikly.stockchat.page.detail.pickPinnedCard
 import com.kuikly.stockchat.page.detail.promptFragment
 import com.kuikly.stockchat.page.detail.scoreNewsSentiment
 import com.kuikly.stockchat.page.detail.shareholderFootnote
+import com.kuikly.stockchat.page.detail.FactorSpec
 import com.kuikly.stockchat.page.components.BalanceSegment
 import com.kuikly.stockchat.page.components.BalanceSpectrumBlock
+import com.kuikly.stockchat.page.components.BlockState
 import com.kuikly.stockchat.page.components.ChartFlag
 import com.kuikly.stockchat.page.components.FactorReplayBlock
-import com.kuikly.stockchat.page.components.FactorSpec
+import com.kuikly.stockchat.page.components.IndustryCompareOverlay
 import com.kuikly.stockchat.page.components.MaterialityBadge
 import com.kuikly.stockchat.page.components.QuickReasonChips
 import com.kuikly.stockchat.page.components.RevisitCard
@@ -66,7 +68,6 @@ import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.kuikly.stockchat.page.components.AtmosphereBackdrop
 import com.kuikly.stockchat.page.components.DetailTimelineChart
-import com.kuikly.stockchat.page.components.NewsSummarySheet
 import com.kuikly.stockchat.page.components.NewsTape
 import com.kuikly.stockchat.page.components.estimateTapeWidth
 import com.kuikly.stockchat.page.components.AppTopBar
@@ -153,9 +154,11 @@ internal class StockDetailPage : BasePager() {
     private var bandRange: Triple<Int, Int, Boolean>? by observable(null)       // ②/B2 区间高亮带 (start,end,fromSentence)
     private var selectedSentence: Int by observable(-1)                         // ② 选中的解读句
     private var tapePreview: NewsItem? by observable(null)                      // B1 长按先览
+    private var tapePreviewVersion = 0                                          // B1 先览消失计时 revision
     private var revisitExpanded: Boolean by observable(false)                   // A1 回访卡展开
     private var watchlistEntryVersion: Int by observable(0)                     // A1 自选条目变更重建键
     private var reasonChipsVisible: Boolean by observable(false)                // H1 快捷理由 chips
+    private var hintVersion = 0                                                 // watchlistHint toast 计时 revision
     // ② 句图联动固定锚点（端侧模板句槽位，不让 LLM 猜坐标）
     private val sentenceAnchors = listOf(14 to 60, 140 to 162, 170 to 196)
     // B1/B2 已落旗新闻（点按收起用）
@@ -225,38 +228,9 @@ internal class StockDetailPage : BasePager() {
         val ctx = CardContext(page.theme, CardDensity.FULL, { }, glass = page.hostGlassRenderer)
         val aiSummary = page.buildInsightSummary()
         val wide = page.pagerData.pageViewWidth >= 768f
-        // doc 29 E1 今日相关置顶：billboard 数据非空 → 该卡 pinnedToday（至多一张置顶）
-        val fundamentals = page.insight.fundamentals
-        val relevanceAnchors = listOf(
-            RelevanceAnchor("fund-flow", false, ""),
-            RelevanceAnchor("financial", false, ""),
-            RelevanceAnchor("shareholders", false, ""),
-            RelevanceAnchor("billboard", fundamentals?.billboard != null, "今日上龙虎榜"),
-            RelevanceAnchor("actions", false, ""),
-        )
-        val pinnedId = pickPinnedCard(relevanceAnchors, relevanceAnchors.map { it.cardId })
-        // doc 29 E2 注脚：仅用真实可得输入——股东户数的户均变化由户数环比在
-        // 「总股本不变」假设下推导（-h/(100+h)），不伪造行业分位等缺失数据，
-        // 无输入的注脚一律不显示。
-        val shareholderNote = fundamentals?.shareholder?.let { sh ->
-            val denom = 100.0 + sh.changePercent
-            val perHolder = if (denom != 0.0) -sh.changePercent / denom * 100.0 else 0.0
-            shareholderFootnote(sh.changePercent, perHolder)
-        }
-        val businessCards = listOfNotNull(
-            page.insight.fundFlow?.let { BusinessInsightItem("fund-flow", "资金流", FundFlowCardModel(it, "fund-flow:${page.symbol}")) },
-            fundamentals?.financial?.let { BusinessInsightItem("financial", "财务", FinancialCardModel(it, "financial:${page.symbol}")) },
-            fundamentals?.shareholder?.let {
-                BusinessInsightItem("shareholders", "股东户数", ShareholderCardModel(it, "shareholders:${page.symbol}"), footnote = shareholderNote)
-            },
-            fundamentals?.billboard?.let {
-                BusinessInsightItem("billboard", "龙虎榜", BillboardCardModel(it, "billboard:${page.symbol}"), pinned = "billboard" == pinnedId)
-            },
-            fundamentals?.actions?.takeIf { it.isNotEmpty() }?.let {
-                BusinessInsightItem("actions", "分红与解禁", CorporateActionCardModel(it, "actions:${page.symbol}"))
-            },
-            // E1：置顶卡移到第一位（无事件日原序）
-        ).let { cards -> if (pinnedId == null) cards else cards.sortedByDescending { it.pinned } }
+        // 注意：body() 的 builder 闭包只取首帧快照（AGENTS.md R1），insight/quote 的
+        // 读取一律延迟到下方 vbind/attr/event 闭包内（businessCards 见 vbind({insight})，
+        // 归因标题与 G1 重算用 lambda 传入）。RevealBlock 阶梯序号按满配 5 张业务卡取常量。
         return {
             attr { backgroundColor(page.theme.page) }
             // 交接容器：灵动岛无动画 push 后原地接管全屏玻璃帧，
@@ -420,8 +394,9 @@ internal class StockDetailPage : BasePager() {
                     }
 
                     // ---- A1 当初理由回访卡（doc 29 §4.1）：Hero 下、NewsTape 前 ----
+                    // vbind 键含新闻头条与 insight：eventsSummary（今日上龙虎榜/近期动态）随数据刷新
                     vif({ page.watchlisted }) {
-                        vbind({ page.watchlistEntryVersion to page.watchlisted }) {
+                        vbind({ page.watchlistEntryVersion to page.watchlisted to (page.newsList.firstOrNull()?.id ?: "") }) {
                             val entry = page.watchlistStore.list().firstOrNull { it.symbol == page.symbol }
                             RevisitCard(
                                 theme = page.theme,
@@ -460,8 +435,9 @@ internal class StockDetailPage : BasePager() {
                             }
                         },
                         onTapItem = { page.onNewsTapped(it) },
-                        // B1 长按先览（U5 400ms）：TAPE_PREVIEW 层，2s 自动消失
+                        // B1 长按先览（U5 400ms）：TAPE_PREVIEW 层，松手 700ms 后消失（5s 兜底）
                         onLongPressItem = { page.showTapePreview(it) },
+                        onLongPressRelease = { page.scheduleTapePreviewDismiss() },
                         onPauseChange = { page.tapePaused = it },
                     )
 
@@ -506,6 +482,110 @@ internal class StockDetailPage : BasePager() {
                                         }
                                     }
                                     event { click { page.onNewsTapped(preview) } }
+                                }
+                            }
+                        }
+                    }
+
+                    // ---- B2 新闻摘要条（弹幕带下方，doc §4.3「非全屏 Sheet」）----
+                    // 点按条目落旗并展开本条；重复点按同一条目收旗收条（U1：NEWS_SUMMARY 层）。
+                    // vbind 键为条目 id：切换条目时整条重建。
+                    vif({ page.overlayArbiter.active == DetailOverlay.NEWS_SUMMARY && page.newsSummary != null }) {
+                        vbind({ page.newsSummary?.id ?: "" }) {
+                            val news = page.newsSummary
+                            if (news != null) {
+                                View {
+                                    attr {
+                                        marginTop(8f)
+                                        padding(12f)
+                                        borderRadius(14f)
+                                        backgroundColor(page.theme.surface)
+                                        border(Border(0.5f, BorderStyle.SOLID, page.theme.divider))
+                                        boxShadow(BoxShadow(0f, 4f, 14f, page.theme.textPrimary.opacity(0.08f)))
+                                    }
+                                    Text {
+                                        attr {
+                                            text(news.title)
+                                            fontSize(page.theme.type.label)
+                                            fontWeightSemiBold()
+                                            color(page.theme.textPrimary)
+                                            lineHeight(17f)
+                                        }
+                                    }
+                                    Text {
+                                        attr {
+                                            text("${news.source} · ${news.time}")
+                                            marginTop(4f)
+                                            fontSize(page.theme.type.meta)
+                                            color(page.theme.textTertiary)
+                                        }
+                                    }
+                                    vif({ news.summary.isNotEmpty() }) {
+                                        Text {
+                                            attr {
+                                                text(news.summary)
+                                                marginTop(6f)
+                                                fontSize(page.theme.type.meta)
+                                                lineHeight(16f)
+                                                color(page.theme.textSecondary)
+                                            }
+                                        }
+                                    }
+                                    // 事实行 + 收起（摘要条非 AI 元素，用中性色，不占 brand 预算）
+                                    View {
+                                        attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
+                                        Text {
+                                            attr {
+                                                text("旗标已落在走势图对应位置 · 端侧规则")
+                                                fontSize(page.theme.type.meta)
+                                                color(page.theme.textTertiary)
+                                                flex(1f)
+                                            }
+                                        }
+                                        Text {
+                                            attr {
+                                                text("收起 ×")
+                                                fontSize(page.theme.type.meta)
+                                                fontWeightMedium()
+                                                color(page.theme.textSecondary)
+                                            }
+                                        }
+                                        event {
+                                            click {
+                                                page.newsSummary = null
+                                                page.overlayArbiter.close()
+                                            }
+                                        }
+                                    }
+                                    vif({ news.url.isNotEmpty() }) {
+                                        View {
+                                            attr {
+                                                marginTop(8f)
+                                                alignSelfFlexStart()
+                                                height(28f)
+                                                paddingLeft(12f)
+                                                paddingRight(12f)
+                                                allCenter()
+                                                borderRadius(14f)
+                                                backgroundColor(page.theme.surfaceMuted)
+                                            }
+                                            Text {
+                                                attr {
+                                                    text("阅读原文")
+                                                    fontSize(page.theme.type.meta)
+                                                    fontWeightMedium()
+                                                    color(page.theme.textSecondary)
+                                                }
+                                            }
+                                            event {
+                                                click {
+                                                    page.newsSummary = null
+                                                    page.overlayArbiter.close()
+                                                    page.openUrl(news.url)
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -572,6 +652,10 @@ internal class StockDetailPage : BasePager() {
                                     },
                                     // ⑤ 十字线停顿 600ms 预填
                                     onScrubPause = { page.makePrefill(it) },
+                                    // ⑤ 松手离开 scrub：2s 后清预填（chart 侧 revision 去抖）
+                                    onScrubLeave = { page.prefillQuestion = "" },
+                                    // U1 点空白（非声呐轻点）：关闭图表气泡并清其区间带
+                                    onBlankTap = { page.closeChartBubble() },
                                 )
                             }
                             vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
@@ -693,7 +777,7 @@ internal class StockDetailPage : BasePager() {
                                             color(page.theme.textTertiary)
                                         }
                                     }
-                                    event { click { page.overlayArbiter.close() } }
+                                    event { click { page.closeChartBubble() } }
                                 }
                                 Text {
                                     attr {
@@ -818,28 +902,67 @@ internal class StockDetailPage : BasePager() {
                     }
 
                     // ---- 真实业务数据：宽屏进入两列 Bento，窄屏保持线性阅读 ----
-                    BusinessInsightGrid(
-                        items = businessCards,
-                        context = ctx,
-                        theme = page.theme,
-                        wide = wide,
-                        baseIndex = 3,
-                        entranceVisible = { page.entranceVisible },
-                        reduceMotion = page.reduceMotion,
-                        // E2 注脚点击 → 展示判定依据（U3 两步溯源）
-                        onFootnoteClick = { note -> page.watchlistHint = "${note.rationale} · 端侧规则" },
-                    )
-
-                    RevealBlock(3 + businessCards.size, { page.entranceVisible }, page.reduceMotion) {
-                        SectionLabel("公告与研报", page.theme)
-                        // F1 公告要点 · 端侧评级（前 3 条，标题+徽章+日期，点击徽章看判定依据）
-                        DisclosureMaterialityBlock(
-                            items = page.insight.disclosures.take(3),
-                            theme = page.theme,
-                        ) { title ->
-                            page.watchlistHint = materialityOf(title).rule
+                    // vbind({insight})：E1 置顶/E2 注脚/卡片模型都在闭包内实时重算，
+                    // insight 加载完成（离线→真实）时整块重建，不再停留在首帧快照。
+                    vbind({ page.insight }) {
+                        val fundamentals = page.insight.fundamentals
+                        // doc 29 E1 今日相关置顶：billboard 数据非空 → 该卡 pinnedToday（至多一张置顶）
+                        val relevanceAnchors = listOf(
+                            RelevanceAnchor("fund-flow", false, ""),
+                            RelevanceAnchor("financial", false, ""),
+                            RelevanceAnchor("shareholders", false, ""),
+                            RelevanceAnchor("billboard", fundamentals?.billboard != null, "今日上龙虎榜"),
+                            RelevanceAnchor("actions", false, ""),
+                        )
+                        val pinnedId = pickPinnedCard(relevanceAnchors, relevanceAnchors.map { it.cardId })
+                        // doc 29 E2 注脚：仅用真实可得输入——股东户数的户均变化由户数环比在
+                        // 「总股本不变」假设下推导（-h/(100+h)），不伪造行业分位等缺失数据，
+                        // 无输入的注脚一律不显示。
+                        val shareholderNote = fundamentals?.shareholder?.let { sh ->
+                            val denom = 100.0 + sh.changePercent
+                            val perHolder = if (denom != 0.0) -sh.changePercent / denom * 100.0 else 0.0
+                            shareholderFootnote(sh.changePercent, perHolder)
                         }
-                        CardShell(DisclosureCardModel(page.insight.disclosures, "disclosures:${page.symbol}"), ctx)
+                        val businessCards = listOfNotNull(
+                            page.insight.fundFlow?.let { BusinessInsightItem("fund-flow", "资金流", FundFlowCardModel(it, "fund-flow:${page.symbol}")) },
+                            fundamentals?.financial?.let { BusinessInsightItem("financial", "财务", FinancialCardModel(it, "financial:${page.symbol}")) },
+                            fundamentals?.shareholder?.let {
+                                BusinessInsightItem("shareholders", "股东户数", ShareholderCardModel(it, "shareholders:${page.symbol}"), footnote = shareholderNote)
+                            },
+                            fundamentals?.billboard?.let {
+                                BusinessInsightItem("billboard", "龙虎榜", BillboardCardModel(it, "billboard:${page.symbol}"), pinned = "billboard" == pinnedId)
+                            },
+                            fundamentals?.actions?.takeIf { it.isNotEmpty() }?.let {
+                                BusinessInsightItem("actions", "分红与解禁", CorporateActionCardModel(it, "actions:${page.symbol}"))
+                            },
+                            // E1：置顶卡移到第一位（无事件日原序）
+                        ).let { cards -> if (pinnedId == null) cards else cards.sortedByDescending { it.pinned } }
+                        BusinessInsightGrid(
+                            items = businessCards,
+                            context = ctx,
+                            theme = page.theme,
+                            wide = wide,
+                            baseIndex = 3,
+                            entranceVisible = { page.entranceVisible },
+                            reduceMotion = page.reduceMotion,
+                            // E2 注脚点击 → 展示判定依据（U3 两步溯源）
+                            onFootnoteClick = { note -> page.toastHint("${note.rationale} · 端侧规则") },
+                        )
+                    }
+
+                    RevealBlock(8, { page.entranceVisible }, page.reduceMotion) {
+                        SectionLabel("公告与研报", page.theme)
+                        // vbind({insight})：公告列表随 insight 加载重建（R1：builder 闭包不追踪 observable）
+                        vbind({ page.insight }) {
+                            // F1 公告要点 · 端侧评级（前 3 条，标题+徽章+日期，点击条目看判定依据）
+                            DisclosureMaterialityBlock(
+                                items = page.insight.disclosures.take(3),
+                                theme = page.theme,
+                            ) { title ->
+                                page.toastHint(materialityOf(title).rule)
+                            }
+                            CardShell(DisclosureCardModel(page.insight.disclosures, "disclosures:${page.symbol}"), ctx)
+                        }
                     }
 
                     // ---- F3 多空平衡光谱（示例 · 演示数据，摘要中性客观） ----
@@ -858,11 +981,10 @@ internal class StockDetailPage : BasePager() {
                     )
 
                     // ---- AI 解读：要点卡片（方案 C）＋ ② 句图联动 ----
-                    RevealBlock(4 + businessCards.size, { page.entranceVisible }, page.reduceMotion) {
+                    RevealBlock(9, { page.entranceVisible }, page.reduceMotion) {
                         SectionLabel("AI 解读", page.theme)
                         vbind({ page.aiRevealLimit to page.aiRevealSource }) {
                             val fullSummary = if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource
-                            val sentences = fullSummary.split(Regex("[。，]")).map { it.trim() }.filter { it.isNotEmpty() }.take(3)
                             AiInsightBlock(
                                 summary = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
                                 revealLimit = { page.aiRevealLimit },
@@ -870,7 +992,6 @@ internal class StockDetailPage : BasePager() {
                                 theme = page.theme,
                                 reduceMotion = page.reduceMotion,
                                 onRetry = { page.retryAiReveal() },
-                                sentenceChips = sentences.map { it.take(8) },
                                 selectedSentence = { page.selectedSentence },
                                 onPickSentence = { page.pickSentence(it) },
                             )
@@ -878,11 +999,13 @@ internal class StockDetailPage : BasePager() {
                     }
 
                     // ---- 涨跌归因：列表 + 分隔线 ----
-                    RevealBlock(5 + businessCards.size, { page.entranceVisible }, page.reduceMotion) {
+                    RevealBlock(10, { page.entranceVisible }, page.reduceMotion) {
                         AttributionBlock(
                             AttributionCardModel(page.quote, attribution.direction, attribution.factors),
                             page.theme,
                             expandedKey = { page.expandedAttributionKey },
+                            // rising 走 lambda：行情方向翻转后标题随 attr 重跑刷新（builder 快照问题）
+                            rising = { page.quote.rising },
                             reduceMotion = page.reduceMotion,
                         ) { key ->
                             page.expandedAttributionKey = if (page.expandedAttributionKey == key) "" else key
@@ -899,7 +1022,7 @@ internal class StockDetailPage : BasePager() {
                             FactorSpec("市场整体", 0.05),
                             FactorSpec("个股事件", -0.23),
                         ),
-                        actualPct = page.quote.changePercent,
+                        actualPct = { page.quote.changePercent },
                         containerWidth = page.pagerData.pageViewWidth - 28f,
                         reduceMotion = page.reduceMotion,
                     )
@@ -928,7 +1051,7 @@ internal class StockDetailPage : BasePager() {
                                 page.overlayArbiter.request(DetailOverlay.REASON_CHIPS)
                             }
                         },
-                        "⋯" to { page.watchlistHint = "更多操作稍后接入" },
+                        "⋯" to { page.toastHint("更多操作稍后接入") },
                     ),
                 )
                 // U1 点空白全关：REASON_CHIPS 层的透明遮罩（开新层自动被仲裁器切换）
@@ -975,17 +1098,16 @@ internal class StockDetailPage : BasePager() {
                     onRemoveChip = { page.chipStore.remove(it.key) },
                     prefill = { page.prefillQuestion },
                 )
-                // 新闻摘要卡（弹幕点击展开；无站内正文渲染）
-                NewsSummarySheet(
-                    item = { page.newsSummary },
-                    theme = page.theme,
-                    onDismiss = { page.newsSummary = null },
-                    onOpenUrl = { url ->
-                        page.newsSummary = null
-                        page.openUrl(url)
-                    },
-                )
             }
+        }
+    }
+
+    /** watchlistHint 统一 toast 入口：2.8s 自动清除；新提示使旧清除计时失效。 */
+    private fun toastHint(message: String) {
+        watchlistHint = message
+        val version = ++hintVersion
+        setTimeout(2800) {
+            if (version == hintVersion) watchlistHint = ""
         }
     }
 
@@ -993,7 +1115,7 @@ internal class StockDetailPage : BasePager() {
         if (watchlisted) {
             watchlistStore.remove(symbol)
             watchlisted = false
-            watchlistHint = "已从自选移除"
+            toastHint("已从自选移除")
             watchlistEntryVersion++
             playWatchlistFeedback()
             return
@@ -1001,7 +1123,7 @@ internal class StockDetailPage : BasePager() {
         when (watchlistStore.add(symbol, quote.name)) {
             WatchlistAddResult.ADDED -> {
                 watchlisted = true
-                watchlistHint = "已加入自选"
+                toastHint("已加入自选")
                 // FR-W2：详情页入口的来源即理由，可在自选长按改写
                 watchlistStore.setReason(symbol, "详情页添加")
                 // doc 29 A1：记录加自选当时价（回访卡 KPI）
@@ -1011,19 +1133,24 @@ internal class StockDetailPage : BasePager() {
             }
             WatchlistAddResult.ALREADY_IN -> {
                 watchlisted = true
-                watchlistHint = "已在自选中"
+                toastHint("已在自选中")
                 playWatchlistFeedback()
             }
-            WatchlistAddResult.FULL -> watchlistHint = "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
+            WatchlistAddResult.FULL -> toastHint("自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧")
         }
     }
 
     // ───────────── doc 29 集成：交互回调与数据派生 ─────────────
 
-    /** ④ 声呐点轻点：就地气泡（U1 经仲裁器）+ 选中态。 */
+    /** ④ 声呐点轻点：就地气泡（U1 经仲裁器）+ 选中态 + 相关区间高亮带（doc §4.4）。 */
     private fun tapSonar(index: Int) {
         val point = sonarPoints.firstOrNull { it.index == index } ?: return
         selectedSonarIndex = index
+        bandRange = Triple(
+            (index - 10).coerceAtLeast(0),
+            (index + 10).coerceAtMost(AnchorIndex.INDEX_COUNT - 1),
+            false,
+        )
         showChartBubble(point.label)
     }
 
@@ -1035,6 +1162,17 @@ internal class StockDetailPage : BasePager() {
         setTimeout(0) { chartBubblePresented = true }
     }
 
+    /**
+     * U1「点空白全关」：关闭图表气泡并清掉它挂的区间带（sonar/圈选带）。
+     * ② 句图带若在气泡开启期间被覆盖，收起后重新点句即可恢复。
+     */
+    private fun closeChartBubble() {
+        if (overlayArbiter.active == DetailOverlay.CHART_BUBBLE) {
+            overlayArbiter.close()
+            bandRange = null
+        }
+    }
+
     /** ① 圈选松手：区间起止价、涨跌幅、极值全部端侧统计（纯事实）。 */
     private fun onCircleSelected(start: Int, end: Int) {
         val series = detailTimelineSeries(quote)
@@ -1042,13 +1180,15 @@ internal class StockDetailPage : BasePager() {
         val lo = minOf(start, end).coerceIn(0, series.lastIndex)
         val hi = maxOf(start, end).coerceIn(0, series.lastIndex)
         if (hi - lo < 3) {
-            watchlistHint = "区间太短（不足 3 个点），松手前多拖一段"
+            toastHint("区间太短（不足 3 个点），松手前多拖一段")
             return
         }
         val p0 = series[lo]
         val p1 = series[hi]
         val pct = if (p0 != 0.0) (p1 - p0) / p0 * 100.0 else 0.0
         val seg = series.subList(lo, hi + 1)
+        // ① 松手后保留区间带高亮（brand 12%），随气泡关闭一起清除
+        bandRange = Triple(lo, hi, false)
         showChartBubble(
             "${AnchorIndex.indexToTimeLabel(lo)}–${AnchorIndex.indexToTimeLabel(hi)} " +
                 "区间${if (pct >= 0) "上行" else "下行"} ${Format.percent(pct)}，" +
@@ -1056,19 +1196,27 @@ internal class StockDetailPage : BasePager() {
         )
     }
 
-    /** ⑤ scrub 停顿 600ms：只预填不发送；恢复滑动（onScrub）即清空。 */
+    /** ⑤ scrub 停顿 600ms：只预填不发送；恢复滑动（onScrub）即清空；松手 2s 后清除。 */
     private fun makePrefill(index: Int) {
         val series = detailTimelineSeries(quote)
         if (index !in series.indices) return
         val base = series.getOrNull((index - 4).coerceAtLeast(0)) ?: return
-        val up = series[index] >= base
-        prefillQuestion = "${AnchorIndex.indexToTimeLabel(index)} 前后这波${if (up) "涨" else "跌"}是怎么回事？"
+        val pct = if (base != 0.0) (series[index] - base) / base * 100.0 else 0.0
+        // 措辞按走势方向模板生成（doc §4.6 验收：涨/跌/横盘三模板），均为可陈述事实问法
+        prefillQuestion = when {
+            pct > 0.15 -> "${AnchorIndex.indexToTimeLabel(index)} 前后这波涨是怎么回事？"
+            pct < -0.15 -> "${AnchorIndex.indexToTimeLabel(index)} 前后这波跌是怎么回事？"
+            else -> "${AnchorIndex.indexToTimeLabel(index)} 前后这段横盘是怎么回事？"
+        }
     }
 
     /** ③ 指标长按抓取：chip 直接入上下文（降级路径），去重由 chipStore 负责。 */
     private fun grabMetric(label: String, value: String) {
         val added = chipStore.add(ContextChip(label, label, value))
-        watchlistHint = if (added) "已抓取「$label」，问 AI 时会一并带上" else "「$label」已在提问上下文中"
+        toastHint(
+            if (added) "已抓取「$label」，问 AI 时会一并带上"
+            else "「$label」已在提问上下文中"
+        )
     }
 
     /** B2 旗标落点：优先用新闻真实发布时间换算分时索引；无时间字段时退关键词静态映射。 */
@@ -1089,7 +1237,7 @@ internal class StockDetailPage : BasePager() {
     private fun toggleNewsFlag(item: NewsItem) {
         val idx = newsFlagIndex(item)
         if (idx == null) {
-            watchlistHint = "该条新闻不在今日分时时段内，未落旗"
+            toastHint("该条新闻不在今日分时时段内，未落旗")
             return
         }
         if (item.id in droppedNewsIds) {
@@ -1116,19 +1264,50 @@ internal class StockDetailPage : BasePager() {
         bandRange = Triple(idx, (idx + 12).coerceAtMost(AnchorIndex.INDEX_COUNT - 1), false)
     }
 
-    /** B1/B2 弹幕条目点按：摘要条（NEWS_SUMMARY）+ 落旗。 */
+    /**
+     * B1/B2 弹幕条目点按（doc §4.3「点按条目或旗落旗，重复点按收起」）：
+     * 未落旗 → 摘要条（NEWS_SUMMARY，弹幕带下方）+ 落旗；已落旗 → 收旗收条。
+     */
     private fun onNewsTapped(item: NewsItem) {
+        val idx = newsFlagIndex(item)
+        if (item.id in droppedNewsIds) {
+            droppedNewsIds.remove(item.id)
+            if (idx != null) {
+                chartFlags = chartFlags.filterNot { it.index == idx }
+                if (bandRange?.first == idx) bandRange = null
+            }
+            if (newsSummary?.id == item.id) {
+                newsSummary = null
+                overlayArbiter.close()
+            }
+            return
+        }
         newsSummary = item
         overlayArbiter.request(DetailOverlay.NEWS_SUMMARY)
         toggleNewsFlag(item)
     }
 
-    /** B1 长按先览：TAPE_PREVIEW 层 + 2s 自动消失（点按条目会切到 NEWS_SUMMARY）。 */
+    /**
+     * B1 长按先览（doc §4.2）：TAPE_PREVIEW 层；气泡在「松手 700ms 后」消失
+     * （由 onLongPressRelease 调度），另留 5s 兜底防松手回调丢失。
+     */
     private fun showTapePreview(item: NewsItem) {
         tapePreview = item
         overlayArbiter.request(DetailOverlay.TAPE_PREVIEW)
-        setTimeout(2000) {
-            if (overlayArbiter.active == DetailOverlay.TAPE_PREVIEW && tapePreview?.id == item.id) {
+        val version = ++tapePreviewVersion
+        setTimeout(5000) {
+            if (version == tapePreviewVersion && overlayArbiter.active == DetailOverlay.TAPE_PREVIEW) {
+                overlayArbiter.close()
+                tapePreview = null
+            }
+        }
+    }
+
+    /** B1 松手 700ms 后收先览（doc §4.2「气泡消失：松手 700ms 后或点按条目」）。 */
+    private fun scheduleTapePreviewDismiss() {
+        val version = ++tapePreviewVersion
+        setTimeout(700) {
+            if (version == tapePreviewVersion && overlayArbiter.active == DetailOverlay.TAPE_PREVIEW) {
                 overlayArbiter.close()
                 tapePreview = null
             }
@@ -1140,7 +1319,7 @@ internal class StockDetailPage : BasePager() {
         overlayArbiter.close()
         val result = watchlistStore.add(symbol, quote.name)
         if (result == WatchlistAddResult.FULL) {
-            watchlistHint = "自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧"
+            toastHint("自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧")
             return
         }
         if (result == WatchlistAddResult.ADDED) watchlistStore.setEntryPrice(symbol, quote.price)
@@ -1148,7 +1327,7 @@ internal class StockDetailPage : BasePager() {
         watchlisted = true
         watchlistEntryVersion++
         revisitExpanded = true
-        watchlistHint = "已记入当初理由"
+        toastHint("已记入当初理由")
     }
 
     /** ② 点解读句：固定锚点亮区间带；同句再点收起。 */
@@ -1223,8 +1402,9 @@ internal class StockDetailPage : BasePager() {
         previousChangeText = "${Format.signed(old.change)}  ${Format.percent(old.changePercent)}"
         tickerDirectionUp = next.price >= old.price
         quote = next
-        // doc 29 ④ 异动声呐：分时到达后跑一次端侧检测（成交量暂不参与确认，见已知简化）
-        sonarPoints = detectAnomalies(detailTimelineSeries(next), null)
+        // doc 29 ④ 异动声呐：分时到达后跑一次端侧检测（成交量暂不参与确认，见已知简化）。
+        // 同屏 ≤3 点（doc §4.4 呼吸预算，U4），超出的按 |涨跌幅| 降序舍弃。
+        sonarPoints = detectAnomalies(detailTimelineSeries(next), null).take(3)
         if (changed) playTicker()
     }
 
@@ -1672,8 +1852,9 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
 }
 
 /**
- * doc 29 E1/E2 业务卡槽：置顶卡加 brand 描边 + 「今日相关」角标；
- * 有注脚的卡在卡底加 brand 小字（点击展示判定依据 + 「· 端侧规则」）。
+ * doc 29 E1/E2/E3 业务卡槽：置顶卡加 brand 描边 + 「今日相关」角标；
+ * 有注脚的卡在卡底加 brand 小字（点击展示判定依据 + 「· 端侧规则」）；
+ * 长按 400ms（U5）→ E3 行业对比覆盖层（只读），松手 2.2s 后弹回。
  */
 private fun ViewContainer<*, *>.BusinessCardSlot(
     item: BusinessInsightItem,
@@ -1681,12 +1862,33 @@ private fun ViewContainer<*, *>.BusinessCardSlot(
     onFootnoteClick: (CardFootnote) -> Unit,
     content: ViewContainer<*, *>.() -> Unit,
 ) {
+    // E3 覆盖层状态（BlockState：observable 委托仅支持类成员，局部状态收敛）
+    val compareShown = BlockState(false)
+    var compareHideRevision = 0
     View {
         attr {
             if (item.pinned) {
                 borderRadius(theme.cardRadius)
                 border(Border(1.2f, BorderStyle.SOLID, theme.brand.opacity(0.5f)))
                 padding(2f)
+            }
+        }
+        // E3 长按行业比：start 挂载覆盖层；end/cancel 起算 2.2s 弹回。
+        // 重按会使旧计时失效（revision），长按中不会中途消失。
+        event {
+            longPress { params ->
+                when (params.state) {
+                    "start" -> {
+                        compareHideRevision++
+                        compareShown.value = true
+                    }
+                    "end", "cancel" -> {
+                        val revision = compareHideRevision
+                        setTimeout(2200) {
+                            if (revision == compareHideRevision) compareShown.value = false
+                        }
+                    }
+                }
             }
         }
         vif({ item.pinned }) {
@@ -1724,6 +1926,18 @@ private fun ViewContainer<*, *>.BusinessCardSlot(
                 }
                 event { click { item.footnote?.let(onFootnoteClick) } }
             }
+        }
+        // E3 可发现性提示（静态样本标注与 F3/G1 同范式）
+        Text {
+            attr {
+                marginTop(4f)
+                text("长按看行业对比 · 示例 · 端侧静态样本")
+                fontSize(theme.type.meta)
+                color(theme.textTertiary)
+            }
+        }
+        vif({ compareShown.value }) {
+            IndustryCompareOverlay(theme, item.label)
         }
     }
 }
@@ -1925,38 +2139,41 @@ private fun ViewContainer<*, *>.DetailBottomBar(
                 right = 14f,
             )
         }
-        // ③ 抓取 chips 行
-        vif({ chips().isNotEmpty() }) {
-            View {
-                attr {
-                    marginBottom(6f)
-                    paddingLeft(4f)
-                    paddingRight(4f)
-                    flexDirectionRow()
-                    flexWrapWrap()
-                }
-                chips().forEach { chip ->
-                    View {
-                        attr {
-                            marginRight(6f)
-                            marginBottom(4f)
-                            paddingLeft(10f)
-                            paddingRight(10f)
-                            height(28f)
-                            allCenter()
-                            borderRadius(14f)
-                            backgroundColor(theme.surface)
-                            border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.6f)))
-                        }
-                        Text {
+        // ③ 抓取 chips 行：vbind 按 chips 列表重建（vif 只判有无，1→2 枚不会重跑内容闭包，
+        // 此前第二枚 chip 不显示、删除后残留旧 chip 的 bug 即源于此）
+        vbind({ chips() }) {
+            if (chips().isNotEmpty()) {
+                View {
+                    attr {
+                        marginBottom(6f)
+                        paddingLeft(4f)
+                        paddingRight(4f)
+                        flexDirectionRow()
+                        flexWrapWrap()
+                    }
+                    chips().forEach { chip ->
+                        View {
                             attr {
-                                text("${chip.label} ${chip.value} ×")
-                                fontSize(theme.type.meta)
-                                fontWeightMedium()
-                                color(theme.brand)
+                                marginRight(6f)
+                                marginBottom(4f)
+                                paddingLeft(10f)
+                                paddingRight(10f)
+                                height(28f)
+                                allCenter()
+                                borderRadius(14f)
+                                backgroundColor(theme.surface)
+                                border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.6f)))
                             }
+                            Text {
+                                attr {
+                                    text("${chip.label} ${chip.value} ×")
+                                    fontSize(theme.type.meta)
+                                    fontWeightMedium()
+                                    color(theme.brand)
+                                }
+                            }
+                            event { click { onRemoveChip(chip) } }
                         }
-                        event { click { onRemoveChip(chip) } }
                     }
                 }
             }
@@ -2072,8 +2289,7 @@ private fun ViewContainer<*, *>.AiInsightBlock(
     theme: StockChatTheme,
     reduceMotion: Boolean,
     onRetry: () -> Unit,
-    // doc 29 ② 句图联动：句前 8 字 chips（与固定锚点一一对应，页面侧负责点亮区间带）
-    sentenceChips: List<String> = emptyList(),
+    // doc 29 ② 句图联动：句序号与页面侧 sentenceAnchors 一一对应，点句点亮区间带
     selectedSentence: () -> Int = { -1 },
     onPickSentence: (Int) -> Unit = {},
 ) {
@@ -2129,15 +2345,19 @@ private fun ViewContainer<*, *>.AiInsightBlock(
                 val revealed = if (revealLimit() <= 0) "" else summary().take(revealLimit().coerceAtMost(summary().length))
                 val sentences = revealed.split(Regex("[。，]")).map { it.trim() }.filter { it.isNotEmpty() }
                 if (sentences.isNotEmpty()) {
-                    Text {
-                        attr {
-                            text(sentences.first() + "。")
-                            marginTop(theme.spacing.sm)
-                            fontSize(theme.type.body)
-                            fontWeightSemiBold()
-                            color(theme.textPrimary)
-                            lineHeight(21f)
+                    // 首句（句 0）：此前无点击事件导致②句图联动整段不可达，补上
+                    View {
+                        attr { marginTop(theme.spacing.sm) }
+                        Text {
+                            attr {
+                                text(sentences.first() + "。")
+                                fontSize(theme.type.body)
+                                fontWeightSemiBold()
+                                color(if (selectedSentence() == 0) theme.brand else theme.textPrimary)
+                                lineHeight(21f)
+                            }
                         }
+                        event { click { onPickSentence(0) } }
                     }
                 }
                 if (sentences.isEmpty()) {
@@ -2179,7 +2399,18 @@ private fun ViewContainer<*, *>.AiInsightBlock(
                                 color(if (selectedSentence() == index + 1) theme.brand else theme.textSecondary)
                             }
                         }
+                        // ② 句图联动：点句 → 页面点亮对应区间带（此前缺失，交互不可达）
+                        event { click { onPickSentence(index + 1) } }
                     }
+                }
+            }
+            // ② 句图联动可发现性提示（端侧规则，不占「问 AI」触点预算）
+            Text {
+                attr {
+                    text("点句子可在走势图中高亮对应区间 · 端侧规则")
+                    marginTop(8f)
+                    fontSize(theme.type.meta)
+                    color(theme.textTertiary)
                 }
             }
             Text {
@@ -2198,6 +2429,8 @@ private fun ViewContainer<*, *>.AttributionBlock(
     model: AttributionCardModel,
     theme: StockChatTheme,
     expandedKey: () -> String,
+    // 行情方向走 lambda：model 是首帧快照，标题需随 quote tick 在 attr 内实时刷新（R1）
+    rising: () -> Boolean,
     reduceMotion: Boolean,
     onToggle: (String) -> Unit,
 ) {
@@ -2205,7 +2438,7 @@ private fun ViewContainer<*, *>.AttributionBlock(
     Text {
         attr {
             marginTop(theme.spacing.x3)
-            text("为什么${if (model.quote.rising) "涨" else "跌"}")
+            text("为什么${if (rising()) "涨" else "跌"}")
             fontSize(theme.type.title)
             fontWeightSemiBold()
             color(theme.textPrimary)

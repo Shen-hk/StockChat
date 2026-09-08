@@ -230,3 +230,27 @@ internal fun fmt1(v: Double): String {
     val s = "$i.$d"
     return if (neg) "-$s" else s
 }
+
+// ───────────────────────── G1 因子权重重放 ─────────────────────────
+
+/**
+ * 因子重放单因子（doc 29 §4.12）。baseContributionPct 为「对当日涨跌」的基准贡献百分比。
+ * 此前落在 UI 文件（DetailBoardBlocks），按 §3「RuleEngine 是端侧规则模板的家」
+ * 挪入纯函数层，使 §4.12 验收「重算结果与手算一致（纯函数单测）」可执行。
+ */
+data class FactorSpec(
+    val name: String,
+    val baseContributionPct: Double,
+)
+
+/**
+ * G1 数学重算：Σ base_i × weight_i（与页面涨跌无关的纯函数）。
+ * 权重缺失时按 1.0（复原态）参与计算。
+ */
+fun replayContribution(factors: List<FactorSpec>, weights: List<Double>): Double {
+    var sum = 0.0
+    factors.forEachIndexed { i, f ->
+        sum += f.baseContributionPct * weights.getOrElse(i) { 1.0 }
+    }
+    return sum
+}

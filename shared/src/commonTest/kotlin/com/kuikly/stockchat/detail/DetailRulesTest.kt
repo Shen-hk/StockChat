@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.detail
 
 import com.kuikly.stockchat.page.detail.AnchorIndex
+import com.kuikly.stockchat.page.detail.FactorSpec
 import com.kuikly.stockchat.page.detail.Materiality
 import com.kuikly.stockchat.page.detail.RelevanceAnchor
 import com.kuikly.stockchat.page.detail.detectAnomalies
@@ -8,6 +9,7 @@ import com.kuikly.stockchat.page.detail.financialFootnote
 import com.kuikly.stockchat.page.detail.fundFlowFootnote
 import com.kuikly.stockchat.page.detail.materialityOf
 import com.kuikly.stockchat.page.detail.pickPinnedCard
+import com.kuikly.stockchat.page.detail.replayContribution
 import com.kuikly.stockchat.page.detail.scoreNewsSentiment
 import com.kuikly.stockchat.page.detail.shareholderFootnote
 import kotlin.test.Test
@@ -186,5 +188,24 @@ class DetailRulesTest {
         assertTrue(f != null && f.text.contains("高于行业 80"))
         // 负增长 → null
         assertNull(financialFootnote(revenueGrowthPct = -2.0, industryPercentile = 80))
+    }
+
+    // ───── G1 因子权重重放（Σ base×weight，doc §4.12「重算与手算一致」验收）─────
+    @Test
+    fun replayContributionSumsWeights() {
+        val factors = listOf(
+            FactorSpec("资金面", -0.30),
+            FactorSpec("板块联动", -0.14),
+            FactorSpec("市场整体", 0.05),
+            FactorSpec("个股事件", -0.23),
+        )
+        // 复原态（全 1.0×）＝ Σ base = -0.62
+        assertEquals(-0.62, replayContribution(factors, listOf(1.0, 1.0, 1.0, 1.0)), 1e-9)
+        // 手算：-0.30×2 + -0.14 + 0.05 + -0.23×0.5 = -0.805
+        assertEquals(-0.805, replayContribution(factors, listOf(2.0, 1.0, 1.0, 0.5)), 1e-9)
+        // 全 0× → 不贡献
+        assertEquals(0.0, replayContribution(factors, listOf(0.0, 0.0, 0.0, 0.0)), 1e-9)
+        // 权重缺失位按 1.0 兜底（复原语义）
+        assertEquals(-0.92, replayContribution(factors, listOf(2.0)), 1e-9)
     }
 }

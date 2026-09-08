@@ -41,6 +41,8 @@ internal fun ViewContainer<*, *>.NewsTape(
     // 长按 400ms（移动 ≤8dp，由 Kuikly 内置 longPress 手势保证）回调；已有 onTapItem 行为不变。
     // 长按期间复用既有 pan 的暂停逻辑（longPress start 亦置 paused=true，end/cancel 复位）。
     onLongPressItem: ((NewsItem) -> Unit)? = null,
+    // 长按松手/取消回调（doc 29 §4.2：先览气泡在松手 700ms 后消失，由页侧调度）。
+    onLongPressRelease: (() -> Unit)? = null,
     // 条目前 6dp 情绪圆点颜色；返回 null 不画。颜色由页面用 DetailRules.scoreNewsSentiment 结果传入。
     itemDotColor: ((NewsItem) -> Color?)? = null,
 ) {
@@ -87,7 +89,10 @@ internal fun ViewContainer<*, *>.NewsTape(
                                         onPauseChange(true)
                                         onLongPressItem?.invoke(item)
                                     }
-                                    "end", "cancel" -> onPauseChange(false)
+                                    "end", "cancel" -> {
+                                        onPauseChange(false)
+                                        onLongPressRelease?.invoke()
+                                    }
                                 }
                             }
                             pan { params ->
@@ -151,7 +156,11 @@ internal fun ViewContainer<*, *>.NewsTape(
     }
 }
 
-/** 摘要卡：覆盖层 + 底部玻璃卡（复用 CardSheet 范式，轻量实现）。 */
+/**
+ * 摘要卡：覆盖层 + 底部玻璃卡（复用 CardSheet 范式，轻量实现）。
+ * doc 29 集成后详情页已改用弹幕带下方摘要条（StockDetailPage 内联 B2 strip，
+ * §4.3 要求「非全屏 Sheet」）；本组件保留作为 doc 26 形态回退，当前无调用方。
+ */
 internal fun ViewContainer<*, *>.NewsSummarySheet(
     item: () -> NewsItem?,
     theme: StockChatTheme,

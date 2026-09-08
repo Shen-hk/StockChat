@@ -2,7 +2,9 @@ package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.page.detail.FactorSpec
 import com.kuikly.stockchat.page.detail.Materiality
+import com.kuikly.stockchat.page.detail.replayContribution
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -43,22 +45,7 @@ data class BalanceSegment(
     val quote: String,
 )
 
-/** 因子权重重放单因子（doc 29 §4.12 G1）。baseContributionPct 为「对当日涨跌」的基准贡献百分比。 */
-data class FactorSpec(
-    val name: String,
-    val baseContributionPct: Double,
-)
-
-// ───────────────────────────── 共享纯函数 ─────────────────────────────
-
-/** G1 数学重算：Σ base_i × weight_i（与页面涨跌无关，纯函数，不放 DetailRules）。 */
-private fun recompute(factors: List<FactorSpec>, weights: List<Double>): Double {
-    var sum = 0.0
-    factors.forEachIndexed { i, f ->
-        sum += f.baseContributionPct * weights.getOrElse(i) { 1.0 }
-    }
-    return sum
-}
+// FactorSpec / 重算纯函数已挪至 page.detail.DetailRules（doc §3 RuleEngine 家，可单测）。
 
 /** 涨跌百分比文案：+x.xx% / -x.xx%，基准为 entryPrice。 */
 private fun pctText(delta: Double, base: Double): String {
@@ -76,8 +63,9 @@ private fun ViewContainer<*, *>.scheduleNextFrame(block: () -> Unit) {
 /**
  * 集成修复：Kuikly 的 observable 委托只能挂在类成员属性上（局部变量委托拿到的是
  * KMutableProperty0，签名不匹配编译不过），组件内局部响应式状态统一收敛到本状态类。
+ * internal：StockDetailPage.BusinessCardSlot（E3 行业比）同样需要局部响应式状态。
  */
-private class BlockState<T>(initial: T) {
+internal class BlockState<T>(initial: T) {
     var value: T by observable(initial)
 }
 
@@ -529,13 +517,15 @@ private fun ViewContainer<*, *>.QuotePanel(
  * - 每行：名称 + 可拖/可点轨道（0–2.0×，默认 1.0×，knob 拖动或点按定位）+ 右侧权重 "1.0×"。
  *   内部 weights 为 observable List，拖动/点按更新对应权重。
  * - 底部结果行：重算涨跌 = Σ base×weight（2 位小数，涨红跌绿）+ 以 0 为中心的贡献条
- *   （重算值相对 actual 的比例）+ 「复原」文字按钮（权重全部回 1.0）。
- * 重算逻辑见同文件私有纯函数 [recompute]（不放 DetailRules）。
+ *   （重算值相对 actual 的比例）+ 「复原」文字按钮（权重全部回 1.0）+ 残差行（未解释部分）。
+ * 重算逻辑见 [com.kuikly.stockchat.page.detail.replayContribution]（纯函数，已配单测）。
  */
 internal fun ViewContainer<*, *>.FactorReplayBlock(
     theme: StockChatTheme,
     factors: List<FactorSpec>,
-    actualPct: Double,
+    // lambda 而非 Double：builder 闭包只取首帧快照（R1），lambda 延迟到 attr 闭包内读取，
+    // 行情 tick 后残差行随 attr 重跑刷新，且组件不被 vbind 重建（拖动中的权重不丢失）。
+    actualPct: () -> Double,
     containerWidth: Float,
     reduceMotion: Boolean,
 ) {
@@ -643,7 +633,7 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
             }
             Text {
                 attr {
-                    val r = recompute(factors, weights.value)
+                    val r = replayContribution(factors, weights.value)
                     text((if (r >= 0) "+" else "") + Format.decimal(r, 2) + "%")
                     fontSize(theme.type.body)
                     fontWeightSemiBold()
@@ -667,9 +657,9 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
                         flex(1f)
                         justifyContentFlexEnd()
                     }
-                    vif({ recompute(factors, weights.value) < 0 }) {
-                        val r = recompute(factors, weights.value)
-                        val s = maxOf(abs(actualPct), abs(r), 0.5)
+                    vif({ replayContribution(factors, weights.value) < 0 }) {
+                        val r = replayContribution(factors, weights.value)
+                        val s = maxOf(abs(actualPct()), abs(r), 0.5)
                         val f = (abs(r) / s).toFloat().coerceIn(0f, 1f)
                         View { attr { flex(f); backgroundColor(theme.fall) } }
                     }
@@ -677,9 +667,9 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
                 // 右半（正向）
                 View {
                     attr { flex(1f) }
-                    vif({ recompute(factors, weights.value) > 0 }) {
-                        val r = recompute(factors, weights.value)
-                        val s = maxOf(abs(actualPct), abs(r), 0.5)
+                    vif({ replayContribution(factors, weights.value) > 0 }) {
+                        val r = replayContribution(factors, weights.value)
+                        val s = maxOf(abs(actualPct()), abs(r), 0.5)
                         val f = (abs(r) / s).toFloat().coerceIn(0f, 1f)
                         View { attr { flex(f); backgroundColor(theme.rise) } }
                     }
@@ -694,6 +684,115 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
                     color(theme.brand)
                 }
                 event { click { weights.value = factors.map { 1.0 } } }
+            }
+        }
+
+        // G1 残差行（doc §4.12「残差=未解释部分如实展示」）：
+        // 未解释 = 实际涨跌 − 重算值；attr 闭包内读 weights/actualPct 建立响应式（R1）。
+        Text {
+            attr {
+                marginTop(6f)
+                val r = replayContribution(factors, weights.value)
+                val residual = actualPct() - r
+                text(
+                    "实际涨跌 " + signedPct(actualPct()) +
+                        " · 未解释部分 " + signedPct(residual) +
+                        "（实际 − 重算，模型未覆盖的成分）"
+                )
+                fontSize(8.5f)
+                color(theme.textTertiary)
+            }
+        }
+    }
+}
+
+/** G1 残差用带符号百分比：+x.xx% / -x.xx%。 */
+private fun signedPct(v: Double): String =
+    (if (v >= 0) "+" else "") + Format.decimal(v, 2) + "%"
+
+// ───────────────────────────── E3 长按行业比 ─────────────────────────────
+
+/**
+ * E3 行业对比静态样本（doc 29 §4.10「静态行业样本」）。端侧暂无行业截面数据，
+ * 与 F3/G1 同范式挂「示例 · 端侧静态样本」标注，只述事实不构成建议。
+ */
+private val INDUSTRY_SAMPLE_PEERS: List<Pair<String, Double>> = listOf(
+    "同业样本一" to 1.62,
+    "同业样本二" to 0.84,
+    "同业样本三" to -0.35,
+    "同业样本四" to -1.12,
+    "同业样本五" to -2.05,
+)
+
+/**
+ * E3 卡内覆盖层：行业 Top5 横条（只读）。由 BusinessCardSlot 的长按手势驱动：
+ * longPress start 挂载、松手 2.2s 后由调用方卸载（弹回）。touchEnable(false)
+ * 保证不拦截手势，松手事件仍落在卡片上。
+ */
+internal fun ViewContainer<*, *>.IndustryCompareOverlay(
+    theme: StockChatTheme,
+    cardLabel: String,
+) {
+    val maxAbs = INDUSTRY_SAMPLE_PEERS.maxOf { abs(it.second) }.coerceAtLeast(0.01)
+    View {
+        attr {
+            absolutePositionAllZero()
+            backgroundColor(theme.surface.opacity(0.97f))
+            borderRadius(theme.cardRadius)
+            border(Border(1f, BorderStyle.SOLID, theme.divider))
+            padding(12f)
+            touchEnable(false)
+        }
+        Text {
+            attr {
+                text("$cardLabel · 行业内对比 Top5（示例 · 端侧静态样本）")
+                fontSize(theme.type.label)
+                fontWeightSemiBold()
+                color(theme.textPrimary)
+            }
+        }
+        INDUSTRY_SAMPLE_PEERS.forEach { (name, pct) ->
+            View {
+                attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
+                Text {
+                    attr {
+                        width(62f)
+                        text(name)
+                        fontSize(theme.type.meta)
+                        color(theme.textSecondary)
+                    }
+                }
+                // 横条：以最大 |pct| 归一化的比例填充（涨红跌绿，U2 数据语义色）
+                View {
+                    attr { flex(1f); height(6f); borderRadius(3f); backgroundColor(theme.surfaceMuted); flexDirectionRow() }
+                    View {
+                        attr {
+                            flex((abs(pct) / maxAbs).toFloat().coerceIn(0.02f, 1f))
+                            height(6f)
+                            borderRadius(3f)
+                            backgroundColor(if (pct >= 0) theme.rise else theme.fall)
+                        }
+                    }
+                    View { attr { flex((1.0 - abs(pct) / maxAbs).toFloat().coerceAtLeast(0.001f)) } }
+                }
+                Text {
+                    attr {
+                        width(52f)
+                        marginLeft(6f)
+                        text(signedPct(pct))
+                        fontSize(theme.type.meta)
+                        textAlignRight()
+                        color(if (pct >= 0) theme.rise else theme.fall)
+                    }
+                }
+            }
+        }
+        Text {
+            attr {
+                marginTop(8f)
+                text("松手约 2 秒后自动弹回 · 只述事实，不构成建议")
+                fontSize(8.5f)
+                color(theme.textTertiary)
             }
         }
     }

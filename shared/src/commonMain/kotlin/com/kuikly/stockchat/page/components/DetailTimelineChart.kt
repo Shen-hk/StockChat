@@ -86,6 +86,8 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     onCircleSelect: (Int, Int) -> Unit = { _, _ -> },  // ① 圈选松手回调（起止 index）
     onSelectStateChange: (Boolean) -> Unit = {},       // ① 进入/退出圈选态（页面显隐 hint）
     onScrubPause: (Int) -> Unit = {},                  // ⑤ scrub 停顿 600ms 回调
+    onScrubLeave: () -> Unit = {},                     // ⑤ 松手离开 scrub（页面 2s 后清预填）
+    onBlankTap: () -> Unit = {},                       // U1 点空白（非声呐、非拖动的轻点）回调
 ) {
     // ── 新增交互的内部状态 ──
     // 响应式字段放进一个小类（与 StockDetailPage 的 `by observable(...)` 同来源/同形态，
@@ -99,6 +101,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     var longPressCancelled = false                            // 移动 >8dp 置真，使待触发长按失效
     var pauseSlot = -1
     var pauseRevision = 0                                     // 槽位变化即自增，使旧停顿计时失效（免 clearTimeout）
+    var scrubLeaveRevision = 0                                // 松手 revision：使旧的 2s 清预填计时失效
     var droppedKnown = emptySet<Int>()                        // 已启动下落动画的旗标 index
 
     // ④ 声呐点命中测试：落点距某声呐中心 ≤12dp（平方 144）返回其 index，否则 -1
@@ -226,7 +229,8 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         }
                     }
 
-                    // 松手：清理计时；圈选则判定回调，否则判定声呐点命中
+                    // 松手：清理计时；圈选则判定回调，否则判定声呐点命中 / 空白轻点，
+                    // 并调度「离开 scrub 2s 清预填」（一次松手只调度一份，再次交互即失效）
                     if (params.isEnd) {
                         longPressCancelled = true
                         pauseRevision++ // 使任何待触发停顿计时失效
@@ -236,10 +240,19 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                             state.selecting = false
                             state.selectRange = Pair(-1, -1)
                             onSelectStateChange(false)
-                        } else if (movedDist <= 64f) {
-                            // ④ 声呐点命中：落点距中心 ≤12dp，回调且不进 scrub
-                            val hit = sonarHitTest(downX, downY)
-                            if (hit >= 0) onSonarTap(hit)
+                        } else {
+                            if (movedDist <= 64f) {
+                                // ④ 声呐点命中：落点距中心 ≤12dp，回调且不进 scrub；
+                                // 未命中 = 空白轻点 → U1「点空白全关」入口
+                                val hit = sonarHitTest(downX, downY)
+                                if (hit >= 0) onSonarTap(hit) else onBlankTap()
+                            }
+                            // ⑤ 离开 scrub：2s 后清预填（期间任何新松手都会使本计时失效）
+                            scrubLeaveRevision++
+                            val myLeaveRev = scrubLeaveRevision
+                            setTimeout(2000) {
+                                if (myLeaveRev == scrubLeaveRevision) onScrubLeave()
+                            }
                         }
                         longPressFired = false
                     }
