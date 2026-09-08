@@ -132,6 +132,11 @@ internal class RiskMapPage : BasePager() {
     /** 引路星/颠簸光晕脉冲相位 0..1（12 步 × 55ms 步进，reduceMotion 恒 0）。 */
     private var beaconPhase: Float by observable(0f)
 
+    /** LINK 层拖星的瞬态偏移；布局本身不变，松手后回弹至 0。 */
+    private var skyDragOffsets: Map<String, Pair<Float, Float>> by observable(emptyMap())
+    private var skyDragReturnGeneration = 0
+    private var skyContextSymbol: String by observable("")
+
     /** 脉冲步进器运行标记（图层离开脉冲层自动停摆，切回由 applySkyLayer 重启）。 */
     private var pulseRunning = false
 
@@ -497,12 +502,16 @@ internal class RiskMapPage : BasePager() {
                     },
                     eventsOf = { page.skyEventsOf(it) },
                     calendarDayLabel = { page.skyDayLabel() },
+                    dragOffsets = { page.skyDragOffsets },
                     canvasHeight = { page.skyGeometry().requiredHeight },
                     reduceMotion = page.reduceMotion,
                     onTapStar = { page.onSkyStarTap(it) },
                     onTapBeacon = { page.onSkyBeaconTap() },
                     onTapCluster = { page.onSkyClusterTap(it) },
                     onTapBlank = { page.onSkyBlankTap() },
+                    onDragStar = { symbol, dx, dy -> page.onSkyStarDrag(symbol, dx, dy) },
+                    onDragEnd = { page.onSkyStarDragEnd() },
+                    onLongPressStar = { page.onSkyStarLongPress(it) },
                 )
             }
 
@@ -528,6 +537,11 @@ internal class RiskMapPage : BasePager() {
                 vbind({ page.skySelectedCluster }) {
                     page.renderSkyClusterDrawer(this, page.skySelectedCluster)
                 }
+            }
+
+            // 长按星才出现的 Context Bar：不占平静态页面空间。
+            vif({ page.skyContextSymbol.isNotEmpty() }) {
+                vbind({ page.skyContextSymbol }) { page.renderSkyContextBar(this) }
             }
 
             // 引路星解读抽屉（点击光环升起：3 行规则事实 + 追问出口）。
@@ -729,7 +743,10 @@ internal class RiskMapPage : BasePager() {
                 attr { marginTop(8f) }
                 event {
                     click {
-                        page.openChatWithQuestion("我的自选里「${chain.topName}」的这几只为什么经常一起涨跌？")
+                        page.openChatWithQuestion(
+                            "我的自选里「${chain.topName}」的这几只为什么经常一起涨跌？",
+                            "来自风险地图：星团「${chain.topName}」",
+                        )
                     }
                 }
                 Text {
@@ -1597,11 +1614,12 @@ internal class RiskMapPage : BasePager() {
         SkyLayer.HEAT -> "热度：环纹一圈 = 一个连板 · 其余星退暗（只看风头上的）"
     }
 
-    // ── 星图手势处理（点按语义；拖星牵引/长按 Context Bar 为 P1 扩展）──
+    // ── 星图手势处理：点按、LINK 层拖星牵引、长按 Context Bar ──
 
     private fun onSkyStarTap(symbol: String) {
         skyBeaconDrawer = false
         skySelectedCluster = ""
+        skyContextSymbol = ""
         skySelectedSymbol = if (skySelectedSymbol == symbol) "" else symbol
     }
 
@@ -1621,6 +1639,91 @@ internal class RiskMapPage : BasePager() {
         skySelectedSymbol = ""
         skySelectedCluster = ""
         skyBeaconDrawer = false
+        skyContextSymbol = ""
+    }
+
+    /** LINK 层牵引：直连星按相关系数比例跟随，负相关反向；全部收口在画布内。 */
+    private fun onSkyStarDrag(symbol: String, dx: Float, dy: Float) {
+        if (skyLayer != SkyLayer.LINK) return
+        skyDragReturnGeneration++
+        val g = skyGeometry()
+        val width = skyContainerWidth()
+        fun clamped(star: com.kuikly.stockchat.page.risk.SkyStar, ox: Float, oy: Float): Pair<Float, Float> {
+            // 星名画在星上方 -21f、涨跌幅 +26f，边距再放一档防文字被裁。
+            val marginX = StarLayout.STAR_RADIUS + 8f
+            val marginY = StarLayout.STAR_RADIUS + 26f
+            val nx = (star.x + ox).coerceIn(marginX, (width - marginX).coerceAtLeast(marginX)) - star.x
+            val ny = (star.y + oy).coerceIn(marginY, (g.requiredHeight - marginY).coerceAtLeast(marginY)) - star.y
+            return nx to ny
+        }
+        val next = HashMap<String, Pair<Float, Float>>()
+        g.stars.firstOrNull { it.symbol == symbol }?.let { next[symbol] = clamped(it, dx, dy) }
+            ?: return
+        rows.filter { it.symbol != symbol }.forEach { other ->
+            val r = StarLayout.lookupCorrelation(correlations, symbol, other.symbol) ?: return@forEach
+            if (abs(r) < StarLayout.LINK_MIN_R) return@forEach
+            val pulled = g.stars.firstOrNull { it.symbol == other.symbol } ?: return@forEach
+            next[other.symbol] = clamped(pulled, dx * r.toFloat() * 0.58f, dy * r.toFloat() * 0.58f)
+        }
+        skyDragOffsets = next
+    }
+
+    /** 松手后在约 0.4 秒内指数回弹；减少动态效果时立即归零。 */
+    private fun onSkyStarDragEnd() {
+        val version = ++skyDragReturnGeneration
+        if (reduceMotion) {
+            skyDragOffsets = emptyMap()
+            return
+        }
+        fun rebound(step: Int) {
+            if (version != skyDragReturnGeneration) return
+            val next = skyDragOffsets.mapValues { (_, value) -> value.first * 0.72f to value.second * 0.72f }
+                .filterValues { abs(it.first) > 0.3f || abs(it.second) > 0.3f }
+            skyDragOffsets = next
+            if (step < 10 && next.isNotEmpty()) setTimeout(40) { rebound(step + 1) }
+        }
+        rebound(0)
+    }
+
+    private fun onSkyStarLongPress(symbol: String) {
+        skySelectedCluster = ""
+        skyBeaconDrawer = false
+        skySelectedSymbol = symbol
+        skyContextSymbol = symbol
+    }
+
+    /** 当前图层下的长按提问条；问句自然，焦点由 route context 传递。 */
+    private fun renderSkyContextBar(container: ViewContainer<*, *>) {
+        val page = this
+        val symbol = page.skyContextSymbol
+        val row = page.rows.firstOrNull { it.symbol == symbol } ?: return
+        val layerName = page.skyLayer.label
+        val questions = listOf(
+            "${row.name}今天为什么这样动？",
+            "${row.name}和谁牵连最明显？",
+            "${row.name}在${layerName}这层说明什么？",
+        )
+        container.View {
+            attr { marginTop(10f); padding(10f); borderRadius(12f); backgroundColor(page.theme.brandSoft) }
+            Text { attr { text("按住「${row.name}」· 想问哪一句？"); fontSize(10.5f); color(page.theme.brand) } }
+            View {
+                attr { marginTop(7f); flexDirectionRow(); flexWrapWrap() }
+                questions.forEach { question ->
+                    View {
+                        attr {
+                            marginRight(6f); marginBottom(5f); paddingLeft(8f); paddingRight(8f); height(25f)
+                            allCenter(); borderRadius(8f); backgroundColor(page.theme.surface)
+                        }
+                        event {
+                            click {
+                                page.openChatWithQuestion(question, "来自风险地图：星「${row.name}」（${layerName}层）")
+                            }
+                        }
+                        Text { attr { text(question); fontSize(10f); color(page.theme.textSecondary) } }
+                    }
+                }
+            }
+        }
     }
 
     /** 焦点注释（Spotlight）：全端侧模板，数字来自 Provider，零 LLM。 */

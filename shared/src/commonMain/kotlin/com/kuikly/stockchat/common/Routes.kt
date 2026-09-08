@@ -39,11 +39,18 @@ fun PagerScope.openStockDetail(
     )
 }
 
-fun PagerScope.openChatWithQuestion(question: String) {
+/**
+ * Opens the single chat surface with an optional, user-visible fact note.
+ * The note is deliberately separate from the natural-language question: it is
+ * preserved in SendPayload context instead of teaching every caller to prefix
+ * its question with implementation details.
+ */
+fun PagerScope.openChatWithQuestion(question: String, focusNote: String = "") {
     getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
         Routes.CHAT,
         JSONObject().apply {
             put("question", question)
+            if (focusNote.isNotBlank()) put("focusNote", focusNote)
         },
     )
 }

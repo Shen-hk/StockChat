@@ -418,6 +418,7 @@ internal class ChatPage : BasePager() {
     private var welcomeEntranceSafetyTimer: Timer? = null
     private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
     private var pendingRouteQuestion: String = ""
+    private var pendingRouteFocusNote: String = ""
     // 输入框渐变描边流动相位（0..2π）：composerRimFlowTimer 以 20fps 推进，
     // renderComposerGradientRim 的 Canvas draw 闭包内读取本值驱动重绘
     // （VoiceBar 同款 ReactiveObserver 范式）。页面不可见即停，省电。
@@ -456,6 +457,7 @@ internal class ChatPage : BasePager() {
         super.created()
         glassMode = hostGlassRenderer.mode
         pendingRouteQuestion = pagerData.params.optString("question")
+        pendingRouteFocusNote = pagerData.params.optString("focusNote")
         StockCardRenderers.ensureRegistered()
     }
 
@@ -4732,9 +4734,18 @@ internal class ChatPage : BasePager() {
         val question = pendingRouteQuestion.trim()
         if (question.isEmpty()) return
         pendingRouteQuestion = ""
+        val focusNote = pendingRouteFocusNote.trim()
+        pendingRouteFocusNote = ""
         setTimeout(0) {
+            if (focusNote.isNotEmpty()) attachContextNote(focusNote)
             injectQuestion(question)
         }
+    }
+
+    /** Route-provided context must not toggle the deep-water visual mode. */
+    private fun attachContextNote(note: String) {
+        if (note !in deepContextNotes) deepContextNotes.add(note)
+        deepContextVersion++
     }
 
     private fun clearCompare() {

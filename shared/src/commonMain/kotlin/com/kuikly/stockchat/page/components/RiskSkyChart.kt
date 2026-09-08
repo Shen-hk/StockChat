@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.data.provider.MarketCalendarEvent
 import com.kuikly.stockchat.page.risk.SkyGeometry
@@ -33,7 +34,14 @@ import kotlin.math.sqrt
  * ContextApi 无 globalAlpha：淡出统一用 Color.opacity 乘算（DetailTimelineChart 同口径）。
  *
  * 命中顺序（doc 32 §6.1）：星体 20dp → 引路星光环 → 团域 → 空白。
- * pan 仅用于轻点判定（拖星牵引 P1 再扩展），纵向滚动仍归 Scroller。
+ * LINK 层还支持拖星牵引：移动超过 12dp 才起拖（8–12dp 死区抬起不算点按也不算拖）；
+ * 长按 500ms（移动超过 8dp 取消）通过页侧 Context Bar 发问。
+ *
+ * 手势必须用 touch 而非 pan：Android 渲染层只要 view 挂 pan 事件，DOWN 时就会
+ * requestDisallowInterceptTouchEvent，整段手势内外层纵向 Scroller 都无法接管——
+ * 数百 dp 高的星图会成为「滚动死区」。touch 不 disallow：纵向拖动被 Scroller
+ * 拦截后以 touchCancel/touchUp(action=cancel) 收尾，拖拽星弹回，页面照常滚动
+ * （ChatPage 语音「按住说话」同款已验证范式）。横向拖星不受拦截，牵引可玩。
  */
 internal fun ViewContainer<*, *>.RiskSkyChart(
     theme: StockChatTheme,
@@ -48,75 +56,124 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
     changePercentOf: (String) -> Double?,
     eventsOf: (String) -> List<MarketCalendarEvent>,
     calendarDayLabel: () -> String,
+    dragOffsets: () -> Map<String, Pair<Float, Float>>,
     canvasHeight: () -> Float,
     reduceMotion: Boolean,
     onTapStar: (String) -> Unit,
     onTapBeacon: () -> Unit,
     onTapCluster: (String) -> Unit,
     onTapBlank: () -> Unit,
+    onDragStar: (symbol: String, dx: Float, dy: Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onLongPressStar: (String) -> Unit,
 ) {
     // 轻点瞬态（事件闭包内读写，非响应式）
     var downX = 0f
     var downY = 0f
     var movedDist = 0f
+    var armedSymbol = ""
+    var dragging = false
+    var longPressShown = false
+    var gestureGeneration = 0
+
+    // 手势收尾（touchUp / touchCancel 共用，幂等——两路都可能触发，只生效一次）。
+    // 取消（被外层 Scroller 拦截等）：拖拽中则弹回，不派发点按；
+    // 正常抬起：拖拽中弹回；否则 ≤8dp 且未长按 → 按命中顺序派发点按。
+    fun handleGestureEnd(cancelled: Boolean) {
+        val wasDragging = dragging
+        dragging = false
+        armedSymbol = ""
+        gestureGeneration++
+        if (wasDragging) {
+            onDragEnd()
+            return
+        }
+        if (cancelled || longPressShown || movedDist > 64f) return
+        val g = geometry()
+        if (g.stars.isEmpty()) return
+        val x = downX
+        val y = downY
+        // ① 星体 20dp
+        val star = g.stars.firstOrNull { s ->
+            val dx = x - s.x
+            val dy = y - s.y
+            dx * dx + dy * dy <= StarLayout.STAR_HIT_DP * StarLayout.STAR_HIT_DP
+        }
+        if (star != null) {
+            onTapStar(star.symbol)
+            return
+        }
+        // ② 引路星光环（团域外圈 4~22dp 环带）
+        val bi = beaconClusterIndex()
+        if (bi in g.clusters.indices) {
+            val c = g.clusters[bi]
+            val d = dist(x, y, c.cx, c.cy)
+            if (d >= c.radius + 4f && d <= c.radius + 22f) {
+                onTapBeacon()
+                return
+            }
+        }
+        // ③ 团域内部
+        val cluster = g.clusters.firstOrNull { dist(x, y, it.cx, it.cy) <= it.radius }
+        if (cluster != null) {
+            onTapCluster(cluster.name)
+            return
+        }
+        // ④ 空白
+        onTapBlank()
+    }
 
     View {
         attr {
             height(canvasHeight())
+            touchEnable(true)
+        }
+        // touch 事件挂在外层 View（GroupEvent 才有 touch 系列；Canvas 的 Event
+        // 基类只有 click/pan）。Canvas 与 View 同原点同尺寸，touch 的 x/y 即星图坐标。
+        event {
+            touchDown { params ->
+                val g = geometry()
+                if (g.stars.isEmpty()) return@touchDown
+                downX = params.x
+                downY = params.y
+                movedDist = 0f
+                dragging = false
+                longPressShown = false
+                armedSymbol = g.stars.firstOrNull { s ->
+                    val dx = params.x - s.x
+                    val dy = params.y - s.y
+                    dx * dx + dy * dy <= StarLayout.STAR_HIT_DP * StarLayout.STAR_HIT_DP
+                }?.symbol.orEmpty()
+                val generation = ++gestureGeneration
+                if (armedSymbol.isNotEmpty()) {
+                    setTimeout(500) {
+                        if (generation == gestureGeneration && !dragging && armedSymbol.isNotEmpty()) {
+                            onLongPressStar(armedSymbol)
+                            armedSymbol = ""
+                            longPressShown = true
+                        }
+                    }
+                }
+            }
+            touchMove { params ->
+                if (armedSymbol.isEmpty()) return@touchMove
+                val dx = params.x - downX
+                val dy = params.y - downY
+                val d2 = dx * dx + dy * dy
+                if (d2 > movedDist) movedDist = d2
+                if (movedDist > 64f) gestureGeneration++ // 8dp：取消长按
+                if (layer() == SkyLayer.LINK && movedDist > 144f) {
+                    dragging = true
+                    onDragStar(armedSymbol, dx, dy)
+                }
+            }
+            touchUp { params -> handleGestureEnd(params.action == "cancel") }
+            touchCancel { _ -> handleGestureEnd(cancelled = true) }
         }
         Canvas({
             attr {
                 absolutePositionAllZero()
-                touchEnable(true)
-            }
-            event {
-                pan { params ->
-                    val g = geometry()
-                    if (g.stars.isEmpty()) return@pan
-                    if (params.state == "start") {
-                        downX = params.x
-                        downY = params.y
-                        movedDist = 0f
-                    }
-                    if (params.state == "move") {
-                        val dx = params.x - downX
-                        val dy = params.y - downY
-                        val d2 = dx * dx + dy * dy
-                        if (d2 > movedDist) movedDist = d2
-                    }
-                    if (params.isEnd && movedDist <= 64f) {
-                        val x = downX
-                        val y = downY
-                        // ① 星体 20dp
-                        val star = g.stars.firstOrNull { s ->
-                            val dx = x - s.x
-                            val dy = y - s.y
-                            dx * dx + dy * dy <= StarLayout.STAR_HIT_DP * StarLayout.STAR_HIT_DP
-                        }
-                        if (star != null) {
-                            onTapStar(star.symbol)
-                            return@pan
-                        }
-                        // ② 引路星光环（团域外圈 4~22dp 环带）
-                        val bi = beaconClusterIndex()
-                        if (bi in g.clusters.indices) {
-                            val c = g.clusters[bi]
-                            val d = dist(x, y, c.cx, c.cy)
-                            if (d >= c.radius + 4f && d <= c.radius + 22f) {
-                                onTapBeacon()
-                                return@pan
-                            }
-                        }
-                        // ③ 团域内部
-                        val cluster = g.clusters.firstOrNull { dist(x, y, it.cx, it.cy) <= it.radius }
-                        if (cluster != null) {
-                            onTapCluster(cluster.name)
-                            return@pan
-                        }
-                        // ④ 空白
-                        onTapBlank()
-                    }
-                }
+                height(canvasHeight())
             }
         }) { canvas, _, _ ->
             val g = geometry()
@@ -127,6 +184,9 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
             val phase = if (reduceMotion) 0f else beaconPhase()
             val dayLabel = calendarDayLabel()
             val cors = correlations()
+            val offsets = dragOffsets()
+            fun x(s: com.kuikly.stockchat.page.risk.SkyStar): Float = s.x + (offsets[s.symbol]?.first ?: 0f)
+            fun y(s: com.kuikly.stockchat.page.risk.SkyStar): Float = s.y + (offsets[s.symbol]?.second ?: 0f)
 
             // LINK 层孤立星（无任何 |r|≥0.5 连线）退暗
             val linkedSymbols = if (ly == SkyLayer.LINK) {
@@ -183,8 +243,8 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                         val width = StarLayout.linkWidthDp(r)
                         if (width <= 0f) continue
                         canvas.beginPath()
-                        canvas.moveTo(a.x, a.y)
-                        canvas.lineTo(b.x, b.y)
+                        canvas.moveTo(x(a), y(a))
+                        canvas.lineTo(x(b), y(b))
                         canvas.lineWidth(width)
                         canvas.lineCapRound()
                         canvas.strokeStyle(theme.brand.opacity(0.22f + (abs(r).toFloat() - 0.5f) * 0.5f))
@@ -193,7 +253,7 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                         canvas.textAlign(TextAlign.CENTER)
                         canvas.fillStyle(theme.textTertiary)
                         val label = (if (r < 0) "-" else "") + Format.decimal(abs(r), 2)
-                        canvas.fillText(label, (a.x + b.x) / 2f, (a.y + b.y) / 2f - 5f)
+                        canvas.fillText(label, (x(a) + x(b)) / 2f, (y(a) + y(b)) / 2f - 5f)
                         canvas.textAlign(TextAlign.LEFT)
                     }
                 }
@@ -213,7 +273,7 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                         1f
                     }
                     canvas.beginPath()
-                    canvas.arc(s.x, s.y, halo * breathe, 0f, (2 * PI).toFloat(), false)
+                    canvas.arc(x(s), y(s), halo * breathe, 0f, (2 * PI).toFloat(), false)
                     canvas.fillStyle(theme.flat.opacity(0.10f * a))
                     canvas.fill()
                     if (ly == SkyLayer.VOLATILITY) {
@@ -222,7 +282,7 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                             canvas.font(8f)
                             canvas.textAlign(TextAlign.CENTER)
                             canvas.fillStyle(theme.textTertiary.opacity(0.9f * a))
-                            canvas.fillText("${Format.decimal(vr, 1)}×大盘", s.x, s.y + 37f)
+                            canvas.fillText("${Format.decimal(vr, 1)}×大盘", x(s), y(s) + 37f)
                             canvas.textAlign(TextAlign.LEFT)
                         }
                     }
@@ -234,7 +294,7 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                     val ringAlpha = if (ly == SkyLayer.HEAT) 1f else 0.5f
                     for (i in 1..boards.coerceAtMost(4)) {
                         canvas.beginPath()
-                        canvas.arc(s.x, s.y, 16f + i * 5f, 0f, (2 * PI).toFloat(), false)
+                        canvas.arc(x(s), y(s), 16f + i * 5f, 0f, (2 * PI).toFloat(), false)
                         canvas.lineWidth(1.4f)
                         if (i < boards) canvas.setLineDash(listOf(40f, 10f))
                         canvas.strokeStyle(theme.flat.opacity(0.45f * a * ringAlpha))
@@ -252,8 +312,8 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                         ly == SkyLayer.SCHEDULE -> 0.85f
                         else -> 0.6f
                     }
-                    val bx = s.x + 9f
-                    val by = s.y - 30f
+                    val bx = x(s) + 9f
+                    val by = y(s) - 30f
                     canvas.beginPath()
                     canvas.moveTo(bx, by)
                     canvas.lineTo(bx + 36f, by)
@@ -272,7 +332,7 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                 // 日程命中圈（brand）
                 if (starLit(s.symbol)) {
                     canvas.beginPath()
-                    canvas.arc(s.x, s.y, 17f, 0f, (2 * PI).toFloat(), false)
+                    canvas.arc(x(s), y(s), 17f, 0f, (2 * PI).toFloat(), false)
                     canvas.lineWidth(1.6f)
                     canvas.strokeStyle(theme.brand.opacity(a))
                     canvas.stroke()
@@ -280,7 +340,7 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
 
                 // 星体
                 canvas.beginPath()
-                canvas.arc(s.x, s.y, StarLayout.STAR_RADIUS, 0f, (2 * PI).toFloat(), false)
+                canvas.arc(x(s), y(s), StarLayout.STAR_RADIUS, 0f, (2 * PI).toFloat(), false)
                 canvas.fillStyle(theme.surface)
                 canvas.fill()
                 canvas.lineWidth(1f)
@@ -290,17 +350,17 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                 canvas.font(8.5f)
                 canvas.textAlign(TextAlign.CENTER)
                 canvas.fillStyle(theme.textSecondary.opacity(a))
-                canvas.fillText(s.name.take(2), s.x, s.y + 3.5f)
+                canvas.fillText(s.name.take(2), x(s), y(s) + 3.5f)
                 // 星名（上方）
                 canvas.font(9.5f)
                 canvas.fillStyle(theme.textSecondary.opacity(0.95f * a))
-                canvas.fillText(s.name, s.x, s.y - 21f)
+                canvas.fillText(s.name, x(s), y(s) - 21f)
                 // 今日涨跌幅（红涨绿跌沿用既有 token，星图本体不用涨跌色、仅此处文字）
                 val pct = changePercentOf(s.symbol)
                 if (pct != null) {
                     canvas.font(8.5f)
                     canvas.fillStyle(if (pct >= 0) theme.rise.opacity(a) else theme.fall.opacity(a))
-                    canvas.fillText(Format.percent(pct), s.x, s.y + 26f)
+                    canvas.fillText(Format.percent(pct), x(s), y(s) + 26f)
                 }
                 canvas.textAlign(TextAlign.LEFT)
             }
@@ -335,7 +395,7 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
             val sel = g.stars.firstOrNull { it.symbol == selected }
             if (sel != null) {
                 canvas.beginPath()
-                canvas.arc(sel.x, sel.y, 19f, 0f, (2 * PI).toFloat(), false)
+                canvas.arc(x(sel), y(sel), 19f, 0f, (2 * PI).toFloat(), false)
                 canvas.lineWidth(1.8f)
                 canvas.strokeStyle(theme.brand)
                 canvas.stroke()
@@ -350,6 +410,9 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
  * - 按下/拖动：knob 跟手，实时回调 fraction（页侧换算最近事件日点亮星图）；
  * - 松手：onRelease(dragged=true, index) 吸附最近事件日；
  * - 轻点：onRelease(dragged=false, index)，页侧「已选日再点 = 取消命中」。
+ *
+ * 手势同 [RiskSkyChart] 用 touch 而非 pan（Android 上 pan 会锁死外层纵向
+ * Scroller）；纵向拖动被拦截时按取消收尾——视为松手吸附，状态不悬挂。
  */
 internal fun ViewContainer<*, *>.RiskSkyTimeBrush(
     theme: StockChatTheme,
@@ -362,43 +425,56 @@ internal fun ViewContainer<*, *>.RiskSkyTimeBrush(
 ) {
     var downX = 0f
     var moved = false
+    var brushActive = false
+
+    fun applyX(x: Float) {
+        val frac = clampF(
+            (x - TimeBrushLayout.PAD) /
+                (containerWidth - TimeBrushLayout.PAD * 2).coerceAtLeast(1f),
+            0f,
+            1f,
+        )
+        onScrubFraction(frac)
+    }
+
+    // touchUp / touchCancel 共用（幂等）；取消也按松手吸附收尾，knob 不悬挂半路。
+    fun releaseBrush() {
+        if (!brushActive) return
+        brushActive = false
+        val n = dayLabels().size
+        if (n <= 0) return
+        val idx = TimeBrushLayout.nearestIndexForFraction(knobFraction(), n)
+        onRelease(moved, idx)
+    }
 
     View {
         attr {
             height(64f)
+            touchEnable(true)
+        }
+        // 同星图主画布：touch 挂外层 View（Canvas 的 Event 基类无 touch 系列），
+        // Canvas 与 View 同原点，touch x/y 即轨道坐标。
+        event {
+            touchDown { params ->
+                val n = dayLabels().size
+                if (n <= 0) return@touchDown
+                downX = params.x
+                moved = false
+                brushActive = true
+                applyX(params.x)
+            }
+            touchMove { params ->
+                if (!brushActive) return@touchMove
+                if (abs(params.x - downX) > 8f) moved = true
+                applyX(params.x)
+            }
+            touchUp { _ -> releaseBrush() }
+            touchCancel { _ -> releaseBrush() }
         }
         Canvas({
             attr {
                 absolutePositionAllZero()
-                touchEnable(true)
-            }
-            event {
-                pan { params ->
-                    val n = dayLabels().size
-                    if (n <= 0) return@pan
-                    fun applyX(x: Float) {
-                        val frac = clampF(
-                            (x - TimeBrushLayout.PAD) /
-                                (containerWidth - TimeBrushLayout.PAD * 2).coerceAtLeast(1f),
-                            0f,
-                            1f,
-                        )
-                        onScrubFraction(frac)
-                    }
-                    if (params.state == "start") {
-                        downX = params.x
-                        moved = false
-                        applyX(params.x)
-                    }
-                    if (params.state == "move") {
-                        if (abs(params.x - downX) > 8f) moved = true
-                        applyX(params.x)
-                    }
-                    if (params.isEnd) {
-                        val idx = TimeBrushLayout.nearestIndexForFraction(knobFraction(), n)
-                        onRelease(moved, idx)
-                    }
-                }
+                height(64f)
             }
         }) { canvas, width, _ ->
             val labels = dayLabels()
