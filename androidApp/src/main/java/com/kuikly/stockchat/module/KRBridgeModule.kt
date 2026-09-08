@@ -101,6 +101,12 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "getGlassMode" -> (activity as? KuiklyRenderActivity)?.currentGlassMode() ?: "simplified"
 
+            // 页面注册「大且快右向横滑 → 抽屉展开」回调；host 挂在 Activity 上，
+            // Activity 销毁时清空。keepCallback 由 Kuikly 侧 toNative(true,...) 控制。
+            "registerDrawerFlingHost" -> {
+                (activity as? KuiklyRenderActivity)?.drawerFlingHost = callback
+            }
+
             "log" -> {
                 log(params)
             }

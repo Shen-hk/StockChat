@@ -106,6 +106,21 @@ internal class BridgeModule : Module() {
         )
     }
 
+    /**
+     * 注册原生侧「大且快右向横滑 → 抽屉展开」手势回调（keepCallback，多次触发）。
+     * 仅 Android 宿主实现了侦察器；其他宿主走 call 的 else 分支回错误码，
+     * 页面侧对回调参数不敏感、静默忽略即可。
+     */
+    fun registerDrawerFlingHost(callbackFn: CallbackFn) {
+        toNative(
+            true,
+            "registerDrawerFlingHost",
+            JSONObject().toString(),
+            callbackFn,
+            false,
+        )
+    }
+
     fun stopVoiceRecording(): JSONObject {
         val raw = syncCallNativeMethod(STOP_VOICE_RECORDING, JSONObject(), null)
         return runCatching { JSONObject(raw) }.getOrNull() ?: JSONObject()

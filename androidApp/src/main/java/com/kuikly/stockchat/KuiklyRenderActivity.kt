@@ -6,6 +6,7 @@ import android.animation.ValueAnimator
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -13,6 +14,7 @@ import androidx.appcompat.app.AppCompatActivity
 import com.tencent.kuikly.core.render.android.IKuiklyRenderExport
 import com.tencent.kuikly.core.render.android.adapter.KuiklyRenderAdapterManager
 import com.tencent.kuikly.core.render.android.css.ktx.toMap
+import com.tencent.kuikly.core.render.android.export.KuiklyRenderCallback
 import com.tencent.kuikly.core.render.android.expand.KuiklyRenderViewBaseDelegatorDelegate
 import com.tencent.kuikly.core.render.android.expand.KuiklyRenderViewBaseDelegator
 import com.kuikly.stockchat.adapter.KRColorParserAdapter
@@ -35,6 +37,26 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
     private var glassMode = "simplified"
 
     private val kuiklyRenderViewDelegator = KuiklyRenderViewBaseDelegator(this)
+
+    /**
+     * 「大且快右向横滑 → 抽屉展开」的页面回调（KRBridgeModule
+     * registerDrawerFlingHost 注册）。纯观测的 dispatchTouchEvent 侦察命中后
+     * 在此通知 Kuikly 页面，是否真开抽屉由页面守卫。onDestroy 清空防泄漏。
+     */
+    internal var drawerFlingHost: KuiklyRenderCallback? = null
+    private val drawerFlingDetector = DrawerFlingDetector {
+        drawerFlingHost?.invoke(emptyMap<String, Any>())
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        // 只读不消费：侦察器永不返回 true/拦截，Kuikly 视图层触摸流不受影响。
+        drawerFlingDetector.onTouchEvent(
+            ev,
+            hrContainerView.takeIf { ::hrContainerView.isInitialized }?.width ?: 0,
+            resources.displayMetrics.density,
+        )
+        return super.dispatchTouchEvent(ev)
+    }
 
     private val pageName: String
         get() {
@@ -60,6 +82,7 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
 
     override fun onDestroy() {
         super.onDestroy()
+        drawerFlingHost = null
         kuiklyRenderViewDelegator.onDetach()
     }
 
