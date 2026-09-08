@@ -69,7 +69,6 @@ import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.kuikly.stockchat.page.components.AtmosphereBackdrop
 import com.kuikly.stockchat.page.components.DetailTimelineChart
 import com.kuikly.stockchat.page.components.NewsTape
-import com.kuikly.stockchat.page.components.estimateTapeWidth
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.DataModeBadge
 import com.tencent.kuikly.core.annotations.Page
@@ -131,10 +130,6 @@ internal class StockDetailPage : BasePager() {
     private var drawProgress: Float by observable(0f)
     private var drawVersion = 0
     private var newsList: List<NewsItem> by observable(emptyList())
-    private var tapeIndex: Int by observable(0)
-    private var tapeOffset: Float by observable(0f)
-    private var tapePaused: Boolean by observable(false)
-    private var tapeVersion = 0
     private var newsSummary: NewsItem? by observable(null)
     private var insight: StockInsightBundle by observable(OfflineMarketInsightProvider().stock("600519.SH"))
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
@@ -191,7 +186,6 @@ internal class StockDetailPage : BasePager() {
         dependencies.stockNewsProvider.stockNews(symbol) { items ->
             if (items.isNotEmpty() && newsList.isEmpty()) {
                 newsList = items.take(12)
-                startNewsTape()
             }
         }
     }
@@ -219,7 +213,6 @@ internal class StockDetailPage : BasePager() {
         livePulseVersion++
         aiRevealVersion++
         drawVersion++
-        tapeVersion++
     }
 
     override fun body(): ViewBuilder {
@@ -415,30 +408,23 @@ internal class StockDetailPage : BasePager() {
                         }
                     }
 
-                    // ---- 新闻弹幕带（doc 26 §5.5）：Hero 与走势主卡之间，单条队列 ----
+                    // ---- 新闻弹幕带（原型 .tape 对齐）：卡容器 + 横滚胶囊流 + 卡内摘要条 ----
                     NewsTape(
                         theme = page.theme,
-                        renderer = page.hostGlassRenderer,
                         items = { page.newsList },
-                        index = { page.tapeIndex },
-                        offset = { page.tapeOffset },
-                        paused = { page.tapePaused },
-                        reduceMotion = page.reduceMotion,
-                        containerWidth = page.pagerData.pageViewWidth - 28f,
-                        softColor = { page.toneSoftColor() },
-                        // B1 情绪点：端侧词典打分，利好红/利空绿/中性不画（U2 涨红跌绿）
-                        itemDotColor = { item ->
-                            when (scoreNewsSentiment(item.title).isPositive) {
-                                true -> page.theme.rise
-                                false -> page.theme.fall
-                                null -> null
-                            }
-                        },
+                        selected = { page.newsSummary },
+                        // B1 情绪点 + 摘要头「利好/利空」：端侧词典打分，涨红跌绿（U2）
+                        sentimentOf = { item -> scoreNewsSentiment(item.title).isPositive },
                         onTapItem = { page.onNewsTapped(it) },
                         // B1 长按先览（U5 400ms）：TAPE_PREVIEW 层，松手 700ms 后消失（5s 兜底）
                         onLongPressItem = { page.showTapePreview(it) },
                         onLongPressRelease = { page.scheduleTapePreviewDismiss() },
-                        onPauseChange = { page.tapePaused = it },
+                        onAskAi = { page.askAboutNews(it) },
+                        onOpenUrl = { news ->
+                            page.newsSummary = null
+                            page.overlayArbiter.close()
+                            page.openUrl(news.url)
+                        },
                     )
 
                     // ---- B1 先览小卡（弹幕带下方，U1 仲裁 + 2s 自动消失） ----
@@ -482,110 +468,6 @@ internal class StockDetailPage : BasePager() {
                                         }
                                     }
                                     event { click { page.onNewsTapped(preview) } }
-                                }
-                            }
-                        }
-                    }
-
-                    // ---- B2 新闻摘要条（弹幕带下方，doc §4.3「非全屏 Sheet」）----
-                    // 点按条目落旗并展开本条；重复点按同一条目收旗收条（U1：NEWS_SUMMARY 层）。
-                    // vbind 键为条目 id：切换条目时整条重建。
-                    vif({ page.overlayArbiter.active == DetailOverlay.NEWS_SUMMARY && page.newsSummary != null }) {
-                        vbind({ page.newsSummary?.id ?: "" }) {
-                            val news = page.newsSummary
-                            if (news != null) {
-                                View {
-                                    attr {
-                                        marginTop(8f)
-                                        padding(12f)
-                                        borderRadius(14f)
-                                        backgroundColor(page.theme.surface)
-                                        border(Border(0.5f, BorderStyle.SOLID, page.theme.divider))
-                                        boxShadow(BoxShadow(0f, 4f, 14f, page.theme.textPrimary.opacity(0.08f)))
-                                    }
-                                    Text {
-                                        attr {
-                                            text(news.title)
-                                            fontSize(page.theme.type.label)
-                                            fontWeightSemiBold()
-                                            color(page.theme.textPrimary)
-                                            lineHeight(17f)
-                                        }
-                                    }
-                                    Text {
-                                        attr {
-                                            text("${news.source} · ${news.time}")
-                                            marginTop(4f)
-                                            fontSize(page.theme.type.meta)
-                                            color(page.theme.textTertiary)
-                                        }
-                                    }
-                                    vif({ news.summary.isNotEmpty() }) {
-                                        Text {
-                                            attr {
-                                                text(news.summary)
-                                                marginTop(6f)
-                                                fontSize(page.theme.type.meta)
-                                                lineHeight(16f)
-                                                color(page.theme.textSecondary)
-                                            }
-                                        }
-                                    }
-                                    // 事实行 + 收起（摘要条非 AI 元素，用中性色，不占 brand 预算）
-                                    View {
-                                        attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
-                                        Text {
-                                            attr {
-                                                text("旗标已落在走势图对应位置 · 端侧规则")
-                                                fontSize(page.theme.type.meta)
-                                                color(page.theme.textTertiary)
-                                                flex(1f)
-                                            }
-                                        }
-                                        Text {
-                                            attr {
-                                                text("收起 ×")
-                                                fontSize(page.theme.type.meta)
-                                                fontWeightMedium()
-                                                color(page.theme.textSecondary)
-                                            }
-                                        }
-                                        event {
-                                            click {
-                                                page.newsSummary = null
-                                                page.overlayArbiter.close()
-                                            }
-                                        }
-                                    }
-                                    vif({ news.url.isNotEmpty() }) {
-                                        View {
-                                            attr {
-                                                marginTop(8f)
-                                                alignSelfFlexStart()
-                                                height(28f)
-                                                paddingLeft(12f)
-                                                paddingRight(12f)
-                                                allCenter()
-                                                borderRadius(14f)
-                                                backgroundColor(page.theme.surfaceMuted)
-                                            }
-                                            Text {
-                                                attr {
-                                                    text("阅读原文")
-                                                    fontSize(page.theme.type.meta)
-                                                    fontWeightMedium()
-                                                    color(page.theme.textSecondary)
-                                                }
-                                            }
-                                            event {
-                                                click {
-                                                    page.newsSummary = null
-                                                    page.overlayArbiter.close()
-                                                    page.openUrl(news.url)
-                                                }
-                                            }
-                                        }
-                                    }
                                 }
                             }
                         }
@@ -1334,6 +1216,13 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
+    /** B2 摘要条「问问 AI」：新闻标题作上下文带入对话（问法为事实型：是什么意思）。 */
+    private fun askAboutNews(news: NewsItem) {
+        overlayArbiter.close()
+        newsSummary = null
+        openChatWithQuestion(chipStore.promptFragment() + "「${news.title}」这条新闻是什么意思？")
+    }
+
     /** H1 快捷理由：写入自选 + 理由 + 当时价，展开 A1 回访卡（doc §4.13 验收链路）。 */
     private fun pickQuickReason(reason: String) {
         overlayArbiter.close()
@@ -1470,35 +1359,6 @@ internal class StockDetailPage : BasePager() {
         setTimeout(1200) { if (version == drawVersion) drawProgress = 1f }
     }
 
-    /**
-     * 新闻弹幕队列节拍（doc 26 §5.5.3）：步进驱动（32ms ≈ 1.8f/步 ≈ 55dp/s），
-     * 一条飘出左缘 → 停 1.5s → 下一条；按住暂停时原地等待、松开续播不丢进度。
-     */
-    private fun startNewsTape() {
-        if (reduceMotion || newsList.isEmpty()) return
-        val version = ++tapeVersion
-        fun tick() {
-            if (version != tapeVersion || newsList.isEmpty()) return
-            if (tapePaused) {
-                setTimeout(120) { tick() }
-                return
-            }
-            val item = newsList[tapeIndex.mod(newsList.size)]
-            val width = estimateTapeWidth(item)
-            tapeOffset -= 1.8f
-            if (tapeOffset <= -width) {
-                tapeIndex = tapeIndex + 1
-                tapeOffset = tapeTravelStart()
-                setTimeout(1500) { tick() }
-            } else {
-                setTimeout(32) { tick() }
-            }
-        }
-        tapeOffset = tapeTravelStart()
-        setTimeout(600) { tick() }
-    }
-
-    private fun tapeTravelStart(): Float = (pagerData.pageViewWidth - 28f).coerceAtLeast(200f)
 
     /** 振幅（(高-低)/昨收），昨收缺失时 0。 */
     private fun amplitudePercent(): Double =

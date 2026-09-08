@@ -2,8 +2,6 @@ package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.provider.NewsItem
-import com.kuikly.stockchat.glass.GlassBackdrop
-import com.kuikly.stockchat.glass.GlassRenderer
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.BoxShadow
@@ -11,314 +9,265 @@ import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
-import com.tencent.kuikly.core.views.Canvas
+import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
 /**
- * 新闻弹幕带（doc 26 §5.5，形态：单条队列）：34f 玻璃细条，一条从右缘匀速飘出
- * （≈55dp/s，时长随标题长度自适应）→ 停 1.5s → 下一条，同屏最多 1 条。
- * 按住暂停/松开续播（步进驱动，进度天然保留）；点击弹玻璃摘要卡。
- * 内容仅标题 + 来源 + 时间，不做涨跌染色；空列表整条隐藏（组件不渲染）。
+ * 新闻弹幕带（对齐 doc 29 全页原型 .tape）：卡容器 + 头部（相关资讯 / 长按先览 · 点按落旗）
+ * + 横向滚动胶囊条目流（情绪圆点 + 时间 + 标题，单行截断）+ 卡内 B2 摘要条（brandSoft）。
+ * 取代 doc 26 §5.5 的单条飞过玻璃条（评审结论：不好看，且自动播放抓不住）。
  *
- * 状态全部页侧持有（items/index/offset/paused observable + setTimeout 步进链），
- * 本组件无状态（SwipeActionRow/VoiceBar 同范式）；步进驱动而非 attr animate，
- * 规避 R5「复位动画被消费」与 commonMain 无时间源两项实测红线。
+ * 交互：点按条目 = 落旗 + 展开摘要条，重复点按同一条目收旗收条（页侧 toggle）；
+ * 长按 400ms 先览（B1，松手 700ms 后消失由页侧调度）；摘要条可「问问 AI」带入对话。
+ * 选中态在 attr 闭包内读 selected()（R1）：切换条目时全部胶囊随 attr 重绘。
  */
 internal fun ViewContainer<*, *>.NewsTape(
     theme: StockChatTheme,
-    renderer: GlassRenderer,
     items: () -> List<NewsItem>,
-    index: () -> Int,
-    offset: () -> Float,
-    paused: () -> Boolean,
-    reduceMotion: Boolean,
-    containerWidth: Float,
-    softColor: () -> Color,
+    // 当前展开摘要的条目（null = 全收起）；页侧 newsSummary 驱动
+    selected: () -> NewsItem?,
+    // 情绪判定：true=利好(rise) / false=利空(fall) / null=中性不染色；页侧 scoreNewsSentiment
+    sentimentOf: (NewsItem) -> Boolean?,
     onTapItem: (NewsItem) -> Unit,
-    onPauseChange: (Boolean) -> Unit,
-    // ↓↓↓ 以下为板块组件开发新增（doc 28 §B1 长按先览 / 情绪点；向后兼容，仅追加可选参数） ↓↓↓
-    // 长按 400ms（移动 ≤8dp，由 Kuikly 内置 longPress 手势保证）回调；已有 onTapItem 行为不变。
-    // 长按期间复用既有 pan 的暂停逻辑（longPress start 亦置 paused=true，end/cancel 复位）。
     onLongPressItem: ((NewsItem) -> Unit)? = null,
-    // 长按松手/取消回调（doc 29 §4.2：先览气泡在松手 700ms 后消失，由页侧调度）。
     onLongPressRelease: (() -> Unit)? = null,
-    // 条目前 6dp 情绪圆点颜色；返回 null 不画。颜色由页面用 DetailRules.scoreNewsSentiment 结果传入。
-    itemDotColor: ((NewsItem) -> Color?)? = null,
+    onAskAi: ((NewsItem) -> Unit)? = null,
+    onOpenUrl: ((NewsItem) -> Unit)? = null,
 ) {
     vif({ items().isNotEmpty() }) {
         View {
             attr {
-                marginTop(10f)
-                height(TAPE_HEIGHT)
-                borderRadius(11f)
+                marginTop(12f)
+                borderRadius(14f)
+                backgroundColor(theme.surface)
+                border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                boxShadow(BoxShadow(0f, 6f, 18f, theme.textPrimary.opacity(0.14f)))
                 overflow(true)
                 touchEnable(true)
             }
-            GlassBackdrop(theme.glass.peek, renderer)
-            // 左右边缘渐隐（「过境」语义）：遮罩色 = 氛围 wash 在弹幕行处的复合色，
-            // 而非 page 原色——弹幕带位于 wash 渐变（toneSoft→page）收束之前，
-            // 若遮罩画 page 原色，两端会出现与中段不一致的浅色块（高亮感）。
-            TapeEdgeFade(theme.page, softColor, alignRight = false)
-            TapeEdgeFade(theme.page, softColor, alignRight = true)
-
-            vbind({ index() to items().size }) {
-                val list = items()
-                if (list.isNotEmpty()) {
-                    val item = list[index().mod(list.size)]
-                    View {
-                        attr {
-                            absolutePosition(
-                                left = if (reduceMotion) 12f else offset(),
-                                top = 0f,
-                            )
-                            height(TAPE_HEIGHT)
-                            flexDirectionRow()
-                            alignItemsCenter()
-                            paddingLeft(10f)
-                            paddingRight(12f)
-                            touchEnable(true)
-                        }
-                        event {
-                            click { onTapItem(item) }
-                            // 长按先览（doc 28 §B1 / U5 400ms·8dp）：longPress start 即回调，
-                            // 同时暂停滚动（与 pan 暂停逻辑一致）；松手/取消复位，避免长按态下滚动卡住。
-                            longPress { params ->
-                                when (params.state) {
-                                    "start" -> {
-                                        onPauseChange(true)
-                                        onLongPressItem?.invoke(item)
-                                    }
-                                    "end", "cancel" -> {
-                                        onPauseChange(false)
-                                        onLongPressRelease?.invoke()
-                                    }
-                                }
-                            }
-                            pan { params ->
-                                when (params.state) {
-                                    "start" -> onPauseChange(true)
-                                    "end" -> onPauseChange(false)
-                                }
-                            }
-                        }
-                        // 条目前情绪圆点（doc 28 §B1）：6dp，颜色由页面经 scoreNewsSentiment 映射后传入；
-                        // 返回 null 不画。读色置于 vif 闭包内，确保情绪状态变化可驱动重绘（R1）。
-                        vif({ itemDotColor?.invoke(item) != null }) {
-                            val dot = itemDotColor!!.invoke(item)!!
-                            View {
-                                attr {
-                                    width(6f)
-                                    height(6f)
-                                    borderRadius(3f)
-                                    backgroundColor(dot)
-                                    marginRight(6f)
-                                }
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(item.title)
-                                fontSize(11f)
-                                color(theme.textPrimary)
-                            }
-                        }
-                        Text {
-                            attr {
-                                text("  ${item.source} · ${formatTapeTime(item.time)}")
-                                fontSize(9f)
-                                color(theme.textTertiary)
-                            }
-                        }
-                        vif({ paused() }) {
-                            View {
-                                attr {
-                                    marginLeft(8f)
-                                    width(26f)
-                                    height(14f)
-                                    borderRadius(7f)
-                                    backgroundColor(theme.surfaceMuted)
-                                    allCenter()
-                                }
-                                Text {
-                                    attr {
-                                        text("停")
-                                        fontSize(9f)
-                                        color(theme.textTertiary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 摘要卡：覆盖层 + 底部玻璃卡（复用 CardSheet 范式，轻量实现）。
- * doc 29 集成后详情页已改用弹幕带下方摘要条（StockDetailPage 内联 B2 strip，
- * §4.3 要求「非全屏 Sheet」）；本组件保留作为 doc 26 形态回退，当前无调用方。
- */
-internal fun ViewContainer<*, *>.NewsSummarySheet(
-    item: () -> NewsItem?,
-    theme: StockChatTheme,
-    onDismiss: () -> Unit,
-    onOpenUrl: (String) -> Unit,
-) {
-    vif({ item() != null }) {
-        val current = item()
-        View {
-            attr {
-                absolutePositionAllZero()
-                backgroundColor(Color(0x4D000000))
-                touchEnable(true)
-                if (current != null) opacity(1f) else opacity(0f)
-            }
-            event { click { onDismiss() } }
-        }
-        if (current != null) {
+            // 头部：标题 + 交互提示（原型 .tape-head）
             View {
                 attr {
-                    absolutePosition(left = 16f, right = 16f, bottom = 0f)
-                    paddingBottom(24f)
+                    paddingTop(8f); paddingLeft(12f); paddingRight(12f); paddingBottom(4f)
+                    flexDirectionRow(); alignItemsCenter()
                 }
-                View {
+                Text {
                     attr {
-                        padding(16f)
-                        borderRadius(16f)
-                        backgroundColor(theme.marketGlass)
-                        border(Border(1f, BorderStyle.SOLID, theme.marketGlassEdge))
-                        boxShadow(BoxShadow(0f, 8f, 28f, theme.textPrimary.opacity(0.16f)))
-                        // 新挂载两帧淡入（R4：首帧不播动画，setTimeout 翻转由调用方 state 驱动）
-                        opacity(1f)
+                        text("相关资讯")
+                        flex(1f)
+                        fontSize(theme.type.label)
+                        fontWeightSemiBold()
+                        color(theme.textSecondary)
                     }
-                    Text {
-                        attr {
-                            text(current.title)
-                            fontSize(14f)
-                            fontWeightSemiBold()
-                            color(theme.textPrimary)
-                            lineHeight(20f)
-                        }
+                }
+                Text {
+                    attr {
+                        text("长按先览 · 点按落旗")
+                        fontSize(theme.type.meta)
+                        color(theme.textTertiary)
                     }
-                    Text {
-                        attr {
-                            text("${current.source} · ${current.time}")
-                            marginTop(6f)
-                            fontSize(10f)
-                            color(theme.textTertiary)
-                        }
+                }
+            }
+            // 胶囊条目行：横向滚动（Kuikly Scroller 方向随 flexDirection）
+            Scroller {
+                attr {
+                    flexDirectionRow()
+                    paddingLeft(12f); paddingRight(12f); paddingBottom(10f)
+                    showScrollerIndicator(false)
+                }
+                vbind({ items().size }) {
+                    items().forEach { item ->
+                        TapePill(theme, item, selected, sentimentOf, onTapItem, onLongPressItem, onLongPressRelease)
                     }
-                    vif({ current.summary.isNotEmpty() }) {
-                        Text {
-                            attr {
-                                text(current.summary)
-                                marginTop(10f)
-                                fontSize(12f)
-                                lineHeight(18f)
-                                color(theme.textSecondary)
-                            }
-                        }
-                    }
-                    vif({ current.url.isNotEmpty() }) {
+                }
+            }
+            // B2 摘要条（卡内展开，原型 .news-summary；非全屏 Sheet）
+            vif({ selected() != null }) {
+                vbind({ selected()?.id ?: "" }) {
+                    val news = selected()
+                    if (news != null) {
+                        val sentiment = sentimentOf(news)
                         View {
                             attr {
-                                marginTop(14f)
-                                height(32f)
-                                paddingLeft(14f)
-                                paddingRight(14f)
-                                alignSelfFlexStart()
-                                allCenter()
-                                borderRadius(16f)
                                 backgroundColor(theme.brandSoft)
+                                paddingLeft(12f); paddingRight(12f); paddingTop(9f); paddingBottom(10f)
                             }
                             Text {
                                 attr {
-                                    text("阅读原文")
-                                    fontSize(11f)
+                                    text("${formatTapeTime(news.time)} · ${sentimentLabel(sentiment)}")
+                                    fontSize(theme.type.meta)
                                     fontWeightSemiBold()
-                                    color(theme.brand)
+                                    color(sentimentColor(theme, sentiment))
                                 }
                             }
-                            event { click { onOpenUrl(current.url) } }
+                            Text {
+                                attr {
+                                    text(news.title)
+                                    marginTop(3f)
+                                    fontSize(theme.type.label)
+                                    fontWeightSemiBold()
+                                    color(theme.textPrimary)
+                                    lineHeight(16f)
+                                }
+                            }
+                            vif({ news.summary.isNotEmpty() }) {
+                                Text {
+                                    attr {
+                                        text(news.summary)
+                                        marginTop(4f)
+                                        fontSize(theme.type.meta)
+                                        lineHeight(15f)
+                                        color(theme.textSecondary)
+                                    }
+                                }
+                            }
+                            // 事实行 + 问 AI 出口（U1 预算内：摘要条本身不占 brand 常驻位）
+                            View {
+                                attr { marginTop(7f); flexDirectionRow(); alignItemsCenter() }
+                                Text {
+                                    attr {
+                                        text("旗标已落在走势图对应位置 · 端侧规则")
+                                        fontSize(theme.type.meta)
+                                        color(theme.textTertiary)
+                                        flex(1f)
+                                    }
+                                }
+                                View {
+                                    attr { touchEnable(true) }
+                                    Text {
+                                        attr {
+                                            text("就这条新闻问问 AI ›")
+                                            fontSize(theme.type.meta)
+                                            fontWeightSemiBold()
+                                            color(theme.brand)
+                                        }
+                                    }
+                                    event { click { onAskAi?.invoke(news) } }
+                                }
+                            }
+                            // 阅读原文 + 收起（收起 = 重复点按同义，走页侧 toggle）
+                            View {
+                                attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
+                                vif({ news.url.isNotEmpty() }) {
+                                    View {
+                                        attr {
+                                            height(26f)
+                                            paddingLeft(10f); paddingRight(10f)
+                                            allCenter()
+                                            borderRadius(13f)
+                                            backgroundColor(theme.surface)
+                                            border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                                        }
+                                        Text {
+                                            attr {
+                                                text("阅读原文 ↗")
+                                                fontSize(theme.type.meta)
+                                                fontWeightMedium()
+                                                color(theme.textSecondary)
+                                            }
+                                        }
+                                        event { click { onOpenUrl?.invoke(news) } }
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        text("收起 ×")
+                                        marginLeft(12f)
+                                        fontSize(theme.type.meta)
+                                        color(theme.textTertiary)
+                                    }
+                                    event { click { onTapItem(news) } }
+                                }
+                            }
                         }
                     }
-                    Text {
-                        attr {
-                            text("内容来自公开媒体，仅陈述事实，不构成任何建议")
-                            marginTop(12f)
-                            fontSize(9f)
-                            color(theme.textTertiary)
-                        }
-                    }
-                    event { click { onDismiss() } }
                 }
             }
         }
     }
 }
 
-private fun ViewContainer<*, *>.TapeEdgeFade(
-    page: Color,
-    softColor: () -> Color,
-    alignRight: Boolean,
+/** 胶囊条目（原型 .tape-item）：情绪点 + 时间 + 标题，单行截断；选中态 brandSoft。 */
+private fun ViewContainer<*, *>.TapePill(
+    theme: StockChatTheme,
+    item: NewsItem,
+    selected: () -> NewsItem?,
+    sentimentOf: (NewsItem) -> Boolean?,
+    onTapItem: (NewsItem) -> Unit,
+    onLongPressItem: ((NewsItem) -> Unit)?,
+    onLongPressRelease: (() -> Unit)?,
 ) {
-    Canvas({
+    View {
         attr {
-            if (alignRight) {
-                absolutePosition(right = 0f, top = 0f)
-            } else {
-                absolutePosition(left = 0f, top = 0f)
-            }
-            width(TAPE_EDGE)
-            height(TAPE_HEIGHT)
-            touchEnable(false)
+            marginRight(8f)
+            height(28f)
+            borderRadius(9f)
+            paddingLeft(10f); paddingRight(10f)
+            flexDirectionRow(); alignItemsCenter()
+            // 选中态在 attr 内读 selected()（R1）：换选条目时所有胶囊重绘
+            val sel = selected()?.id == item.id
+            backgroundColor(if (sel) theme.brandSoft else theme.surfaceMuted)
+            if (sel) border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.6f)))
         }
-    }) { canvas, width, height ->
-        // draw 闭包内读 softColor() 建立响应式依赖（与 AtmosphereBackdrop 同款重绘机制）
-        val fadeColor = washColorAtTape(softColor(), page)
-        val gradient = canvas.createLinearGradient(
-            if (alignRight) width else 0f,
-            0f,
-            if (alignRight) 0f else width,
-            0f,
-        )
-        gradient.addColorStop(0f, fadeColor.opacity(0.0f))
-        gradient.addColorStop(1f, fadeColor.opacity(0.95f))
-        canvas.fillStyle(gradient)
-        canvas.beginPath()
-        canvas.moveTo(0f, 0f)
-        canvas.lineTo(width, 0f)
-        canvas.lineTo(width, height)
-        canvas.lineTo(0f, height)
-        canvas.closePath()
-        canvas.fill()
+        event {
+            click { onTapItem(item) }
+            // B1 长按先览（U5 400ms·8dp）：start 即回调，end/cancel 交页侧调度消失
+            longPress { params ->
+                when (params.state) {
+                    "start" -> onLongPressItem?.invoke(item)
+                    "end", "cancel" -> onLongPressRelease?.invoke()
+                }
+            }
+        }
+        vif({ sentimentOf(item) != null }) {
+            View {
+                attr {
+                    width(6f); height(6f); borderRadius(3f)
+                    marginRight(5f)
+                    backgroundColor(sentimentColor(theme, sentimentOf(item)))
+                }
+            }
+        }
+        Text {
+            attr {
+                text(pillText(item))
+                fontSize(10.5f)
+                if (selected()?.id == item.id) fontWeightSemiBold()
+                color(if (selected()?.id == item.id) theme.textPrimary else theme.textSecondary)
+            }
+        }
     }
+}
+
+private fun sentimentColor(theme: StockChatTheme, positive: Boolean?): Color = when (positive) {
+    true -> theme.rise
+    false -> theme.fall
+    null -> theme.textTertiary
+}
+
+private fun sentimentLabel(positive: Boolean?): String = when (positive) {
+    true -> "利好"
+    false -> "利空"
+    null -> "中性"
 }
 
 /**
- * 氛围 wash（AtmosphereBackdrop：soft 0% → soft@0.45 18% → page 58%）在弹幕行
- * （实测屏高 ~38%，即线性段中点）处的复合色 ≈ 0.36·toneSoft + 0.64·page。
- * 弹幕行位置随 Hero 内容 ±20dp 漂移对应 ~6% 混色误差，肉眼不可辨。
+ * 胶囊单行文本：时间 + 标题。Kuikly core 无 maxLines/textOverflow API（源码已核），
+ * 按字符显示宽度手动截断（CJK=1 单位 / 拉丁=0.5，项目既有模式）。
  */
-private fun washColorAtTape(soft: Color, page: Color): Color {
-    val softW = 0.36f
-    fun channel(shift: Int): Int {
-        val s = ((soft.hexColor shr shift) and 0xFFL).toInt()
-        val p = ((page.hexColor shr shift) and 0xFFL).toInt()
-        return (s * softW + p * (1f - softW)).toInt().coerceIn(0, 255)
-    }
-    return Color(channel(16), channel(8), channel(0), 1f)
+private fun pillText(item: NewsItem): String {
+    val time = formatTapeTime(item.time)
+    return "$time  " + truncateByWidth(item.title, PILL_TITLE_UNITS)
 }
 
-/** 步进估算条宽：CJK ≈ 11f/字、拉丁 ≈ 6f/字 + 来源时间缀 + 余量。 */
-internal fun estimateTapeWidth(item: NewsItem): Float {
-    val titleWidth = item.title.sumOf { ch ->
-        (if (ch.code > 0x2E7F) 11.0 else 6.0)
-    }.toFloat()
-    return titleWidth + 150f
+private fun truncateByWidth(text: String, maxUnits: Float): String {
+    var w = 0f
+    for ((i, ch) in text.withIndex()) {
+        w += if (ch.code > 0x2E7F) 1f else 0.5f
+        if (w > maxUnits) return text.substring(0, i) + "…"
+    }
+    return text
 }
 
 private fun formatTapeTime(raw: String): String {
@@ -326,5 +275,5 @@ private fun formatTapeTime(raw: String): String {
     return if (raw.length >= 16) raw.substring(5, 16) else raw
 }
 
-private const val TAPE_HEIGHT = 34f
-private const val TAPE_EDGE = 28f
+/** 胶囊标题显示宽度预算（单位 ≈ 一个 CJK 字符 @10.5f）；时间占 ~6.5。 */
+private const val PILL_TITLE_UNITS = 11.5f
