@@ -4,6 +4,7 @@ import com.kuikly.stockchat.chat.ChatContext
 import com.kuikly.stockchat.chat.ChatMessage
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.CardResponseFallback
+import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.chat.WatchlistIntent
 import com.kuikly.stockchat.chat.WatchlistSummaryBuilder
 import com.kuikly.stockchat.data.WatchlistItem
@@ -106,5 +107,30 @@ class ChatInfrastructureTest {
         assertEquals("消息4", context.first().content)
         assertEquals("消息15", context.last().content)
         assertTrue(context.zipWithNext().all { it.first.role != it.second.role })
+    }
+
+    @Test
+    fun typewriterRevealCountTypesSlowlyAndCatchesUpWhenBacklogged() {
+        // 小积压：一字一拍（打字机手感）
+        assertEquals(1, TypewriterSmoother.revealCount(1))
+        assertEquals(1, TypewriterSmoother.revealCount(2))
+        // 大积压：按固定追平节奏加速释放
+        assertTrue(TypewriterSmoother.revealCount(100) > 1)
+        assertTrue(TypewriterSmoother.revealCount(100) <= TypewriterSmoother.MAX_CHARS_PER_TICK)
+        assertTrue(TypewriterSmoother.revealCount(1000) == TypewriterSmoother.MAX_CHARS_PER_TICK)
+        // 永不超过积压本身
+        for (backlog in 0..32) assertTrue(TypewriterSmoother.revealCount(backlog) <= backlog)
+    }
+
+    @Test
+    fun typewriterHidesCardProtocolIncludingPartialFence() {
+        // 完整 fence：从头截断
+        assertEquals("正文", TypewriterSmoother.hideCardProtocol("正文```card:stock-quote\n{}"))
+        // 结尾半个 fence 前缀：扣住不显示
+        assertEquals("正文", TypewriterSmoother.hideCardProtocol("正文`"))
+        assertEquals("正文", TypewriterSmoother.hideCardProtocol("正文``"))
+        assertEquals("正文", TypewriterSmoother.hideCardProtocol("正文```c"))
+        // 普通反引号不在结尾时不误伤
+        assertEquals("代`码`高亮", TypewriterSmoother.hideCardProtocol("代`码`高亮"))
     }
 }

@@ -27,6 +27,9 @@ import com.kuikly.stockchat.protocol.TextBlock
 import com.kuikly.stockchat.richtext.EntityRichText
 import com.kuikly.stockchat.richtext.EntitySpan
 import com.kuikly.stockchat.richtext.EntityStreamingMarkdown
+import com.tencent.kuikly.core.base.Animation
+import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.base.event.LongPressParams
@@ -78,7 +81,6 @@ internal class ChatMessageActions(
     val onFocusChanged: (String, Boolean) -> Unit,
     val onCompareCandidate: (String, String) -> Unit,
     val onCardEvent: (String, CardEvent) -> Unit,
-    val onShareInterpretation: (String) -> Unit,
     // ===== 正文文本选择（复制 / 追问）=====
     // 气泡容器开启 selectable 后：长按正文 → 页侧调 createSelection 起选
     // （渲染层显示系统选择手柄与放大镜）→ 拖手柄调整 → selectEnd 取词弹菜单。
@@ -90,6 +92,18 @@ internal class ChatMessageActions(
     val onTextSelectionLongPress: (messageId: String, x: Float, y: Float, pageX: Float, pageY: Float) -> Unit,
     val onTextSelectEnd: (String) -> Unit,
     val onTextSelectCancel: (String) -> Unit,
+    // ===== 消息操作图标（复制 / 重试 / 分享，纯图标，挂在免责行右侧）=====
+    val onCopyMessage: (String) -> Unit,
+    val onShareMessage: (String) -> Unit,
+    // 重试 = 从该条 AI 回复起截断重新生成（含其后消息）。
+    val onRegenerate: (String) -> Unit,
+    // ===== 完成后的引导语 chips =====
+    // 取值闭包读 observable（messages 列表 / message.streaming），在 vif 闭包内
+    // 调用建立响应依赖；mount/presented 由页侧双态机驱动（R4 两帧入场）。
+    val followUpsVisible: (ChatMessage) -> Boolean,
+    val followUpsChips: (ChatMessage) -> List<SuggestionIntent>,
+    val followUpsMounted: () -> Boolean,
+    val followUpsPresented: () -> Boolean,
 )
 
 internal fun ViewContainer<*, *>.ChatMessageView(
@@ -138,7 +152,7 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                 selectCancel { actions.onTextSelectCancel(message.id) }
             }
             if (user) {
-                Text { attr { text(message.content); fontSize(16f); lineHeight(24f); color(theme.onBrand) } }
+                Text { attr { text(message.content); fontSize(16f); lineHeight(24f); fontWeightMedium(); color(theme.onBrand) } }
             } else {
                 vif({ message.streaming }) {
                     View {
@@ -291,6 +305,8 @@ private fun ViewContainer<*, *>.AssistantContent(
         )
     }
     if (!message.streaming) {
+        // 免责/状态行：左侧文案，右侧 三个纯图标动作（复制 / 重试 / 分享）。
+        // 失败态整行可点重试，图标不展示。
         View {
             attr { marginTop(10f); flexDirectionRow(); alignItemsCenter() }
             Text {
@@ -302,15 +318,63 @@ private fun ViewContainer<*, *>.AssistantContent(
                             else -> "AI 生成，仅供参考，不构成投资建议"
                         },
                     )
-                    flex(1f); fontSize(9f); color(if (message.failed) theme.brand else theme.textTertiary)
+                    flex(1f)
+                    fontSize(9f)
+                    color(if (message.failed) theme.brand else theme.textTertiary)
                 }
-                if (message.failed) event { click { actions.onRetry() } }
             }
-            if (!message.failed && !message.cancelled) {
-                Text { attr { text("分享长图"); fontSize(9.5f); color(theme.brand) } }
-                event { click { actions.onShareInterpretation(message.content) } }
+            if (message.failed) event { click { actions.onRetry() } }
+            vif({ !message.failed }) {
+                footerIconButton(theme, icon = { c, s -> LineIconCopy(c, s) }) {
+                    actions.onCopyMessage(message.id)
+                }
+                footerIconButton(theme, icon = { c, s -> LineIconRefresh(c, s) }) {
+                    actions.onRegenerate(message.id)
+                }
+                footerIconButton(theme, icon = { c, s -> LineIconShare(c, s) }) {
+                    actions.onShareMessage(message.content)
+                }
             }
         }
+        // 引导语：回答完成后弹出几条追问 chips（页侧两帧入场，R4）。
+        // 模型协议里已带 suggestions 卡片时由上方 SuggestionRow 渲染，不重复弹。
+        vif({ actions.followUpsMounted() && actions.followUpsVisible(message) }) {
+            View {
+                attr {
+                    opacity(if (actions.followUpsPresented()) 1f else 0f)
+                    transform(Translate(0f, if (actions.followUpsPresented()) 0f else 10f))
+                    // R2/R5：presented 是本 attr 最后读的 observable，animate 以其为
+                    // 驱动 key；挂载周期注册、下一帧翻转时消费播放。
+                    animate(Animation.easeOut(0.26f).delay(0.04f), actions.followUpsPresented())
+                }
+                SuggestionRow(
+                    SuggestionsIntent(actions.followUpsChips(message)),
+                    theme,
+                    actions.onSuggestion,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 免责行右侧的纯图标动作按钮（无文字）：17f 图标 + 4f 四向留白做点击热区。
+ */
+private fun ViewContainer<*, *>.footerIconButton(
+    theme: StockChatTheme,
+    icon: ViewContainer<*, *>.(Color, Float) -> Unit,
+    onTap: () -> Unit,
+) {
+    View {
+        attr {
+            marginLeft(8f)
+            paddingTop(4f)
+            paddingBottom(4f)
+            paddingLeft(4f)
+            paddingRight(4f)
+        }
+        icon(theme.textTertiary, 17f)
+        event { click { onTap() } }
     }
 }
 

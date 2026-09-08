@@ -296,6 +296,11 @@ private fun ViewContainer<*, *>.WelcomeBackdrop(theme: StockChatTheme, full: Boo
     }
 }
 
+/**
+ * 引导卡（2026-09-08 改版）：玻璃小卡——只保留主问题，去掉图标/副文案/箭头。
+ * 收缩为自适应宽度的紧凑卡片（不再 alignSelfStretch 占满整行），
+ * 玻璃质感 = 半透明 surface + 1px 描边 + 大圆角；入场阶梯动画逻辑不变。
+ */
 private fun ViewContainer<*, *>.QuestionStarterCard(
     starter: WelcomeStarter,
     theme: StockChatTheme,
@@ -304,35 +309,22 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
     reduceMotion: Boolean,
     onChoose: (WelcomeStarter) -> Unit,
 ) {
-    val iconBackground = when (starter.kind) {
-        WelcomeStarterKind.MOVE -> theme.riseSoft
-        WelcomeStarterKind.TERM -> theme.brandSoft
-        WelcomeStarterKind.REPORT -> theme.fallSoft
-        WelcomeStarterKind.COMPARE -> theme.brandSoft
-    }
-    val iconColor = when (starter.kind) {
-        WelcomeStarterKind.MOVE -> theme.rise
-        WelcomeStarterKind.TERM -> theme.term
-        WelcomeStarterKind.REPORT -> theme.fall
-        WelcomeStarterKind.COMPARE -> theme.brand
-    }
     View {
         attr {
-            alignSelfStretch()
-            minHeight(58f)
+            // 外层是 alignItemsCenter，必须显式改回左对齐；
+            // 宽度随文案自适应，四张卡左缘对齐、长短错落成阶梯感。
+            alignSelfFlexStart()
             marginTop(theme.spacing.sm)
-            paddingLeft(theme.spacing.md)
-            paddingRight(theme.spacing.md)
-            paddingTop(9f)
-            paddingBottom(9f)
-            flexDirectionRow()
-            alignItemsCenter()
-            backgroundColor(theme.surface)
-            borderRadius(theme.cardRadius)
+            paddingLeft(14f)
+            paddingRight(14f)
+            paddingTop(8f)
+            paddingBottom(8f)
+            backgroundColor(theme.surface.opacity(0.72f))
+            borderRadius(12f)
             border(Border(1f, BorderStyle.SOLID, theme.divider))
-            // 无障碍（规范 §6.5）：朗读「示例问题：…」整句，副说明一并读出；
+            // 无障碍（规范 §6.5）：朗读「示例问题：…」整句；
             // 按钮语义让读屏播报「点按两次即可激活」。
-            accessibility("示例问题：${starter.question}。${starter.detail}")
+            accessibility("示例问题：${starter.question}")
             accessibilityRole(AccessibilityRole.BUTTON)
             accessibilityInfo(clickable = true, longClickable = false)
             // 入场：上滑 + 淡入，阶梯式延迟（规范 7 · 动效）。
@@ -366,42 +358,14 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
                 )
             }
         }
-        View {
+        Text {
             attr {
-                size(32f, 32f)
-                allCenter()
-                borderRadius(10f)
-                backgroundColor(iconBackground)
-                marginRight(10f)
-            }
-            when (starter.kind) {
-                WelcomeStarterKind.MOVE -> LineIconTrendDown(color = iconColor, size = 18f)
-                WelcomeStarterKind.TERM -> LineIconBook(color = iconColor, size = 18f)
-                WelcomeStarterKind.REPORT -> LineIconFileText(color = iconColor, size = 18f)
-                WelcomeStarterKind.COMPARE -> LineIconColumns(color = iconColor, size = 18f)
+                text(starter.question)
+                fontSize(14f)
+                fontWeightMedium()
+                color(theme.textPrimary)
             }
         }
-        View {
-            attr { flex(1f) }
-            Text {
-                attr {
-                    text(starter.question)
-                    fontSize(theme.type.body)
-                    fontWeightMedium()
-                    color(theme.textPrimary)
-                }
-            }
-            Text {
-                attr {
-                    text(starter.detail)
-                    marginTop(3f)
-                    fontSize(theme.type.meta)
-                    lineHeight(15f)
-                    color(theme.textTertiary)
-                }
-            }
-        }
-        LineIconChevronRight(color = theme.textTertiary, size = 17f)
         event { click { onChoose(starter) } }
     }
 }
@@ -535,10 +499,14 @@ internal fun ViewContainer<*, *>.ActiveComparePanel(
             }
             Text {
                 attr {
+                    // 流式解读（2026-09-08）：LOADING 态有部分文本就直接展示并尾随
+                    // 光标（MarketPage AI 复盘卡同款），文本逐字到达 → 面板高度连续
+                    // 小步生长；此前整段文本要等 READY 才上屏，高度瞬间涨几行，
+                    // 底部锚定的面板会被顶得"突然往上弹一下"。
                     val content = when {
-                        insightLoading() -> "正在读取两只股票的差异..."
                         insightError().isNotBlank() -> insightError()
-                        insightText().isNotBlank() -> insightText()
+                        insightText().isNotBlank() -> if (insightLoading()) "${insightText()} ▌" else insightText()
+                        insightLoading() -> "正在读取两只股票的差异..."
                         else -> "等待第二只股票完成对比"
                     }
                     text(content)
@@ -632,10 +600,12 @@ internal fun ViewContainer<*, *>.TermComparePanel(
             }
             Text {
                 attr {
+                    // 流式解读（2026-09-08）：同 ActiveComparePanel，LOADING 态
+                    // 部分文本直接上屏 + 尾随光标，避免 onDone 整段顶高面板。
                     val content = when {
-                        insightLoading() -> "正在生成两个概念的区别与联系..."
                         insightError().isNotBlank() -> insightError()
-                        insightText().isNotBlank() -> insightText()
+                        insightText().isNotBlank() -> if (insightLoading()) "${insightText()} ▌" else insightText()
+                        insightLoading() -> "正在生成两个概念的区别与联系..."
                         else -> "等待第二个术语完成对比"
                     }
                     text(content)

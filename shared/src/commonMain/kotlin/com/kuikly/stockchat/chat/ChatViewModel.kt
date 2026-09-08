@@ -33,6 +33,7 @@ class ChatViewModel(
     private var aiProvider: AiProvider? = null
     private var subThreadProvider: AiProvider? = null
     private var cardRepairProvider: AiProvider? = null
+    private var activeTypewriter: TypewriterSmoother? = null
     var activeSessionId: String by observable("")
         private set
     private var nextId = 1
@@ -64,6 +65,14 @@ class ChatViewModel(
         if (value.isEmpty() || streamState == StreamState.STREAMING) return
         messages.add(ChatMessage(pagerId, newId(), MessageRole.USER, value))
         persist()
+        respondTo(value, payload)
+    }
+
+    /**
+     * 回复分发：send 在追加用户气泡后调用；重新生成（regenerateAt）与失败重试
+     * （retryLast）复用同一管线但不重复插入用户消息。
+     */
+    private fun respondTo(value: String, payload: SendPayload) {
         val assistantId = newId()
         if (WatchlistIntent.matches(value)) {
             replyWithWatchlistSummary(assistantId)
@@ -96,6 +105,26 @@ class ChatViewModel(
         streamWithProvider(provider, assistantId, payload)
     }
 
+    /**
+     * 重新生成某条 AI 回复：从该条起截断（含其后所有消息），用上一条用户提问
+     * 重新走回复管线——不重复插入用户气泡。操作栏（复制/重试/分享）的「重试」
+     * 即此能力；流式进行中拒绝重入。
+     */
+    fun regenerateAt(messageId: String): Boolean {
+        if (streamState == StreamState.STREAMING) return false
+        val index = messages.indexOfFirst { it.id == messageId && it.role == MessageRole.ASSISTANT }
+        if (index < 0) return false
+        val question = messages.take(index).lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
+        if (question.isBlank()) return false
+        while (messages.size > index) messages.removeAt(messages.size - 1)
+        persist()
+        respondTo(
+            question,
+            SendPayload(text = question, mentions = emptyList(), command = null, renderedPrompt = null),
+        )
+        return true
+    }
+
     private fun streamWithProvider(provider: AiProvider, assistantId: String, payload: SendPayload) {
         aiProvider = provider
         val assistantMessage = ChatMessage(pagerId, assistantId, MessageRole.ASSISTANT, "正在组织回答…", streaming = true)
@@ -108,21 +137,34 @@ class ChatViewModel(
             if (launched) return
             launched = true
             var content = ""
+            // 打字机平滑：delta 全量进缓冲，显示端按节拍逐字释放（见 TypewriterSmoother）。
+            // 网络一次吐一大段时不再是"整行蹦出"，而是匀速逐字打出；积压越大吐字越快。
+            val typewriter = TypewriterSmoother(pagerId) { revealed ->
+                assistantMessage.content = TypewriterSmoother
+                    .hideCardProtocol(revealed)
+                    .trim()
+                    .ifEmpty { "正在整理结构化信息…" }
+            }
+            activeTypewriter = typewriter
             provider.ask(
                 messages = ChatContext.build(messages, payload.systemNote(), note),
                 onDelta = { delta ->
                     content += delta
-                    assistantMessage.content = content.substringBefore("```card").trim().ifEmpty { "正在整理结构化信息…" }
+                    typewriter.append(delta)
                 },
                 onDone = {
                     streamState = StreamState.IDLE
                     val question = payload.renderedPrompt ?: payload.text
-                    assistantMessage.content = CardResponseFallback.appendMissingCard(question, content)
-                    assistantMessage.streaming = false
-                    persist()
+                    // 收尾等显示端把已收到的文本打完再落定，避免最后一截被整段顶上来。
+                    typewriter.complete {
+                        assistantMessage.content = CardResponseFallback.appendMissingCard(question, content)
+                        assistantMessage.streaming = false
+                        persist()
+                    }
                 },
                 onError = { error ->
                     streamState = StreamState.ERROR
+                    typewriter.cancel()
                     assistantMessage.content = error
                     assistantMessage.streaming = false
                     assistantMessage.failed = true
@@ -149,6 +191,9 @@ class ChatViewModel(
     }
 
     fun stop() {
+        // 停止生成：先把打字机缓冲里已收到的文本一次性显示（之后终止节拍），
+        // 再掐断网络流——与旧行为一致，已收到的半截回答保留可见。
+        activeTypewriter?.let { it.flushNow(); it.cancel() }
         aiProvider?.stop()
         cardRepairProvider?.stop()
         streamState = StreamState.STOPPED
@@ -169,9 +214,10 @@ class ChatViewModel(
 
     fun startNewChat() {
         stop()
-        if (messages.isNotEmpty()) {
-            activeSessionId = sessionStore.startSession()
-        }
+        // 每次点击「新建」都必须换一个会话身份，即使当前会话恰好是空的。
+        // 除了语义正确，这也给视图层一个稳定的重建键，避免空列表的同值 clear()
+        // 被原生列表复用路径吞掉后留在空白画面。
+        activeSessionId = sessionStore.startSession()
         messages.clear()
         streamState = StreamState.IDLE
         nextId = 1
@@ -197,7 +243,13 @@ class ChatViewModel(
         messages.remove(failed)
         val question = messages.lastOrNull { it.role == MessageRole.USER }?.content.orEmpty()
         persist()
-        if (question.isNotBlank()) send(question)
+        // respondTo 而非 send：不重复插入用户气泡，直接重新生成回复。
+        if (question.isNotBlank()) {
+            respondTo(
+                question,
+                SendPayload(text = question, mentions = emptyList(), command = null, renderedPrompt = null),
+            )
+        }
     }
 
     fun retryCard(

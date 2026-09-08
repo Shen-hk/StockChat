@@ -251,24 +251,26 @@ private fun stockMarkdownConfig(
 private fun stockMarkdownTypography(dark: Boolean): MarkdownTypography {
     val textColor = if (dark) 0xFFF5F5F7 else 0xFF1D1D1F
     val secondary = if (dark) 0xFFC7C7CC else 0xFF6E6E73
-    val body = TextStyleConfig(fontSize = 16f, lineHeight = 25f, color = textColor)
-    val compact = TextStyleConfig(fontSize = 15f, lineHeight = 23f, color = textColor)
+    // 字重整体上浮一档（Normal→Medium、SemiBold→Bold，库里共四档）：
+    // 正文 16f Medium 对齐主流 AI 聊天（微信/豆包正文 16-17px 观感），字号保持不变。
+    val body = TextStyleConfig(fontSize = 16f, lineHeight = 25f, fontWeight = FontWeight.Medium, color = textColor)
+    val compact = TextStyleConfig(fontSize = 15f, lineHeight = 23f, fontWeight = FontWeight.Medium, color = textColor)
     return MarkdownTypography(
         text = body,
-        code = TextStyleConfig(fontSize = 14f, lineHeight = 21f, color = textColor),
-        inlineCode = TextStyleConfig(fontSize = 15f, color = textColor),
+        code = TextStyleConfig(fontSize = 14f, lineHeight = 21f, fontWeight = FontWeight.Medium, color = textColor),
+        inlineCode = TextStyleConfig(fontSize = 15f, fontWeight = FontWeight.Medium, color = textColor),
         h1 = TextStyleConfig(fontSize = 20f, lineHeight = 28f, fontWeight = FontWeight.Bold, color = textColor),
-        h2 = TextStyleConfig(fontSize = 18f, lineHeight = 26f, fontWeight = FontWeight.SemiBold, color = textColor),
-        h3 = TextStyleConfig(fontSize = 17f, lineHeight = 24f, fontWeight = FontWeight.SemiBold, color = textColor),
-        h4 = TextStyleConfig(fontSize = 16f, lineHeight = 25f, fontWeight = FontWeight.SemiBold, color = textColor),
+        h2 = TextStyleConfig(fontSize = 18f, lineHeight = 26f, fontWeight = FontWeight.Bold, color = textColor),
+        h3 = TextStyleConfig(fontSize = 17f, lineHeight = 24f, fontWeight = FontWeight.Bold, color = textColor),
+        h4 = TextStyleConfig(fontSize = 16f, lineHeight = 25f, fontWeight = FontWeight.Bold, color = textColor),
         h5 = body,
         h6 = body,
-        quote = TextStyleConfig(fontSize = 15f, lineHeight = 23f, color = secondary),
+        quote = TextStyleConfig(fontSize = 15f, lineHeight = 23f, fontWeight = FontWeight.Medium, color = secondary),
         paragraph = body,
         ordered = compact,
         bullet = compact,
         list = compact,
-        table = TextStyleConfig(fontSize = 14f, lineHeight = 21f, color = textColor),
+        table = TextStyleConfig(fontSize = 14f, lineHeight = 21f, fontWeight = FontWeight.Medium, color = textColor),
         textLink = body,
     )
 }

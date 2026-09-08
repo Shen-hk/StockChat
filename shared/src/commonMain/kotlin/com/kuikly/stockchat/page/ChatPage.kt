@@ -28,6 +28,7 @@ import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatViewModel
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.StreamState
+import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.openGlossary
@@ -38,12 +39,13 @@ import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.LocalAlertProvider
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
+import com.kuikly.stockchat.data.config.DataSourceConfig
+import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.data.entity.Securities
-import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.page.components.ChatDrawer
 import com.kuikly.stockchat.page.components.CardSheetHost
 import com.kuikly.stockchat.page.components.ActiveComparePanel
@@ -85,6 +87,7 @@ import com.kuikly.stockchat.protocol.CardBlock
 import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.kuikly.stockchat.protocol.SkeletonBlock
 import com.kuikly.stockchat.protocol.SuggestionsIntent
+import com.kuikly.stockchat.protocol.SuggestionIntent
 import com.kuikly.stockchat.protocol.SymbolCardIntent
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.TextBlock
@@ -131,6 +134,7 @@ import com.tencent.kuikly.core.base.event.LongPressParams
 import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.log.KLog
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
@@ -240,6 +244,11 @@ internal class ChatPage : BasePager() {
     private var selectionMessageId = ""
     private var selectionPageX = 0f
     private var selectionPageY = 0f
+    // ===== 回答完成后的引导语 chips 双态机（R4 两帧入场）=====
+    // 流结束 → 挂载一拍后 presented 翻转；重新流式/换会话即重置。
+    private var followUpsMounted: Boolean by observable(false)
+    private var followUpsPresented: Boolean by observable(false)
+    private var followUpsVersion = 0
     private var keyboardHeight: Float by observable(0f)
     private var drawerOpen: Boolean by observable(false)
     // Drawer double-state machine (mirrors sheetMounted/sheetPresented): vif
@@ -255,7 +264,15 @@ internal class ChatPage : BasePager() {
     private var drawerGestureStartX = 0f
     // 最近一次 move 的单步位移（非 observable）：快速短划（flick）判定的速度代理。
     private var drawerGestureLastDX = 0f
-    private var liveDataMode: Boolean by observable(true)
+    // 原生 fling 侦察（大且快右向横滑 → 开抽屉）回调是否已注册：created 里
+    // 注册一次即可（keepCallback），页面可见性由 pageVisible 守卫。
+    private var drawerFlingHostRegistered = false
+    private var pageVisible = false
+    // 2026-09-08：行情数据模式只有"实时"一档（模拟分支已整体摘除），旧
+    // liveDataMode 开关随之移除；顶部岛上的"实时"角标为常显。
+    // 抽屉历史会话搜索词：drawer 的 Input 不受控，页面侧只存词 + 供 vbind 过滤；
+    // 打开抽屉时重置，避免上次输入残留下次仍过滤。
+    private var historySearchQuery: String by observable("")
     // Dynamic island: the top title capsule morphs into a live quote card.
     private var islandExpanded: Boolean by observable(false)
     private var islandSymbol: String by observable("600519.SH")
@@ -394,6 +411,7 @@ internal class ChatPage : BasePager() {
     private val glossaryStore get() = dependencies.glossaryStore
     private var alertPollGeneration = 0
     private val deliveredAlertBuckets = mutableSetOf<String>()
+    // 数据源开关：模拟模式下行情回落 MockDataBank（原状态）；真实模式此字段不参与请求。
     private val mockQuoteProvider = MockQuoteProvider()
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
@@ -404,9 +422,9 @@ internal class ChatPage : BasePager() {
     private var welcomeCursorTimer: Timer? = null
     // 轮播关键词尾部的 2px 光标：轮播存活期 550ms 翻转（1.1s step-end），停止即隐藏
     private var welcomeCursorVisible: Boolean by observable(false)
-    // 入场动效：欢迎区先挂载，再在下一帧呈现；示例卡各自以 40ms 阶梯上滑。
-    // vif 新挂载的视图不会在首帧补间，不能只靠 messages.isEmpty() 直接显示。
-    private var welcomeEntranceMounted: Boolean by observable(true)
+    // 入场动效只控制示例卡，不控制欢迎区本身是否存在。新会话必须在清空消息的
+    // 同一帧就能画出欢迎内容；把挂载再交给一个 Timer 会让抽屉收起/页面重排与
+    // 会话切换碰撞时留下白屏窗口。
     private var welcomeEntranceVisible: Boolean by observable(false)
     private var welcomeEntranceArmed = false
     // 定时回调只能检查普通版本号，不能在回调中读取 observable。
@@ -459,10 +477,12 @@ internal class ChatPage : BasePager() {
         pendingRouteQuestion = pagerData.params.optString("question")
         pendingRouteFocusNote = pagerData.params.optString("focusNote")
         StockCardRenderers.ensureRegistered()
+        registerDrawerFlingHostIfNeeded()
     }
 
     override fun pageDidDisappear() {
         super.pageDidDisappear()
+        pageVisible = false
         alertPollGeneration++
         // 只暂停、不上锁：lock=true 会把 welcomeKeywordStopped 永久置真，
         // 于是从详情页返回或应用回到前台后 startWelcomeKeywordLoopIfNeeded()
@@ -483,6 +503,7 @@ internal class ChatPage : BasePager() {
 
     override fun pageDidAppear() {
         super.pageDidAppear()
+        pageVisible = true
         if (islandDetailRouteActive) scheduleIslandDetailReturnReset()
         viewModel.refreshConfigStatus()
         islandWatchlisted = watchlistStore.contains(islandSymbol)
@@ -499,461 +520,508 @@ internal class ChatPage : BasePager() {
         val page = this
         return {
             attr { backgroundColor(page.theme.page) }
-            Scroller {
-                ref { page.chatScrollerRef = it }
+            // 主内容平移层（用户决策 2026-09-08）：抽屉展开时整页内容（聊天
+            // 列表 + 顶栏 + 输入栏）像被抽屉迎面"推"开一样整体右移，收起时
+            // 整体左移回位。手势跟手阶段与面板同速落位；归位/程序化开合与
+            // ChatDrawer 面板逐分支同构（同驱动、同曲线、同时长），保证两层
+            // 消费的动画注册一致、严格同步。模态层（对比弹窗/CardSheet/抽屉
+            // 本体）留在根层级不平移。
+            View {
                 attr {
-                    flex(1f)
-                    // Reserve resting space for the floating chrome while
-                    // allowing content to travel underneath it as it scrolls.
-                    paddingTop(page.pagerData.statusBarHeight + 52f)
-                    paddingLeft(14f)
-                    // Kuikly 竖向 Scroller 测量子项宽 = 视宽 - 2×(左+右 padding)，
-                    // 右 padding 被双倍扣除：14/14 时聊天内容右侧实测多出 28dp 留白
-                    // （真机 1440px 宽，卡片右缘 1271px ≈ 预测的 w-2×28 位置）。
-                    // 右侧留 0，留白交由子项自身 margin 补齐，实测左右各 20dp 对齐。
-                    paddingRight(0f)
-                    paddingBottom(190f + page.pagerData.safeAreaInsets.bottom)
-                }
-                event {
-                    contentSizeChanged { _, height ->
-                        page.chatContentHeight = height
-                        page.handleChatContentSizeGrew()
-                    }
-                    scroll { params ->
-                        page.handleChatStreamScroll(params)
-                    }
-                    // 按住非交互区域（气泡/卡片自己的长按会被消费、不冒泡上来）
-                    // 也视为用户接管列表，暂停跟随
-                    longPress { page.chatFollowStream = false }
-                    // 点击列表非输入栏区域：展开态先收键盘，键盘已收起才回到默认态
-                    click { page.handleOutsideTap() }
-                }
-                vif({ page.viewModel.messages.isEmpty() && page.welcomeEntranceMounted }) {
-                    WelcomeSection(
-                        theme = page.theme,
-                        // 取值闭包，不能在这里直接读 observable：vif 体只执行一次，
-                        // 读到的快照不会建立依赖，attr 不重跑、animate() 也拿不到
-                        // observablePropertyKey，整块动效会静默失效。
-                        rotatingKeyword = { page.welcomeKeywordText },
-                        cursorVisible = { page.welcomeCursorVisible },
-                        entranceVisible = { page.welcomeEntranceVisible },
-                        onMounted = page::welcomeDidMount,
-                        marketTabSelected = { page.welcomeMarketTabSelected },
-                        onOpenMarket = { page.handleWelcomeMarketTap() },
-                        reduceMotion = page.welcomeReducedMotion,
-                    ) { starter ->
-                        page.chooseWelcomeStarter(starter)
+                    absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                    val motion = page.drawerGesture
+                    val shown = page.drawerPresented
+                    // 面板位移 [-292, 0] → 主内容位移 [0, 292]，与面板互为镜像。
+                    val panelX =
+                        if (motion.phase == DrawerGesturePhase.IDLE) {
+                            if (shown) 0f else -292f
+                        } else {
+                            motion.offsetX
+                        }
+                    transform(translate = Translate(0f, 0f, offsetX = panelX + 292f))
+                    // R2/R3：分支互斥、每分支恰一次 animate；实参位置现场再读
+                    // observable（RowGestureLayer 范式），与 ChatDrawer 面板一致。
+                    when (motion.phase) {
+                        DrawerGesturePhase.IDLE ->
+                            animate(
+                                if (shown) Animation.easeOut(0.375f) else Animation.easeIn(0.275f),
+                                page.drawerPresented,
+                            )
+                        DrawerGesturePhase.DRAGGING -> Unit // 跟手：直接落位，不注册动画
+                        DrawerGesturePhase.SETTLING ->
+                            animate(
+                                if (motion.offsetX > -146f) Animation.easeOut(0.375f) else Animation.easeIn(0.30f),
+                                page.drawerGesture,
+                            )
                     }
                 }
-                vif({ page.viewModel.messages.isNotEmpty() }) {
-                    DateDivider(page.theme)
-                }
-                vfor({ page.viewModel.messages }) { message ->
-                    ChatMessageView(
-                        message = message,
-                        theme = page.theme,
-                        contextSymbols = page.contextSymbolsBefore(message.id),
-                        suggestionsActive = page.suggestionsAreActive(message),
-                        state = ChatMessageRenderState(
-                            repairingCardKey = page.repairingCardKey,
-                            drilledKeys = page.drilledKeys.toSet(),
-                            subThreads = page.subThreads.toList(),
-                            focusedCardKey = page.focusedCardKey,
-                            compareCandidateSymbol = page.compareCandidateSymbol,
-                        ),
-                        actions = ChatMessageActions(
-                            onEntityStock = page::handleStockEntityClick,
-                            onEntityStockLongPress = page::handleStockEntityLongPress,
-                            onCardStock = page::openStockDetail,
-                            onTerm = {
-                                // 长按术语后部分 bridge 会补发 click，抑制之。
-                                if (it == page.suppressNextTermClick) {
-                                    page.suppressNextTermClick = ""
-                                } else {
-                                    // 用户卡在术语上主动点高亮 = 一次真实「遇到」（doc 24 §6.3）。
-                                    Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
-                                    page.viewModel.send("$it 是什么意思")
-                                }
-                            },
-                            onTermLongPress = page::handleTermEntityLongPress,
-                            onSuggestion = page.viewModel::send,
-                            onRetry = page.viewModel::retryLast,
-                            onRetryCard = page::retryCard,
-                            onQuoteNeeded = page::requestQuote,
-                            quoteFor = page::quoteFor,
-                            isCardExpanded = { page.expandedCardKey == it },
-                            onToggleCardExpanded = page::toggleCardExpanded,
-                            onOpenCardSheet = page::openCardSheet,
-                            onToggleDrill = page::toggleDrill,
-                            onStartSubThread = page::startSubThread,
-                            onToggleSubThread = page::toggleSubThread,
-                            onUpdateSubThreadInput = page::updateSubThreadInput,
-                            onSendSubThread = page::sendSubThread,
-                            onFocusChanged = page::setFocusedCard,
-                            onCompareCandidate = page::handleCompareCandidate,
-                            onCardEvent = page::handleCardEvent,
-                            onShareInterpretation = page::copyShareCard,
+                Scroller {
+                    ref { page.chatScrollerRef = it }
+                    attr {
+                        flex(1f)
+                        // Reserve resting space for the floating chrome while
+                        // allowing content to travel underneath it as it scrolls.
+                        paddingTop(page.pagerData.statusBarHeight + 52f)
+                        paddingLeft(14f)
+                        // Kuikly 竖向 Scroller 测量子项宽 = 视宽 - 2×(左+右 padding)，
+                        // 右 padding 被双倍扣除：14/14 时聊天内容右侧实测多出 28dp 留白
+                        // （真机 1440px 宽，卡片右缘 1271px ≈ 预测的 w-2×28 位置）。
+                        // 右侧留 0，留白交由子项自身 margin 补齐，实测左右各 20dp 对齐。
+                        paddingRight(0f)
+                        paddingBottom(190f + page.pagerData.safeAreaInsets.bottom)
+                    }
+                    event {
+                        contentSizeChanged { _, height ->
+                            page.chatContentHeight = height
+                            page.handleChatContentSizeGrew()
+                        }
+                        scroll { params ->
+                            page.handleChatStreamScroll(params)
+                        }
+                        // 按住非交互区域（气泡/卡片自己的长按会被消费、不冒泡上来）
+                        // 也视为用户接管列表，暂停跟随
+                        longPress { page.chatFollowStream = false }
+                        // 点击列表非输入栏区域：展开态先收键盘，键盘已收起才回到默认态
+                        click { page.handleOutsideTap() }
+                    }
+                    // activeSessionId 是会话树的重建键。新建对话时先替换整棵会话
+                    // 内容树，再由内部 vif/vfor 画空态或消息；这是应用内等价于用户
+                    // 手动退出、重新进入页面的恢复动作，规避原生列表复用偶发残留。
+                    vbind({ page.viewModel.activeSessionId }) {
+                        // 仅由消息是否为空决定欢迎区的存在。不要把这里再绑定到动效的
+                        // mounted 状态：内容可见性必须独立于任何异步动画调度。
+                        vif({ page.viewModel.messages.isEmpty() }) {
+                            WelcomeSection(
+                            theme = page.theme,
+                            // 取值闭包，不能在这里直接读 observable：vif 体只执行一次，
+                            // 读到的快照不会建立依赖，attr 不重跑、animate() 也拿不到
+                            // observablePropertyKey，整块动效会静默失效。
+                            rotatingKeyword = { page.welcomeKeywordText },
+                            cursorVisible = { page.welcomeCursorVisible },
+                            entranceVisible = { page.welcomeEntranceVisible },
+                            onMounted = page::welcomeDidMount,
+                            marketTabSelected = { page.welcomeMarketTabSelected },
+                            onOpenMarket = { page.handleWelcomeMarketTap() },
+                            reduceMotion = page.welcomeReducedMotion,
+                            ) { starter ->
+                                page.chooseWelcomeStarter(starter)
+                            }
+                        }
+                        vif({ page.viewModel.messages.isNotEmpty() }) {
+                            DateDivider(page.theme)
+                        }
+                        vfor({ page.viewModel.messages }) { message ->
+                            ChatMessageView(
+                            message = message,
+                            theme = page.theme,
+                            contextSymbols = page.contextSymbolsBefore(message.id),
+                            suggestionsActive = page.suggestionsAreActive(message),
+                            state = ChatMessageRenderState(
+                                repairingCardKey = page.repairingCardKey,
+                                drilledKeys = page.drilledKeys.toSet(),
+                                subThreads = page.subThreads.toList(),
+                                focusedCardKey = page.focusedCardKey,
+                                compareCandidateSymbol = page.compareCandidateSymbol,
+                            ),
+                            actions = ChatMessageActions(
+                                onEntityStock = page::handleStockEntityClick,
+                                onEntityStockLongPress = page::handleStockEntityLongPress,
+                                onCardStock = page::openStockDetail,
+                                onTerm = {
+                                    // 长按术语后部分 bridge 会补发 click，抑制之。
+                                    if (it == page.suppressNextTermClick) {
+                                        page.suppressNextTermClick = ""
+                                    } else {
+                                        // 用户卡在术语上主动点高亮 = 一次真实「遇到」（doc 24 §6.3）。
+                                        Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
+                                        page.viewModel.send("$it 是什么意思")
+                                    }
+                                },
+                                onTermLongPress = page::handleTermEntityLongPress,
+                                onSuggestion = page.viewModel::send,
+                                onRetry = page.viewModel::retryLast,
+                                onRetryCard = page::retryCard,
+                                onQuoteNeeded = page::requestQuote,
+                                quoteFor = page::quoteFor,
+                                isCardExpanded = { page.expandedCardKey == it },
+                                onToggleCardExpanded = page::toggleCardExpanded,
+                                onOpenCardSheet = page::openCardSheet,
+                                onToggleDrill = page::toggleDrill,
+                                onStartSubThread = page::startSubThread,
+                                onToggleSubThread = page::toggleSubThread,
+                                onUpdateSubThreadInput = page::updateSubThreadInput,
+                                onSendSubThread = page::sendSubThread,
+                                onFocusChanged = page::setFocusedCard,
+                                onCompareCandidate = page::handleCompareCandidate,
+                                onCardEvent = page::handleCardEvent,
                             onSelectionContainerRef = page::handleSelectionContainerRef,
                             onTextSelectionLongPress = page::handleTextSelectionLongPress,
                             onTextSelectEnd = page::handleTextSelectEnd,
                             onTextSelectCancel = page::handleTextSelectCancel,
+                            // 消息操作图标：复制 / 重试（截断重生成）/ 分享。
+                            onCopyMessage = page::copyMessageContent,
+                            onShareMessage = page::copyShareCard,
+                            onRegenerate = page::regenerateMessage,
+                            // 引导语：完成后的追问 chips（闭包在 vif 内调用，读 observable
+                            // 建立依赖；页侧双态机驱动两帧入场）。
+                            followUpsVisible = page::isFollowUpsVisible,
+                            followUpsChips = page::followUpChipsFor,
+                            followUpsMounted = { page.followUpsMounted },
+                            followUpsPresented = { page.followUpsPresented },
                         ),
-                    )
-                }
-            }
-            // Declare the overlay after its backdrop source so Android paints
-            // the glass above the moving conversation rather than beneath it.
-            ChatTopNav(
-                statusBarHeight = page.pagerData.statusBarHeight,
-                theme = page.theme,
-                drawerOpen = { page.drawerOpen },
-                liveData = { page.liveDataMode },
-                renderer = page.glassRenderer,
-                contextTitle = if (page.drilledKeys.isNotEmpty()) "归因链 · 资金面 ›" else null,
-                pageWidth = page.pagerData.pageViewWidth,
-                pageHeight = page.pagerData.pageViewHeight,
-                islandExpanded = { page.islandExpanded },
-                islandMounted = { page.islandMounted },
-                islandQuote = { page.quoteFor(page.islandSymbol) },
-                islandGestureMotion = { page.islandGestureMotion },
-                islandWatchlisted = { page.islandWatchlisted },
-                islandDropActive = {
-                    page.entityDragActive && page.entityDropTarget == EntityDropTarget.ISLAND
-                },
-                islandFirstCompareDrop = {
-                    page.entityDragActive &&
-                        page.entityDropTarget == EntityDropTarget.ISLAND &&
-                        page.isIslandFirstCompareDrop()
-                },
-                islandCompareLeftSymbol = { page.islandCompareLeftSymbol },
-                islandCompareRightSymbol = { page.islandCompareRightSymbol },
-                islandCompareLeftQuote = { page.quoteFor(page.islandCompareLeftSymbol) },
-                islandCompareRightQuote = { page.quoteFor(page.islandCompareRightSymbol) },
-                // 股票对比与术语对比共用同一套 lobby 几何，内容层按会话分流。
-                islandCompareVisible = {
-                    page.isIslandCompareLobbyVisible() || page.isIslandTermCompareLobbyVisible()
-                },
-                islandTermEntry = { Glossary.byKey(page.islandTermKey) },
-                islandCompareIsTerm = { page.islandTermCompareLeftKey.isNotEmpty() },
-                islandTermCompareLeft = { Glossary.byKey(page.islandTermCompareLeftKey) },
-                islandTermCompareRight = { Glossary.byKey(page.islandTermCompareRightKey) },
-                islandTextOnly = { false },
-                islandCompareInsightLoading = { page.compareInsightState == CompareInsightState.LOADING },
-                islandCompareInsightAvailable = { page.compareInsightState == CompareInsightState.READY },
-                onToggleIsland = { page.toggleIsland() },
-                onIslandGesture = { state, y -> page.handleIslandGesture(state, y) },
-                onIslandMotionComplete = { key -> page.completeIslandMotion(key) },
-                onToggleIslandWatchlist = { symbol -> page.toggleIslandWatchlist(symbol) },
-                onOpenIslandCompare = { page.openIslandComparePanel() },
-                onClearIslandCompare = { page.clearIslandCompare() },
-                onMenu = { page.updateDrawerOpen(!page.drawerOpen) },
-                onNewChat = { page.startNewChat() },
-            )
-            vif({ page.ambiguousSymbols.isNotEmpty() }) {
-                View {
-                    attr {
-                        marginLeft(12f)
-                        marginRight(12f)
-                        marginBottom(8f)
-                        padding(10f)
-                        backgroundColor(page.theme.brandSoft)
-                        borderRadius(12f)
-                    }
-                    Text {
-                        attr {
-                            text("“${page.ambiguousEntityText}”可能指以下标的")
-                            fontSize(12f)
-                            fontWeightMedium()
-                            color(page.theme.textPrimary)
+                            )
                         }
                     }
-                    Scroller {
-                        attr { flexDirectionRow(); height(36f); marginTop(7f) }
-                        page.ambiguousSymbols.forEach { symbol ->
-                            val security = Securities.all.firstOrNull { it.symbol == symbol }
-                            View {
-                                attr {
-                                    height(32f)
-                                    marginRight(7f)
-                                    paddingLeft(10f)
-                                    paddingRight(10f)
-                                    justifyContentCenter()
-                                    borderRadius(9f)
-                                    backgroundColor(page.theme.surface)
+                }
+                // Declare the overlay after its backdrop source so Android paints
+                // the glass above the moving conversation rather than beneath it.
+                ChatTopNav(
+                    statusBarHeight = page.pagerData.statusBarHeight,
+                    theme = page.theme,
+                    drawerOpen = { page.drawerOpen },
+                    liveData = { true },
+                    renderer = page.glassRenderer,
+                    contextTitle = if (page.drilledKeys.isNotEmpty()) "归因链 · 资金面 ›" else null,
+                    pageWidth = page.pagerData.pageViewWidth,
+                    pageHeight = page.pagerData.pageViewHeight,
+                    islandExpanded = { page.islandExpanded },
+                    islandMounted = { page.islandMounted },
+                    islandQuote = { page.quoteFor(page.islandSymbol) },
+                    islandGestureMotion = { page.islandGestureMotion },
+                    islandWatchlisted = { page.islandWatchlisted },
+                    islandDropActive = {
+                        page.entityDragActive && page.entityDropTarget == EntityDropTarget.ISLAND
+                    },
+                    islandFirstCompareDrop = {
+                        page.entityDragActive &&
+                            page.entityDropTarget == EntityDropTarget.ISLAND &&
+                            page.isIslandFirstCompareDrop()
+                    },
+                    islandCompareLeftSymbol = { page.islandCompareLeftSymbol },
+                    islandCompareRightSymbol = { page.islandCompareRightSymbol },
+                    islandCompareLeftQuote = { page.quoteFor(page.islandCompareLeftSymbol) },
+                    islandCompareRightQuote = { page.quoteFor(page.islandCompareRightSymbol) },
+                    // 股票对比与术语对比共用同一套 lobby 几何，内容层按会话分流。
+                    islandCompareVisible = {
+                        page.isIslandCompareLobbyVisible() || page.isIslandTermCompareLobbyVisible()
+                    },
+                    islandTermEntry = { Glossary.byKey(page.islandTermKey) },
+                    islandCompareIsTerm = { page.islandTermCompareLeftKey.isNotEmpty() },
+                    islandTermCompareLeft = { Glossary.byKey(page.islandTermCompareLeftKey) },
+                    islandTermCompareRight = { Glossary.byKey(page.islandTermCompareRightKey) },
+                    islandTextOnly = { false },
+                    islandCompareInsightLoading = { page.compareInsightState == CompareInsightState.LOADING },
+                    islandCompareInsightAvailable = { page.compareInsightState == CompareInsightState.READY },
+                    onToggleIsland = { page.toggleIsland() },
+                    onIslandGesture = { state, y -> page.handleIslandGesture(state, y) },
+                    onIslandMotionComplete = { key -> page.completeIslandMotion(key) },
+                    onToggleIslandWatchlist = { symbol -> page.toggleIslandWatchlist(symbol) },
+                    onOpenIslandCompare = { page.openIslandComparePanel() },
+                    onClearIslandCompare = { page.clearIslandCompare() },
+                    onMenu = { page.updateDrawerOpen(!page.drawerOpen) },
+                    onNewChat = { page.startNewChat() },
+                )
+                vif({ page.ambiguousSymbols.isNotEmpty() }) {
+                    View {
+                        attr {
+                            marginLeft(12f)
+                            marginRight(12f)
+                            marginBottom(8f)
+                            padding(10f)
+                            backgroundColor(page.theme.brandSoft)
+                            borderRadius(12f)
+                        }
+                        Text {
+                            attr {
+                                text("“${page.ambiguousEntityText}”可能指以下标的")
+                                fontSize(12f)
+                                fontWeightMedium()
+                                color(page.theme.textPrimary)
+                            }
+                        }
+                        Scroller {
+                            attr { flexDirectionRow(); height(36f); marginTop(7f) }
+                            page.ambiguousSymbols.forEach { symbol ->
+                                val security = Securities.all.firstOrNull { it.symbol == symbol }
+                                View {
+                                    attr {
+                                        height(32f)
+                                        marginRight(7f)
+                                        paddingLeft(10f)
+                                        paddingRight(10f)
+                                        justifyContentCenter()
+                                        borderRadius(9f)
+                                        backgroundColor(page.theme.surface)
+                                    }
+                                    Text { attr { text(security?.name ?: symbol); fontSize(12f); color(page.theme.brand) } }
+                                    event { click { page.chooseAmbiguousSymbol(symbol) } }
                                 }
-                                Text { attr { text(security?.name ?: symbol); fontSize(12f); color(page.theme.brand) } }
-                                event { click { page.chooseAmbiguousSymbol(symbol) } }
                             }
                         }
                     }
                 }
-            }
-            vif({ page.peekSymbol.isNotEmpty() }) {
-                val quote = page.quoteFor(page.peekSymbol)
-                View {
-                    attr {
-                        marginLeft(12f)
-                        marginRight(12f)
-                        marginBottom(8f)
-                        padding(12f)
-                        flexDirectionRow()
-                        alignItemsCenter()
-                        opacity(if (page.peekVisible) 1f else 0f)
-                        transform(Translate(0f, if (page.peekVisible) 0f else 0.16f))
-                        animate(Animation.easeOut(0.24f), page.peekVisible)
-                    }
-                    GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
-                    View {
-                        attr { flex(1f) }
-                        if (quote == null) Text { attr { text("正在获取 ${page.peekSymbol} 的行情…"); fontSize(12f); color(page.theme.textTertiary) } }
-                        else CardShell(
-                            StockQuoteCardModel(quote),
-                            CardContext(page.theme, CardDensity.MINI, { page.openStockDetail(it) }, glass = page.glassRenderer),
-                        )
-                    }
-                    View {
-                        attr { padding(9f); borderRadius(9f); backgroundColor(page.theme.surfaceMuted) }
-                        Text { attr { text("收起"); fontSize(11f); color(page.theme.textSecondary) } }
-                        event { click { page.dismissPeek() } }
-                    }
-                    View {
-                        attr { marginLeft(7f); padding(9f); borderRadius(9f); backgroundColor(page.theme.brand) }
-                        Text { attr { text("看详情"); fontSize(11f); fontWeightMedium(); color(page.theme.onBrand) } }
-                        event { click { page.openStockDetail(page.peekSymbol) } }
-                    }
-                }
-            }
-            // 回到顶部悬浮按钮：会话不在顶部时浮现于输入栏右上方，液态玻璃表皮
-            // + ^ 图标；点击平滑滚回顶部（animated，而非闪现）。
-            vif({
-                page.chatBackToTopMounted &&
-                    page.viewModel.messages.isNotEmpty() &&
-                    page.keyboardHeight == 0f &&
-                    !page.isComposerExpanded()
-            }) {
-                View {
-                    attr {
-                        absolutePosition(
-                            right = 14f,
-                            bottom = 86f + page.pagerData.safeAreaInsets.bottom,
-                        )
-                        size(40f, 40f)
-                        allCenter()
-                        // 玻璃高光描边：GlassBackdrop 不带描边，细 rim 由容器补
-                        // （与 peek 胶囊 resolved.stroke 对齐）。
-                        border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
-                        // 与输入栏胶囊同款悬浮投影，让按钮浮在列表上方。
-                        boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
-                        // 无障碍属性属于 attr 方法，必须写在 attr 块内（写在
-                        // builder 作用域会因解析不到而编译失败）。
-                        accessibility("回到顶部")
-                        accessibilityRole(AccessibilityRole.BUTTON)
-                        accessibilityInfo(clickable = true, longClickable = false)
-                        // R4/R5：mount 周期无条件注册，presented 翻转周期消费。
-                        val presented = page.chatBackToTopPresented
-                        opacity(if (presented) 1f else 0f)
-                        transform(scale = if (presented) Scale(1f, 1f) else Scale(0.5f, 0.5f))
-                        animate(Animation.easeOut(0.22f), page.chatBackToTopPresented)
-                    }
-                    GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
-                    LineIconChevronUp(color = page.theme.textSecondary, size = 18f)
-                    event { click { page.scrollChatToTopAnimated() } }
-                }
-            }
-            // ===== 长按消息操作菜单（复制 / 追问）=====
-            // 全屏透明手势层（点按任意处关闭）+ 长按落点附近的玻璃胶囊菜单。
-            // 入场与回到顶部按钮同款双态机：mount 周期注册动画，presented
-            // 翻转周期消费（R4/R5）。菜单内容（followUp 分支）在挂载帧读取
-            // 一次即可，不参与挂载后的响应式变化。
-            vif({ page.messageActionMounted }) {
-                View {
-                    attr {
-                        absolutePosition(left = 0f, top = 0f)
-                        size(page.pagerData.pageViewWidth, page.pagerData.pageViewHeight)
-                    }
-                    event { click { page.dismissMessageActionMenu() } }
-                }
-                View {
-                    attr {
-                        val menuWidth = if (page.messageActionFollowUp) 174f else 96f
-                        absolutePosition(
-                            left = (page.messageActionX - 20f).coerceIn(
-                                12f,
-                                (page.pagerData.pageViewWidth - menuWidth - 12f).coerceAtLeast(12f),
-                            ),
-                            // 近底部翻到手指上方，避免被输入栏遮住。
-                            top = if (page.messageActionY + 150f > page.pagerData.pageViewHeight - 160f) {
-                                page.messageActionY - 96f
-                            } else {
-                                page.messageActionY + 14f
-                            },
-                        )
-                        height(44f)
-                        borderRadius(14f)
-                        boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
-                        border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
-                        opacity(if (page.messageActionPresented) 1f else 0f)
-                        transform(scale = if (page.messageActionPresented) Scale(1f, 1f) else Scale(0.9f, 0.9f))
-                        animate(Animation.easeOut(0.2f), page.messageActionPresented)
-                    }
-                    GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
+                vif({ page.peekSymbol.isNotEmpty() }) {
+                    val quote = page.quoteFor(page.peekSymbol)
                     View {
                         attr {
+                            marginLeft(12f)
+                            marginRight(12f)
+                            marginBottom(8f)
+                            padding(12f)
                             flexDirectionRow()
                             alignItemsCenter()
-                            height(44f)
-                            paddingLeft(5f)
-                            paddingRight(5f)
+                            opacity(if (page.peekVisible) 1f else 0f)
+                            transform(Translate(0f, if (page.peekVisible) 0f else 0.16f))
+                            animate(Animation.easeOut(0.24f), page.peekVisible)
+                        }
+                        GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
+                        View {
+                            attr { flex(1f) }
+                            if (quote == null) Text { attr { text("正在获取 ${page.peekSymbol} 的行情…"); fontSize(12f); color(page.theme.textTertiary) } }
+                            else CardShell(
+                                StockQuoteCardModel(quote),
+                                CardContext(page.theme, CardDensity.MINI, { page.openStockDetail(it) }, glass = page.glassRenderer),
+                            )
                         }
                         View {
-                            attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
-                            Text { attr { text("复制"); fontSize(13f); color(page.theme.textPrimary) } }
-                            event { click { page.copyMessageToPasteboard() } }
+                            attr { padding(9f); borderRadius(9f); backgroundColor(page.theme.surfaceMuted) }
+                            Text { attr { text("收起"); fontSize(11f); color(page.theme.textSecondary) } }
+                            event { click { page.dismissPeek() } }
                         }
-                        if (page.messageActionFollowUp) {
-                            View {
-                                attr { width(1f); height(18f); backgroundColor(page.theme.textTertiary.opacity(0.25f)) }
-                            }
-                            View {
-                                attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
-                                Text {
-                                    attr { text("追问"); fontSize(13f); fontWeightMedium(); color(page.theme.brand) }
-                                }
-                                event { click { page.quoteMessageIntoComposer() } }
-                            }
+                        View {
+                            attr { marginLeft(7f); padding(9f); borderRadius(9f); backgroundColor(page.theme.brand) }
+                            Text { attr { text("看详情"); fontSize(11f); fontWeightMedium(); color(page.theme.onBrand) } }
+                            event { click { page.openStockDetail(page.peekSymbol) } }
                         }
                     }
                 }
-            }
-            val composerSheetMaterial = page.theme.glass.sheet
-            val composerGlassRenderer = page.glassRenderer
-            val composerDragBackground = page.theme.brandSoft
-            View {
-                attr {
-                    // Floating capsule composer on a solid page-coloured base:
-                    // the blank area around/below the capsule no longer shows
-                    // scrolled content through.  The extra 3dp top padding
-                    // hosts a feather strip that softens the junction,
-                    // mirroring the top chrome.
-                    absolutePosition(bottom = 0f, left = 0f, right = 0f)
-                    paddingTop(if (COMPOSER_ISOLATION_TEST) 0f else 3f)
-                    paddingLeft(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
-                    paddingRight(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
-                    paddingBottom(
-                        if (COMPOSER_ISOLATION_TEST) 0f
-                        else 10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight,
-                    )
-                }
-                if (COMPOSER_ISOLATION_TEST) {
-                    // 使用玻璃的静态表皮（色彩、描边、阴影），不能调用
-                    // GlassBackdrop：其 Blur 原生覆盖层会盖住 EditText 光标。
+                // 回到顶部悬浮按钮：会话不在顶部时浮现于输入栏右上方，液态玻璃表皮
+                // + ^ 图标；点击平滑滚回顶部（animated，而非闪现）。
+                vif({
+                    page.chatBackToTopMounted &&
+                        page.viewModel.messages.isNotEmpty() &&
+                        page.keyboardHeight == 0f &&
+                        !page.isComposerExpanded()
+                }) {
                     View {
                         attr {
-                            height(42f)
-                            paddingLeft(12f)
-                            paddingRight(12f)
-                            applyGlassSurfaceSkin(composerSheetMaterial, composerGlassRenderer)
+                            absolutePosition(
+                                right = 14f,
+                                bottom = 86f + page.pagerData.safeAreaInsets.bottom,
+                            )
+                            size(40f, 40f)
+                            allCenter()
+                            // 玻璃高光描边：GlassBackdrop 不带描边，细 rim 由容器补
+                            // （与 peek 胶囊 resolved.stroke 对齐）。
+                            border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
+                            // 与输入栏胶囊同款悬浮投影，让按钮浮在列表上方。
+                            boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
+                            // 无障碍属性属于 attr 方法，必须写在 attr 块内（写在
+                            // builder 作用域会因解析不到而编译失败）。
+                            accessibility("回到顶部")
+                            accessibilityRole(AccessibilityRole.BUTTON)
+                            accessibilityInfo(clickable = true, longClickable = false)
+                            // R4/R5：mount 周期无条件注册，presented 翻转周期消费。
+                            val presented = page.chatBackToTopPresented
+                            opacity(if (presented) 1f else 0f)
+                            transform(scale = if (presented) Scale(1f, 1f) else Scale(0.5f, 0.5f))
+                            animate(Animation.easeOut(0.22f), page.chatBackToTopPresented)
                         }
-                        page.renderComposerTextArea(this, isolated = true)
-                    }
-                } else {
-                // 吞掉落在输入栏自身范围内的点击（羽毛条/左右留白/底部留白），
-                // 否则它们会穿透到聊天列表，被误判成"点击非输入栏区域"而收起输入栏。
-                event { click { } }
-                // 3dp feather at the top junction: content scrolling in from
-                // above fades out instead of hitting a hard edge.
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f)
-                        height(3f)
-                        touchEnable(false)
-                        backgroundLinearGradient(
-                            Direction.TO_BOTTOM,
-                            ColorStop(page.theme.page.opacity(0f), 0f),
-                            ColorStop(page.theme.page, 1f),
-                        )
-                    }
-                }
-                // Solid base covering only the blank strip below the capsule,
-                // down to the screen bottom. The capsule itself keeps its
-                // glass backdrop.
-                View {
-                    attr {
-                        absolutePosition(bottom = 0f, left = 0f, right = 0f)
-                        height(10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
-                        backgroundColor(page.theme.page)
-                        touchEnable(false)
+                        GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
+                        LineIconChevronUp(color = page.theme.textSecondary, size = 18f)
+                        event { click { page.scrollChatToTopAnimated() } }
                     }
                 }
-                // Two states: a short collapsed bar (＋ / input / 语音 / 拍照, no
-                // send) and the expanded composing bar from the HTML prototype.
-                // The glass remains transparent. Its gradient rim is painted
-                // above it, rather than used as a coloured background beneath it.
-                View {
-                    attr {
-                        borderRadius(26f)
-                        paddingTop(9f)
-                        paddingBottom(9f)
-                        paddingLeft(10f)
-                        paddingRight(10f)
-                        // 悬浮感：与顶部灵动岛胶囊同款阴影（AppChrome 灵动岛
-                        // 0/8/22/0.16），让输入栏像浮在列表上方而不是贴底。
-                        boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
-                        // 对比试验：输入栏使用纯白背景，不叠加玻璃表皮或 Blur。
-                        // entityDragActive 仍是本 attr 的唯一动画驱动。
-                        backgroundColor(
-                            if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) composerDragBackground
-                            else Color(0xFFFFFFFF)
-                        )
-                        transform(
-                            scale = if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) {
-                                Scale(1.015f, 1.015f)
-                            } else {
-                                Scale.DEFAULT
-                            }
-                        )
-                        animate(
-                            Animation.easeOut(0.16f),
-                            page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER,
-                        )
+                // ===== 长按消息操作菜单（复制 / 追问）=====
+                // 全屏透明手势层（点按任意处关闭）+ 长按落点附近的玻璃胶囊菜单。
+                // 入场与回到顶部按钮同款双态机：mount 周期注册动画，presented
+                // 翻转周期消费（R4/R5）。菜单内容（followUp 分支）在挂载帧读取
+                // 一次即可，不参与挂载后的响应式变化。
+                vif({ page.messageActionMounted }) {
+                    View {
+                        attr {
+                            absolutePosition(left = 0f, top = 0f)
+                            size(page.pagerData.pageViewWidth, page.pagerData.pageViewHeight)
+                        }
+                        event { click { page.dismissMessageActionMenu() } }
                     }
-                        // 联想面板打开时收起"最近标的"横条：面板本身已含"最近"数据源候选，
-                        // 两条叠着显示既重复又顶高输入栏。
-                        vif({ page.isComposerVisuallyExpanded() && page.assistantPanel == AssistantPanel.NONE }) {
-                            RecentSymbolRow(page.theme) { text -> page.injectQuestion(text) }
+                    View {
+                        attr {
+                            val menuWidth = if (page.messageActionFollowUp) 174f else 96f
+                            absolutePosition(
+                                left = (page.messageActionX - 20f).coerceIn(
+                                    12f,
+                                    (page.pagerData.pageViewWidth - menuWidth - 12f).coerceAtLeast(12f),
+                                ),
+                                // 近底部翻到手指上方，避免被输入栏遮住。
+                                top = if (page.messageActionY + 150f > page.pagerData.pageViewHeight - 160f) {
+                                    page.messageActionY - 96f
+                                } else {
+                                    page.messageActionY + 14f
+                                },
+                            )
+                            height(44f)
+                            borderRadius(14f)
+                            boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
+                            border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
+                            opacity(if (page.messageActionPresented) 1f else 0f)
+                            transform(scale = if (page.messageActionPresented) Scale(1f, 1f) else Scale(0.9f, 0.9f))
+                            animate(Animation.easeOut(0.2f), page.messageActionPresented)
                         }
-                        vif({ page.isComposerVisuallyExpanded() && page.deepContextVersion >= 0 && page.deepContextNotes.isNotEmpty() }) {
-                            page.renderContextNoteBar(this)
-                        }
-                        vif({ page.isComposerVisuallyExpanded() && page.commandValidationMessage.isNotEmpty() }) {
-                            page.renderCommandValidationBar(this)
-                        }
-                        vif({ page.isComposerVisuallyExpanded() && page.assistantPanel != AssistantPanel.NONE }) {
-                            page.renderAssistantPanel(this)
-                        }
-                        vif({ page.isComposerVisuallyExpanded() && page.inputPanel == InputPanel.MEDIA }) {
-                            MediaInputRow(page.theme) { action -> page.handleMediaAction(action) }
-                        }
-                        // TextArea 必须永远挂在同一个父节点下。折叠/展开只改布局和
-                        // 周边操作区，不再用 vif 替换输入组件，避免聚焦期间原生
-                        // EditText 被移除或在尚未 attach 时调用 autofocus。
+                        GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
                         View {
                             attr {
                                 flexDirectionRow()
                                 alignItemsCenter()
+                                height(44f)
+                                paddingLeft(5f)
+                                paddingRight(5f)
                             }
-                            // 折叠态只保留左侧 + 与右侧语音两个操作位：纯黑线条、
-                            // 透明背景（2026-09-05 设计调整）。2026-09-06 放大 50%：
-                            // 32→48（图标 16→24 / 18→27），与文本区同高垂直居中。
-                            vif({ !page.isComposerVisuallyExpanded() }) {
-                                // 收起回放壳：折叠态图标以 !presented 为入场驱动，
-                                // 收起翻转时由挂载周期注册的 easeOut 消费（R2/R5）。
+                            View {
+                                attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
+                                Text { attr { text("复制"); fontSize(13f); color(page.theme.textPrimary) } }
+                                event { click { page.copyMessageToPasteboard() } }
+                            }
+                            if (page.messageActionFollowUp) {
                                 View {
-                                    attr {
-                                        opacity(if (!page.composerChromePresented) 1f else 0f)
-                                        transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
-                                        animate(Animation.easeOut(0.2f), !page.composerChromePresented)
+                                    attr { width(1f); height(18f); backgroundColor(page.theme.textTertiary.opacity(0.25f)) }
+                                }
+                                View {
+                                    attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
+                                    Text {
+                                        attr { text("追问"); fontSize(13f); fontWeightMedium(); color(page.theme.brand) }
                                     }
+                                    event { click { page.quoteMessageIntoComposer() } }
+                                }
+                            }
+                        }
+                    }
+                }
+                val composerSheetMaterial = page.theme.glass.sheet
+                val composerGlassRenderer = page.glassRenderer
+                val composerDragBackground = page.theme.brandSoft
+                View {
+                    attr {
+                        // Floating capsule composer on a solid page-coloured base:
+                        // the blank area around/below the capsule no longer shows
+                        // scrolled content through.  The extra 3dp top padding
+                        // hosts a feather strip that softens the junction,
+                        // mirroring the top chrome.
+                        absolutePosition(bottom = 0f, left = 0f, right = 0f)
+                        paddingTop(if (COMPOSER_ISOLATION_TEST) 0f else 3f)
+                        paddingLeft(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
+                        paddingRight(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
+                        paddingBottom(
+                            if (COMPOSER_ISOLATION_TEST) 0f
+                            else 10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight,
+                        )
+                    }
+                    if (COMPOSER_ISOLATION_TEST) {
+                        // 使用玻璃的静态表皮（色彩、描边、阴影），不能调用
+                        // GlassBackdrop：其 Blur 原生覆盖层会盖住 EditText 光标。
+                        View {
+                            attr {
+                                height(42f)
+                                paddingLeft(12f)
+                                paddingRight(12f)
+                                applyGlassSurfaceSkin(composerSheetMaterial, composerGlassRenderer)
+                            }
+                            page.renderComposerTextArea(this, isolated = true)
+                        }
+                    } else {
+                    // 吞掉落在输入栏自身范围内的点击（羽毛条/左右留白/底部留白），
+                    // 否则它们会穿透到聊天列表，被误判成"点击非输入栏区域"而收起输入栏。
+                    event { click { } }
+                    // 3dp feather at the top junction: content scrolling in from
+                    // above fades out instead of hitting a hard edge.
+                    View {
+                        attr {
+                            absolutePosition(top = 0f, left = 0f, right = 0f)
+                            height(3f)
+                            touchEnable(false)
+                            backgroundLinearGradient(
+                                Direction.TO_BOTTOM,
+                                ColorStop(page.theme.page.opacity(0f), 0f),
+                                ColorStop(page.theme.page, 1f),
+                            )
+                        }
+                    }
+                    // Solid base covering only the blank strip below the capsule,
+                    // down to the screen bottom. The capsule itself keeps its
+                    // glass backdrop.
+                    View {
+                        attr {
+                            absolutePosition(bottom = 0f, left = 0f, right = 0f)
+                            height(10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
+                            backgroundColor(page.theme.page)
+                            touchEnable(false)
+                        }
+                    }
+                    // Two states: a short collapsed bar (＋ / input / 语音 / 拍照, no
+                    // send) and the expanded composing bar from the HTML prototype.
+                    // The glass remains transparent. Its gradient rim is painted
+                    // above it, rather than used as a coloured background beneath it.
+                    View {
+                        attr {
+                            borderRadius(26f)
+                            paddingTop(9f)
+                            paddingBottom(9f)
+                            paddingLeft(10f)
+                            paddingRight(10f)
+                            // 悬浮感：与顶部灵动岛胶囊同款阴影（AppChrome 灵动岛
+                            // 0/8/22/0.16），让输入栏像浮在列表上方而不是贴底。
+                            boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
+                            // 对比试验：输入栏使用纯白背景，不叠加玻璃表皮或 Blur。
+                            // entityDragActive 仍是本 attr 的唯一动画驱动。
+                            backgroundColor(
+                                if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) composerDragBackground
+                                else Color(0xFFFFFFFF)
+                            )
+                            transform(
+                                scale = if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) {
+                                    Scale(1.015f, 1.015f)
+                                } else {
+                                    Scale.DEFAULT
+                                }
+                            )
+                            animate(
+                                Animation.easeOut(0.16f),
+                                page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER,
+                            )
+                        }
+                            // 联想面板打开时收起"最近标的"横条：面板本身已含"最近"数据源候选，
+                            // 两条叠着显示既重复又顶高输入栏。
+                            vif({ page.isComposerVisuallyExpanded() && page.assistantPanel == AssistantPanel.NONE }) {
+                                RecentSymbolRow(page.theme) { text -> page.injectQuestion(text) }
+                            }
+                            vif({ page.isComposerVisuallyExpanded() && page.deepContextVersion >= 0 && page.deepContextNotes.isNotEmpty() }) {
+                                page.renderContextNoteBar(this)
+                            }
+                            vif({ page.isComposerVisuallyExpanded() && page.commandValidationMessage.isNotEmpty() }) {
+                                page.renderCommandValidationBar(this)
+                            }
+                            vif({ page.isComposerVisuallyExpanded() && page.assistantPanel != AssistantPanel.NONE }) {
+                                page.renderAssistantPanel(this)
+                            }
+                            vif({ page.isComposerVisuallyExpanded() && page.inputPanel == InputPanel.MEDIA }) {
+                                MediaInputRow(page.theme) { action -> page.handleMediaAction(action) }
+                            }
+                            // TextArea 必须永远挂在同一个父节点下。折叠/展开只改布局和
+                            // 周边操作区，不再用 vif 替换输入组件，避免聚焦期间原生
+                            // EditText 被移除或在尚未 attach 时调用 autofocus。
+                            View {
+                                attr {
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                }
+                                // 折叠态只保留左侧 + 与右侧语音两个操作位：纯黑线条、
+                                // 透明背景（2026-09-05 设计调整）。2026-09-06 放大 50%：
+                                // 32→48（图标 16→24 / 18→27），与文本区同高垂直居中。
+                                vif({ !page.isComposerVisuallyExpanded() }) {
+                                    // 收起回放壳（用户反馈 2026-09-08：外表圆圈大小不动）：
+                                    // 48dp 触控区固定不缩放，缩放/淡入只作用在加号本体
+                                    // 内层（驱动仍为 !presented，收起翻转时由挂载周期
+                                    // 注册的 easeOut 消费，R2/R5）。
                                     View {
                                         attr {
                                             size(48f, 48f)
@@ -961,256 +1029,263 @@ internal class ChatPage : BasePager() {
                                             allCenter()
                                             borderRadius(24f)
                                         }
-                                        LineIconPlus(color = Color(0xFF000000), size = 24f)
-                                    }
-                                }
-                            }
-                            View {
-                                attr {
-                                    flex(1f)
-                                    minHeight(if (page.isComposerVisuallyExpanded()) 44f else 48f)
-                                    paddingLeft(12f)
-                                    paddingRight(12f)
-                                    justifyContentCenter()
-                                    borderRadius(16f)
-                                    backgroundColor(Color(0xFFFFFFFF, 0f))
-                                }
-                                // 点击兜底：空文本时原生 TextArea 可能收缩到极小高，
-                                // 点击落不到 EditText 上。整条中段可点，任何测量
-                                // 异常下都能进入输入态；已展开/语音模式下守卫直接跳过
-                                // （语音模式下中段是"按住说话"，触摸由覆盖层处理）。
-                                event {
-                                    click {
-                                        if (!page.voiceInputMode && !page.isComposerExpanded() && page.voiceState == VoiceState.IDLE) {
-                                            KLog.i(COMPOSER_LOG_TAG, "composerMiddleTap expand")
-                                            page.expandComposer(requestFocus = true)
+                                        View {
+                                            attr {
+                                                opacity(if (!page.composerChromePresented) 1f else 0f)
+                                                transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
+                                                animate(Animation.easeOut(0.2f), !page.composerChromePresented)
+                                            }
+                                            LineIconPlus(color = Color(0xFF000000), size = 24f)
                                         }
                                     }
                                 }
-                                page.renderComposerTextArea(this)
-                                // 语音模式（豆包式）："按住说话"是普通 flex 子项，
-                                // 恰好替代文字位置（语音模式下 TextArea 被压到 0 高，
-                                // 见 renderComposerTextArea）。不用 absolutePosition——
-                                // 实测在中段（纵向 column + justifyContentCenter）里
-                                // 定位偏下被遮挡。白底；录音期间保持挂载（vif 卸载
-                                // 会丢 touchUp，录音卡到 60s 超时），"按住说话"文案仅
-                                // 在 IDLE 显示，录音 UI 由其上层的 VoiceBar 呈现。
-                                // 2026-09-06 定稿：不做任何光晕（全屏圆顶与按钮级
-                                // boxShadow 均已移除），视觉反馈只有滚动声波与变红提示。
-                                vif({ page.voiceInputMode }) {
-                                    View {
-                                        attr {
-                                            height(48f)
-                                            allCenter()
-                                            borderRadius(16f)
-                                            backgroundColor(Color(0xFFFFFFFF))
+                                View {
+                                    attr {
+                                        flex(1f)
+                                        minHeight(if (page.isComposerVisuallyExpanded()) 44f else 48f)
+                                        paddingLeft(12f)
+                                        paddingRight(12f)
+                                        justifyContentCenter()
+                                        borderRadius(16f)
+                                        backgroundColor(Color(0xFFFFFFFF, 0f))
+                                    }
+                                    // 点击兜底：空文本时原生 TextArea 可能收缩到极小高，
+                                    // 点击落不到 EditText 上。整条中段可点，任何测量
+                                    // 异常下都能进入输入态；已展开/语音模式下守卫直接跳过
+                                    // （语音模式下中段是"按住说话"，触摸由覆盖层处理）。
+                                    event {
+                                        click {
+                                            if (!page.voiceInputMode && !page.isComposerExpanded() && page.voiceState == VoiceState.IDLE) {
+                                                KLog.i(COMPOSER_LOG_TAG, "composerMiddleTap expand")
+                                                page.expandComposer(requestFocus = true)
+                                            }
                                         }
-                                        vif({ page.voiceState == VoiceState.IDLE }) {
-                                            Text {
-                                                attr {
-                                                    text("按住 说话")
-                                                    fontSize(15f)
-                                                    color(page.theme.textSecondary)
+                                    }
+                                    page.renderComposerTextArea(this)
+                                    // 语音模式（豆包式）："按住说话"是普通 flex 子项，
+                                    // 恰好替代文字位置（语音模式下 TextArea 被压到 0 高，
+                                    // 见 renderComposerTextArea）。不用 absolutePosition——
+                                    // 实测在中段（纵向 column + justifyContentCenter）里
+                                    // 定位偏下被遮挡。白底；录音期间保持挂载（vif 卸载
+                                    // 会丢 touchUp，录音卡到 60s 超时），"按住说话"文案仅
+                                    // 在 IDLE 显示，录音 UI 由其上层的 VoiceBar 呈现。
+                                    // 2026-09-06 定稿：不做任何光晕（全屏圆顶与按钮级
+                                    // boxShadow 均已移除），视觉反馈只有滚动声波与变红提示。
+                                    vif({ page.voiceInputMode }) {
+                                        View {
+                                            attr {
+                                                height(48f)
+                                                allCenter()
+                                                borderRadius(16f)
+                                                backgroundColor(Color(0xFFFFFFFF))
+                                            }
+                                            vif({ page.voiceState == VoiceState.IDLE }) {
+                                                Text {
+                                                    attr {
+                                                        text("按住 说话")
+                                                        fontSize(15f)
+                                                        color(page.theme.textSecondary)
+                                                    }
                                                 }
                                             }
-                                        }
-                                        event {
-                                            touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
-                                            touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
-                                            touchUp { page.handleVoiceTouchUp() }
-                                        }
-                                    }
-                                }
-                                vif({ page.voiceState != VoiceState.IDLE }) {
-                                    VoiceBar(
-                                        theme = page.theme,
-                                        transcribing = { page.voiceState == VoiceState.TRANSCRIBING },
-                                        cancelArmed = { page.voiceCancelArmed },
-                                        amps = { page.voiceAmps },
-                                    )
-                                }
-                            }
-                            vif({ !page.isComposerVisuallyExpanded() }) {
-                                // 外层：收起回放入场（驱动 presented）；
-                                // 内层：录音缩放（驱动 voiceState）。双驱动必须拆
-                                // 父子视图，同 attr 双 animate 违反 R3。
-                                View {
-                                    attr {
-                                        opacity(if (!page.composerChromePresented) 1f else 0f)
-                                        transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
-                                        animate(Animation.easeOut(0.2f), !page.composerChromePresented)
-                                    }
-                                    View {
-                                        attr {
-                                            size(48f, 48f)
-                                            marginLeft(7f)
-                                            allCenter()
-                                            borderRadius(24f)
-                                        }
-                                        // 语音模式开关（豆包式）：文字态显示声波线条
-                                        // （Lucide audio-lines 对齐），语音模式显示键盘
-                                        // （Lucide keyboard 对齐），点击互相切换；按住
-                                        // 说话手势已移至中段覆盖层。
-                                        vif({ !page.voiceInputMode }) {
-                                            LineIconAudioLines(color = Color(0xFF000000), size = 27f)
-                                        }
-                                        vif({ page.voiceInputMode }) {
-                                            LineIconKeyboard(color = Color(0xFF000000), size = 27f)
-                                        }
-                                        event { click { page.toggleVoiceInputMode() } }
-                                    }
-                                }
-                            }
-                        }
-                        vif({ page.isComposerVisuallyExpanded() }) {
-                            View { attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
-                                // 展开态图标入场壳（R4：vif 挂载首帧不播动画，由
-                                // presented 两帧翻转驱动；R2：attr 内读 observable、
-                                // animate 最后注册）。按左→右 30ms 错峰浮入。
-                                View {
-                                    attr {
-                                        opacity(if (page.composerChromePresented) 1f else 0f)
-                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                        animate(Animation.easeOut(0.24f), page.composerChromePresented)
-                                    }
-                                    View {
-                                        attr {
-                                            size(46f, 46f)
-                                            allCenter()
-                                            borderRadius(23f)
-                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                            touchEnable(!page.isVoiceBusy())
-                                        }
-                                        Text {
-                                            attr {
-                                                text("@")
-                                                fontSize(18f)
-                                                fontWeightSemiBold()
-                                                color(page.theme.brand)
+                                            event {
+                                                touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
+                                                touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
+                                                touchUp { page.handleVoiceTouchUp() }
                                             }
                                         }
-                                        event { click { page.onTriggerButtonTapped('@') } }
                                     }
-                                }
-                                View {
-                                    attr {
-                                        opacity(if (page.composerChromePresented) 1f else 0f)
-                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                        animate(Animation.easeOut(0.24f).delay(0.03f), page.composerChromePresented)
-                                    }
-                                    View {
-                                        attr {
-                                            size(46f, 46f)
-                                            marginLeft(8f)
-                                            allCenter()
-                                            borderRadius(23f)
-                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                            touchEnable(!page.isVoiceBusy())
-                                        }
-                                        Text {
-                                            attr {
-                                                text("/")
-                                                fontSize(18f)
-                                                fontWeightSemiBold()
-                                                color(page.theme.brand)
-                                            }
-                                        }
-                                        event { click { page.onTriggerButtonTapped('/') } }
-                                    }
-                                }
-                                View { attr { flex(1f) } }
-                                View {
-                                    attr {
-                                        opacity(if (page.composerChromePresented) 1f else 0f)
-                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                        animate(Animation.easeOut(0.24f).delay(0.06f), page.composerChromePresented)
-                                    }
-                                    View {
-                                        attr {
-                                            size(46f, 46f)
-                                            marginRight(6f)
-                                            allCenter()
-                                            borderRadius(23f)
-                                        }
-                                        // 与折叠态语音开关同款声波图标（Lucide
-                                        // audio-lines），白底输入栏下同折叠态用黑色。
-                                        LineIconAudioLines(color = Color(0xFF000000), size = 26f)
-                                        // 展开态点击语音（豆包式）：直接折叠并进入语音
-                                        // 模式，一步呈现折叠态"按住说话"样式；不再在
-                                        // 展开态按住录音。
-                                        event { click { page.enterVoiceModeFromExpanded() } }
-                                    }
-                                }
-                                // 展开态右侧媒体入口：拍照图标改为 + 号（2026-09-05）。
-                                View {
-                                    attr {
-                                        opacity(if (page.composerChromePresented) 1f else 0f)
-                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                        animate(Animation.easeOut(0.24f).delay(0.09f), page.composerChromePresented)
-                                    }
-                                    View {
-                                        attr {
-                                            size(46f, 46f)
-                                            marginRight(4f)
-                                            allCenter()
-                                            borderRadius(23f)
-                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                            touchEnable(!page.isVoiceBusy())
-                                        }
-                                        LineIconPlus(
-                                            color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
-                                            size = 22f,
+                                    vif({ page.voiceState != VoiceState.IDLE }) {
+                                        VoiceBar(
+                                            theme = page.theme,
+                                            transcribing = { page.voiceState == VoiceState.TRANSCRIBING },
+                                            cancelArmed = { page.voiceCancelArmed },
+                                            amps = { page.voiceAmps },
                                         )
-                                        event { click { page.toggleMediaPanel() } }
                                     }
                                 }
-                                View {
-                                    attr {
-                                        opacity(if (page.composerChromePresented) 1f else 0f)
-                                        transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                        animate(Animation.easeOut(0.24f).delay(0.12f), page.composerChromePresented)
-                                    }
+                                vif({ !page.isComposerVisuallyExpanded() }) {
+                                    // 外层：收起回放入场（驱动 presented）；
+                                    // 内层：录音缩放（驱动 voiceState）。双驱动必须拆
+                                    // 父子视图，同 attr 双 animate 违反 R3。
                                     View {
                                         attr {
-                                            size(44f, 44f)
-                                            allCenter()
-                                            borderRadius(22f)
-                                            backgroundColor(
-                                                when {
-                                                    page.viewModel.streamState == StreamState.STREAMING -> page.theme.divider
-                                                    page.isCommandSendBlocked() -> page.theme.surfaceMuted
-                                                    else -> page.theme.brand
-                                                }
-                                            )
-                                            boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
-                                            opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                            touchEnable(!page.isVoiceBusy())
+                                            opacity(if (!page.composerChromePresented) 1f else 0f)
+                                            transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
+                                            animate(Animation.easeOut(0.2f), !page.composerChromePresented)
                                         }
-                                        vif({ page.viewModel.streamState == StreamState.STREAMING }) {
-                                            LineIconStop(color = page.theme.onBrand, size = 18f)
+                                        View {
+                                            attr {
+                                                size(48f, 48f)
+                                                marginLeft(7f)
+                                                allCenter()
+                                                borderRadius(24f)
+                                            }
+                                            // 语音模式开关（豆包式）：文字态显示声波线条
+                                            // （Lucide audio-lines 对齐），语音模式显示键盘
+                                            // （Lucide keyboard 对齐），点击互相切换；按住
+                                            // 说话手势已移至中段覆盖层。
+                                            vif({ !page.voiceInputMode }) {
+                                                LineIconAudioLines(color = Color(0xFF000000), size = 27f)
+                                            }
+                                            vif({ page.voiceInputMode }) {
+                                                LineIconKeyboard(color = Color(0xFF000000), size = 27f)
+                                            }
+                                            event { click { page.toggleVoiceInputMode() } }
                                         }
-                                        vif({ page.viewModel.streamState != StreamState.STREAMING }) {
+                                    }
+                                }
+                            }
+                            vif({ page.isComposerVisuallyExpanded() }) {
+                                View { attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
+                                    // 展开态图标入场壳（R4：vif 挂载首帧不播动画，由
+                                    // presented 两帧翻转驱动；R2：attr 内读 observable、
+                                    // animate 最后注册）。按左→右 30ms 错峰浮入。
+                                    View {
+                                        attr {
+                                            opacity(if (page.composerChromePresented) 1f else 0f)
+                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                            animate(Animation.easeOut(0.24f), page.composerChromePresented)
+                                        }
+                                        View {
+                                            attr {
+                                                size(46f, 46f)
+                                                allCenter()
+                                                borderRadius(23f)
+                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                                touchEnable(!page.isVoiceBusy())
+                                            }
                                             Text {
                                                 attr {
-                                                    text("↑")
+                                                    text("@")
                                                     fontSize(18f)
                                                     fontWeightSemiBold()
-                                                    color(if (page.isCommandSendBlocked()) page.theme.textTertiary else page.theme.onBrand)
+                                                    color(page.theme.brand)
                                                 }
                                             }
+                                            event { click { page.onTriggerButtonTapped('@') } }
                                         }
-                                        event {
-                                            click {
-                                                if (page.viewModel.streamState == StreamState.STREAMING) page.viewModel.stop()
-                                                else page.submitInput()
+                                    }
+                                    View {
+                                        attr {
+                                            opacity(if (page.composerChromePresented) 1f else 0f)
+                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                            animate(Animation.easeOut(0.24f).delay(0.03f), page.composerChromePresented)
+                                        }
+                                        View {
+                                            attr {
+                                                size(46f, 46f)
+                                                marginLeft(8f)
+                                                allCenter()
+                                                borderRadius(23f)
+                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                                touchEnable(!page.isVoiceBusy())
+                                            }
+                                            Text {
+                                                attr {
+                                                    text("/")
+                                                    fontSize(18f)
+                                                    fontWeightSemiBold()
+                                                    color(page.theme.brand)
+                                                }
+                                            }
+                                            event { click { page.onTriggerButtonTapped('/') } }
+                                        }
+                                    }
+                                    View { attr { flex(1f) } }
+                                    View {
+                                        attr {
+                                            opacity(if (page.composerChromePresented) 1f else 0f)
+                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                            animate(Animation.easeOut(0.24f).delay(0.06f), page.composerChromePresented)
+                                        }
+                                        View {
+                                            attr {
+                                                size(46f, 46f)
+                                                marginRight(6f)
+                                                allCenter()
+                                                borderRadius(23f)
+                                            }
+                                            // 与折叠态语音开关同款声波图标（Lucide
+                                            // audio-lines），白底输入栏下同折叠态用黑色。
+                                            LineIconAudioLines(color = Color(0xFF000000), size = 26f)
+                                            // 展开态点击语音（豆包式）：直接折叠并进入语音
+                                            // 模式，一步呈现折叠态"按住说话"样式；不再在
+                                            // 展开态按住录音。
+                                            event { click { page.enterVoiceModeFromExpanded() } }
+                                        }
+                                    }
+                                    // 展开态右侧媒体入口：拍照图标改为 + 号（2026-09-05）。
+                                    View {
+                                        attr {
+                                            opacity(if (page.composerChromePresented) 1f else 0f)
+                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                            animate(Animation.easeOut(0.24f).delay(0.09f), page.composerChromePresented)
+                                        }
+                                        View {
+                                            attr {
+                                                size(46f, 46f)
+                                                marginRight(4f)
+                                                allCenter()
+                                                borderRadius(23f)
+                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                                touchEnable(!page.isVoiceBusy())
+                                            }
+                                            LineIconPlus(
+                                                color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
+                                                size = 22f,
+                                            )
+                                            event { click { page.toggleMediaPanel() } }
+                                        }
+                                    }
+                                    View {
+                                        attr {
+                                            opacity(if (page.composerChromePresented) 1f else 0f)
+                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
+                                            animate(Animation.easeOut(0.24f).delay(0.12f), page.composerChromePresented)
+                                        }
+                                        View {
+                                            attr {
+                                                size(44f, 44f)
+                                                allCenter()
+                                                borderRadius(22f)
+                                                backgroundColor(
+                                                    when {
+                                                        page.viewModel.streamState == StreamState.STREAMING -> page.theme.divider
+                                                        page.isCommandSendBlocked() -> page.theme.surfaceMuted
+                                                        else -> page.theme.brand
+                                                    }
+                                                )
+                                                boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
+                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
+                                                touchEnable(!page.isVoiceBusy())
+                                            }
+                                            vif({ page.viewModel.streamState == StreamState.STREAMING }) {
+                                                LineIconStop(color = page.theme.onBrand, size = 18f)
+                                            }
+                                            vif({ page.viewModel.streamState != StreamState.STREAMING }) {
+                                                Text {
+                                                    attr {
+                                                        text("↑")
+                                                        fontSize(18f)
+                                                        fontWeightSemiBold()
+                                                        color(if (page.isCommandSendBlocked()) page.theme.textTertiary else page.theme.onBrand)
+                                                    }
+                                                }
+                                            }
+                                            event {
+                                                click {
+                                                    if (page.viewModel.streamState == StreamState.STREAMING) page.viewModel.stop()
+                                                    else page.submitInput()
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
-                        }
-                    page.renderComposerGradientRim(this)
-                }
+                        page.renderComposerGradientRim(this)
+                    }
+                    }
                 }
             }
             vif({ page.compareCard != null }) {
@@ -1325,17 +1400,16 @@ internal class ChatPage : BasePager() {
                     statusBarHeight = page.pagerData.statusBarHeight,
                     bottomInset = page.pagerData.safeAreaInsets.bottom,
                     theme = page.theme,
-                    liveData = page.liveDataMode,
                     renderer = page.glassRenderer,
                     visualLabel = page.glassRenderer.statusLabel(),
                     sessions = page.viewModel.sessionSummaries.toList(),
-                    activeSessionId = page.viewModel.activeSessionId,
+                    historyQuery = { page.historySearchQuery },
+                    onHistoryQuery = { page.historySearchQuery = it },
                     presented = { page.drawerPresented },
                     interactive = { page.drawerOpen },
                     gestureMotion = { page.drawerGesture },
                     onPan = { state, x -> page.handleDrawerPan(state, x) },
                     onClose = { page.updateDrawerOpen(false) },
-                    onToggleDataMode = { page.toggleDataMode() },
                     onCycleVisualMode = { page.cycleGlassMode() },
                     onNewChat = { page.startNewChat() },
                     onOpenSession = { page.openHistorySession(it) },
@@ -1360,6 +1434,10 @@ internal class ChatPage : BasePager() {
      * a version counter so rapid toggles never leave a stale timer behind.
      */
     private fun updateDrawerOpen(open: Boolean) {
+        // 展开抽屉前必须先 blur 收键盘：原生键盘 z 序压过所有 Kuikly 视图，
+        // 不收会浮在抽屉面板之上。blurComposer 解除焦点锁，避免意外 blur
+        // 自动恢复把键盘又抢回来。
+        if (open) blurComposer()
         // 程序化开合终结任何进行中的手势态，避免 SETTLING 分支抢走 transform 控制权
         // （已是 IDLE 缺省值时等值写入不触发通知，无副作用）。
         drawerGesture = DrawerGestureMotion()
@@ -1369,6 +1447,8 @@ internal class ChatPage : BasePager() {
         if (open) {
             drawerMounted = true
             drawerPresented = false
+            // 重置历史会话搜索词（抽屉 Input 不受控，词存这里）。
+            historySearchQuery = ""
             setTimeout(0) {
                 if (drawerPresentationVersion == version) drawerPresented = true
             }
@@ -1412,7 +1492,12 @@ internal class ChatPage : BasePager() {
                 drawerGestureStartX = x
                 drawerGestureLastDX = 0f
                 val base = if (drawerOpen) 0f else -292f
-                if (!drawerOpen) drawerMounted = true // 关→开：先挂载，让面板从指下跟手滑出
+                if (!drawerOpen) {
+                    // 关→开：先挂载，让面板从指下跟手滑出；同时收键盘
+                    //（原生键盘 z 序压过抽屉，手势展开同样要 blur）。
+                    blurComposer()
+                    drawerMounted = true
+                }
                 drawerGesture = DrawerGestureMotion(DrawerGesturePhase.DRAGGING, base)
             }
             "move" -> {
@@ -1421,7 +1506,7 @@ internal class ChatPage : BasePager() {
                     if (drawerOpen) x - drawerGestureStartX else -292f + (x - drawerGestureStartX)
                 val next = raw.coerceIn(-292f, 0f)
                 // 单步位移作速度代理：pan 不带 velocity，move 事件帧间隔近似恒定，
-                // 最后一步位移量大 = 手指正在快速滑动（SwipeActionRow 同款约束下的替代方案）。
+                // 最后一步位移量大 = 手指正在快速滑动（RowGestureLayer 同款约束下的替代方案）。
                 drawerGestureLastDX = next - drawerGesture.offsetX
                 drawerGesture = DrawerGestureMotion(DrawerGesturePhase.DRAGGING, next)
             }
@@ -1429,14 +1514,18 @@ internal class ChatPage : BasePager() {
                 if (drawerGesture.phase != DrawerGesturePhase.DRAGGING) return
                 val base = if (drawerOpen) 0f else -292f
                 val travel = drawerGesture.offsetX - base
-                // 快速短划判定：朝收起（左）/展开（右）方向猛一划，单步 ≥9dp
-                // 即翻越，不必拖过半程——松手判定要敏捷，轻扫就能收起。
-                val flickTowardClose = drawerOpen && drawerGestureLastDX <= -9f
+                // 快速短划判定（展开方向保留 9dp 速度代理）。收起方向（用户
+                // 决策 2026-09-08）：不再要求速度/半程阈值——只要检测到向左的
+                // 趋势（最后一步向左，或整体位置越过起点向左）松手即直接收回，
+                // 不再出现"没到阈值回弹"的情况。
+                val flickTowardClose = drawerOpen &&
+                    (drawerGestureLastDX < 0f || drawerGesture.offsetX < 0f)
                 val flickTowardOpen = !drawerOpen && drawerGestureLastDX >= 9f
                 when {
                     // 手势被打断：回原位也要归位（有动画 + 震感）。
                     state == "cancel" -> settleDrawerGesture(open = drawerOpen)
-                    // 死区内（≤8dp）且非快速划的误触：静默还原，不播动画不震动。
+                    // 纯误触（完全没往任何方向位移）静默还原，不播动画不震动；
+                    // 收起方向因 flickTowardClose 放宽，任何向左趋势都到不了这里。
                     kotlin.math.abs(travel) < 8f && !flickTowardClose && !flickTowardOpen ->
                         cancelDrawerGesture()
                     else -> {
@@ -1492,6 +1581,30 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    /**
+     * 注册原生「大且快右向横滑」侦察回调（Android 宿主专有通道，见
+     * DrawerFlingDetector）：created 里注册一次（keepCallback 多次触发），
+     * 页面不可见时靠 pageVisible 守卫静默忽略。
+     */
+    private fun registerDrawerFlingHostIfNeeded() {
+        if (drawerFlingHostRegistered) return
+        drawerFlingHostRegistered = true
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
+            .registerDrawerFlingHost { _ -> handleNativeDrawerFling() }
+    }
+
+    /**
+     * 原生 fling 侦察命中：整页任意位置的「大且快」右向横滑。原生层只观测
+     * 不消费事件，做不了跟手预览，因此直接程序化展开（走 updateDrawerOpen
+     * 的双态入场 + blur 收键盘）。抽屉/卡片弹层/实体拖拽/灵动岛展开任一
+     * 活跃时忽略，避免手势叠加。
+     */
+    private fun handleNativeDrawerFling() {
+        if (!pageVisible) return
+        if (drawerOpen || drawerMounted || sheetMounted || entityDragActive || islandExpanded) return
+        updateDrawerOpen(true)
+    }
+
     private fun startNewChat() {
         updateDrawerOpen(false)
         stopWelcomeKeywordLoop(lock = false)
@@ -1501,10 +1614,13 @@ internal class ChatPage : BasePager() {
         chatStreamFlushed = false
         chatFollowLoop?.cancel()
         chatFollowLoop = null
-        viewModel.startNewChat()
         resetSessionUiState()
         setComposerText("")
+        // 先把欢迎页置为可见终态，再清空消息触发 vif 挂载。这样即使 ref、动画帧或
+        // 抽屉收起的回调丢失，新会话首帧也不会是空白。
         resetWelcomeForEmptySession()
+        viewModel.startNewChat()
+        startWelcomeKeywordLoopIfNeeded()
         resetChatScrollToTop()
     }
 
@@ -1676,27 +1792,20 @@ internal class ChatPage : BasePager() {
 
     private fun resetWelcomeForEmptySession() {
         welcomeKeywordStopped = false
-        welcomeEntranceArmed = false
-        val version = ++welcomeEntranceVersion
+        // 新建会话优先保证内容可见，欢迎卡片不必为了入场动画经历一帧 opacity 0。
+        // armed 同时阻止新挂载的 ref 把已经可见的内容又重置为隐藏态。
+        welcomeEntranceArmed = true
+        ++welcomeEntranceVersion
         welcomeEntranceTimer?.cancel()
         welcomeEntranceTimer = null
-        welcomeEntranceMounted = false
-        welcomeEntranceVisible = false
-        startWelcomeKeywordLoopIfNeeded()
+        welcomeEntranceVisible = true
         scheduleWelcomeEntranceSafety()
-        // 先让旧欢迎区卸载；Timer 的下一次调度只负责挂载。
-        // presented 必须由新实例的 ref 回调启动，不能在挂载前抢跑。
-        scheduleWelcomeEntranceStep(version, 16) {
-            welcomeEntranceMounted = true
-        }
     }
 
     /**
      * 入场兜底：600ms 后欢迎区仍未呈现则直接落终态。
      * 覆盖冷启动与新会话两条路径下断链的任意一环：
-     * - 16ms 挂载 Timer 丢失 → mounted 仍为 false，这里补挂载（旧实现要求
-     *   mounted == true 才动作，断在这一环时兜底会静默退出，欢迎区永远不出现）；
-     * - ref 未回调 / 32ms 呈现 Timer 丢失 → 已挂载但 visible 停在 false，这里翻转
+     * - ref 未回调 / 32ms 呈现 Timer 丢失 → visible 停在 false，这里翻转
      *   呈现；此时卡片 attr 已注册 easeOut，翻转仍走正常入场动画。
      * 正常链路（ref → 32ms 呈现）先完成时，版本号已前移，本回调静默退出。
      */
@@ -1711,11 +1820,9 @@ internal class ChatPage : BasePager() {
             if (version == welcomeEntranceVersion && !isWillDestroy() &&
                 viewModel.messages.isEmpty() && !welcomeEntranceVisible
             ) {
-                // 终态三件套一起落：armed 防 ref 迟到后把 visible 打回 false；
-                // mounted 补挂载；visible 呈现。若未挂载则卡片直接以终态出现
-                // （无入场动画），内容可见优先于动效。
+                // armed 防 ref 迟到后把 visible 打回 false；欢迎区的挂载只由
+                // messages.isEmpty() 管理，visible 仅负责卡片终态。
                 welcomeEntranceArmed = true
-                welcomeEntranceMounted = true
                 welcomeEntranceVisible = true
             }
         }
@@ -1802,6 +1909,7 @@ internal class ChatPage : BasePager() {
                     "clear" -> {
                         viewModel.clear()
                         resetWelcomeForEmptySession()
+                        startWelcomeKeywordLoopIfNeeded()
                         val rest = CommandInvocationParser.remainder(payload.text, command.name)
                         finishCommandSideEffect(rest)
                         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已清屏")
@@ -2416,11 +2524,14 @@ internal class ChatPage : BasePager() {
         if (isolated) {
             // 与 GlobalSearchPage 保持同一类原生 TextArea 配置：不持有 ref、
             // 不命令式回写编辑态、不监听焦点/选区/键盘高度，也不修改父级布局。
+            // 垂直居中同 GlobalSearchPage：盒子收缩到单行内容高度，minHeight 兜空态。
             container.TextArea {
                 attr {
                     flex(1f)
-                    height(40f)
                     fontSize(14f)
+                    lineHeight(21f)
+                    minHeight(21f)
+                    maxHeight(40f)
                     color(this@ChatPage.theme.textPrimary)
                     backgroundColor(Color(0xFFFFFFFF, 0f))
                     placeholder("问一只股票或一个术语")
@@ -2637,12 +2748,91 @@ internal class ChatPage : BasePager() {
     private fun handleChatContentSizeGrew() {
         if (viewModel.streamState == StreamState.STREAMING) {
             chatStreamFlushed = true
+            resetFollowUps()
         } else if (chatStreamFlushed) {
             chatStreamFlushed = false
             // 用户流式中已上滑离开（chatFollowStream=false）则不打扰。
             if (chatFollowStream) keepChatAtBottomAfterStreamEnd()
+            // 流刚结束的第一拍：延迟弹出引导语 chips，避免与贴底滚动/卡片挂载抢帧。
+            scheduleFollowUpsPresentation()
         }
         if (shouldKeepChatAtBottom()) scheduleScrollChatToBottom(animated = false)
+    }
+
+    /** 引导语双态机：立即重置（新一轮流式/清屏时调用）。 */
+    private fun resetFollowUps() {
+        followUpsVersion++
+        followUpsPresented = false
+        followUpsMounted = false
+    }
+
+    /**
+     * 引导语入场（R4）：回答收尾一拍后先挂载（opacity 0），再翻 presented 播
+     * 淡入+上移。version 使重置/重复触发时过期回调失效。
+     */
+    private fun scheduleFollowUpsPresentation() {
+        val version = ++followUpsVersion
+        followUpsPresented = false
+        followUpsMounted = false
+        setTimeout(320) {
+            if (version != followUpsVersion || isWillDestroy()) return@setTimeout
+            followUpsMounted = true
+            setTimeout(16) {
+                if (version != followUpsVersion || isWillDestroy()) return@setTimeout
+                followUpsPresented = true
+            }
+        }
+    }
+
+    /**
+     * 引导语可见性：仅最新一条正常完成的 AI 回复，且模型协议未自带 suggestions
+     * 卡片（自带时由消息内 SuggestionRow 渲染，不重复弹）。在组件 vif 闭包内
+     * 调用：messages 列表与 message.streaming 的 observable 读在此建立依赖。
+     */
+    private fun isFollowUpsVisible(message: ChatMessage): Boolean {
+        val latest = viewModel.messages.lastOrNull { it.role == MessageRole.ASSISTANT }
+        if (latest?.id != message.id) return false
+        if (message.streaming || message.failed || message.cancelled) return false
+        return runCatching {
+            AiResponseLexer.lex(message.content, finished = true)
+                .none { it is CardBlock && it.type == "suggestions" }
+        }.getOrDefault(true)
+    }
+
+    /** 引导语 chips：正文提到股票则围绕该标的追问，否则通用追问。 */
+    private fun followUpChipsFor(message: ChatMessage): List<SuggestionIntent> {
+        val stockName = runCatching {
+            EntityRecognizer.recognize(message.content)
+                .firstOrNull { it.type == EntityType.STOCK }?.target
+        }.getOrNull()?.let { symbol ->
+            Securities.all.firstOrNull { it.symbol == symbol }?.name ?: symbol
+        }
+        return if (stockName != null) {
+            listOf(
+                SuggestionIntent("${stockName}后市怎么看"),
+                SuggestionIntent("${stockName}现在估值高吗"),
+                SuggestionIntent("对比同行业其他股票"),
+            )
+        } else {
+            listOf(
+                SuggestionIntent("能再详细讲讲吗"),
+                SuggestionIntent("结合最新行情再分析一下"),
+                SuggestionIntent("总结一下要点"),
+            )
+        }
+    }
+
+    /** 操作栏「复制」：抽取正文纯文本入剪贴板（卡片协议块剔除）。 */
+    private fun copyMessageContent(messageId: String) {
+        val message = viewModel.messages.firstOrNull { it.id == messageId } ?: return
+        val bridge = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
+        bridge.copyToPasteboard(messagePlainText(message))
+        bridge.toast("已复制")
+    }
+
+    /** 操作栏「重试」：从该条 AI 回复起截断，用上一条用户提问重新生成。 */
+    private fun regenerateMessage(messageId: String) {
+        if (viewModel.regenerateAt(messageId)) keepChatAtBottomTemporarily()
     }
 
     /** 流结束宽限贴底：只延长 keepChatAtBottomVersion 窗口，不改 chatFollowStream。 */
@@ -3600,7 +3790,8 @@ internal class ChatPage : BasePager() {
     private fun requestQuote(symbol: String) {
         val firstRequest = requestedSymbols.add(symbol)
         if (!firstRequest) return
-        if (!liveDataMode) {
+        if (!DataSourceConfig.USE_REAL_MARKET_DATA) {
+            // 模拟模式（原状态）：行情回落 MockDataBank，行为与数据源真实化之前一致。
             mockQuoteProvider.snapshot(symbol) { quote ->
                 val updated = ChatQuoteState(symbol, quote, DataMode.OFFLINE)
                 val index = quoteStates.indexOfFirst { it.symbol == symbol }
@@ -3609,6 +3800,7 @@ internal class ChatPage : BasePager() {
             }
             return
         }
+        // 真实模式：腾讯行情 → 缓存 → 空态，不再有任何模拟数值。
         quoteRepository.load(symbol) { result ->
             val updated = ChatQuoteState(symbol, result.quote, result.mode)
             val index = quoteStates.indexOfFirst { it.symbol == symbol }
@@ -3838,19 +4030,8 @@ internal class ChatPage : BasePager() {
     }
 
     private fun toggleDataMode() {
-        liveDataMode = !liveDataMode
-        requestedSymbols.clear()
-        quoteStates.clear()
-        (viewModel.messages.flatMap { EntityRecognizer.recognize(it.content) }
-            .filter { it.type == EntityType.STOCK }
-            .map { it.target } + listOfNotNull(
-                peekSymbol.takeIf { it.isNotEmpty() },
-                islandSymbol.takeIf { it.isNotEmpty() },
-                islandCompareLeftSymbol.takeIf { it.isNotEmpty() },
-                islandCompareRightSymbol.takeIf { it.isNotEmpty() },
-            ))
-            .distinct()
-            .forEach(::requestQuote)
+        // 2026-09-08：数据模式只剩"实时"一档（模拟分支已摘除），此开关保留为空操作
+        // 以兼容历史调用点。
     }
 
     /**
@@ -4912,21 +5093,34 @@ internal class ChatPage : BasePager() {
         compareInsightText = ""
         compareInsightError = ""
         val requestVersion = ++compareInsightVersion
-        var response = ""
+        // 流式打字机（与主聊天流同款，见 TypewriterSmoother）：delta 全量进缓冲、
+        // 按节拍逐字释放到面板。面板高度因此随文本连续小步生长，而不是 onDone
+        // 时整段顶上来把卡片"弹"一下。
+        val typewriter = TypewriterSmoother(pagerId) { revealed ->
+            if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@TypewriterSmoother
+            compareInsightText = revealed
+        }
         viewModel.askSubThread(
             prompt = "用不超过 120 字向 A 股新手解释金融术语「${left.term}」和「${right.term}」的区别与联系，" +
                 "各举一个它们分别适用的小场景。只做事实性解释，不要给任何买卖建议或倾向性结论。",
             onDelta = { delta ->
                 if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                response += delta
-                compareInsightText = response
+                typewriter.append(delta)
             },
             onDone = {
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                compareInsightText = response.ifBlank { "暂未生成对比解读" }
-                compareInsightState = CompareInsightState.READY
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) {
+                    typewriter.cancel()
+                    return@askSubThread
+                }
+                // 收尾等显示端把缓冲打完再落 READY，避免最后一截整段蹦出。
+                typewriter.complete {
+                    if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@complete
+                    compareInsightText = compareInsightText.ifBlank { "暂未生成对比解读" }
+                    compareInsightState = CompareInsightState.READY
+                }
             },
             onError = { error ->
+                typewriter.cancel()
                 if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
                 compareInsightError = error
                 compareInsightState = CompareInsightState.ERROR
@@ -4942,20 +5136,32 @@ internal class ChatPage : BasePager() {
         compareInsightText = ""
         compareInsightError = ""
         val requestVersion = ++compareInsightVersion
-        var response = ""
+        // 流式打字机（同 requestTermCompareInsightIfNeeded）：逐字释放，
+        // 面板高度连续生长，onDone 不再整段顶高卡片。
+        val typewriter = TypewriterSmoother(pagerId) { revealed ->
+            if (requestVersion == compareInsightVersion && compareInsightPairKey == pairKey) {
+                compareInsightText = revealed
+            }
+        }
         viewModel.askSubThread(
             prompt = buildCompareInsightPrompt(left, right),
             onDelta = { delta ->
                 if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                response += delta
-                compareInsightText = response
+                typewriter.append(delta)
             },
             onDone = {
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                compareInsightText = response.ifBlank { "暂未生成对比解读" }
-                compareInsightState = CompareInsightState.READY
+                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) {
+                    typewriter.cancel()
+                    return@askSubThread
+                }
+                typewriter.complete {
+                    if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@complete
+                    compareInsightText = compareInsightText.ifBlank { "暂未生成对比解读" }
+                    compareInsightState = CompareInsightState.READY
+                }
             },
             onError = { error ->
+                typewriter.cancel()
                 if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
                 compareInsightError = error
                 compareInsightState = CompareInsightState.ERROR
