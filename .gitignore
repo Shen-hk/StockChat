@@ -31,9 +31,18 @@ Kotlin-js-store
 /ui-now.xml
 /v-step*.png
 /v-swipe.png
+/rm-*.png
+/rm-*.xml
+/doc34-*.png
+/walk-*.png
+/.playwright-cli/
 /preview/
 *.bak.*
 /build_log.txt
+/build_install_log*.txt
+/build_*.log
+/docs/_*.js
+/docs/*.tmp.cjs
 
 ## Various settings
 *.pbxuser
