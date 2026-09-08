@@ -19,13 +19,22 @@ import com.kuikly.stockchat.data.provider.MarketCalendarEvent
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.platformCurrentDate
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
+import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
+import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.RiskSkyChart
+import com.kuikly.stockchat.page.components.RiskSkyTimeBrush
+import com.kuikly.stockchat.page.risk.SkyLayer
+import com.kuikly.stockchat.page.risk.StarMemberIn
+import com.kuikly.stockchat.page.risk.StarLayout
+import com.kuikly.stockchat.page.risk.TimeBrushLayout
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
@@ -90,6 +99,45 @@ internal class RiskMapPage : BasePager() {
     private var limitUps: List<Pair<LimitUpStock, RiskRow>> by observable(emptyList())
     private var dataModeLabel: String by observable("")
 
+    // ── 星图模式（doc 32 §6.1）状态：图层/选中/时间刷/引路星脉冲 ──
+
+    /**
+     * 当前投影图层。持久化 key [SKY_LAYER_KEY]（返回态保持）。
+     * 改名只能走 [applySkyLayer]——不能定义 setSkyLayer 函数（与属性委托生成的
+     * JVM setter 签名冲突，Platform declaration clash，doc 32 §6.1 实测坑）。
+     */
+    private var skyLayer: SkyLayer by observable(SkyLayer.CLUSTER)
+
+    /** 选中星（symbol）；空 = 未选中。点同星 = 取消。 */
+    private var skySelectedSymbol: String by observable("")
+
+    /** 选中团域（行业名）；空 = 未选中。 */
+    private var skySelectedCluster: String by observable("")
+
+    /** 引路星解读抽屉展开态。 */
+    private var skyBeaconDrawer: Boolean by observable(false)
+
+    /** 时间刷 knob 连续位置 0..1（日程层）。 */
+    private var skyKnobFrac: Float by observable(0f)
+
+    /** 时间刷命中的事件日下标（-1 = 未命中；日程层命中圈跟着亮）。 */
+    private var skyCalDay: Int by observable(-1)
+
+    /** 两两相关系数（key "A|B"，A 在列表序在前）；星图连线数据源。 */
+    private var correlations: Map<String, Double> by observable(emptyMap())
+
+    /** 个股日波动 ÷ 沪深300 日波动（等权口径）；颠簸层光晕数据源。 */
+    private var volRatios: Map<String, Double> by observable(emptyMap())
+
+    /** 引路星/颠簸光晕脉冲相位 0..1（12 步 × 55ms 步进，reduceMotion 恒 0）。 */
+    private var beaconPhase: Float by observable(0f)
+
+    /** 脉冲步进器运行标记（图层离开脉冲层自动停摆，切回由 applySkyLayer 重启）。 */
+    private var pulseRunning = false
+
+    private val skyStorage by lazy { PagerKeyValueStorage(pagerId) }
+    private val reduceMotion by lazy { platformPrefersReducedMotion() }
+
     /** 相关性矩阵选中的配对 "symA|symB"；空 = 未选中。 */
     private var selectedPair: String by observable("")
 
@@ -114,7 +162,12 @@ internal class RiskMapPage : BasePager() {
 
     override fun created() {
         super.created()
+        // 返回态保持：恢复上次图层（doc 32 §3.1 P0 增强）。
+        SkyLayer.fromName(skyStorage.getString(SKY_LAYER_KEY))?.let { skyLayer = it }
         reload()
+        // 离线/缓存行情先行可算一次（在线加载回调里会再刷）。
+        refreshSkyData()
+        ensureBeaconPulse()
     }
 
     override fun body(): ViewBuilder {
@@ -198,93 +251,22 @@ internal class RiskMapPage : BasePager() {
 
     private fun renderRiskMap(container: ViewContainer<*, *>) {
         val page = this
-        val total = page.rows.size
         val industry = page.industryStats()
         val chain = page.chainConcentration(industry)
         container.View {
             attr { marginTop(6f) }
 
-            // ── z0 氛围底：中性色 + L1 结论 + 常驻口径角标 ──
-            View {
-                attr {
-                    paddingTop(18f)
-                    paddingBottom(24f)
-                    paddingLeft(12f)
-                    paddingRight(12f)
-                    borderRadius(20f)
-                    backgroundColor(page.theme.surfaceMuted)
-                }
-                Text {
-                    attr {
-                        text(page.headline(industry, chain))
-                        fontSize(18f)
-                        fontWeightSemiBold()
-                        lineHeight(26f)
-                        color(page.theme.textPrimary)
-                    }
-                }
-                Text {
-                    attr {
-                        text("等权估算 · 非真实仓位 · 共 ${total} 只自选")
-                        marginTop(8f)
-                        fontSize(10f)
-                        color(page.theme.textTertiary)
-                    }
-                }
-                vif({ page.dataModeLabel.isNotEmpty() }) {
-                    Text {
-                        attr {
-                            text(page.dataModeLabel)
-                            marginTop(3f)
-                            fontSize(10f)
-                            color(page.theme.textTertiary)
-                        }
-                    }
-                }
-
-                // ── z3 主卡玻璃（唯一，条件出现）：行业重叠在单链集中时上浮 ──
-                vif({ chain.triggered }) {
-                    View {
-                        attr {
-                            marginTop(16f)
-                            padding(16f)
-                            borderRadius(16f)
-                            backgroundColor(page.theme.marketGlass)
-                            boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.10f)))
-                        }
-                        page.renderIndustryContent(this, industry, chain, elevated = true)
-                    }
-                }
+            // doc 32 §5 降级分档：≥3 只自选走星图主卡（档 1）；
+            // 1–2 只回落六面板列表投影（档 3，v1 全保留）。rows 在 created() 内同步
+            // 装满、行情加载只替换元素不改 size，构建期判定稳定。
+            if (page.rows.size >= 3) {
+                page.renderSkyMode(this, industry, chain)
+            } else {
+                page.renderHeadline(this, industry, chain, withIndustryCard = true)
+                page.renderPanels(this)
             }
 
-            // 行业未触发单链判定 → 常规面板（z1）。termKey = FR-R6 术语出口。
-            vif({ !chain.triggered }) {
-                page.renderDimensionPanel(this, "行业重叠", termKey = "SECTOR") { body ->
-                    page.renderIndustryContent(body, industry, chain, elevated = false)
-                }
-            }
-
-            page.renderDimensionPanel(this, "集中度", termKey = "HHI") { body ->
-                page.renderConcentration(body)
-            }
-
-            page.renderDimensionPanel(this, "相关性", termKey = "CORRELATION") { body ->
-                page.renderCorrelation(body)
-            }
-
-            page.renderDimensionPanel(this, "波动暴露", termKey = "VOLATILITY") { body ->
-                page.renderVolatility(body)
-            }
-
-            page.renderDimensionPanel(this, "事件时间轴", termKey = "UNLOCK") { body ->
-                page.renderEventTimeline(body)
-            }
-
-            page.renderDimensionPanel(this, "情绪暴露", termKey = "SENTIMENT") { body ->
-                page.renderSentiment(body)
-            }
-
-            // FR-R10 暴露快照：≥2 条才有「变化」可看，单点不渲染。
+            // FR-R10 暴露快照：≥2 条才有「变化」可看，单点不渲染（两种模式共用）。
             page.renderSnapshotHistory(this)
 
             // FR-R9 跑输大盘归因通路（条件出现）：本页只给事实差值 + 提问出口，
@@ -300,6 +282,462 @@ internal class RiskMapPage : BasePager() {
                     fontSize(11f)
                     lineHeight(17f)
                     color(page.theme.textTertiary)
+                }
+            }
+        }
+    }
+
+    /** v1 六面板列表投影（降级档 3）：行业/集中度/相关性/波动/事件/情绪。 */
+    private fun renderPanels(container: ViewContainer<*, *>) {
+        val page = this
+        val industry = page.industryStats()
+        val chain = page.chainConcentration(industry)
+
+        // 行业未触发单链判定 → 常规面板（z1）。termKey = FR-R6 术语出口。
+        vif({ !chain.triggered }) {
+            page.renderDimensionPanel(this, "行业重叠", termKey = "SECTOR") { body ->
+                page.renderIndustryContent(body, industry, chain, elevated = false)
+            }
+        }
+
+        page.renderDimensionPanel(container, "集中度", termKey = "HHI") { body ->
+            page.renderConcentration(body)
+        }
+
+        page.renderDimensionPanel(container, "相关性", termKey = "CORRELATION") { body ->
+            page.renderCorrelation(body)
+        }
+
+        page.renderDimensionPanel(container, "波动暴露", termKey = "VOLATILITY") { body ->
+            page.renderVolatility(body)
+        }
+
+        page.renderDimensionPanel(container, "事件时间轴", termKey = "UNLOCK") { body ->
+            page.renderEventTimeline(body)
+        }
+
+        page.renderDimensionPanel(container, "情绪暴露", termKey = "SENTIMENT") { body ->
+            page.renderSentiment(body)
+        }
+    }
+
+    /**
+     * z0 氛围底：中性色 + L1 结论 + 常驻口径角标。
+     * [withIndustryCard] = v1 模式下行业重叠单链集中时上浮 z3 主卡玻璃（唯一）；
+     * 星图模式下 z3 唯一玻璃让位给星图主卡，不再重复上浮。
+     */
+    private fun renderHeadline(
+        container: ViewContainer<*, *>,
+        industry: List<IndustryStat>,
+        chain: ChainConcentration,
+        withIndustryCard: Boolean,
+    ) {
+        val page = this
+        val total = page.rows.size
+        container.View {
+            attr {
+                paddingTop(18f)
+                paddingBottom(24f)
+                paddingLeft(12f)
+                paddingRight(12f)
+                borderRadius(20f)
+                backgroundColor(page.theme.surfaceMuted)
+            }
+            Text {
+                attr {
+                    text(page.headline(industry, chain))
+                    fontSize(18f)
+                    fontWeightSemiBold()
+                    lineHeight(26f)
+                    color(page.theme.textPrimary)
+                }
+            }
+            Text {
+                attr {
+                    text("等权估算 · 非真实仓位 · 共 ${total} 只自选")
+                    marginTop(8f)
+                    fontSize(10f)
+                    color(page.theme.textTertiary)
+                }
+            }
+            vif({ page.dataModeLabel.isNotEmpty() }) {
+                Text {
+                    attr {
+                        text(page.dataModeLabel)
+                        marginTop(3f)
+                        fontSize(10f)
+                        color(page.theme.textTertiary)
+                    }
+                }
+            }
+
+            // ── z3 主卡玻璃（唯一，条件出现）：行业重叠在单链集中时上浮 ──
+            if (withIndustryCard) {
+                vif({ chain.triggered }) {
+                    View {
+                        attr {
+                            marginTop(16f)
+                            padding(16f)
+                            borderRadius(16f)
+                            backgroundColor(page.theme.marketGlass)
+                            boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.10f)))
+                        }
+                        page.renderIndustryContent(this, industry, chain, elevated = true)
+                    }
+                }
+            }
+        }
+    }
+
+    // ── 星图模式（doc 32：一张图，多图层）──
+
+    /**
+     * 星图主卡（≥3 只自选的档 1 形态）：图层 chips + 五投影 Canvas + 焦点注释 +
+     * 成员抽屉 + 引路星解读抽屉；日程层带时间刷。z3 唯一玻璃卡。
+     * AI 预算（doc 32 §3）：引路星（条件 ≤2）+ 焦点注释（条件 1），平静且无选中 = 0。
+     */
+    private fun renderSkyMode(
+        container: ViewContainer<*, *>,
+        industry: List<IndustryStat>,
+        chain: ChainConcentration,
+    ) {
+        val page = this
+        page.renderHeadline(container, industry, chain, withIndustryCard = false)
+        container.View {
+            attr {
+                marginTop(10f)
+                padding(16f)
+                borderRadius(16f)
+                backgroundColor(page.theme.marketGlass)
+                boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.10f)))
+            }
+
+            // 图层 chips（拇指区）：单 observable driver（skyLayer）。
+            View {
+                attr { flexDirectionRow(); flexWrapWrap() }
+                SkyLayer.entries.forEach { layer ->
+                    View {
+                        attr {
+                            marginRight(8f)
+                            marginBottom(8f)
+                            paddingLeft(12f)
+                            paddingRight(12f)
+                            height(28f)
+                            allCenter()
+                            borderRadius(9f)
+                            backgroundColor(if (page.skyLayer == layer) page.theme.brandSoft else page.theme.surfaceMuted)
+                        }
+                        event { click { page.applySkyLayer(layer) } }
+                        Text {
+                            attr {
+                                text(layer.label)
+                                fontSize(11.5f)
+                                color(if (page.skyLayer == layer) page.theme.brand else page.theme.textSecondary)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 层 tip + 术语出口（联动契约 C-2：每层 tip 一词可点，单点收口）。
+            View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text {
+                    attr {
+                        flex(1f)
+                        text(page.skyLayerTip())
+                        fontSize(10.5f)
+                        lineHeight(16f)
+                        color(page.theme.textTertiary)
+                    }
+                }
+                View {
+                    attr {
+                        marginLeft(8f)
+                        paddingLeft(8f)
+                        paddingRight(8f)
+                        paddingTop(3f)
+                        paddingBottom(3f)
+                        borderRadius(9f)
+                        backgroundColor(page.theme.brandSoft)
+                    }
+                    event {
+                        click {
+                            page.glossaryStore.encounter(page.skyLayer.termKey)
+                            page.openPage(Routes.GLOSSARY)
+                        }
+                    }
+                    Text {
+                        attr {
+                            text("这是什么 ›")
+                            fontSize(10f)
+                            color(page.theme.brand)
+                        }
+                    }
+                }
+            }
+
+            // 星图 Canvas（五投影同图，切层星星不换位置）。
+            View {
+                attr { marginTop(8f) }
+                RiskSkyChart(
+                    theme = page.theme,
+                    geometry = { page.skyGeometry() },
+                    correlations = { page.correlations },
+                    layer = { page.skyLayer },
+                    selectedSymbol = { page.skySelectedSymbol },
+                    beaconClusterIndex = { page.skyBeaconClusterIndex() },
+                    beaconPhase = { page.beaconPhase },
+                    volRatioOf = { symbol -> page.volRatios[symbol] },
+                    boardsOf = { symbol ->
+                        page.limitUps.firstOrNull { it.second.symbol == symbol }?.first?.consecutiveBoards ?: 0
+                    },
+                    changePercentOf = { symbol ->
+                        page.rows.firstOrNull { it.symbol == symbol }?.quote?.changePercent
+                    },
+                    eventsOf = { page.skyEventsOf(it) },
+                    calendarDayLabel = { page.skyDayLabel() },
+                    canvasHeight = { page.skyGeometry().requiredHeight },
+                    reduceMotion = page.reduceMotion,
+                    onTapStar = { page.onSkyStarTap(it) },
+                    onTapBeacon = { page.onSkyBeaconTap() },
+                    onTapCluster = { page.onSkyClusterTap(it) },
+                    onTapBlank = { page.onSkyBlankTap() },
+                )
+            }
+
+            // 日程层：时间刷 + 「那天」一句事实。
+            vif({ page.skyLayer == SkyLayer.SCHEDULE }) {
+                page.renderSkySchedule(this)
+            }
+
+            // 焦点注释（Spotlight，预算 1）：选中即浮现，取消即收起。
+            vif({ page.skySelectedSymbol.isNotEmpty() }) {
+                vbind({ page.skySelectedSymbol }) {
+                    page.renderAnnotation(this, page.skyFocusNote(page.skySelectedSymbol))
+                }
+            }
+
+            // 成员抽屉（就地展开面板，非底部 sheet——vif 新视图做不了入场动画，R4）。
+            vif({ page.skySelectedSymbol.isNotEmpty() }) {
+                vbind({ page.skySelectedSymbol }) {
+                    page.renderSkyStarDrawer(this)
+                }
+            }
+            vif({ page.skySelectedCluster.isNotEmpty() }) {
+                vbind({ page.skySelectedCluster }) {
+                    page.renderSkyClusterDrawer(this, page.skySelectedCluster)
+                }
+            }
+
+            // 引路星解读抽屉（点击光环升起：3 行规则事实 + 追问出口）。
+            vif({ page.skyBeaconDrawer }) {
+                page.renderSkyBeaconDrawer(this, chain)
+            }
+        }
+    }
+
+    /** 日程层时间刷 + 命中日事实句（无事件日显示「正常走」）。 */
+    private fun renderSkySchedule(container: ViewContainer<*, *>) {
+        val page = this
+        if (page.skyEventDays().isEmpty()) {
+            container.Text {
+                attr {
+                    text("未来 30 天自选没有已预约事件，正常走。")
+                    marginTop(10f)
+                    fontSize(10.5f)
+                    color(page.theme.textTertiary)
+                }
+            }
+            return
+        }
+        container.View {
+            attr { marginTop(10f) }
+            RiskSkyTimeBrush(
+                theme = page.theme,
+                dayLabels = { page.skyEventDays().map { it.substring(5) } },
+                knobFraction = { page.skyKnobFrac },
+                selectedIndex = { page.skyCalDay },
+                containerWidth = page.skyContainerWidth(),
+                onScrubFraction = { frac ->
+                    page.skyKnobFrac = frac
+                    page.skyCalDay = TimeBrushLayout.nearestIndexForFraction(frac, page.skyEventDays().size)
+                },
+                onRelease = { dragged, index ->
+                    if (!dragged && page.skyCalDay == index) {
+                        // 已选日再点 = 取消命中。
+                        page.skyCalDay = -1
+                    } else {
+                        page.skyCalDay = index
+                        page.skyKnobFrac = TimeBrushLayout.fractionForIndex(index, page.skyEventDays().size)
+                    }
+                },
+            )
+            Text {
+                attr {
+                    text(page.skyCalSentence())
+                    marginTop(6f)
+                    fontSize(10.5f)
+                    lineHeight(16f)
+                    color(page.theme.textTertiary)
+                }
+            }
+        }
+    }
+
+    /** 单星成员抽屉：一行摘要（两次点击到详情：星 → 抽屉 → 详情）。 */
+    private fun renderSkyStarDrawer(container: ViewContainer<*, *>) {
+        val page = this
+        val symbol = page.skySelectedSymbol
+        val row = page.rows.firstOrNull { it.symbol == symbol } ?: return
+        container.View {
+            attr {
+                marginTop(10f)
+                paddingLeft(12f)
+                paddingRight(12f)
+                paddingTop(10f)
+                paddingBottom(10f)
+                borderRadius(12f)
+                backgroundColor(page.theme.surfaceMuted)
+                flexDirectionRow()
+                alignItemsCenter()
+            }
+            event { click { page.openStockDetail(row.symbol, Routes.RISK) } }
+            View {
+                attr { flex(1f) }
+                Text {
+                    attr {
+                        text(row.name)
+                        fontSize(12f)
+                        color(page.theme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        text(page.skyStarSub(row))
+                        marginTop(2f)
+                        fontSize(10.5f)
+                        lineHeight(15f)
+                        color(page.theme.textTertiary)
+                    }
+                }
+            }
+            val pct = row.quote?.changePercent
+            Text {
+                attr {
+                    text(pct?.let { Format.percent(it) } ?: "--")
+                    fontSize(12f)
+                    color(if ((pct ?: 0.0) >= 0) page.theme.rise else page.theme.fall)
+                }
+            }
+            Text {
+                attr {
+                    text("进详情 ›")
+                    marginLeft(10f)
+                    fontSize(11f)
+                    color(page.theme.brand)
+                }
+            }
+        }
+    }
+
+    /** 团域成员抽屉：同链成员 chip 流，点 chip 进详情。 */
+    private fun renderSkyClusterDrawer(container: ViewContainer<*, *>, clusterName: String) {
+        val page = this
+        val members = page.rows.filter {
+            (page.industries[it.symbol]?.takeIf { n -> n.isNotBlank() } ?: "未分类") == clusterName
+        }
+        if (members.isEmpty()) return
+        container.View {
+            attr {
+                marginTop(10f)
+                padding(12f)
+                borderRadius(12f)
+                backgroundColor(page.theme.surfaceMuted)
+            }
+            Text {
+                attr {
+                    text("「${clusterName}」的 ${members.size} 只成员")
+                    fontSize(11f)
+                    fontWeightSemiBold()
+                    color(page.theme.textPrimary)
+                }
+            }
+            View {
+                attr { marginTop(8f); flexDirectionRow(); flexWrapWrap() }
+                members.forEach { row ->
+                    View {
+                        attr {
+                            marginRight(6f)
+                            marginBottom(6f)
+                            paddingLeft(9f)
+                            paddingRight(9f)
+                            height(24f)
+                            allCenter()
+                            borderRadius(8f)
+                            backgroundColor(page.theme.surface)
+                        }
+                        event { click { page.openStockDetail(row.symbol, Routes.RISK) } }
+                        Text {
+                            attr {
+                                text(row.name)
+                                fontSize(10.5f)
+                                color(page.theme.textSecondary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 引路星解读抽屉：3 行规则事实 + 追问出口（复用对话通路，零 LLM）。 */
+    private fun renderSkyBeaconDrawer(container: ViewContainer<*, *>, chain: ChainConcentration) {
+        val page = this
+        val total = page.rows.size
+        container.View {
+            attr {
+                marginTop(10f)
+                padding(12f)
+                borderRadius(12f)
+                backgroundColor(page.theme.surfaceMuted)
+            }
+            Text {
+                attr {
+                    text("为什么圈住这团")
+                    fontSize(11f)
+                    fontWeightSemiBold()
+                    color(page.theme.textPrimary)
+                }
+            }
+            listOf(
+                "「${chain.topName}」${chain.topCount} 只同属一条链，占 ${page.weightLabel(chain.topCount, total)}（等权估算）",
+                "前三大行业合计 ${page.weightLabel(chain.cr3Count, total)}，是这张图里最挤的一片",
+                "行业归属来自公开行业分类 · 非你的真实仓位",
+            ).forEach { fact ->
+                Text {
+                    attr {
+                        text(fact)
+                        marginTop(6f)
+                        fontSize(10.5f)
+                        lineHeight(16f)
+                        color(page.theme.textSecondary)
+                    }
+                }
+            }
+            View {
+                attr { marginTop(8f) }
+                event {
+                    click {
+                        page.openChatWithQuestion("我的自选里「${chain.topName}」的这几只为什么经常一起涨跌？")
+                    }
+                }
+                Text {
+                    attr {
+                        text("问一句「为什么经常一起涨跌」 ›")
+                        fontSize(11f)
+                        color(page.theme.brand)
+                    }
                 }
             }
         }
@@ -1074,6 +1512,172 @@ internal class RiskMapPage : BasePager() {
         }
     }
 
+    // ── 星图状态与纯映射（无副作用部分尽量薄，几何/刷子映射在 page/risk 可单测）──
+
+    /** 图层切换单点入口：持久化 + 清选中 + 离开日程层清时间刷命中 + 脉冲启停。 */
+    private fun applySkyLayer(layer: SkyLayer) {
+        if (skyLayer == layer) return
+        skyLayer = layer
+        skyStorage.setString(SKY_LAYER_KEY, layer.name)
+        skySelectedSymbol = ""
+        skySelectedCluster = ""
+        skyBeaconDrawer = false
+        if (layer != SkyLayer.SCHEDULE) skyCalDay = -1
+        ensureBeaconPulse()
+    }
+
+    private fun skyContainerWidth(): Float = pagerData.pageViewWidth - 28f - 32f
+
+    /** 星→团→星布局（确定性纯函数，输入来自 rows + industries 两个 observable）。 */
+    private fun skyGeometry() = StarLayout.layout(
+        rows.map { row ->
+            StarMemberIn(
+                symbol = row.symbol,
+                name = row.name,
+                industry = industries[row.symbol]?.takeIf { n -> n.isNotBlank() } ?: "未分类",
+            )
+        },
+        skyContainerWidth(),
+    )
+
+    /** 重算两两相关系数与波动倍率（行情/日K/指数到达后调用）。 */
+    private fun refreshSkyData() {
+        val returns = rows.mapNotNull { row ->
+            dailyReturns(row.quote)?.let { row.symbol to it }
+        }
+        val cors = HashMap<String, Double>()
+        for (i in returns.indices) {
+            for (j in i + 1 until returns.size) {
+                pearson(returns[i].second, returns[j].second)?.let { r ->
+                    cors["${returns[i].first}|${returns[j].first}"] = r
+                }
+            }
+        }
+        correlations = cors
+        val indexStd = dailyReturns(indexQuote)?.let { stdOf(it.values.toList()) }
+        volRatios = if (indexStd != null && indexStd > 0.0) {
+            returns.associate { (symbol, rets) -> symbol to stdOf(rets.values.toList()) / indexStd }
+        } else {
+            emptyMap()
+        }
+    }
+
+    /** 引路星指向的团下标（布局把最大团排在下标 0）；单链未判定 = 平静 = 无引路星。 */
+    private fun skyBeaconClusterIndex(): Int =
+        if (rows.size >= 3 && chainConcentration(industryStats()).triggered) 0 else -1
+
+    private fun skyEventsOf(symbol: String): List<MarketCalendarEvent> {
+        val code = symbol.substringBefore('.')
+        return events.filter { it.symbol == symbol || it.symbol.substringBefore('.') == code }
+    }
+
+    /** 时间刷刻度日（升序去重完整日期串）。 */
+    private fun skyEventDays(): List<String> = events.map { it.date }.distinct().sorted()
+
+    /** 日程命中日 "MM-dd"（空 = 未命中）。 */
+    private fun skyDayLabel(): String {
+        val days = skyEventDays()
+        return if (skyCalDay in days.indices) days[skyCalDay].substring(5) else ""
+    }
+
+    private fun skyCalSentence(): String {
+        val days = skyEventDays()
+        if (skyCalDay !in days.indices) return "拖动手柄扫未来 30 天，扫到哪天那颗星就亮"
+        val day = days[skyCalDay]
+        val dayEvents = events.filter { it.date == day }
+        if (dayEvents.isEmpty()) return "那天：自选没有已预约事件，正常走"
+        return "那天：" + dayEvents.joinToString("；") { "${it.name} · ${it.kind.label}" }
+    }
+
+    private fun skyLayerTip(): String = when (skyLayer) {
+        SkyLayer.CLUSTER -> "抱团：圈 = 一条链，圈越大挤得越多 · 光晕 = 单只波动"
+        SkyLayer.LINK -> "牵连：线 = 近 ${CORRELATION_WINDOW} 日相关系数，粗亮 = 同涨同跌更狠（|r|≥0.5 才画）"
+        SkyLayer.VOLATILITY -> "颠簸：光晕呼吸 = 波动倍率 · 数字 = 日波动 ÷ 沪深300（等权）"
+        SkyLayer.SCHEDULE -> "日程：拖下方手柄扫未来 30 天，扫到哪天、那颗星就亮"
+        SkyLayer.HEAT -> "热度：环纹一圈 = 一个连板 · 其余星退暗（只看风头上的）"
+    }
+
+    // ── 星图手势处理（点按语义；拖星牵引/长按 Context Bar 为 P1 扩展）──
+
+    private fun onSkyStarTap(symbol: String) {
+        skyBeaconDrawer = false
+        skySelectedCluster = ""
+        skySelectedSymbol = if (skySelectedSymbol == symbol) "" else symbol
+    }
+
+    private fun onSkyClusterTap(name: String) {
+        skyBeaconDrawer = false
+        skySelectedSymbol = ""
+        skySelectedCluster = if (skySelectedCluster == name) "" else name
+    }
+
+    private fun onSkyBeaconTap() {
+        skySelectedSymbol = ""
+        skySelectedCluster = ""
+        skyBeaconDrawer = !skyBeaconDrawer
+    }
+
+    private fun onSkyBlankTap() {
+        skySelectedSymbol = ""
+        skySelectedCluster = ""
+        skyBeaconDrawer = false
+    }
+
+    /** 焦点注释（Spotlight）：全端侧模板，数字来自 Provider，零 LLM。 */
+    private fun skyFocusNote(symbol: String): String {
+        val row = rows.firstOrNull { it.symbol == symbol } ?: return ""
+        val strong = rows.count { other ->
+            other.symbol != symbol &&
+                StarLayout.lookupCorrelation(correlations, symbol, other.symbol)
+                    ?.let { abs(it) > 0.6 } == true
+        }
+        val parts = mutableListOf<String>()
+        parts += if (strong > 0) {
+            "与 $strong 只相关系数>0.6"
+        } else {
+            "与谁都不连（近 ${CORRELATION_WINDOW} 日）"
+        }
+        volRatios[symbol]?.let { parts += "波动 ${Format.decimal(it, 1)}×大盘（等权估算）" }
+        val boards = limitUps.firstOrNull { it.second.symbol == symbol }?.first?.consecutiveBoards ?: 0
+        if (boards > 0) parts += "今日 $boards 连板"
+        skyEventsOf(symbol).firstOrNull()?.let {
+            parts += "${it.date.substring(5)} ${it.kind.label}已预约"
+        }
+        return "「${row.name}」：${parts.joinToString(" · ")}"
+    }
+
+    /** 成员抽屉摘要行：行业 + 事件 + 连板 + 波动（有啥写啥，全部事实）。 */
+    private fun skyStarSub(row: RiskRow): String {
+        val parts = mutableListOf<String>()
+        parts += industries[row.symbol]?.takeIf { n -> n.isNotBlank() } ?: "未分类"
+        skyEventsOf(row.symbol).firstOrNull()?.let {
+            parts += "${it.date.substring(5)} ${it.kind.label}"
+        }
+        val boards = limitUps.firstOrNull { it.second.symbol == row.symbol }?.first?.consecutiveBoards ?: 0
+        if (boards > 0) parts += "$boards 连板"
+        volRatios[row.symbol]?.let { parts += "波动 ${Format.decimal(it, 1)}×大盘" }
+        return parts.joinToString(" · ")
+    }
+
+    /** 引路星/光晕脉冲步进：12 步 × 55ms；仅脉冲层运行，reduceMotion 不启动（doc 32 §6.1）。 */
+    private fun ensureBeaconPulse() {
+        if (reduceMotion || pulseRunning) return
+        pulseRunning = true
+        tickBeaconPulse()
+    }
+
+    private fun tickBeaconPulse() {
+        if (!pulseRunning) return
+        val needed = rows.size >= 3 &&
+            (skyLayer == SkyLayer.CLUSTER || skyLayer == SkyLayer.VOLATILITY)
+        if (!needed) {
+            pulseRunning = false
+            return
+        }
+        beaconPhase = (beaconPhase + 1f / BEACON_STEPS) % 1f
+        setTimeout(BEACON_STEP_MS.toInt()) { tickBeaconPulse() }
+    }
+
     // ── 数据装载 ──
 
     private fun reload() {
@@ -1492,5 +2096,10 @@ internal class RiskMapPage : BasePager() {
         const val CORRELATION_WINDOW = 60
         const val MIN_RETURN_DAYS = 30
         const val DAY_MS = 24L * 60 * 60 * 1000
+
+        // 星图（doc 32）：图层持久化 key 与引路星脉冲步进参数。
+        const val SKY_LAYER_KEY = "stockchat_risk_sky_layer_v1"
+        const val BEACON_STEPS = 12
+        const val BEACON_STEP_MS = 55L
     }
 }
