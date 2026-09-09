@@ -75,10 +75,10 @@ import com.kuikly.stockchat.page.components.DateDivider
 import com.kuikly.stockchat.page.components.RecentSymbolRow
 import com.kuikly.stockchat.page.components.RegressionQuestionRow
 import com.kuikly.stockchat.page.components.SubThreadState
-import com.kuikly.stockchat.page.components.WelcomeMode
-import com.kuikly.stockchat.page.components.WelcomeSection
-import com.kuikly.stockchat.page.components.WelcomeStarter
-import com.kuikly.stockchat.page.components.defaultWelcomeStarters
+import com.kuikly.stockchat.chat.welcome.component.WelcomeMode
+import com.kuikly.stockchat.chat.welcome.component.WelcomeSection
+import com.kuikly.stockchat.chat.welcome.component.WelcomeStarter
+import com.kuikly.stockchat.chat.welcome.component.defaultWelcomeStarters
 import com.kuikly.stockchat.page.components.ChatTopNav
 import com.kuikly.stockchat.page.components.DrawerGestureMotion
 import com.kuikly.stockchat.page.components.DrawerGesturePhase
