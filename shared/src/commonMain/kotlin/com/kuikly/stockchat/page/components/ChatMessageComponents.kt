@@ -224,51 +224,52 @@ private fun ViewContainer<*, *>.AssistantContent(
             }
             is CardBlock -> {
                 try {
-                    val cardKey = "${message.id}:${block.id}"
-                    val intent = CardPayloadParser.parse(block.type, block.payload)
-                    if (intent is SuggestionsIntent) {
-                        if (suggestionsActive) SuggestionRow(intent, theme, actions.onSuggestion)
-                    } else {
-                        when (intent) {
-                            is SymbolCardIntent -> actions.onQuoteNeeded(intent.symbol)
-                            is AttributionIntent -> actions.onQuoteNeeded(intent.symbol)
-                            else -> Unit
-                        }
-                        if (intent is SymbolCardIntent && intent.type == "stock-chart") {
-                            ChatStockChartCard(block, intent, theme, actions.onCardStock, actions.onTerm, actions.quoteFor, actions.isCardExpanded, actions.onToggleCardExpanded, actions.onOpenCardSheet, cardKey, state.focusedCardKey, actions.onFocusChanged, state.compareCandidateSymbol, actions.onCompareCandidate, actions.onCardEvent)
+                        val cardKey = "${message.id}:${block.id}"
+                        val intent = CardPayloadParser.parse(block.type, block.payload)
+                        if (intent is SuggestionsIntent) {
+                            if (suggestionsActive) SuggestionRow(intent, theme, actions.onSuggestion)
                         } else {
-                            val model = CardAssembler.assemble(block, actions.quoteFor)
-                            ReactiveCardShell(
-                                model,
-                                CardContext(
-                                    theme = theme,
-                                    density = CardDensity.COMPACT,
-                                    onOpenStock = actions.onCardStock,
-                                    onExplainTerm = actions.onTerm,
-                                    expanded = false,
-                                    onToggleExpanded = { actions.onToggleCardExpanded(cardKey) },
-                                    onOpenSheet = actions.onOpenCardSheet,
-                                    drilledKeys = state.drilledKeys,
-                                    onToggleDrill = actions.onToggleDrill,
-                                    onStartSubThread = actions.onStartSubThread,
-                                    cardKey = cardKey,
-                                    focusedCardKey = state.focusedCardKey,
-                                    onFocusChanged = actions.onFocusChanged,
-                                    compareCandidateSymbol = state.compareCandidateSymbol,
-                                    onCompareCandidate = actions.onCompareCandidate,
-                                    onCardEvent = actions.onCardEvent,
-                                ),
-                                cardKey,
-                                actions.isCardExpanded,
-                            )
-                            if (model is InsightCardModel) {
-                                state.subThreads.firstOrNull { it.cardId == model.cardId }?.let { thread ->
-                                    NestedConversation(thread, theme, actions.onToggleSubThread, actions.onUpdateSubThreadInput, actions.onSendSubThread)
+                            when (intent) {
+                                is SymbolCardIntent -> actions.onQuoteNeeded(intent.symbol)
+                                is AttributionIntent -> actions.onQuoteNeeded(intent.symbol)
+                                else -> Unit
+                            }
+                            if (intent is SymbolCardIntent && intent.type == "stock-chart") {
+                                ChatStockChartCard(block, intent, theme, actions.onCardStock, actions.onTerm, actions.quoteFor, actions.isCardExpanded, actions.onToggleCardExpanded, actions.onOpenCardSheet, cardKey, state.focusedCardKey, actions.onFocusChanged, state.compareCandidateSymbol, actions.onCompareCandidate, actions.onCardEvent)
+                            } else {
+                                val model = CardAssembler.assemble(block, actions.quoteFor)
+                                ReactiveCardShell(
+                                    model,
+                                    CardContext(
+                                        theme = theme,
+                                        density = CardDensity.COMPACT,
+                                        onOpenStock = actions.onCardStock,
+                                        onExplainTerm = actions.onTerm,
+                                        expanded = false,
+                                        onToggleExpanded = { actions.onToggleCardExpanded(cardKey) },
+                                        onOpenSheet = actions.onOpenCardSheet,
+                                        drilledKeys = state.drilledKeys,
+                                        onToggleDrill = actions.onToggleDrill,
+                                        onStartSubThread = actions.onStartSubThread,
+                                        cardKey = cardKey,
+                                        focusedCardKey = state.focusedCardKey,
+                                        onFocusChanged = actions.onFocusChanged,
+                                        compareCandidateSymbol = state.compareCandidateSymbol,
+                                        onCompareCandidate = actions.onCompareCandidate,
+                                        onCardEvent = actions.onCardEvent,
+                                    ),
+                                    cardKey,
+                                    actions.isCardExpanded,
+                                )
+                                if (model is InsightCardModel) {
+                                    state.subThreads.firstOrNull { it.cardId == model.cardId }?.let { thread ->
+                                        NestedConversation(thread, theme, actions.onToggleSubThread, actions.onUpdateSubThreadInput, actions.onSendSubThread)
+                                    }
                                 }
                             }
                         }
                     }
-                } catch (_: Throwable) {
+                catch (_: Throwable) {
                     val rawCard = "```card:${block.type}\n${block.payload}\n```"
                     val cardKey = "${message.id}:${block.id}"
                     StructuredContentUnavailable(
