@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
@@ -95,7 +97,7 @@ fun ViewContainer<*, *>.VoiceBar(
                 attr {
                     // 提示语是取消手势唯一的可见教学（规范 G1 / §5.2）
                     text(if (cancelArmed()) "松开手指，取消发送" else "松手发送 · 上滑取消")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     color(if (cancelArmed()) theme.rise else theme.textSecondary)
                 }
             }
@@ -105,7 +107,7 @@ fun ViewContainer<*, *>.VoiceBar(
                 attr {
                     flex(1f)
                     text("转写中…")
-                    fontSize(12f)
+                    fontSizeScaled(12f)
                     color(theme.textTertiary)
                     textAlignCenter()
                 }

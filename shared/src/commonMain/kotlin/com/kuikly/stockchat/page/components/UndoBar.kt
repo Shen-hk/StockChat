@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
@@ -51,7 +53,7 @@ fun ViewContainer<*, *>.UndoBar(
                 attr {
                     flex(1f)
                     text(text())
-                    fontSize(13f)
+                    fontSizeScaled(13f)
                     color(theme.page)
                 }
             }
@@ -68,7 +70,7 @@ fun ViewContainer<*, *>.UndoBar(
                 Text {
                     attr {
                         text(actionLabel)
-                        fontSize(13f)
+                        fontSizeScaled(13f)
                         fontWeightSemiBold()
                         color(theme.onBrand)
                     }

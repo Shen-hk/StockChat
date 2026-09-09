@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
@@ -98,7 +101,7 @@ internal fun ViewContainer<*, *>.WelcomeSection(
             Text {
                 attr {
                     text("StockChat帮你看")
-                    fontSize(22f)
+                    fontSizeScaled(22f)
                     fontWeightBold()
                     color(theme.textPrimary)
                 }
@@ -107,7 +110,7 @@ internal fun ViewContainer<*, *>.WelcomeSection(
                 attr {
                     // 必须在 attr 内部调用取值闭包，否则打字机文案不会重绘。
                     text(rotatingKeyword())
-                    fontSize(22f)
+                    fontSizeScaled(22f)
                     fontWeightBold()
                     color(theme.brand)
                 }
@@ -205,7 +208,7 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
             Text {
                 attr {
                     text("问AI")
-                    fontSize(15f)
+                    fontSizeScaled(15f)
                     fontWeightSemiBold()
                     color(theme.textPrimary)
                 }
@@ -224,7 +227,7 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
             Text {
                 attr {
                     text("看行情")
-                    fontSize(15f)
+                    fontSizeScaled(15f)
                     fontWeightSemiBold()
                     // 滑块滑到右半格时同步高亮，与滑块动画共用同一驱动。
                     color(if (marketTabSelected()) theme.textPrimary else theme.textSecondary)
@@ -361,7 +364,7 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
         Text {
             attr {
                 text(starter.question)
-                fontSize(14f)
+                fontSizeScaled(14f)
                 fontWeightMedium()
                 color(theme.textPrimary)
             }
@@ -374,7 +377,7 @@ internal fun ViewContainer<*, *>.DateDivider(theme: StockChatTheme) {
     View {
         attr { marginTop(14f); marginBottom(8f); flexDirectionRow(); alignItemsCenter() }
         View { attr { height(1f); flex(1f); backgroundColor(theme.divider) } }
-        Text { attr { text("今天"); marginLeft(10f); marginRight(10f); fontSize(11f); color(theme.textTertiary) } }
+        Text { attr { text("今天"); marginLeft(10f); marginRight(10f); fontSizeScaled(11f); color(theme.textTertiary) } }
         View { attr { height(1f); flex(1f); backgroundColor(theme.divider) } }
     }
 }
@@ -385,8 +388,8 @@ internal fun ViewContainer<*, *>.RecentSymbolRow(theme: StockChatTheme, onSelect
         listOf("📍 贵州茅台", "五粮液", "上证指数", "+ 添加关注").forEach { label ->
             View {
                 // 白色背景胶囊（2026-09-05），细描边保证落在玻璃胶囊上仍可辨。
-                attr { height(26f); marginRight(7f); paddingLeft(10f); paddingRight(10f); justifyContentCenter(); backgroundColor(Color(0xFFFFFFFF)); borderRadius(13f); border(Border(0.5f, BorderStyle.SOLID, theme.divider)) }
-                Text { attr { text(label); fontSize(11f); color(if (label.startsWith("+")) theme.brand else theme.textSecondary) } }
+                attr { height(26f); marginRight(7f); paddingLeft(10f); paddingRight(10f); justifyContentCenter(); backgroundColor(theme.surface); borderRadius(13f); border(Border(0.5f, BorderStyle.SOLID, theme.divider)) }
+                Text { attr { text(label); fontSizeScaled(11f); color(if (label.startsWith("+")) theme.brand else theme.textSecondary) } }
                 event { click { if (!label.startsWith("+")) onSelect(label.removePrefix("📍 ")) } }
             }
         }
@@ -427,7 +430,7 @@ internal fun ViewContainer<*, *>.RegressionQuestionRow(
                 Text {
                     attr {
                         text(item.first)
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         fontWeightMedium()
                         color(theme.textSecondary)
                     }
@@ -465,13 +468,13 @@ internal fun ViewContainer<*, *>.ActiveComparePanel(
             Text {
                 attr {
                     text("对比视图")
-                    fontSize(12f)
+                    fontSizeScaled(12f)
                     fontWeightSemiBold()
                     color(theme.textPrimary)
                     flex(1f)
                 }
             }
-            Text { attr { text("退出"); fontSize(11f); color(theme.textSecondary) } }
+            Text { attr { text("退出"); fontSizeScaled(11f); color(theme.textSecondary) } }
             event { click { onClose() } }
         }
         CardShell(
@@ -492,7 +495,7 @@ internal fun ViewContainer<*, *>.ActiveComparePanel(
             Text {
                 attr {
                     text("AI 解读")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(theme.textSecondary)
                 }
@@ -511,8 +514,8 @@ internal fun ViewContainer<*, *>.ActiveComparePanel(
                     }
                     text(content)
                     marginTop(6f)
-                    fontSize(11f)
-                    lineHeight(17f)
+                    fontSizeScaled(11f)
+                    lineHeightScaled(17f)
                     color(if (insightError().isNotBlank()) theme.fall else theme.textSecondary)
                 }
             }
@@ -530,7 +533,7 @@ internal fun ViewContainer<*, *>.ActiveComparePanel(
                     opacity(if (visible) 1f else 0f)
                     touchEnable(visible)
                 }
-                Text { attr { text("重试"); fontSize(10f); fontWeightMedium(); color(theme.brand) } }
+                Text { attr { text("重试"); fontSizeScaled(10f); fontWeightMedium(); color(theme.brand) } }
                 event { click { if (insightError().isNotBlank()) onRetryInsight() } }
             }
         }
@@ -568,13 +571,13 @@ internal fun ViewContainer<*, *>.TermComparePanel(
             Text {
                 attr {
                     text("术语对比")
-                    fontSize(12f)
+                    fontSizeScaled(12f)
                     fontWeightSemiBold()
                     color(theme.textPrimary)
                     flex(1f)
                 }
             }
-            Text { attr { text("退出"); fontSize(11f); color(theme.textSecondary) } }
+            Text { attr { text("退出"); fontSizeScaled(11f); color(theme.textSecondary) } }
             event { click { onClose() } }
         }
         View {
@@ -593,7 +596,7 @@ internal fun ViewContainer<*, *>.TermComparePanel(
             Text {
                 attr {
                     text("AI 解读")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(theme.textSecondary)
                 }
@@ -610,8 +613,8 @@ internal fun ViewContainer<*, *>.TermComparePanel(
                     }
                     text(content)
                     marginTop(6f)
-                    fontSize(11f)
-                    lineHeight(17f)
+                    fontSizeScaled(11f)
+                    lineHeightScaled(17f)
                     color(if (insightError().isNotBlank()) theme.fall else theme.textSecondary)
                 }
             }
@@ -629,7 +632,7 @@ internal fun ViewContainer<*, *>.TermComparePanel(
                     opacity(if (visible) 1f else 0f)
                     touchEnable(visible)
                 }
-                Text { attr { text("重试"); fontSize(10f); fontWeightMedium(); color(theme.brand) } }
+                Text { attr { text("重试"); fontSizeScaled(10f); fontWeightMedium(); color(theme.brand) } }
                 event { click { if (insightError().isNotBlank()) onRetryInsight() } }
             }
         }
@@ -647,7 +650,7 @@ private fun ViewContainer<*, *>.TermCompareColumn(
             borderRadius(10f)
             backgroundColor(theme.surfaceMuted)
         }
-        Text { attr { text(entry.term); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
+        Text { attr { text(entry.term); fontSizeScaled(13f); fontWeightBold(); color(theme.textPrimary) } }
         View {
             attr {
                 marginTop(4f)
@@ -659,14 +662,14 @@ private fun ViewContainer<*, *>.TermCompareColumn(
                 borderRadius(6f)
                 backgroundColor(theme.brandSoft)
             }
-            Text { attr { text(entry.category.label); fontSize(8.5f); fontWeightMedium(); color(theme.term) } }
+            Text { attr { text(entry.category.label); fontSizeScaled(8.5f); fontWeightMedium(); color(theme.term) } }
         }
         Text {
             attr {
                 text(entry.plain)
                 marginTop(7f)
-                fontSize(11f)
-                lineHeight(16f)
+                fontSizeScaled(11f)
+                lineHeightScaled(16f)
                 color(theme.textPrimary)
             }
         }
@@ -674,8 +677,8 @@ private fun ViewContainer<*, *>.TermCompareColumn(
             attr {
                 text("例 ${entry.example}")
                 marginTop(6f)
-                fontSize(9.5f)
-                lineHeight(14f)
+                fontSizeScaled(9.5f)
+                lineHeightScaled(14f)
                 color(theme.textSecondary)
             }
         }

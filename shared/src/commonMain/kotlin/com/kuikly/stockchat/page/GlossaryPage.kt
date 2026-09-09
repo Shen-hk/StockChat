@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.components.CardShell
@@ -66,7 +69,7 @@ import kotlin.math.roundToInt
  */
 @Page(Routes.GLOSSARY, supportInLocal = true)
 internal class GlossaryPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val glossaryStore: GlossaryStore get() = dependencies.glossaryStore
 
@@ -214,7 +217,7 @@ internal class GlossaryPage : BasePager() {
                             Text {
                                 attr {
                                     text(stat.category.label)
-                                    fontSize(13.5f)
+                                    fontSizeScaled(13.5f)
                                     fontWeightSemiBold()
                                     color(page.theme.textPrimary)
                                 }
@@ -223,7 +226,7 @@ internal class GlossaryPage : BasePager() {
                             Text {
                                 attr {
                                     text("已遇 ${stat.encountered} / 共 ${stat.total}")
-                                    fontSize(11f)
+                                    fontSizeScaled(11f)
                                     color(page.theme.textTertiary)
                                 }
                             }
@@ -242,7 +245,7 @@ internal class GlossaryPage : BasePager() {
                             attr {
                                 text("未遇到 ${stat.unseen} · 见过 ${stat.seen} · 常见 ${stat.common} · 已读 ${stat.known}")
                                 marginTop(7f)
-                                fontSize(10f)
+                                fontSizeScaled(10f)
                                 color(page.theme.textTertiary)
                             }
                         }
@@ -256,7 +259,7 @@ internal class GlossaryPage : BasePager() {
                         Text {
                             attr {
                                 text("最近在聊天里遇到")
-                                fontSize(12f)
+                                fontSizeScaled(12f)
                                 fontWeightSemiBold()
                                 color(page.theme.term)
                             }
@@ -280,7 +283,7 @@ internal class GlossaryPage : BasePager() {
                                     Text {
                                         attr {
                                             text("$term ×${enc.hitCount}")
-                                            fontSize(11f)
+                                            fontSizeScaled(11f)
                                             color(page.theme.textSecondary)
                                         }
                                     }
@@ -304,7 +307,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("浏览全部 ${Glossary.all.size} 个概念 ›")
-                        fontSize(13f)
+                        fontSizeScaled(13f)
                         fontWeightSemiBold()
                         color(page.theme.textSecondary)
                     }
@@ -316,8 +319,8 @@ internal class GlossaryPage : BasePager() {
                 attr {
                     text("状态只影响推荐顺序，不做任何能力评价 · 记录仅存本地")
                     marginTop(10f)
-                    fontSize(10.5f)
-                    lineHeight(16f)
+                    fontSizeScaled(10.5f)
+                    lineHeightScaled(16f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -342,7 +345,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("下一步该懂什么")
-                        fontSize(12f)
+                        fontSizeScaled(12f)
                         fontWeightSemiBold()
                         color(page.theme.term)
                     }
@@ -351,7 +354,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("全库已读 ${page.flowReadCount()} / ${Glossary.all.size}")
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -404,7 +407,7 @@ internal class GlossaryPage : BasePager() {
                 attr {
                     text("左右滑动或甩动翻页 · 翻过的词自动记为「已读」，仅影响推荐顺序")
                     marginTop(8f)
-                    fontSize(10.5f)
+                    fontSizeScaled(10.5f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -493,7 +496,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text(entry.category.label)
-                        fontSize(10.5f)
+                        fontSizeScaled(10.5f)
                         color(page.theme.brand)
                     }
                 }
@@ -545,7 +548,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text(entry.term + if (entry.ascii.isNotEmpty()) "  ${entry.ascii}" else "")
-                        fontSize(19f)
+                        fontSizeScaled(19f)
                         fontWeightSemiBold()
                         color(page.theme.textPrimary)
                     }
@@ -553,7 +556,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("人话解释")
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         letterSpacing(2f)
                         color(page.theme.textTertiary)
                         marginTop(10f)
@@ -562,8 +565,8 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text(entry.plain)
-                        fontSize(14.5f)
-                        lineHeight(22f)
+                        fontSizeScaled(14.5f)
+                        lineHeightScaled(22f)
                         color(page.theme.textPrimary)
                         marginTop(5f)
                     }
@@ -572,8 +575,8 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("为什么是这张：${page.flowWhyText(entry)}")
-                        fontSize(10.5f)
-                        lineHeight(16f)
+                        fontSizeScaled(10.5f)
+                        lineHeightScaled(16f)
                         color(page.theme.textTertiary)
                         marginTop(7f)
                     }
@@ -581,7 +584,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("A 股语境例子")
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         letterSpacing(2f)
                         color(page.theme.textTertiary)
                         marginTop(11f)
@@ -600,8 +603,8 @@ internal class GlossaryPage : BasePager() {
                     Text {
                         attr {
                             text(entry.example)
-                            fontSize(12.5f)
-                            lineHeight(19f)
+                            fontSizeScaled(12.5f)
+                            lineHeightScaled(19f)
                             color(page.theme.textSecondary)
                         }
                     }
@@ -623,7 +626,7 @@ internal class GlossaryPage : BasePager() {
                         Text {
                             attr {
                                 text(if (page.flowAdvancedOpen) "收起进阶 ▴" else "进阶解释 ▾")
-                                fontSize(11f)
+                                fontSizeScaled(11f)
                                 color(page.theme.brand)
                             }
                         }
@@ -632,8 +635,8 @@ internal class GlossaryPage : BasePager() {
                         Text {
                             attr {
                                 text(entry.advanced)
-                                fontSize(12f)
-                                lineHeight(19f)
+                                fontSizeScaled(12f)
+                                lineHeightScaled(19f)
                                 color(page.theme.textSecondary)
                                 marginTop(6f)
                             }
@@ -666,7 +669,7 @@ internal class GlossaryPage : BasePager() {
                             Text {
                                 attr {
                                     text("先懂")
-                                    fontSize(10.5f)
+                                    fontSizeScaled(10.5f)
                                     color(page.theme.textTertiary)
                                 }
                             }
@@ -681,7 +684,7 @@ internal class GlossaryPage : BasePager() {
                                     text("看懂后")
                                     marginLeft(if (Glossary.prerequisitesOf(entry.key).isEmpty()) 0f else 14f)
                                     marginTop(4f)
-                                    fontSize(10.5f)
+                                    fontSizeScaled(10.5f)
                                     color(page.theme.textTertiary)
                                 }
                             }
@@ -713,7 +716,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("这一遍顺完了")
-                        fontSize(19f)
+                        fontSizeScaled(19f)
                         fontWeightBold()
                         color(page.theme.textPrimary)
                     }
@@ -721,7 +724,7 @@ internal class GlossaryPage : BasePager() {
                 Text {
                     attr {
                         text("这一遍翻过 ${page.flowSessionCount} 个概念 · 全库已读 ${page.flowReadCount()} / ${Glossary.all.size}")
-                        fontSize(12f)
+                        fontSizeScaled(12f)
                         color(page.theme.textTertiary)
                         marginTop(6f)
                         textAlignCenter()
@@ -742,7 +745,7 @@ internal class GlossaryPage : BasePager() {
                     Text {
                         attr {
                             text("再顺一遍（含已读）")
-                            fontSize(14f)
+                            fontSizeScaled(14f)
                             fontWeightSemiBold()
                             color(page.theme.onBrand)
                         }
@@ -763,7 +766,7 @@ internal class GlossaryPage : BasePager() {
                     Text {
                         attr {
                             text("浏览词表与搜索")
-                            fontSize(13f)
+                            fontSizeScaled(13f)
                             color(page.theme.textSecondary)
                         }
                     }
@@ -977,13 +980,13 @@ internal class GlossaryPage : BasePager() {
                 borderRadius(10f)
                 backgroundColor(page.theme.surfaceMuted)
             }
-            Text { attr { text("⌕"); fontSize(15f); color(page.theme.textTertiary) } }
+            Text { attr { text("⌕"); fontSizeScaled(15f); color(page.theme.textTertiary) } }
             TextArea {
                 attr {
                     flex(1f)
                     marginLeft(6f)
                     height(36f)
-                    fontSize(13f)
+                    fontSizeScaled(13f)
                     color(page.theme.textPrimary)
                     backgroundColor(Color(0xFFFFFFFF, 0f))
                     text(searchSeed)
@@ -1083,7 +1086,7 @@ internal class GlossaryPage : BasePager() {
                                 Text {
                                     attr {
                                         text("相关：")
-                                        fontSize(10.5f)
+                                        fontSizeScaled(10.5f)
                                         color(page.theme.textTertiary)
                                     }
                                 }
@@ -1108,7 +1111,7 @@ internal class GlossaryPage : BasePager() {
                                         Text {
                                             attr {
                                                 text(rel.term)
-                                                fontSize(10.5f)
+                                                fontSizeScaled(10.5f)
                                                 color(page.theme.brand)
                                             }
                                         }
@@ -1125,8 +1128,8 @@ internal class GlossaryPage : BasePager() {
             attr {
                 text("术语解释由股问整理，仅用于理解概念，不构成投资建议。")
                 marginTop(16f)
-                fontSize(11f)
-                lineHeight(17f)
+                fontSizeScaled(11f)
+                lineHeightScaled(17f)
                 color(page.theme.textTertiary)
             }
         }
@@ -1320,7 +1323,7 @@ private fun GlossarySectionTitle(
         Text {
             attr {
                 text(if (count > 0) "$label · $count" else label)
-                fontSize(12f)
+                fontSizeScaled(12f)
                 fontWeightSemiBold()
                 color(theme.term)
             }
@@ -1349,7 +1352,7 @@ private fun FlowChip(
         Text {
             attr {
                 text(label)
-                fontSize(11f)
+                fontSizeScaled(11f)
                 color(theme.brand)
             }
         }
@@ -1377,7 +1380,7 @@ private fun GlossaryFilterChip(
         Text {
             attr {
                 text(label)
-                fontSize(12f)
+                fontSizeScaled(12f)
                 color(if (selected()) theme.brand else theme.textSecondary)
             }
         }

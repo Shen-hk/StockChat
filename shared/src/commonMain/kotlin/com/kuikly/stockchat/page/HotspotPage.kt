@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
@@ -25,7 +27,7 @@ import com.tencent.kuikly.core.views.View
 
 @Page(Routes.HOTSPOTS, supportInLocal = true)
 internal class HotspotPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private var sectors: ObservableList<SectorRank> by observableList()
     private var limitUps: ObservableList<LimitUpStock> by observableList()
@@ -60,10 +62,10 @@ internal class HotspotPage : BasePager() {
                         attr { marginBottom(8f); padding(13f); borderRadius(13f); backgroundColor(page.theme.surface); flexDirectionRow(); alignItemsCenter() }
                         View {
                             attr { flex(1f) }
-                            Text { attr { text(sector.name); fontSize(13f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
-                            Text { attr { text("主力 ${Format.compactAmount(sector.mainFlow)} · ${sector.risingCount} 涨 / ${sector.fallingCount} 跌"); marginTop(4f); fontSize(10f); color(page.theme.textTertiary) } }
+                            Text { attr { text(sector.name); fontSizeScaled(13f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
+                            Text { attr { text("主力 ${Format.compactAmount(sector.mainFlow)} · ${sector.risingCount} 涨 / ${sector.fallingCount} 跌"); marginTop(4f); fontSizeScaled(10f); color(page.theme.textTertiary) } }
                         }
-                        Text { attr { text(Format.percent(sector.changePercent)); fontSize(13f); fontWeightSemiBold(); color(if (sector.changePercent >= 0) page.theme.rise else page.theme.fall) } }
+                        Text { attr { text(Format.percent(sector.changePercent)); fontSizeScaled(13f); fontWeightSemiBold(); color(if (sector.changePercent >= 0) page.theme.rise else page.theme.fall) } }
                     }
                 }
 
@@ -75,15 +77,15 @@ internal class HotspotPage : BasePager() {
                             attr { flex(1f) }
                             View {
                                 attr { flexDirectionRow(); alignItemsCenter() }
-                                Text { attr { text(stock.name); fontSize(13f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
+                                Text { attr { text(stock.name); fontSizeScaled(13f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
                                 View {
                                     attr { marginLeft(7f); paddingLeft(6f); paddingRight(6f); paddingTop(2f); paddingBottom(2f); borderRadius(6f); backgroundColor(page.theme.riseSoft) }
-                                    Text { attr { text("${stock.consecutiveBoards} 连板"); fontSize(9f); color(page.theme.rise) } }
+                                    Text { attr { text("${stock.consecutiveBoards} 连板"); fontSizeScaled(9f); color(page.theme.rise) } }
                                 }
                             }
-                            Text { attr { text("${stock.sector} · 封单 ${Format.compactAmount(stock.sealedAmount)} · 开板 ${stock.openCount} 次"); marginTop(4f); fontSize(10f); color(page.theme.textTertiary) } }
+                            Text { attr { text("${stock.sector} · 封单 ${Format.compactAmount(stock.sealedAmount)} · 开板 ${stock.openCount} 次"); marginTop(4f); fontSizeScaled(10f); color(page.theme.textTertiary) } }
                         }
-                        Text { attr { text(Format.percent(stock.changePercent)); fontSize(12f); color(page.theme.rise) } }
+                        Text { attr { text(Format.percent(stock.changePercent)); fontSizeScaled(12f); color(page.theme.rise) } }
                         event { click { page.openStockDetail(stock.symbol, Routes.HOTSPOTS) } }
                     }
                 }

@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -61,7 +64,7 @@ import com.tencent.kuikly.core.views.View
  */
 @Page(Routes.ALERTS, supportInLocal = true)
 internal class AlertCenterPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
 
@@ -138,7 +141,7 @@ internal class AlertCenterPage : BasePager() {
                 Text {
                     attr {
                         text("只解释已发生的事 · 不构成操作建议 · 无远程推送")
-                        fontSize(10.5f)
+                        fontSizeScaled(10.5f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -157,7 +160,7 @@ internal class AlertCenterPage : BasePager() {
                         attr {
                             text(page.actionHint)
                             marginTop(8f)
-                            fontSize(10.5f)
+                            fontSizeScaled(10.5f)
                             color(page.theme.brand)
                         }
                     }
@@ -173,12 +176,12 @@ internal class AlertCenterPage : BasePager() {
                             backgroundColor(page.theme.surface)
                         }
                         Text {
-                            attr { text("收件箱是干净的"); fontSize(14f); fontWeightSemiBold(); color(page.theme.textPrimary) }
+                            attr { text("收件箱是干净的"); fontSizeScaled(14f); fontWeightSemiBold(); color(page.theme.textPrimary) }
                         }
                         Text {
                             attr {
                                 text("异动和事件触发后会出现在这里，每条都附带已发生事实的归因检查。")
-                                marginTop(6f); fontSize(11.5f); lineHeight(17f); color(page.theme.textSecondary)
+                                marginTop(6f); fontSizeScaled(11.5f); lineHeightScaled(17f); color(page.theme.textSecondary)
                             }
                         }
                     }
@@ -192,16 +195,16 @@ internal class AlertCenterPage : BasePager() {
                             backgroundColor(page.theme.surface)
                         }
                         Text {
-                            attr { text("收件箱的输入是你的自选"); fontSize(14f); fontWeightSemiBold(); color(page.theme.textPrimary) }
+                            attr { text("收件箱的输入是你的自选"); fontSizeScaled(14f); fontWeightSemiBold(); color(page.theme.textPrimary) }
                         }
                         Text {
                             attr {
                                 text("先到自选股添加关注标的，异动与事件会自动进入这里。")
-                                marginTop(6f); fontSize(11.5f); lineHeight(17f); color(page.theme.textSecondary)
+                                marginTop(6f); fontSizeScaled(11.5f); lineHeightScaled(17f); color(page.theme.textSecondary)
                             }
                         }
                         Text {
-                            attr { text("打开自选股 ›"); marginTop(10f); fontSize(11f); color(page.theme.brand) }
+                            attr { text("打开自选股 ›"); marginTop(10f); fontSizeScaled(11f); color(page.theme.brand) }
                         }
                         event { click { page.openPage(Routes.WATCHLIST) } }
                     }
@@ -226,10 +229,10 @@ internal class AlertCenterPage : BasePager() {
                             }
                             View {
                                 attr { flex(1f) }
-                                Text { attr { text(item.name); fontSize(13f); color(page.theme.textPrimary) } }
-                                Text { attr { text(item.symbol); marginTop(2f); fontSize(10f); color(page.theme.textTertiary) } }
+                                Text { attr { text(item.name); fontSizeScaled(13f); color(page.theme.textPrimary) } }
+                                Text { attr { text(item.symbol); marginTop(2f); fontSizeScaled(10f); color(page.theme.textTertiary) } }
                             }
-                            Text { attr { text("启用 ±3%"); fontSize(11f); fontWeightSemiBold(); color(page.theme.brand) } }
+                            Text { attr { text("启用 ±3%"); fontSizeScaled(11f); fontWeightSemiBold(); color(page.theme.brand) } }
                             event { click { page.addRule(item) } }
                         }
                     }
@@ -281,7 +284,7 @@ internal class AlertCenterPage : BasePager() {
                 attr {
                     // 计数读 kindCounts（R1）。
                     text("$label ${page.kindCounts[key] ?: 0}")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(if (page.inboxFilter == key) chipTheme.brand else chipTheme.textSecondary)
                 }
@@ -294,7 +297,7 @@ internal class AlertCenterPage : BasePager() {
     private fun renderMessageCard(container: ViewContainer<*, *>, msg: AlertMessage) {
         val page = this
         val cardTheme = theme // 构建作用域捕获（R2：theme 是 observable，不得进 attr 后于驱动读取）
-        val isDark = isNightMode()
+        val isDark = appIsDarkTheme()
         val (kindBgColor, kindFgColor) = kindChipColors(cardTheme, isDark, msg.kind)
         container.View {
             attr {
@@ -333,7 +336,7 @@ internal class AlertCenterPage : BasePager() {
                     Text {
                         attr {
                             text(msg.kind.label)
-                            fontSize(9f)
+                            fontSizeScaled(9f)
                             fontWeightSemiBold()
                             color(kindFgColor)
                         }
@@ -344,7 +347,7 @@ internal class AlertCenterPage : BasePager() {
                         flex(1f)
                         text(msg.title)
                         marginLeft(6f)
-                        fontSize(12.5f)
+                        fontSizeScaled(12.5f)
                         fontWeightSemiBold()
                         color(cardTheme.textPrimary)
                     }
@@ -353,7 +356,7 @@ internal class AlertCenterPage : BasePager() {
                     attr {
                         text(page.timeLabel(msg))
                         marginLeft(6f)
-                        fontSize(9.5f)
+                        fontSizeScaled(9.5f)
                         color(cardTheme.textTertiary)
                     }
                 }
@@ -366,8 +369,8 @@ internal class AlertCenterPage : BasePager() {
                     attr {
                         text(msg.summary)
                         marginTop(6f)
-                        fontSize(11f)
-                        lineHeight(16f)
+                        fontSizeScaled(11f)
+                        lineHeightScaled(16f)
                         color(cardTheme.textSecondary)
                     }
                 }
@@ -384,7 +387,7 @@ internal class AlertCenterPage : BasePager() {
                         Text {
                             attr {
                                 text(if (msg.kind == AlertKind.MOVE) "✦ 归因检查顺序" else "✦ 事实卡")
-                                fontSize(10f)
+                                fontSizeScaled(10f)
                                 fontWeightSemiBold()
                                 color(cardTheme.brand)
                             }
@@ -394,8 +397,8 @@ internal class AlertCenterPage : BasePager() {
                                 attr {
                                     text(fact)
                                     marginTop(5f)
-                                    fontSize(11f)
-                                    lineHeight(17f)
+                                    fontSizeScaled(11f)
+                                    lineHeightScaled(17f)
                                     color(cardTheme.textSecondary)
                                 }
                             }
@@ -461,7 +464,7 @@ internal class AlertCenterPage : BasePager() {
             Text {
                 attr {
                     text(label)
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(
                         when {
@@ -491,13 +494,13 @@ internal class AlertCenterPage : BasePager() {
             View {
                 attr { flex(1f) }
                 Text {
-                    attr { text("收盘后免打扰"); fontSize(12f); fontWeightSemiBold(); color(cardTheme.textPrimary) }
+                    attr { text("收盘后免打扰"); fontSizeScaled(12f); fontWeightSemiBold(); color(cardTheme.textPrimary) }
                 }
                 Text {
                     attr {
                         text("15 点后触发的异动不再即时出卡，合并到次日早间")
                         marginTop(2f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(cardTheme.textTertiary)
                     }
                 }
@@ -541,27 +544,27 @@ internal class AlertCenterPage : BasePager() {
             }
             View {
                 attr { flex(1f) }
-                Text { attr { text(rule.name); fontSize(14f); fontWeightSemiBold(); color(rowTheme.textPrimary) } }
+                Text { attr { text(rule.name); fontSizeScaled(14f); fontWeightSemiBold(); color(rowTheme.textPrimary) } }
                 Text {
                     attr {
                         text("${rule.symbol} · |涨跌幅| ≥ ${Format.percent(rule.thresholdPercent)}")
-                        marginTop(3f); fontSize(10f); color(rowTheme.textTertiary)
+                        marginTop(3f); fontSizeScaled(10f); color(rowTheme.textTertiary)
                     }
                 }
             }
             Text {
                 attr {
                     text(if (rule.enabled) "监控中" else "已暂停")
-                    fontSize(10.5f)
+                    fontSizeScaled(10.5f)
                     color(if (rule.enabled) rowTheme.brand else rowTheme.textTertiary)
                 }
             }
             Text {
-                attr { text(if (rule.enabled) " 暂停" else " 恢复"); fontSize(11f); color(rowTheme.brand) }
+                attr { text(if (rule.enabled) " 暂停" else " 恢复"); fontSizeScaled(11f); color(rowTheme.brand) }
                 event { click { page.toggleRule(rule.symbol) } }
             }
             Text {
-                attr { text(" 删除"); fontSize(11f); color(rowTheme.fall) }
+                attr { text(" 删除"); fontSizeScaled(11f); color(rowTheme.fall) }
                 event { click { page.removeRule(rule.symbol) } }
             }
         }

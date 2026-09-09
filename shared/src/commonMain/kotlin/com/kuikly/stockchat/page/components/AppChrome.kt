@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.ChatSessionSummary
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
@@ -167,7 +170,7 @@ fun ViewContainer<*, *>.ChatTopNav(
             View {
                 attr {
                     size(44f, 44f); allCenter(); borderRadius(22f)
-                    backgroundColor(Color(0xFFFFFFFF))
+                    backgroundColor(theme.surface)
                     border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
                     boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
                     // 收起联动 + 跟手（用户反馈 2026-09-05 二轮）：按钮不再只挂
@@ -210,7 +213,7 @@ fun ViewContainer<*, *>.ChatTopNav(
                         )
                     }
                 }
-                Text { attr { text(if (drawerOpen()) "×" else "☰"); fontSize(22f); color(theme.textPrimary) } }
+                Text { attr { text(if (drawerOpen()) "×" else "☰"); fontSizeScaled(22f); color(theme.textPrimary) } }
                 event { click { onMenu() } }
             }
             // The middle slot stays empty: the floating title island below is
@@ -220,7 +223,7 @@ fun ViewContainer<*, *>.ChatTopNav(
             View {
                 attr {
                     size(44f, 44f); allCenter(); borderRadius(22f)
-                    backgroundColor(Color(0xFFFFFFFF))
+                    backgroundColor(theme.surface)
                     border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
                     boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
                     // Mirror of the menu button above：同款进度联动 p，向右滑出。
@@ -258,7 +261,7 @@ fun ViewContainer<*, *>.ChatTopNav(
                         )
                     }
                 }
-                Text { attr { text("＋"); fontSize(23f); color(theme.brand) } }
+                Text { attr { text("＋"); fontSizeScaled(23f); color(theme.brand) } }
                 event { click { onNewChat() } }
             }
         }
@@ -446,7 +449,7 @@ private fun ViewContainer<*, *>.StockIsland(
                     else -> collapsedLeft
                 }
                 marginLeft(targetLeft)
-                backgroundColor(Color(0xFFFFFFFF))
+                backgroundColor(theme.surface)
                 border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
                 boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
                 transform(
@@ -536,7 +539,7 @@ private fun ViewContainer<*, *>.StockIsland(
                 Text {
                     attr {
                         text(title ?: "StockChat")
-                        fontSize(if (title == null) 15f else 13f)
+                        fontSizeScaled(if (title == null) 15f else 13f)
                         fontWeightBold()
                         color(if (title == null) theme.textPrimary else theme.textSecondary)
                     }
@@ -602,11 +605,11 @@ private fun ViewContainer<*, *>.StockIsland(
                 View {
                     attr { flexDirectionRow(); alignItemsCenter() }
                     // 真实行情未返回前不给占位名称/代码（不得用示例股票冒充）。
-                    Text { attr { text(quote()?.name ?: "行情加载中"); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
-                    Text { attr { text(quote()?.symbol ?: ""); marginLeft(6f); fontSize(10f); color(theme.textTertiary) } }
+                    Text { attr { text(quote()?.name ?: "行情加载中"); fontSizeScaled(14f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text(quote()?.symbol ?: ""); marginLeft(6f); fontSizeScaled(10f); color(theme.textTertiary) } }
                     View { attr { flex(1f) } }
                     View { attr { size(5f, 5f); borderRadius(3f); backgroundColor(if (liveData()) Color(0xFF34C759) else theme.textTertiary) } }
-                    Text { attr { text(if (liveData()) "实时" else "模拟"); marginLeft(4f); fontSize(9f); color(theme.textTertiary) } }
+                    Text { attr { text(if (liveData()) "实时" else "模拟"); marginLeft(4f); fontSizeScaled(9f); color(theme.textTertiary) } }
                     // 自选按钮上移到右上角（用户反馈 2026-09-07）：原位置悬在底行
                     // 最右、四周是大片空白，且卡片底部 44dp 是下拉详情手势的捕获带。
                     // 右上角紧贴实时标识，视线动线顺（名称 → 代码 → 状态 → 操作）。
@@ -623,7 +626,7 @@ private fun ViewContainer<*, *>.StockIsland(
                         Text {
                             attr {
                                 text(if (watchlisted()) "✓ 自选" else "＋ 自选")
-                                fontSize(10f)
+                                fontSizeScaled(10f)
                                 fontWeightMedium()
                                 color(if (watchlisted()) theme.brand else theme.textSecondary)
                             }
@@ -645,7 +648,7 @@ private fun ViewContainer<*, *>.StockIsland(
                         opacity(if (quote() == null) 1f else 0f)
                         touchEnable(false)
                     }
-                    Text { attr { text("行情加载中…"); fontSize(12f); color(theme.textTertiary) } }
+                    Text { attr { text("行情加载中…"); fontSizeScaled(12f); color(theme.textTertiary) } }
                 }
                 View {
                     attr {
@@ -658,7 +661,7 @@ private fun ViewContainer<*, *>.StockIsland(
                         Text {
                             attr {
                                 text(quote()?.let { Format.price(it.price) } ?: "--")
-                                fontSize(26f)
+                                fontSizeScaled(26f)
                                 fontWeightBold()
                                 color(quote()?.let { if (it.rising) theme.rise else theme.fall } ?: theme.textPrimary)
                             }
@@ -677,7 +680,7 @@ private fun ViewContainer<*, *>.StockIsland(
                             Text {
                                 attr {
                                     text(quote()?.let { "${if (it.rising) "▲" else "▼"} ${Format.signed(it.change)}  ${Format.percent(it.changePercent)}" } ?: "--")
-                                    fontSize(11f)
+                                    fontSizeScaled(11f)
                                     fontWeightMedium()
                                     color(quote()?.let { if (it.rising) theme.rise else theme.fall } ?: theme.textTertiary)
                                 }
@@ -686,8 +689,8 @@ private fun ViewContainer<*, *>.StockIsland(
                     }
                     View {
                         attr { marginTop(9f); flexDirectionRow(); alignItemsCenter() }
-                        Text { attr { text(quote()?.let { "高 ${Format.price(it.high)}" } ?: "高 --"); fontSize(10f); color(theme.textSecondary) } }
-                        Text { attr { text(quote()?.let { "低 ${Format.price(it.low)}" } ?: "低 --"); marginLeft(10f); fontSize(10f); color(theme.textSecondary) } }
+                        Text { attr { text(quote()?.let { "高 ${Format.price(it.high)}" } ?: "高 --"); fontSizeScaled(10f); color(theme.textSecondary) } }
+                        Text { attr { text(quote()?.let { "低 ${Format.price(it.low)}" } ?: "低 --"); marginLeft(10f); fontSizeScaled(10f); color(theme.textSecondary) } }
                     }
                     // 右侧留白填上简笔分时（用户反馈 2026-09-07）：虚线昨收基准 +
                     // 单色折线，数据来自 quote.timeline（QuoteRepository 异步填充）；
@@ -791,7 +794,7 @@ private fun ViewContainer<*, *>.StockIsland(
                 }
                 View {
                     attr { flexDirectionRow(); alignItemsCenter() }
-                    Text { attr { text(termEntry()?.term ?: ""); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text(termEntry()?.term ?: ""); fontSizeScaled(14f); fontWeightBold(); color(theme.textPrimary) } }
                     View {
                         attr {
                             marginLeft(7f)
@@ -802,17 +805,17 @@ private fun ViewContainer<*, *>.StockIsland(
                             borderRadius(7f)
                             backgroundColor(theme.brandSoft)
                         }
-                        Text { attr { text(termEntry()?.category?.label ?: ""); fontSize(9f); fontWeightMedium(); color(theme.term) } }
+                        Text { attr { text(termEntry()?.category?.label ?: ""); fontSizeScaled(9f); fontWeightMedium(); color(theme.term) } }
                     }
                     View { attr { flex(1f) } }
-                    Text { attr { text("术语"); fontSize(9f); color(theme.textTertiary) } }
+                    Text { attr { text("术语"); fontSizeScaled(9f); color(theme.textTertiary) } }
                 }
                 Text {
                     attr {
                         text(termEntry()?.plain ?: "")
                         marginTop(9f)
-                        fontSize(12f)
-                        lineHeight(17f)
+                        fontSizeScaled(12f)
+                        lineHeightScaled(17f)
                         // 卡高 158f 的内容预算：标题行 20 + 9 + 3×17 + 7 + 2×15
                         // ≈ 117 ≤ 158-12-26。超限截断，防止溢出卡底被裁切。
                         lines(3)
@@ -823,8 +826,8 @@ private fun ViewContainer<*, *>.StockIsland(
                     attr {
                         text(termEntry()?.let { "例 ${it.example}" } ?: "")
                         marginTop(7f)
-                        fontSize(10.5f)
-                        lineHeight(15f)
+                        fontSizeScaled(10.5f)
+                        lineHeightScaled(15f)
                         lines(2)
                         color(theme.textSecondary)
                     }
@@ -851,7 +854,7 @@ private fun ViewContainer<*, *>.StockIsland(
                         backgroundColor(theme.brand)
                         opacity(if (firstCompareDrop()) 1f else 0f)
                     }
-                    Text { attr { text("⇄"); fontSize(21f); fontWeightBold(); color(theme.onBrand) } }
+                    Text { attr { text("⇄"); fontSizeScaled(21f); fontWeightBold(); color(theme.onBrand) } }
                 }
                 Text {
                     attr {
@@ -863,7 +866,7 @@ private fun ViewContainer<*, *>.StockIsland(
                             }
                         )
                         marginTop(if (firstCompareDrop()) 9f else 0f)
-                        fontSize(13f)
+                        fontSizeScaled(13f)
                         fontWeightSemiBold()
                         color(theme.brand)
                     }
@@ -902,7 +905,7 @@ private fun ViewContainer<*, *>.StockIsland(
                 vif({ !compareIsTerm() }) {
                 View {
                     attr { height(24f); flexDirectionRow(); alignItemsCenter() }
-                    Text { attr { text("股票对比"); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text("股票对比"); fontSizeScaled(13f); fontWeightBold(); color(theme.textPrimary) } }
                     Text {
                         attr {
                             val ready = compareRightSymbol().isNotEmpty() &&
@@ -917,14 +920,14 @@ private fun ViewContainer<*, *>.StockIsland(
                                 }
                             )
                             marginLeft(7f)
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             color(theme.brand)
                         }
                     }
                     View { attr { flex(1f) } }
                     View {
                         attr { size(24f, 24f); allCenter(); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
-                        Text { attr { text("×"); fontSize(13f); color(theme.textSecondary) } }
+                        Text { attr { text("×"); fontSizeScaled(13f); color(theme.textSecondary) } }
                         event { click { onClearCompare() } }
                     }
                 }
@@ -969,7 +972,7 @@ private fun ViewContainer<*, *>.StockIsland(
                                     else -> "正在生成对比"
                                 }
                             )
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             fontWeightMedium()
                             color(if (ready) theme.onBrand else theme.textTertiary)
                         }
@@ -988,7 +991,7 @@ private fun ViewContainer<*, *>.StockIsland(
                 vif({ compareIsTerm() }) {
                 View {
                     attr { height(24f); flexDirectionRow(); alignItemsCenter() }
-                    Text { attr { text("术语对比"); fontSize(13f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text("术语对比"); fontSizeScaled(13f); fontWeightBold(); color(theme.textPrimary) } }
                     Text {
                         attr {
                             text(
@@ -1000,14 +1003,14 @@ private fun ViewContainer<*, *>.StockIsland(
                                 }
                             )
                             marginLeft(7f)
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             color(theme.term)
                         }
                     }
                     View { attr { flex(1f) } }
                     View {
                         attr { size(24f, 24f); allCenter(); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
-                        Text { attr { text("×"); fontSize(13f); color(theme.textSecondary) } }
+                        Text { attr { text("×"); fontSizeScaled(13f); color(theme.textSecondary) } }
                         event { click { onClearCompare() } }
                     }
                 }
@@ -1046,7 +1049,7 @@ private fun ViewContainer<*, *>.StockIsland(
                                     else -> "查看对比"
                                 }
                             )
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             fontWeightMedium()
                             color(if (termCompareRight() != null) theme.onBrand else theme.textTertiary)
                         }
@@ -1154,7 +1157,7 @@ private fun ViewContainer<*, *>.CompareIslandSlot(
         Text {
             attr {
                 text(name())
-                fontSize(11f)
+                fontSizeScaled(11f)
                 fontWeightMedium()
                 color(if (filled()) theme.textPrimary else theme.textTertiary)
             }
@@ -1163,7 +1166,7 @@ private fun ViewContainer<*, *>.CompareIslandSlot(
             attr {
                 text(symbol())
                 marginTop(2f)
-                fontSize(8f)
+                fontSizeScaled(8f)
                 color(theme.textTertiary)
             }
         }
@@ -1177,7 +1180,7 @@ private fun ViewContainer<*, *>.CompareIslandSlot(
             Text {
                 attr {
                     text(quote()?.let { Format.price(it.price) } ?: "--")
-                    fontSize(10f)
+                    fontSizeScaled(10f)
                     fontWeightSemiBold()
                     color(theme.textPrimary)
                 }
@@ -1186,7 +1189,7 @@ private fun ViewContainer<*, *>.CompareIslandSlot(
                 attr {
                     text(quote()?.let { Format.percent(it.changePercent) } ?: "--")
                     marginLeft(6f)
-                    fontSize(9f)
+                    fontSizeScaled(9f)
                     color(quote()?.let { if (it.rising) theme.rise else theme.fall } ?: theme.textTertiary)
                 }
             }
@@ -1262,9 +1265,11 @@ fun ViewContainer<*, *>.ChatDrawer(
             paddingLeft(16f)
             paddingRight(16f)
             paddingBottom(bottomInset + 4f)
-            // Solid white sheet instead of frosted glass (2026-09-04): blur on
-            // Android reads muddy at this size, a flat surface keeps rows legible.
-            backgroundColor(Color(0xFFFFFFFF))
+            // Solid sheet instead of frosted glass (2026-09-04): blur on
+            // Android reads muddy at this size, a flat surface keeps rows
+            // legible. 2026-09-09: follow theme.surface so dark mode reads
+            // correctly (text colors inside already come from theme.*).
+            backgroundColor(theme.surface)
             boxShadow(BoxShadow(-2f, 0f, 14f, Color(0x000000, 0.12f)))
             val motion = gestureMotion()
             val shown = presented()
@@ -1329,7 +1334,7 @@ fun ViewContainer<*, *>.ChatDrawer(
                         // 否则输入框塌 0 点不中（ApiConfig 是纵向容器 flex 即满高，无此问题）。
                         height(32f)
                         marginLeft(6f)
-                        fontSize(13f)
+                        fontSizeScaled(13f)
                         color(theme.textPrimary)
                         placeholder("搜索历史会话")
                         placeholderColor(theme.textTertiary)
@@ -1389,7 +1394,7 @@ fun ViewContainer<*, *>.ChatDrawer(
                         attr {
                             text("没有匹配的会话")
                             marginTop(14f)
-                            fontSize(13f)
+                            fontSizeScaled(13f)
                             color(theme.textTertiary)
                         }
                     }
@@ -1420,14 +1425,14 @@ fun ViewContainer<*, *>.ChatDrawer(
             }
             View {
                 attr { size(26f, 26f); borderRadius(8f); allCenter(); backgroundColor(theme.brand) }
-                Text { attr { text("S"); fontSize(13f); fontWeightBold(); color(Color(0xFFFFFFFF)) } }
+                Text { attr { text("S"); fontSizeScaled(13f); fontWeightBold(); color(theme.onBrand) } }
             }
             Text {
                 attr {
                     text("StockChat")
                     marginLeft(8f)
                     flex(1f)
-                    fontSize(14f)
+                    fontSizeScaled(14f)
                     fontWeightSemiBold()
                     color(theme.textPrimary)
                 }
@@ -1447,7 +1452,7 @@ fun ViewContainer<*, *>.ChatDrawer(
 }
 
 private fun ViewContainer<*, *>.DrawerGroupTitle(text: String, theme: StockChatTheme) {
-    Text { attr { text(text); marginTop(14f); marginBottom(4f); marginLeft(4f); fontSize(11f); fontWeightSemiBold(); color(theme.textTertiary) } }
+    Text { attr { text(text); marginTop(14f); marginBottom(4f); marginLeft(4f); fontSizeScaled(11f); fontWeightSemiBold(); color(theme.textTertiary) } }
 }
 
 /**
@@ -1469,7 +1474,7 @@ private fun ViewContainer<*, *>.DrawerSessionItem(
         Text {
             attr {
                 text(title)
-                fontSize(14f)
+                fontSizeScaled(14f)
                 color(theme.textPrimary)
                 lines(1)
             }
@@ -1489,8 +1494,8 @@ private fun ViewContainer<*, *>.DrawerEmptyHistory(theme: StockChatTheme) {
             borderRadius(12f)
             backgroundColor(theme.surfaceMuted)
         }
-        Text { attr { text("还没有历史记录"); fontSize(14f); fontWeightMedium(); color(theme.textSecondary); textAlignCenter() } }
-        Text { attr { text("开始提问后会自动保存"); marginTop(5f); fontSize(11f); color(theme.textTertiary); textAlignCenter() } }
+        Text { attr { text("还没有历史记录"); fontSizeScaled(14f); fontWeightMedium(); color(theme.textSecondary); textAlignCenter() } }
+        Text { attr { text("开始提问后会自动保存"); marginTop(5f); fontSizeScaled(11f); color(theme.textTertiary); textAlignCenter() } }
     }
 }
 
@@ -1517,7 +1522,7 @@ private fun ViewContainer<*, *>.DrawerTile(
             boxShadow(BoxShadow(0f, 2f, 8f, Color(0x000000, 0.06f)))
         }
         icon()
-        Text { attr { text(label); marginTop(5f); fontSize(10f); color(theme.textSecondary) } }
+        Text { attr { text(label); marginTop(5f); fontSizeScaled(10f); color(theme.textSecondary) } }
         event { click { onClick() } }
     }
 }
@@ -1575,7 +1580,7 @@ fun ViewContainer<*, *>.AppTopBar(
                         attr {
                             text(backLabel)
                             // 单字符（‹）按大号图形字号渲染，文字标签（返回）保持常规。
-                            fontSize(if (backLabel.length == 1) 22f else 15f)
+                            fontSizeScaled(if (backLabel.length == 1) 22f else 15f)
                             fontWeightMedium()
                             color(theme.brand)
                         }
@@ -1600,16 +1605,16 @@ fun ViewContainer<*, *>.AppTopBar(
                             animate(Animation.easeOut(0.20f), compactVisible())
                         }
                     }
-                    Text { attr { text(title); fontSize(19f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text(title); fontSizeScaled(19f); fontWeightBold(); color(theme.textPrimary) } }
                     View {
                         attr { flexDirectionRow(); alignItemsCenter(); marginTop(2f) }
-                        Text { attr { text(subtitle); fontSize(10.5f); color(theme.textTertiary) } }
+                        Text { attr { text(subtitle); fontSizeScaled(10.5f); color(theme.textTertiary) } }
                         vif({ compactLine() != null }) {
                             Text {
                                 attr {
                                     text(compactLine() ?: "")
                                     marginLeft(8f)
-                                    fontSize(10f)
+                                    fontSizeScaled(10f)
                                     fontWeightSemiBold()
                                     color(compactLineColor() ?: theme.textSecondary)
                                     val compact = compactVisible()
@@ -1653,10 +1658,10 @@ fun ViewContainer<*, *>.AppTopBar(
                                             // semantic colour change on the value.
                                             backgroundColor(theme.surface.opacity(0f))
                                         }
-                                        Text { attr { text(metric.label); fontSize(8.5f); color(theme.textTertiary) } }
+                                        Text { attr { text(metric.label); fontSizeScaled(8.5f); color(theme.textTertiary) } }
                                         View { attr { marginTop(2f); flexDirectionRow(); alignItemsCenter() }
-                                            Text { attr { text(metric.value); fontSize(10.5f); fontWeightBold(); color(if (metric.flash) metric.changeColor else theme.textPrimary) } }
-                                            Text { attr { text(metric.change); marginLeft(3f); fontSize(8.5f); fontWeightSemiBold(); color(metric.changeColor) } }
+                                            Text { attr { text(metric.value); fontSizeScaled(10.5f); fontWeightBold(); color(if (metric.flash) metric.changeColor else theme.textPrimary) } }
+                                            Text { attr { text(metric.change); marginLeft(3f); fontSizeScaled(8.5f); fontWeightSemiBold(); color(metric.changeColor) } }
                                         }
                                     }
                                 }
@@ -1679,7 +1684,7 @@ fun ViewContainer<*, *>.AppTopBar(
                         attr {
                             text(label)
                             // 符号字形（＋ ✓ ⋯）给图形级字号；两字以上是文字动作。
-                            fontSize(if (label.length > 1) 15f else 21f)
+                            fontSizeScaled(if (label.length > 1) 15f else 21f)
                             fontWeightSemiBold()
                             color(if (label == "+" || label == "✓") theme.brand else theme.textPrimary)
                         }
@@ -1721,6 +1726,6 @@ fun ViewContainer<*, *>.DataModeBadge(
         }
         GlassBackdrop(theme.glass.peek, renderer)
         View { attr { size(6f, 6f); borderRadius(3f); backgroundColor(theme.brand); marginRight(5f) } }
-        Text { attr { text(text); fontSize(10f); fontWeightMedium(); color(theme.brand) } }
+        Text { attr { text(text); fontSizeScaled(10f); fontWeightMedium(); color(theme.brand) } }
     }
 }

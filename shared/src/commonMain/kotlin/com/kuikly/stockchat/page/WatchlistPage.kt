@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.components.CardShell
@@ -76,7 +79,7 @@ import kotlin.math.roundToInt
  */
 @Page(Routes.WATCHLIST, supportInLocal = true)
 internal class WatchlistPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val watchlistStore get() = dependencies.watchlistStore
     private val quoteRepository get() = dependencies.quoteRepository
@@ -256,7 +259,7 @@ internal class WatchlistPage : BasePager() {
                         attr {
                             text("长按卡片拖动可排序 · 长按原地松手看更多操作")
                             marginTop(9f)
-                            fontSize(10.5f)
+                            fontSizeScaled(10.5f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -268,8 +271,8 @@ internal class WatchlistPage : BasePager() {
                         attr {
                             text(page.staleLabel())
                             marginTop(10f)
-                            fontSize(11.5f)
-                            lineHeight(17f)
+                            fontSizeScaled(11.5f)
+                            lineHeightScaled(17f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -280,7 +283,7 @@ internal class WatchlistPage : BasePager() {
                         attr {
                             text(page.hint)
                             marginTop(10f)
-                            fontSize(12f)
+                            fontSizeScaled(12f)
                             color(page.theme.term)
                         }
                     }
@@ -291,7 +294,7 @@ internal class WatchlistPage : BasePager() {
                         attr {
                             text("当前筛选下没有标的")
                             marginTop(24f)
-                            fontSize(12.5f)
+                            fontSizeScaled(12.5f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -421,7 +424,7 @@ internal class WatchlistPage : BasePager() {
                                                     attr {
                                                         text(if (pct > 0) "异动 ↑" else "异动 ↓")
                                                         marginTop(4f)
-                                                        fontSize(9.5f)
+                                                        fontSizeScaled(9.5f)
                                                         color(if (pct > 0) page.theme.rise else page.theme.fall)
                                                     }
                                                 }
@@ -432,7 +435,7 @@ internal class WatchlistPage : BasePager() {
                                                     attr {
                                                         text("★ 对话加入")
                                                         marginTop(4f)
-                                                        fontSize(9.5f)
+                                                        fontSizeScaled(9.5f)
                                                         color(page.theme.brand)
                                                     }
                                                 }
@@ -468,14 +471,14 @@ internal class WatchlistPage : BasePager() {
                             attr {
                                 flex(1f)
                                 text("我押注了什么？看共同暴露 ›")
-                                fontSize(12.5f)
+                                fontSizeScaled(12.5f)
                                 color(page.theme.textSecondary)
                             }
                         }
                         Text {
                             attr {
                                 text("风险地图")
-                                fontSize(11.5f)
+                                fontSizeScaled(11.5f)
                                 color(page.theme.brand)
                             }
                         }
@@ -487,8 +490,8 @@ internal class WatchlistPage : BasePager() {
                         attr {
                             text(page.dataModeLabel)
                             marginTop(16f)
-                            fontSize(11f)
-                            lineHeight(17f)
+                            fontSizeScaled(11f)
+                            lineHeightScaled(17f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -548,13 +551,13 @@ internal class WatchlistPage : BasePager() {
                                 borderRadius(10f)
                                 backgroundColor(page.theme.surfaceMuted)
                             }
-                            Text { attr { text("＋"); fontSize(15f); color(page.theme.textTertiary) } }
+                            Text { attr { text("＋"); fontSizeScaled(15f); color(page.theme.textTertiary) } }
                             TextArea {
                                 attr {
                                     flex(1f)
                                     marginLeft(6f)
                                     height(36f)
-                                    fontSize(13f)
+                                    fontSizeScaled(13f)
                                     color(page.theme.textPrimary)
                                     backgroundColor(Color(0xFFFFFFFF, 0f))
                                     text(searchSeed)
@@ -618,7 +621,7 @@ internal class WatchlistPage : BasePager() {
                                     text(page.menuTitle())
                                     marginTop(10f)
                                     marginLeft(16f)
-                                    fontSize(11f)
+                                    fontSizeScaled(11f)
                                     color(page.theme.textTertiary)
                                 }
                             }
@@ -630,8 +633,8 @@ internal class WatchlistPage : BasePager() {
                                         marginTop(3f)
                                         marginLeft(16f)
                                         marginRight(16f)
-                                        fontSize(11.5f)
-                                        lineHeight(16f)
+                                        fontSizeScaled(11.5f)
+                                        lineHeightScaled(16f)
                                         color(page.theme.textSecondary)
                                     }
                                 }
@@ -644,8 +647,8 @@ internal class WatchlistPage : BasePager() {
                                         marginTop(3f)
                                         marginLeft(16f)
                                         marginRight(16f)
-                                        fontSize(10.5f)
-                                        lineHeight(15f)
+                                        fontSizeScaled(10.5f)
+                                        lineHeightScaled(15f)
                                         color(page.theme.textTertiary)
                                     }
                                 }
@@ -694,7 +697,7 @@ internal class WatchlistPage : BasePager() {
                                 backgroundColor(page.theme.surface)
                             }
                             Text {
-                                attr { text("取消"); fontSize(14f); fontWeightMedium(); color(page.theme.textSecondary) }
+                                attr { text("取消"); fontSizeScaled(14f); fontWeightMedium(); color(page.theme.textSecondary) }
                             }
                             event { click { page.menuSymbol = "" } }
                         }
@@ -729,7 +732,7 @@ internal class WatchlistPage : BasePager() {
                         Text {
                             attr {
                                 text("为什么关注 ${page.rows.firstOrNull { it.symbol == page.reasonEditSymbol }?.name.orEmpty()}？")
-                                fontSize(14f)
+                                fontSizeScaled(14f)
                                 fontWeightMedium()
                                 color(page.theme.textPrimary)
                             }
@@ -738,8 +741,8 @@ internal class WatchlistPage : BasePager() {
                             attr {
                                 text("记下当初的理由，之后在风险地图对照「当初理由 vs 当前事实」。留空可跳过。")
                                 marginTop(4f)
-                                fontSize(11f)
-                                lineHeight(16f)
+                                fontSizeScaled(11f)
+                                lineHeightScaled(16f)
                                 color(page.theme.textTertiary)
                             }
                         }
@@ -758,7 +761,7 @@ internal class WatchlistPage : BasePager() {
                                 attr {
                                     flex(1f)
                                     height(36f)
-                                    fontSize(13f)
+                                    fontSizeScaled(13f)
                                     color(page.theme.textPrimary)
                                     backgroundColor(Color(0xFFFFFFFF, 0f))
                                     text("")
@@ -796,7 +799,7 @@ internal class WatchlistPage : BasePager() {
                                     Text {
                                         attr {
                                             text(chip)
-                                            fontSize(12f)
+                                            fontSizeScaled(12f)
                                             color(if (page.reasonChip == chip) Color(0xFFFFFFFF, 1f) else page.theme.textSecondary)
                                         }
                                     }
@@ -814,7 +817,7 @@ internal class WatchlistPage : BasePager() {
                                     backgroundColor(page.theme.surfaceMuted)
                                 }
                                 event { click { page.reasonEditSymbol = "" } }
-                                Text { attr { text("跳过"); fontSize(13.5f); color(page.theme.textSecondary) } }
+                                Text { attr { text("跳过"); fontSizeScaled(13.5f); color(page.theme.textSecondary) } }
                             }
                             View {
                                 attr {
@@ -826,7 +829,7 @@ internal class WatchlistPage : BasePager() {
                                     backgroundColor(page.theme.brand)
                                 }
                                 event { click { page.saveReason() } }
-                                Text { attr { text("保存"); fontSize(13.5f); fontWeightMedium(); color(Color(0xFFFFFFFF, 1f)) } }
+                                Text { attr { text("保存"); fontSizeScaled(13.5f); fontWeightMedium(); color(Color(0xFFFFFFFF, 1f)) } }
                             }
                         }
                     }
@@ -894,7 +897,7 @@ internal class WatchlistPage : BasePager() {
                 Text {
                     attr {
                         text("${agg.total} 只自选 · 等权")
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -902,7 +905,7 @@ internal class WatchlistPage : BasePager() {
                     Text {
                         attr {
                             text(" · ${agg.total - agg.quoted} 只无报价")
-                            fontSize(11f)
+                            fontSizeScaled(11f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -912,7 +915,7 @@ internal class WatchlistPage : BasePager() {
                 attr {
                     text(Format.percent(agg.avgPct))
                     marginTop(6f)
-                    fontSize(34f)
+                    fontSizeScaled(34f)
                     fontWeightBold()
                     color(page.aggregateColor(agg.avgPct))
                 }
@@ -921,7 +924,7 @@ internal class WatchlistPage : BasePager() {
                 attr {
                     text(agg.conclusion)
                     marginTop(5f)
-                    fontSize(12.5f)
+                    fontSizeScaled(12.5f)
                     color(page.theme.textSecondary)
                 }
             }
@@ -933,7 +936,7 @@ internal class WatchlistPage : BasePager() {
                 attr {
                     text("涨 ${agg.rising} · 平 ${agg.flat} · 跌 ${agg.falling}")
                     marginTop(7f)
-                    fontSize(10f)
+                    fontSizeScaled(10f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -985,14 +988,14 @@ internal class WatchlistPage : BasePager() {
                     backgroundColor(rowTheme.brandSoft)
                     allCenter()
                 }
-                Text { attr { text("⚡"); fontSize(15f) } }
+                Text { attr { text("⚡"); fontSizeScaled(15f) } }
             }
             View {
                 attr { flex(1f); marginLeft(11f); marginRight(8f) }
                 Text {
                     attr {
                         text(page.inboxTitle())
-                        fontSize(12.5f)
+                        fontSizeScaled(12.5f)
                         fontWeightSemiBold()
                         color(rowTheme.textPrimary)
                     }
@@ -1003,7 +1006,7 @@ internal class WatchlistPage : BasePager() {
                         // 不能在构建闭包先取快照（那是首帧定格，R1 高危）。
                         text(page.inboxMessages.firstOrNull()?.summary.orEmpty())
                         marginTop(3f)
-                        fontSize(10.5f)
+                        fontSizeScaled(10.5f)
                         color(rowTheme.textSecondary)
                     }
                 }
@@ -1023,7 +1026,7 @@ internal class WatchlistPage : BasePager() {
                     Text {
                         attr {
                             text("${page.inboxUnread}")
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             fontWeightSemiBold()
                             color(Color(0xFFFFFFFF, 1f))
                         }
@@ -1033,7 +1036,7 @@ internal class WatchlistPage : BasePager() {
             Text {
                 attr {
                     text("查看 ›")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(rowTheme.brand)
                 }
@@ -1073,7 +1076,7 @@ internal class WatchlistPage : BasePager() {
                     Text {
                         attr {
                             text("速览")
-                            fontSize(9f)
+                            fontSizeScaled(9f)
                             fontWeightSemiBold()
                             color(Color(0xFFFFFFFF, 1f))
                         }
@@ -1084,7 +1087,7 @@ internal class WatchlistPage : BasePager() {
                         flex(1f)
                         text("今日速览 · 开盘前看完")
                         marginLeft(7f)
-                        fontSize(12.5f)
+                        fontSizeScaled(12.5f)
                         fontWeightSemiBold()
                         color(cardTheme.textPrimary)
                     }
@@ -1092,7 +1095,7 @@ internal class WatchlistPage : BasePager() {
                 Text {
                     attr {
                         text(if (page.briefOpen) "收起" else "展开")
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(cardTheme.textTertiary)
                     }
                 }
@@ -1106,8 +1109,8 @@ internal class WatchlistPage : BasePager() {
                             attr {
                                 text(line)
                                 marginTop(6f)
-                                fontSize(11.5f)
-                                lineHeight(17f)
+                                fontSizeScaled(11.5f)
+                                lineHeightScaled(17f)
                                 color(cardTheme.textSecondary)
                             }
                         }
@@ -1116,7 +1119,7 @@ internal class WatchlistPage : BasePager() {
                         attr {
                             text("由规则引擎从行情与事件整理 · 非预测非建议")
                             marginTop(9f)
-                            fontSize(9.5f)
+                            fontSizeScaled(9.5f)
                             color(cardTheme.textTertiary)
                         }
                     }
@@ -1598,7 +1601,7 @@ private fun ViewContainer<*, *>.WatchlistFilterChip(
         Text {
             attr {
                 text(label)
-                fontSize(if (compact) 10.5f else 11f)
+                fontSizeScaled(if (compact) 10.5f else 11f)
                 color(if (selected) theme.brand else theme.textSecondary)
             }
         }
@@ -1622,7 +1625,7 @@ private fun ViewContainer<*, *>.WatchlistMenuRow(
         Text {
             attr {
                 text(label)
-                fontSize(14.5f)
+                fontSizeScaled(14.5f)
                 color(if (destructive) theme.rise else theme.textPrimary)
             }
         }
@@ -1647,8 +1650,8 @@ private fun WatchlistCandidateRow(
         }
         View {
             attr { flex(1f) }
-            Text { attr { text(security.name); fontSize(14f); fontWeightSemiBold(); color(theme.textPrimary) } }
-            Text { attr { text(security.symbol); marginTop(2f); fontSize(10f); color(theme.textTertiary) } }
+            Text { attr { text(security.name); fontSizeScaled(14f); fontWeightSemiBold(); color(theme.textPrimary) } }
+            Text { attr { text(security.symbol); marginTop(2f); fontSizeScaled(10f); color(theme.textTertiary) } }
         }
         View {
             attr {
@@ -1659,7 +1662,7 @@ private fun WatchlistCandidateRow(
                 borderRadius(8f)
                 backgroundColor(theme.brandSoft)
             }
-            Text { attr { text("加自选"); fontSize(12f); fontWeightSemiBold(); color(theme.brand) } }
+            Text { attr { text("加自选"); fontSizeScaled(12f); fontWeightSemiBold(); color(theme.brand) } }
             event { click { onAdd() } }
         }
     }
@@ -1673,8 +1676,8 @@ private fun WatchlistPendingRow(
 ) {
     container.View {
         attr { padding(14f); borderRadius(12f); backgroundColor(theme.surfaceMuted) }
-        Text { attr { text(name); fontSize(14f); fontWeightSemiBold(); color(theme.textPrimary) } }
-        Text { attr { text("$symbol · 行情加载中"); marginTop(4f); fontSize(11f); color(theme.textTertiary) } }
+        Text { attr { text(name); fontSizeScaled(14f); fontWeightSemiBold(); color(theme.textPrimary) } }
+        Text { attr { text("$symbol · 行情加载中"); marginTop(4f); fontSizeScaled(11f); color(theme.textTertiary) } }
     }
 }
 
@@ -1684,13 +1687,13 @@ private fun WatchlistEmptyState(
 ) {
     container.View {
         attr { marginTop(28f); padding(18f); borderRadius(14f); backgroundColor(theme.surface) }
-        Text { attr { text("还没有自选股"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
+        Text { attr { text("还没有自选股"); fontSizeScaled(15f); fontWeightSemiBold(); color(theme.textPrimary) } }
         Text {
             attr {
                 text("点右上角「搜索」加入第一只股票，也可以在聊天里长按股票名、或从股票详情页添加。加入后可以直接问「我的自选今天怎么样」。")
                 marginTop(8f)
-                fontSize(12.5f)
-                lineHeight(19f)
+                fontSizeScaled(12.5f)
+                lineHeightScaled(19f)
                 color(theme.textSecondary)
             }
         }

@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
@@ -38,7 +41,7 @@ internal class ApiConfigPage : BasePager() {
     private var selectedPresetId: String by observable(ModelPresets.all.first().id)
     private var slotVersion: Int by observable(0)
     private val configStore by lazy { AiConfigStore(pagerId) }
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
 
     override fun viewDidLoad() {
         super.viewDidLoad()
@@ -66,7 +69,7 @@ internal class ApiConfigPage : BasePager() {
                         PresetCard(
                             preset = preset,
                             theme = page.theme,
-                            dark = page.isNightMode(),
+                            dark = page.appIsDarkTheme(),
                             isSelected = { page.selectedPresetId == preset.id },
                             hasSavedKey = { page.hasSavedKey(preset.id) },
                             onClick = { page.applyPreset(preset) },
@@ -77,8 +80,8 @@ internal class ApiConfigPage : BasePager() {
                     attr {
                         text(page.selectedPreset()?.keyHint.orEmpty())
                         marginTop(9f)
-                        fontSize(10f)
-                        lineHeight(16f)
+                        fontSizeScaled(10f)
+                        lineHeightScaled(16f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -121,7 +124,7 @@ internal class ApiConfigPage : BasePager() {
                         text("API Key")
                         marginTop(16f)
                         marginBottom(7f)
-                        fontSize(12f)
+                        fontSizeScaled(12f)
                         fontWeightSemiBold()
                         color(page.theme.textSecondary)
                     }
@@ -143,7 +146,7 @@ internal class ApiConfigPage : BasePager() {
                                 attr {
                                     flex(1f)
                                     text(page.apiKey)
-                                    fontSize(14f)
+                                    fontSizeScaled(14f)
                                     color(page.theme.textPrimary)
                                     placeholder("输入你的 API Key")
                                     placeholderColor(page.theme.textTertiary)
@@ -156,7 +159,7 @@ internal class ApiConfigPage : BasePager() {
                                 attr {
                                     flex(1f)
                                     text(page.apiKey)
-                                    fontSize(14f)
+                                    fontSizeScaled(14f)
                                     color(page.theme.textPrimary)
                                     placeholder("输入你的 API Key")
                                     placeholderColor(page.theme.textTertiary)
@@ -171,7 +174,7 @@ internal class ApiConfigPage : BasePager() {
                         Text {
                             attr {
                                 text(if (page.revealKey) "隐藏" else "显示")
-                                fontSize(11f)
+                                fontSizeScaled(11f)
                                 color(page.theme.textSecondary)
                             }
                         }
@@ -182,8 +185,8 @@ internal class ApiConfigPage : BasePager() {
                     attr {
                         text("密钥不会写入源码或构建产物。Android/H5 都保存在当前设备；浏览器无法安全隐藏前端密钥，H5 正式环境应使用后端代理。")
                         marginTop(8f)
-                        fontSize(10f)
-                        lineHeight(16f)
+                        fontSizeScaled(10f)
+                        lineHeightScaled(16f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -198,8 +201,8 @@ internal class ApiConfigPage : BasePager() {
                         Text {
                             attr {
                                 text(page.statusMessage)
-                                fontSize(12f)
-                                lineHeight(18f)
+                                fontSizeScaled(12f)
+                                lineHeightScaled(18f)
                                 color(if (page.statusSuccess) page.theme.brand else page.theme.textSecondary)
                             }
                         }
@@ -231,7 +234,7 @@ internal class ApiConfigPage : BasePager() {
                         borderRadius(11f)
                         backgroundColor(page.theme.surface)
                     }
-                    Text { attr { text("清除本机配置"); fontSize(12f); color(page.theme.fall) } }
+                    Text { attr { text("清除本机配置"); fontSizeScaled(12f); color(page.theme.fall) } }
                     event { click { page.clearConfig() } }
                 }
             }
@@ -376,7 +379,7 @@ private fun ViewContainer<*, *>.PresetCard(
                 Text {
                     attr {
                         text(preset.badge)
-                        fontSize(14f)
+                        fontSizeScaled(14f)
                         fontWeightBold()
                         color(Color(0xFFFFFF))
                     }
@@ -387,7 +390,7 @@ private fun ViewContainer<*, *>.PresetCard(
             attr {
                 text(preset.name)
                 marginTop(7f)
-                fontSize(11f)
+                fontSizeScaled(11f)
                 fontWeightMedium()
                 color(theme.textPrimary)
             }
@@ -430,7 +433,7 @@ private fun ViewContainer<*, *>.ModelVariantChip(
                 // selected 在各自 attr 闭包内读取，保证选中态随选中项变化重渲染（R1）
                 val selected = isSelected()
                 text(modelId)
-                fontSize(11f)
+                fontSizeScaled(11f)
                 color(if (selected) theme.brand else theme.textSecondary)
             }
         }
@@ -439,14 +442,14 @@ private fun ViewContainer<*, *>.ModelVariantChip(
 }
 
 private fun ViewContainer<*, *>.ConfigSectionTitle(title: String, description: String, theme: StockChatTheme) {
-    Text { attr { text(title); fontSize(20f); fontWeightBold(); color(theme.textPrimary) } }
+    Text { attr { text(title); fontSizeScaled(20f); fontWeightBold(); color(theme.textPrimary) } }
     Text {
         attr {
             text(description)
             marginTop(5f)
             marginBottom(4f)
-            fontSize(12f)
-            lineHeight(18f)
+            fontSizeScaled(12f)
+            lineHeightScaled(18f)
             color(theme.textSecondary)
         }
     }
@@ -464,7 +467,7 @@ private fun ViewContainer<*, *>.ConfigField(
             text(label)
             marginTop(16f)
             marginBottom(7f)
-            fontSize(12f)
+            fontSizeScaled(12f)
             fontWeightSemiBold()
             color(theme.textSecondary)
         }
@@ -482,7 +485,7 @@ private fun ViewContainer<*, *>.ConfigField(
             attr {
                 flex(1f)
                 text(value())
-                fontSize(14f)
+                fontSizeScaled(14f)
                 color(theme.textPrimary)
                 placeholder(hint)
                 placeholderColor(theme.textTertiary)
@@ -511,7 +514,7 @@ private fun ViewContainer<*, *>.ActionButton(
         Text {
             attr {
                 text(label)
-                fontSize(13f)
+                fontSizeScaled(13f)
                 fontWeightSemiBold()
                 color(if (primary) theme.onBrand else theme.textSecondary)
             }

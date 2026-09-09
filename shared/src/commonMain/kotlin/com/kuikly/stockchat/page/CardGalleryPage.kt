@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.components.CardShell
@@ -42,7 +45,7 @@ import com.tencent.kuikly.core.views.View
 
 @Page(Routes.CARD_GALLERY, supportInLocal = true)
 internal class CardGalleryPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private var expandedCardKey: String by observable("")
     private var sheetCard: CardModel? by observable(null)
     private var sheetPresented: Boolean by observable(false)
@@ -122,8 +125,8 @@ internal class CardGalleryPage : BasePager() {
                         attr {
                             text("同一套模型与渲染器可在聊天、详情和迷你预览中复用。")
                             marginTop(16f)
-                            fontSize(12f)
-                            lineHeight(18f)
+                            fontSizeScaled(12f)
+                            lineHeightScaled(18f)
                             color(page.theme.textSecondary)
                         }
                     }
@@ -236,7 +239,7 @@ private fun ViewContainer<*, *>.AccordionShowcase(
     Text {
         attr {
             text("手风琴")
-            fontSize(15f)
+            fontSizeScaled(15f)
             fontWeightSemiBold()
             color(theme.textPrimary)
         }
@@ -293,7 +296,7 @@ private fun ViewContainer<*, *>.GalleryCard(
         attr {
             text(model.cardType)
             marginTop(18f)
-            fontSize(13f)
+            fontSizeScaled(13f)
             fontWeightSemiBold()
             color(theme.textSecondary)
         }
@@ -304,7 +307,7 @@ private fun ViewContainer<*, *>.GalleryCard(
             attr {
                 text(density.name)
                 marginTop(8f)
-                fontSize(9f)
+                fontSizeScaled(9f)
                 color(theme.textTertiary)
             }
         }
@@ -379,12 +382,12 @@ private fun ViewContainer<*, *>.GallerySubThread(theme: StockChatTheme, collapse
         attr { marginTop(8f); marginLeft(16f); padding(10f); backgroundColor(theme.brandSoft); borderRadius(8f) }
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
-            Text { attr { text("分支：AI 解读深挖"); fontSize(11f); fontWeightMedium(); color(theme.brand); flex(1f) } }
-            Text { attr { text(if (collapsed) "展开" else "收起"); fontSize(11f); color(theme.brand) } }
+            Text { attr { text("分支：AI 解读深挖"); fontSizeScaled(11f); fontWeightMedium(); color(theme.brand); flex(1f) } }
+            Text { attr { text(if (collapsed) "展开" else "收起"); fontSizeScaled(11f); color(theme.brand) } }
             event { click { onToggle() } }
         }
         if (!collapsed) {
-            Text { attr { text("这里承接该卡片的独立追问；聊天页会调用 AI 流式补全回答。") ; marginTop(7f); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
+            Text { attr { text("这里承接该卡片的独立追问；聊天页会调用 AI 流式补全回答。") ; marginTop(7f); fontSizeScaled(12f); lineHeightScaled(18f); color(theme.textSecondary) } }
         }
     }
 }

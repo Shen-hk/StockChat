@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
@@ -96,13 +98,13 @@ internal fun ViewContainer<*, *>.CardSheetHost(
         }
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
-            Text { attr { text("完整内容"); fontSize(15f); fontWeightSemiBold(); color(theme.textPrimary); flex(1f) } }
+            Text { attr { text("完整内容"); fontSizeScaled(15f); fontWeightSemiBold(); color(theme.textPrimary); flex(1f) } }
             if (primaryActionLabel != null) {
                 Text {
                     attr {
                         text(primaryActionLabel)
                         marginRight(14f)
-                        fontSize(12f)
+                        fontSizeScaled(12f)
                         fontWeightSemiBold()
                         color(if (primaryActionLabel == "已自选") theme.textTertiary else theme.brand)
                     }
@@ -113,7 +115,7 @@ internal fun ViewContainer<*, *>.CardSheetHost(
                     }
                 }
             }
-            Text { attr { text("收起"); fontSize(12f); color(theme.textSecondary) } }
+            Text { attr { text("收起"); fontSizeScaled(12f); color(theme.textSecondary) } }
             event { click { onLower() } }
         }
         Scroller {
@@ -139,7 +141,7 @@ internal fun ViewContainer<*, *>.CardSheetHost(
                     backgroundColor(theme.brandSoft)
                     borderRadius(10f)
                 }
-                Text { attr { text("展开更多"); fontSize(12f); fontWeightMedium(); color(theme.brand) } }
+                Text { attr { text("展开更多"); fontSizeScaled(12f); fontWeightMedium(); color(theme.brand) } }
                 event { click { onRaise() } }
             }
         }

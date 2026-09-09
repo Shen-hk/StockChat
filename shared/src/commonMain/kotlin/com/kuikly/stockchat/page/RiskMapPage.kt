@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -78,7 +81,7 @@ import kotlin.math.sqrt
  */
 @Page(Routes.RISK, supportInLocal = true)
 internal class RiskMapPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val watchlistStore get() = dependencies.watchlistStore
     private val quoteRepository get() = dependencies.quoteRepository
@@ -201,7 +204,7 @@ internal class RiskMapPage : BasePager() {
                         Text {
                             attr {
                                 text("风险地图的输入是你的自选")
-                                fontSize(15f)
+                                fontSizeScaled(15f)
                                 fontWeightSemiBold()
                                 color(page.theme.textPrimary)
                             }
@@ -210,8 +213,8 @@ internal class RiskMapPage : BasePager() {
                             attr {
                                 text("先在自选页添加几只股票，这里才能画出它们共享了哪些变量。不采集任何仓位信息，全部按等权估算。")
                                 marginTop(10f)
-                                fontSize(12.5f)
-                                lineHeight(19f)
+                                fontSizeScaled(12.5f)
+                                lineHeightScaled(19f)
                                 color(page.theme.textSecondary)
                             }
                         }
@@ -229,7 +232,7 @@ internal class RiskMapPage : BasePager() {
                             Text {
                                 attr {
                                     text("去自选页看看")
-                                    fontSize(12f)
+                                    fontSizeScaled(12f)
                                     color(page.theme.brand)
                                 }
                             }
@@ -286,8 +289,8 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("本页只翻译共同暴露，不判定风险等级，不构成投资建议。")
                     marginTop(16f)
-                    fontSize(11f)
-                    lineHeight(17f)
+                    fontSizeScaled(11f)
+                    lineHeightScaled(17f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -353,9 +356,9 @@ internal class RiskMapPage : BasePager() {
             Text {
                 attr {
                     text(page.headline(industry, chain))
-                    fontSize(18f)
+                    fontSizeScaled(18f)
                     fontWeightSemiBold()
-                    lineHeight(26f)
+                    lineHeightScaled(26f)
                     color(page.theme.textPrimary)
                 }
             }
@@ -363,7 +366,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("等权估算 · 非真实仓位 · 共 ${total} 只自选")
                     marginTop(8f)
-                    fontSize(10f)
+                    fontSizeScaled(10f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -372,7 +375,7 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text(page.dataModeLabel)
                         marginTop(3f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -438,7 +441,7 @@ internal class RiskMapPage : BasePager() {
                         Text {
                             attr {
                                 text(layer.label)
-                                fontSize(11.5f)
+                                fontSizeScaled(11.5f)
                                 color(if (page.skyLayer == layer) page.theme.brand else page.theme.textSecondary)
                             }
                         }
@@ -453,8 +456,8 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         flex(1f)
                         text(page.skyLayerTip())
-                        fontSize(10.5f)
-                        lineHeight(16f)
+                        fontSizeScaled(10.5f)
+                        lineHeightScaled(16f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -477,7 +480,7 @@ internal class RiskMapPage : BasePager() {
                     Text {
                         attr {
                             text("这是什么 ›")
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             color(page.theme.brand)
                         }
                     }
@@ -561,7 +564,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("未来 30 天自选没有已预约事件，正常走。")
                     marginTop(10f)
-                    fontSize(10.5f)
+                    fontSizeScaled(10.5f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -593,8 +596,8 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text(page.skyCalSentence())
                     marginTop(6f)
-                    fontSize(10.5f)
-                    lineHeight(16f)
+                    fontSizeScaled(10.5f)
+                    lineHeightScaled(16f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -624,7 +627,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text(row.name)
-                        fontSize(12f)
+                        fontSizeScaled(12f)
                         color(page.theme.textPrimary)
                     }
                 }
@@ -632,8 +635,8 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text(page.skyStarSub(row))
                         marginTop(2f)
-                        fontSize(10.5f)
-                        lineHeight(15f)
+                        fontSizeScaled(10.5f)
+                        lineHeightScaled(15f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -642,7 +645,7 @@ internal class RiskMapPage : BasePager() {
             Text {
                 attr {
                     text(pct?.let { Format.percent(it) } ?: "--")
-                    fontSize(12f)
+                    fontSizeScaled(12f)
                     color(if ((pct ?: 0.0) >= 0) page.theme.rise else page.theme.fall)
                 }
             }
@@ -650,7 +653,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("进详情 ›")
                     marginLeft(10f)
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     color(page.theme.brand)
                 }
             }
@@ -674,7 +677,7 @@ internal class RiskMapPage : BasePager() {
             Text {
                 attr {
                     text("「${clusterName}」的 ${members.size} 只成员")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(page.theme.textPrimary)
                 }
@@ -697,7 +700,7 @@ internal class RiskMapPage : BasePager() {
                         Text {
                             attr {
                                 text(row.name)
-                                fontSize(10.5f)
+                                fontSizeScaled(10.5f)
                                 color(page.theme.textSecondary)
                             }
                         }
@@ -721,7 +724,7 @@ internal class RiskMapPage : BasePager() {
             Text {
                 attr {
                     text("为什么圈住这团")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(page.theme.textPrimary)
                 }
@@ -735,8 +738,8 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text(fact)
                         marginTop(6f)
-                        fontSize(10.5f)
-                        lineHeight(16f)
+                        fontSizeScaled(10.5f)
+                        lineHeightScaled(16f)
                         color(page.theme.textSecondary)
                     }
                 }
@@ -754,7 +757,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text("问一句「为什么经常一起涨跌」 ›")
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         color(page.theme.brand)
                     }
                 }
@@ -784,7 +787,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text(title)
-                        fontSize(13.5f)
+                        fontSizeScaled(13.5f)
                         fontWeightSemiBold()
                         color(page.theme.textPrimary)
                     }
@@ -814,7 +817,7 @@ internal class RiskMapPage : BasePager() {
                             Text {
                                 attr {
                                     text("这是什么 ›")
-                                    fontSize(10f)
+                                    fontSizeScaled(10f)
                                     color(page.theme.brand)
                                 }
                             }
@@ -841,8 +844,8 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("行业归属暂不可用（离线或接口失败），其他维度不受影响。")
                     marginTop(8f)
-                    fontSize(11.5f)
-                    lineHeight(17f)
+                    fontSizeScaled(11.5f)
+                    lineHeightScaled(17f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -853,7 +856,7 @@ internal class RiskMapPage : BasePager() {
             attr {
                 text("${top.count} 只同属「${top.name}」，占 ${page.weightLabel(top.count, total)}")
                 marginTop(if (elevated) 4f else 8f)
-                fontSize(12.5f)
+                fontSizeScaled(12.5f)
                 color(page.theme.textSecondary)
             }
         }
@@ -903,7 +906,7 @@ internal class RiskMapPage : BasePager() {
                         attr {
                             text("${stat.name} ${page.weightLabel(stat.count, total)}")
                             marginLeft(4f)
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -913,7 +916,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("其他 ${page.weightLabel(total - industry.take(3).sumOf { it.count }, total)}"
                     )
-                    fontSize(10f)
+                    fontSizeScaled(10f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -935,7 +938,7 @@ internal class RiskMapPage : BasePager() {
                     Text {
                         attr {
                             text(row.name)
-                            fontSize(10.5f)
+                            fontSizeScaled(10.5f)
                             color(page.theme.textSecondary)
                         }
                     }
@@ -966,7 +969,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("市值数据不足（离线或停牌），暂无法计算集中度。")
                     marginTop(8f)
-                    fontSize(11.5f)
+                    fontSizeScaled(11.5f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -978,7 +981,7 @@ internal class RiskMapPage : BasePager() {
             attr {
                 text("市值加权口径（非你的真实仓位）：Top3 占 ${page.weightLabel(top3Share)}")
                 marginTop(8f)
-                fontSize(11.5f)
+                fontSizeScaled(11.5f)
                 color(page.theme.textSecondary)
             }
         }
@@ -990,7 +993,7 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text(name)
                         width(64f)
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         color(page.theme.textSecondary)
                     }
                 }
@@ -1010,7 +1013,7 @@ internal class RiskMapPage : BasePager() {
                         text(page.weightLabel(share))
                         marginLeft(8f)
                         width(38f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -1031,7 +1034,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("日K数据不足（离线或新股），相关性暂不可算。")
                     marginTop(8f)
-                    fontSize(11.5f)
+                    fontSizeScaled(11.5f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -1053,7 +1056,7 @@ internal class RiskMapPage : BasePager() {
             attr {
                 text("近 ${CORRELATION_WINDOW} 个交易日 · 点格子看配对解读 · 色深 = 同涨同跌程度")
                 marginTop(8f)
-                fontSize(10.5f)
+                fontSizeScaled(10.5f)
                 color(page.theme.textTertiary)
             }
         }
@@ -1064,7 +1067,7 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text(rowName)
                         width(52f)
-                        fontSize(9f)
+                        fontSizeScaled(9f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -1110,8 +1113,8 @@ internal class RiskMapPage : BasePager() {
                     Text {
                         attr {
                             text("${rowA.second} ↔ ${rowB.second}：相关系数 ${page.coefficientLabel(r)}，同期 ${sameDirection} 天同向")
-                            fontSize(11.5f)
-                            lineHeight(17f)
+                            fontSizeScaled(11.5f)
+                            lineHeightScaled(17f)
                             color(page.theme.textSecondary)
                         }
                     }
@@ -1119,7 +1122,7 @@ internal class RiskMapPage : BasePager() {
                         attr {
                             text("在知识库查看「相关系数」是什么意思 ›")
                             marginTop(6f)
-                            fontSize(10.5f)
+                            fontSizeScaled(10.5f)
                             color(page.theme.brand)
                         }
                     }
@@ -1147,7 +1150,7 @@ internal class RiskMapPage : BasePager() {
             attr {
                 text("标的数超过 12，降级为同涨同跌程度最高的 5 组配对")
                 marginTop(8f)
-                fontSize(10.5f)
+                fontSizeScaled(10.5f)
                 color(page.theme.textTertiary)
             }
         }
@@ -1157,7 +1160,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text("${names.first} ↔ ${names.second}")
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         color(page.theme.textSecondary)
                     }
                 }
@@ -1165,7 +1168,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text("${page.coefficientLabel(r)} · ${sameDays} 天同向")
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -1186,7 +1189,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("日K数据不足，组合与大盘的波动对比暂不可算。")
                     marginTop(8f)
-                    fontSize(11.5f)
+                    fontSizeScaled(11.5f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -1201,7 +1204,7 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text(label)
                         width(84f)
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         color(page.theme.textSecondary)
                     }
                 }
@@ -1221,7 +1224,7 @@ internal class RiskMapPage : BasePager() {
                         text("${Format.price(std * 100)}%")
                         marginLeft(8f)
                         width(46f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -1231,7 +1234,7 @@ internal class RiskMapPage : BasePager() {
             attr {
                 text("近 ${CORRELATION_WINDOW} 个交易日 · 日收益率标准差（等权）")
                 marginTop(8f)
-                fontSize(10.5f)
+                fontSizeScaled(10.5f)
                 color(page.theme.textTertiary)
             }
         }
@@ -1256,7 +1259,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("自选标的未来没有已预约的披露事件。")
                     marginTop(8f)
-                    fontSize(11.5f)
+                    fontSizeScaled(11.5f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -1272,7 +1275,7 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text(event.date.substring(5))
                         width(44f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -1292,7 +1295,7 @@ internal class RiskMapPage : BasePager() {
                     Text {
                         attr {
                             text("${event.name} · ${event.kind.label}")
-                            fontSize(11.5f)
+                            fontSizeScaled(11.5f)
                             color(page.theme.textSecondary)
                         }
                     }
@@ -1300,7 +1303,7 @@ internal class RiskMapPage : BasePager() {
                         attr {
                             text(event.title)
                             marginTop(2f)
-                            fontSize(10.5f)
+                            fontSizeScaled(10.5f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -1322,7 +1325,7 @@ internal class RiskMapPage : BasePager() {
                             Text {
                                 attr {
                                     text("转预警 ›")
-                                    fontSize(11f)
+                                    fontSizeScaled(11f)
                                     color(page.theme.brand)
                                 }
                             }
@@ -1338,7 +1341,7 @@ internal class RiskMapPage : BasePager() {
                             attr {
                                 text("已在收件箱 ✓")
                                 marginLeft(8f)
-                                fontSize(10f)
+                                fontSizeScaled(10f)
                                 color(page.theme.textTertiary)
                             }
                         }
@@ -1359,7 +1362,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text(page.eventToInboxHint)
                     marginTop(10f)
-                    fontSize(10.5f)
+                    fontSizeScaled(10.5f)
                     color(page.theme.brand)
                 }
             }
@@ -1458,7 +1461,7 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text("今日自选中没有涨停标的，情绪暴露不明显。")
                     marginTop(8f)
-                    fontSize(11.5f)
+                    fontSizeScaled(11.5f)
                     color(page.theme.textTertiary)
                 }
             }
@@ -1468,7 +1471,7 @@ internal class RiskMapPage : BasePager() {
             attr {
                 text("自选中有 ${members.size} 只在今日涨停池")
                 marginTop(8f)
-                fontSize(11.5f)
+                fontSizeScaled(11.5f)
                 color(page.theme.textSecondary)
             }
         }
@@ -1487,7 +1490,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text(member.second.name)
-                        fontSize(11.5f)
+                        fontSizeScaled(11.5f)
                         color(page.theme.textSecondary)
                     }
                 }
@@ -1495,7 +1498,7 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text("${member.first.consecutiveBoards} 连板 · ${member.first.sector}")
                         marginLeft(8f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -1523,8 +1526,8 @@ internal class RiskMapPage : BasePager() {
                 attr {
                     text(text)
                     marginLeft(8f)
-                    fontSize(10.5f)
-                    lineHeight(16f)
+                    fontSizeScaled(10.5f)
+                    lineHeightScaled(16f)
                     color(page.theme.textSecondary)
                 }
             }
@@ -1707,7 +1710,7 @@ internal class RiskMapPage : BasePager() {
         )
         container.View {
             attr { marginTop(10f); padding(10f); borderRadius(12f); backgroundColor(page.theme.brandSoft) }
-            Text { attr { text("按住「${row.name}」· 想问哪一句？"); fontSize(10.5f); color(page.theme.brand) } }
+            Text { attr { text("按住「${row.name}」· 想问哪一句？"); fontSizeScaled(10.5f); color(page.theme.brand) } }
             View {
                 attr { marginTop(7f); flexDirectionRow(); flexWrapWrap() }
                 questions.forEach { question ->
@@ -1721,7 +1724,7 @@ internal class RiskMapPage : BasePager() {
                                 page.openChatWithQuestion(question, "来自风险地图：星「${row.name}」（${layerName}层）")
                             }
                         }
-                        Text { attr { text(question); fontSize(10f); color(page.theme.textSecondary) } }
+                        Text { attr { text(question); fontSizeScaled(10f); color(page.theme.textSecondary) } }
                     }
                 }
             }
@@ -1892,7 +1895,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text("暴露变化")
-                        fontSize(13.5f)
+                        fontSizeScaled(13.5f)
                         fontWeightSemiBold()
                         color(page.theme.textPrimary)
                     }
@@ -1902,7 +1905,7 @@ internal class RiskMapPage : BasePager() {
                         flex(1f)
                         text("每周自动留存一次")
                         textAlignRight()
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -1914,7 +1917,7 @@ internal class RiskMapPage : BasePager() {
                         attr {
                             text(page.formatSnapshotDate(snapshot.capturedAtMillis))
                             width(64f)
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -1936,8 +1939,8 @@ internal class RiskMapPage : BasePager() {
                                 "${snapshot.memberCount} 只 · ${snapshot.topIndustry} ${snapshot.topIndustryCount} 只 · " +
                                     "CR3 ${snapshot.cr3Percent}% · ${snapshot.volRatioLabel()}",
                             )
-                            fontSize(11f)
-                            lineHeight(16f)
+                            fontSizeScaled(11f)
+                            lineHeightScaled(16f)
                             color(page.theme.textSecondary)
                         }
                     }
@@ -1953,7 +1956,7 @@ internal class RiskMapPage : BasePager() {
                         attr {
                             text("对比上次 · 生成暴露变化预警 ›")
                             flex(1f)
-                            fontSize(11f)
+                            fontSizeScaled(11f)
                             color(page.theme.brand) // EXPOSURE 用品牌蓝语境，不用涨跌色
                         }
                     }
@@ -1966,7 +1969,7 @@ internal class RiskMapPage : BasePager() {
                     Text {
                         attr {
                             text("已生成 ✓")
-                            fontSize(10f)
+                            fontSizeScaled(10f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -2011,7 +2014,7 @@ internal class RiskMapPage : BasePager() {
                 Text {
                     attr {
                         text("今天比大盘多跌 ${Format.price(-gap)}%")
-                        fontSize(12.5f)
+                        fontSizeScaled(12.5f)
                         color(page.theme.textSecondary)
                     }
                 }
@@ -2019,7 +2022,7 @@ internal class RiskMapPage : BasePager() {
                     attr {
                         text("问一句「为什么」，看逐项归因 ›")
                         marginTop(3f)
-                        fontSize(10.5f)
+                        fontSizeScaled(10.5f)
                         color(page.theme.brand)
                     }
                 }
@@ -2027,7 +2030,7 @@ internal class RiskMapPage : BasePager() {
             Text {
                 attr {
                     text("去问")
-                    fontSize(11.5f)
+                    fontSizeScaled(11.5f)
                     color(page.theme.brand)
                 }
             }

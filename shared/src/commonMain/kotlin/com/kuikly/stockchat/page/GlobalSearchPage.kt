@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
@@ -27,7 +30,7 @@ import com.tencent.kuikly.core.views.View
 
 @Page(Routes.SEARCH, supportInLocal = true)
 internal class GlobalSearchPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private var securities: ObservableList<Security> by observableList()
     private var terms: ObservableList<GlossaryEntry> by observableList()
     private lateinit var dependencies: MarketDependencies
@@ -49,10 +52,10 @@ internal class GlobalSearchPage : BasePager() {
                 attr { flex(1f); paddingLeft(14f); paddingRight(0f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(70f) }
                 View {
                     attr { height(42f); flexDirectionRow(); alignItemsCenter(); paddingLeft(12f); paddingRight(12f); borderRadius(12f); backgroundColor(page.theme.surfaceMuted) }
-                    Text { attr { text("⌕"); fontSize(18f); color(page.theme.textTertiary) } }
+                    Text { attr { text("⌕"); fontSizeScaled(18f); color(page.theme.textTertiary) } }
                     TextArea {
                         attr {
-                            flex(1f); marginLeft(7f); fontSize(14f); lineHeight(21f)
+                            flex(1f); marginLeft(7f); fontSizeScaled(14f); lineHeightScaled(21f)
                             color(page.theme.textPrimary); backgroundColor(Color(0xFFFFFFFF, 0f))
                             // 垂直居中关键（同 ChatPage 折叠态范式）：原生 TextArea 恒为
                             // TOP|START 顶对齐（KRTextAreaView setGravity(51)），固定 40 高
@@ -74,10 +77,10 @@ internal class GlobalSearchPage : BasePager() {
                         attr { marginBottom(7f); padding(13f); borderRadius(12f); backgroundColor(page.theme.surface); flexDirectionRow(); alignItemsCenter() }
                         View {
                             attr { flex(1f) }
-                            Text { attr { text(security.name); fontSize(13.5f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
-                            Text { attr { text(security.symbol); marginTop(3f); fontSize(10f); color(page.theme.textTertiary) } }
+                            Text { attr { text(security.name); fontSizeScaled(13.5f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
+                            Text { attr { text(security.symbol); marginTop(3f); fontSizeScaled(10f); color(page.theme.textTertiary) } }
                         }
-                        Text { attr { text("查看详情 ›"); fontSize(11f); color(page.theme.brand) } }
+                        Text { attr { text("查看详情 ›"); fontSizeScaled(11f); color(page.theme.brand) } }
                         event { click { page.openStockDetail(security.symbol, Routes.SEARCH) } }
                     }
                 }
@@ -88,10 +91,10 @@ internal class GlobalSearchPage : BasePager() {
                         attr { marginBottom(7f); padding(13f); borderRadius(12f); backgroundColor(page.theme.surface) }
                         View {
                             attr { flexDirectionRow(); alignItemsCenter() }
-                            Text { attr { text(entry.term); fontSize(13.5f); fontWeightSemiBold(); color(page.theme.term) } }
-                            Text { attr { text(entry.ascii.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""); fontSize(10f); color(page.theme.textTertiary) } }
+                            Text { attr { text(entry.term); fontSizeScaled(13.5f); fontWeightSemiBold(); color(page.theme.term) } }
+                            Text { attr { text(entry.ascii.takeIf { it.isNotEmpty() }?.let { " · $it" } ?: ""); fontSizeScaled(10f); color(page.theme.textTertiary) } }
                         }
-                        Text { attr { text(entry.plain); marginTop(5f); fontSize(11.5f); lineHeight(17f); color(page.theme.textSecondary) } }
+                        Text { attr { text(entry.plain); marginTop(5f); fontSizeScaled(11.5f); lineHeightScaled(17f); color(page.theme.textSecondary) } }
                         event { click { page.openPage(Routes.GLOSSARY) } }
                     }
                 }
