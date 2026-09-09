@@ -112,6 +112,33 @@ class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, Disc
         SectorRank("BK1277", "白酒", -1.42, -1_502_000_000.0, 5, 15),
     )
 
+    /**
+     * 市场页新闻弹幕带（doc 36 §9.1）：演示模式给一组带日内时间戳的快讯，
+     * 供时间机器「随帧过滤」（回放到 HH:MM 只显示当时已发布的新闻）。
+     * 真实模式返回空——市场级快讯的真实数据源未接入前不冒充。
+     * [time] 保持 `yyyy-MM-dd HH:mm:ss` 形状，与 NewsTape 的 formatTapeTime 口径一致。
+     */
+    fun marketNewsValue(): List<NewsItem> = if (realMode) {
+        emptyList()
+    } else {
+        listOf(
+            NewsItem("mkt-n1", "央行公开市场今日净投放 1200 亿元", "公开媒体", "2026-09-09 09:32:00", "", "演示数据：数量级与表述均为占位，仅供交互演示。"),
+            NewsItem("mkt-n2", "两市成交额开盘 30 分钟突破 4000 亿", "公开媒体", "2026-09-09 09:41:00", "", ""),
+            NewsItem("mkt-n3", "工信部：加快推进机器人产业创新发展", "公开媒体", "2026-09-09 09:48:00", "", ""),
+            NewsItem("mkt-n4", "北证50 盘中涨超 2%，成交额创阶段新高", "公开媒体", "2026-09-09 09:55:00", "", ""),
+            NewsItem("mkt-n5", "存储芯片现货价连续第三周上行", "公开媒体", "2026-09-09 10:06:00", "", ""),
+            NewsItem("mkt-n6", "券商板块冲高回落，早盘振幅 2.1%", "公开媒体", "2026-09-09 10:19:00", "", ""),
+            NewsItem("mkt-n7", "沪深两市红盘率回落至 45% 下方", "公开媒体", "2026-09-09 10:47:00", "", ""),
+            NewsItem("mkt-n8", "国家统计局：8 月 CPI 同比上涨 0.4%", "公开媒体", "2026-09-09 11:02:00", "", ""),
+            NewsItem("mkt-n9", "创业板指午后翻红，现涨 0.3%", "公开媒体", "2026-09-09 13:26:00", "", ""),
+            NewsItem("mkt-n10", "两市炸板数升至 22 家", "公开媒体", "2026-09-09 13:38:00", "", ""),
+            NewsItem("mkt-n11", "北向资金净流出收窄至 44 亿", "公开媒体", "2026-09-09 14:05:00", "", ""),
+            NewsItem("mkt-n12", "机器人板块尾盘拉升，涨幅重回 1%", "公开媒体", "2026-09-09 14:31:00", "", ""),
+            NewsItem("mkt-n13", "上证指数收复 3300 点整数关口", "公开媒体", "2026-09-09 14:46:00", "", ""),
+            NewsItem("mkt-n14", "两市全天成交 1.79 万亿，较昨日缩量", "公开媒体", "2026-09-09 15:01:00", "", ""),
+        )
+    }
+
     override fun fundFlow(symbol: String, onResult: (FundFlow?) -> Unit) = onResult(stock(symbol).fundFlow)
     override fun fundamentals(symbol: String, onResult: (FundamentalBundle?) -> Unit) = onResult(stock(symbol).fundamentals)
     override fun calendar(onResult: (List<MarketCalendarEvent>) -> Unit) = onResult(calendarValue())

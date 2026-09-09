@@ -32,10 +32,16 @@ internal fun ViewContainer<*, *>.NewsTape(
     selected: () -> NewsItem?,
     // 情绪判定：true=利好(rise) / false=利空(fall) / null=中性不染色；页侧 scoreNewsSentiment
     sentimentOf: (NewsItem) -> Boolean?,
+    // 头部文案（市场页弹幕带复用本组件，换成自己的语义；默认保持详情页口径）
+    headerTitle: String = "相关资讯",
+    headerHint: String = "长按先览 · 点按落旗",
     // 该条是否已落旗（页侧 droppedNewsIds）：摘要条事实行据此切换文案
     flagged: (NewsItem) -> Boolean = { false },
     onTapItem: (NewsItem) -> Unit,
-    onLongPressItem: ((NewsItem) -> Unit)? = null,
+    // B1 长按先览（U5 400ms）：state=start 时回调 item 与按压点 pageX/pageY
+    // （根 Page 坐标系，LongPressParams 原生提供）；页侧气泡锚定胶囊正下方——
+    // doc 29 原型 .preview「从消息上引出来」，非卡内/页顶固定。
+    onLongPressItem: ((NewsItem, Float, Float) -> Unit)? = null,
     onLongPressRelease: (() -> Unit)? = null,
     onAskAi: ((NewsItem) -> Unit)? = null,
     onOpenUrl: ((NewsItem) -> Unit)? = null,
@@ -59,7 +65,7 @@ internal fun ViewContainer<*, *>.NewsTape(
                 }
                 Text {
                     attr {
-                        text("相关资讯")
+                        text(headerTitle)
                         flex(1f)
                         fontSize(theme.type.label)
                         fontWeightSemiBold()
@@ -68,7 +74,7 @@ internal fun ViewContainer<*, *>.NewsTape(
                 }
                 Text {
                     attr {
-                        text("长按先览 · 点按落旗")
+                        text(headerHint)
                         fontSize(theme.type.meta)
                         color(theme.textTertiary)
                     }
@@ -210,7 +216,7 @@ private fun ViewContainer<*, *>.TapePill(
     selected: () -> NewsItem?,
     sentimentOf: (NewsItem) -> Boolean?,
     onTapItem: (NewsItem) -> Unit,
-    onLongPressItem: ((NewsItem) -> Unit)?,
+    onLongPressItem: ((NewsItem, Float, Float) -> Unit)?,
     onLongPressRelease: (() -> Unit)?,
 ) {
     View {
@@ -227,10 +233,11 @@ private fun ViewContainer<*, *>.TapePill(
         }
         event {
             click { onTapItem(item) }
-            // B1 长按先览（U5 400ms·8dp）：start 即回调，end/cancel 交页侧调度消失
+            // B1 长按先览（U5 400ms·8dp）：state=start 即回调 item + 按压点 pageX/pageY，
+            // end/cancel 交页侧调度消失
             longPress { params ->
                 when (params.state) {
-                    "start" -> onLongPressItem?.invoke(item)
+                    "start" -> onLongPressItem?.invoke(item, params.pageX, params.pageY)
                     "end", "cancel" -> onLongPressRelease?.invoke()
                 }
             }
