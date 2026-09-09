@@ -44,6 +44,11 @@ import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
+import com.kuikly.stockchat.chat.welcome.data.WelcomeStarterStore
+import com.kuikly.stockchat.chat.welcome.state.ChatWelcomeCoordinator
+import com.kuikly.stockchat.chat.welcome.state.ChatWelcomeEffect
+import com.kuikly.stockchat.chat.welcome.state.ChatWelcomeState
+import com.kuikly.stockchat.chat.welcome.state.KuiklyWelcomeScheduler
 import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.data.entity.Securities
@@ -171,7 +176,6 @@ internal class ChatPage : BasePager() {
     // 输入栏诊断日志统一 tag。logcat 过滤：adb logcat -s KLog 或搜 "Composer"。
     private companion object {
         const val COMPOSER_LOG_TAG = "Composer"
-        const val WELCOME_USED_KIND_KEY = "stockchat_welcome_used_starter_kinds_v1"
         // 焦点隔离诊断开关；正常交付必须关闭。完整输入栏使用无 Blur 的静态
         // 玻璃表皮，避免原生 Blur 覆盖层遮住 EditText 光标。
         const val COMPOSER_ISOLATION_TEST = false
@@ -194,8 +198,30 @@ internal class ChatPage : BasePager() {
     }
     private val dependencies by lazy { ChatDependencies.forPager(pagerId) }
     private val viewModel by lazy { ChatViewModel(pagerId, dependencies) }
-    private val welcomeStorage by lazy { PagerKeyValueStorage(pagerId) }
-    private val welcomeKeywords = listOf("行情", "术语", "财报", "公告")
+    // Welcome is a self-contained vertical slice: storage/data, state/timing,
+    // component and this page-level platform-effect adapter.
+    private val welcomeStarterStore by lazy {
+        WelcomeStarterStore(
+            PagerKeyValueStorage(pagerId),
+            defaultWelcomeStarters().map { it.kind.name }.toSet(),
+        )
+    }
+    private val welcomeState by lazy { ChatWelcomeState() }
+    private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
+    private val welcomeCoordinator by lazy {
+        ChatWelcomeCoordinator(
+            state = welcomeState,
+            starterStore = welcomeStarterStore,
+            scheduler = KuiklyWelcomeScheduler(),
+            reducedMotion = welcomeReducedMotion,
+        ) { effect ->
+            when (effect) {
+                ChatWelcomeEffect.HAPTIC_IMPACT ->
+                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                ChatWelcomeEffect.OPEN_MARKET -> openPage(Routes.MARKET)
+            }
+        }
+    }
     // 全页唯一、持久挂载的 TextArea。ref 只在首次 body 挂载前为空。
     private var inputRef: ViewRef<TextAreaView>? = null
     private var chatScrollerRef: ViewRef<ScrollerView<*, *>>? = null
@@ -431,26 +457,6 @@ internal class ChatPage : BasePager() {
     private val deliveredAlertBuckets = mutableSetOf<String>()
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
-    private var welcomeKeywordText: String by observable("行情")
-    private var welcomeKeywordStopped: Boolean by observable(false)
-    private var welcomeKeywordVersion = 0
-    private var welcomeKeywordTimer: Timer? = null
-    private var welcomeCursorTimer: Timer? = null
-    // 轮播关键词尾部的 2px 光标：轮播存活期 550ms 翻转（1.1s step-end），停止即隐藏
-    private var welcomeCursorVisible: Boolean by observable(false)
-    // 入场动效只控制示例卡，不控制欢迎区本身是否存在。新会话必须在清空消息的
-    // 同一帧就能画出欢迎内容；把挂载再交给一个 Timer 会让抽屉收起/页面重排与
-    // 会话切换碰撞时留下白屏窗口。
-    private var welcomeEntranceVisible: Boolean by observable(false)
-    private var welcomeEntranceArmed = false
-    // 定时回调只能检查普通版本号，不能在回调中读取 observable。
-    private var welcomeEntranceVersion = 0
-    // 与欢迎词轮播共用 Kuikly Timer 调度路径；每次只保留一个入场阶段任务。
-    private var welcomeEntranceTimer: Timer? = null
-    // 入场兜底（独立于 welcomeEntranceTimer）：ref/Timer 链路任一环丢失时，
-    // 示例卡不得停留在 opacity 0 的空首页。600ms 一次性，版本号守卫。
-    private var welcomeEntranceSafetyTimer: Timer? = null
-    private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
     private var pendingRouteQuestion: String = ""
     private var pendingRouteFocusNote: String = ""
     private var pendingRouteFocusSymbol: String = ""
@@ -503,11 +509,9 @@ internal class ChatPage : BasePager() {
         super.pageDidDisappear()
         pageVisible = false
         alertPollGeneration++
-        // 只暂停、不上锁：lock=true 会把 welcomeKeywordStopped 永久置真，
-        // 于是从详情页返回或应用回到前台后 startWelcomeKeywordLoopIfNeeded()
-        // 会被首行的 stopped 判断直接挡掉，轮播再也不会恢复。
-        // 上锁只留给「用户已经开始对话」的路径（提交输入、选示例卡、打开历史会话）。
-        stopWelcomeKeywordLoop(lock = false)
+        // Coordinator cancels and version-guards every welcome callback here;
+        // leaving a page must never let a stale timer mutate its observables.
+        welcomeCoordinator.onDisappear()
         stopComposerRimFlow()
         // If the stock detail route is covering this page, JS state may
         // already read as idle while the native view is still waiting for the
@@ -529,10 +533,17 @@ internal class ChatPage : BasePager() {
         // Preload the island quote so the morph opens with data in place.
         requestQuote(islandSymbol)
         startAlertPolling()
-        startWelcomeKeywordLoopIfNeeded()
+        welcomeCoordinator.onAppear(
+            sessionEmpty = viewModel.messages.isEmpty(),
+            fullMode = welcomeMode() == WelcomeMode.FULL,
+        )
         startComposerRimFlow()
-        scheduleWelcomeEntranceSafety()
         consumeRouteQuestionIfNeeded()
+    }
+
+    override fun pageWillDestroy() {
+        welcomeCoordinator.onDestroy()
+        super.pageWillDestroy()
     }
 
     override fun body(): ViewBuilder {
@@ -617,12 +628,12 @@ internal class ChatPage : BasePager() {
                             // 取值闭包，不能在这里直接读 observable：vif 体只执行一次，
                             // 读到的快照不会建立依赖，attr 不重跑、animate() 也拿不到
                             // observablePropertyKey，整块动效会静默失效。
-                            rotatingKeyword = { page.welcomeKeywordText },
-                            cursorVisible = { page.welcomeCursorVisible },
-                            entranceVisible = { page.welcomeEntranceVisible },
-                            onMounted = page::welcomeDidMount,
-                            marketTabSelected = { page.welcomeMarketTabSelected },
-                            onOpenMarket = { page.handleWelcomeMarketTap() },
+                            rotatingKeyword = { page.welcomeState.rotatingKeyword },
+                            cursorVisible = { page.welcomeState.cursorVisible },
+                            entranceVisible = { page.welcomeState.entranceVisible },
+                            onMounted = page.welcomeCoordinator::onWelcomeMounted,
+                            marketTabSelected = { page.welcomeState.marketTabSelected },
+                            onOpenMarket = page.welcomeCoordinator::onOpenMarketRequested,
                             reduceMotion = page.welcomeReducedMotion,
                             ) { starter ->
                                 page.chooseWelcomeStarter(starter)
@@ -1739,7 +1750,7 @@ internal class ChatPage : BasePager() {
 
     private fun startNewChat() {
         updateDrawerOpen(false)
-        stopWelcomeKeywordLoop(lock = false)
+        welcomeCoordinator.onNewEmptySession()
         keepChatAtBottomVersion = 0
         chatContentHeight = 0f
         chatFollowStream = true
@@ -1748,11 +1759,7 @@ internal class ChatPage : BasePager() {
         chatFollowLoop = null
         resetSessionUiState()
         setComposerText("")
-        // 先把欢迎页置为可见终态，再清空消息触发 vif 挂载。这样即使 ref、动画帧或
-        // 抽屉收起的回调丢失，新会话首帧也不会是空白。
-        resetWelcomeForEmptySession()
         viewModel.startNewChat()
-        startWelcomeKeywordLoopIfNeeded()
         resetChatScrollToTop()
     }
 
@@ -1764,217 +1771,16 @@ internal class ChatPage : BasePager() {
         if (welcomeBriefEnabled && viewModel.hasSessionHistory) WelcomeMode.BRIEF else WelcomeMode.FULL
 
     private fun chooseWelcomeStarter(starter: WelcomeStarter) {
-        markWelcomeStarterUsed(starter)
-        stopWelcomeKeywordLoop(lock = true)
+        welcomeCoordinator.onStarterChosen(starter.kind.name)
         injectQuestion(starter.question)
     }
 
-    private fun readWelcomeUsedStarterKinds(): Set<String> =
-        welcomeStorage.getString(WELCOME_USED_KIND_KEY)
-            .split('|')
-            .filter { it.isNotBlank() }
-            .toSet()
-
-    private fun markWelcomeStarterUsed(starter: WelcomeStarter) {
-        val allKinds = defaultWelcomeStarters().map { it.kind.name }.toSet()
-        val current = readWelcomeUsedStarterKinds()
-        val next = if (current.containsAll(allKinds)) {
-            mutableSetOf()
-        } else {
-            current.toMutableSet()
-        }
-        next.add(starter.kind.name)
-        welcomeStorage.setString(WELCOME_USED_KIND_KEY, next.joinToString("|"))
-    }
-
-    private fun startWelcomeKeywordLoopIfNeeded() {
-        if (welcomeKeywordStopped || welcomeMode() != WelcomeMode.FULL || viewModel.messages.isNotEmpty()) return
-        if (welcomeReducedMotion) {
-            // 「减弱动态效果」开启：不轮播、不闪烁，静态显示默认词。
-            welcomeKeywordVersion++
-            welcomeKeywordText = welcomeKeywords.first()
-            welcomeCursorVisible = false
-            return
-        }
-        val version = ++welcomeKeywordVersion
-        welcomeKeywordText = welcomeKeywords.first()
-        welcomeCursorVisible = true
-        scheduleWelcomeKeywordTyping(version, wordIndex = 0, length = welcomeKeywords.first().length)
-        scheduleWelcomeCursorBlink(version)
-    }
-
-    private fun stopWelcomeKeywordLoop(lock: Boolean = false) {
-        if (lock) welcomeKeywordStopped = true
-        welcomeKeywordVersion++
-        welcomeKeywordTimer?.cancel()
-        welcomeKeywordTimer = null
-        welcomeCursorTimer?.cancel()
-        welcomeCursorTimer = null
-        welcomeKeywordText = welcomeKeywords.first()
-        welcomeCursorVisible = false
-    }
-
-    private fun welcomeKeywordShouldRun(version: Int): Boolean =
-        version == welcomeKeywordVersion &&
-            !welcomeKeywordStopped &&
-            !isWillDestroy() &&
-            welcomeMode() == WelcomeMode.FULL &&
-            viewModel.messages.isEmpty()
-
-    private fun scheduleWelcomeKeywordTyping(version: Int, wordIndex: Int, length: Int) {
-        if (!welcomeKeywordShouldRun(version)) return
-        val word = welcomeKeywords[wordIndex % welcomeKeywords.size]
-        welcomeKeywordText = word.take(length)
-        if (length < word.length) {
-            scheduleWelcomeKeywordStep(version, 200) {
-                scheduleWelcomeKeywordTyping(version, wordIndex, length + 1)
-            }
-        } else {
-            scheduleWelcomeKeywordStep(version, 1200) {
-                scheduleWelcomeKeywordDeleting(version, wordIndex, word.length - 1)
-            }
-        }
-    }
-
-    private fun scheduleWelcomeKeywordDeleting(version: Int, wordIndex: Int, length: Int) {
-        if (!welcomeKeywordShouldRun(version)) return
-        val word = welcomeKeywords[wordIndex % welcomeKeywords.size]
-        welcomeKeywordText = word.take(length)
-        if (length > 0) {
-            scheduleWelcomeKeywordStep(version, 120) {
-                scheduleWelcomeKeywordDeleting(version, wordIndex, length - 1)
-            }
-        } else {
-            scheduleWelcomeKeywordStep(version, 300) {
-                scheduleWelcomeKeywordTyping(version, wordIndex + 1, 1)
-            }
-        }
-    }
-
-    private fun scheduleWelcomeKeywordStep(version: Int, delay: Int, block: () -> Unit) {
-        welcomeKeywordTimer?.cancel()
-        val timer = Timer()
-        welcomeKeywordTimer = timer
-        timer.schedule(delay, delay.coerceAtLeast(16)) {
-            timer.cancel()
-            if (welcomeKeywordTimer === timer) welcomeKeywordTimer = null
-            if (welcomeKeywordShouldRun(version)) block()
-        }
-    }
-
-    /** 光标 1.1s step-end 闪烁：每 550ms 翻转一次，与轮播共用版本号，随轮播一起停止。 */
-    private fun scheduleWelcomeCursorBlink(version: Int) {
-        if (!welcomeKeywordShouldRun(version)) return
-        welcomeCursorTimer?.cancel()
-        val timer = Timer()
-        welcomeCursorTimer = timer
-        timer.schedule(550, 550) {
-            if (!welcomeKeywordShouldRun(version)) {
-                timer.cancel()
-                if (welcomeCursorTimer === timer) welcomeCursorTimer = null
-                return@schedule
-            }
-            welcomeCursorVisible = !welcomeCursorVisible
-        }
-    }
-
-    /**
-     * 首屏入场：示例卡 94ms 阶梯上滑（时长 0.375s，下一张在前一张 25% 进度时启动）。
-     * 每个空会话实例只播一次；从详情页返回不重播；减弱动态时直接落到终态。
-     */
-    private fun welcomeDidMount() {
-        if (welcomeEntranceArmed) return
-        welcomeEntranceArmed = true
-        if (welcomeReducedMotion) {
-            welcomeEntranceVisible = true
-            return
-        }
-        // 该状态只在欢迎区已挂载后翻转；attr 内会读它并将它绑定为动画驱动。
-        welcomeEntranceVisible = false
-        val version = ++welcomeEntranceVersion
-        // 轮播已验证的 Timer 调度路径：约两帧后再呈现，保证 vif 新建卡片的初态
-        // 已实际下发给原生视图，随后由 attr 中的 visible 读取驱动 animate()。
-        scheduleWelcomeEntranceStep(version, 32) {
-            if (welcomeEntranceArmed) {
-                welcomeEntranceVisible = true
-            }
-        }
-        // ref 回调已递增版本号，reset 时挂的兜底按旧版本失效了；这里按新版本重挂，
-        // 补上「ref 已回调但 32ms 呈现 Timer 丢失」的窗口，否则 visible 永远停在
-        // false、示例卡全部停在 opacity 0（聊天中新建会话偶发无欢迎语的根因之一）。
-        scheduleWelcomeEntranceSafety()
-    }
-
-    // 欢迎区「看市场」胶囊：点击后滑块滑到右半格，动画结束震动再跳转市场页
-    // （R4/R5：滑块常驻挂载，attr 内无条件注册 easeOut，翻转周期消费上轮注册）。
-    private var welcomeMarketTabSelected: Boolean by observable(false)
-
-    private fun handleWelcomeMarketTap() {
-        if (welcomeMarketTabSelected) return // 动画/跳转期间防重复触发
-        welcomeMarketTabSelected = true
-        // 滑动 220ms → 到位震动 → 市场页才淡入；跳转后复位滑块供返回时显示默认态。
-        setTimeout(240) {
-            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-            openPage(Routes.MARKET)
-        }
-        setTimeout(420) {
-            welcomeMarketTabSelected = false
-        }
-    }
-
-    private fun resetWelcomeForEmptySession() {
-        welcomeKeywordStopped = false
-        // 新建会话优先保证内容可见，欢迎卡片不必为了入场动画经历一帧 opacity 0。
-        // armed 同时阻止新挂载的 ref 把已经可见的内容又重置为隐藏态。
-        welcomeEntranceArmed = true
-        ++welcomeEntranceVersion
-        welcomeEntranceTimer?.cancel()
-        welcomeEntranceTimer = null
-        welcomeEntranceVisible = true
-        scheduleWelcomeEntranceSafety()
-    }
-
-    /**
-     * 入场兜底：600ms 后欢迎区仍未呈现则直接落终态。
-     * 覆盖冷启动与新会话两条路径下断链的任意一环：
-     * - ref 未回调 / 32ms 呈现 Timer 丢失 → visible 停在 false，这里翻转
-     *   呈现；此时卡片 attr 已注册 easeOut，翻转仍走正常入场动画。
-     * 正常链路（ref → 32ms 呈现）先完成时，版本号已前移，本回调静默退出。
-     */
-    private fun scheduleWelcomeEntranceSafety() {
-        welcomeEntranceSafetyTimer?.cancel()
-        val version = welcomeEntranceVersion
-        val timer = Timer()
-        welcomeEntranceSafetyTimer = timer
-        timer.schedule(600, 600) {
-            timer.cancel()
-            if (welcomeEntranceSafetyTimer === timer) welcomeEntranceSafetyTimer = null
-            if (version == welcomeEntranceVersion && !isWillDestroy() &&
-                viewModel.messages.isEmpty() && !welcomeEntranceVisible
-            ) {
-                // armed 防 ref 迟到后把 visible 打回 false；欢迎区的挂载只由
-                // messages.isEmpty() 管理，visible 仅负责卡片终态。
-                welcomeEntranceArmed = true
-                welcomeEntranceVisible = true
-            }
-        }
-    }
-
-    /** 与欢迎词轮播相同的单次 Timer 调度；回调不读取任何 observable。 */
-    private fun scheduleWelcomeEntranceStep(version: Int, delay: Int, block: () -> Unit) {
-        welcomeEntranceTimer?.cancel()
-        val timer = Timer()
-        welcomeEntranceTimer = timer
-        timer.schedule(delay, delay.coerceAtLeast(16)) {
-            timer.cancel()
-            if (welcomeEntranceTimer === timer) welcomeEntranceTimer = null
-            if (version == welcomeEntranceVersion && !isWillDestroy()) block()
-        }
-    }
-
     private fun openHistorySession(sessionId: String) {
-        stopWelcomeKeywordLoop(lock = true)
         viewModel.openSession(sessionId)
+        welcomeCoordinator.onSessionOpened(
+            sessionEmpty = viewModel.messages.isEmpty(),
+            fullMode = welcomeMode() == WelcomeMode.FULL,
+        )
         resetSessionUiState()
         reloadQuotesForCurrentSession()
         setComposerText("")
@@ -1982,7 +1788,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun submitInput() {
-        stopWelcomeKeywordLoop(lock = true)
+        welcomeCoordinator.onConversationStarted()
         val payload = buildSendPayload()
         if (payload.displayText.isEmpty() || viewModel.streamState == StreamState.STREAMING) return
         val command = payload.command?.let { commandById(it.commandId) }
@@ -2041,8 +1847,7 @@ internal class ChatPage : BasePager() {
                 when (command.id) {
                     "clear" -> {
                         viewModel.clear()
-                        resetWelcomeForEmptySession()
-                        startWelcomeKeywordLoopIfNeeded()
+                        welcomeCoordinator.onNewEmptySession()
                         val rest = CommandInvocationParser.remainder(payload.text, command.name)
                         finishCommandSideEffect(rest)
                         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已清屏")
