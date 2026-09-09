@@ -415,6 +415,12 @@ private fun ViewContainer<*, *>.StockIsland(
                 val expandedBaseHeight = if (termEntry() != null) termHeight else quoteHeight
                 val targetHeight = when {
                     navigating -> fullScreenHeight
+                    // 收回位移固定为 -104dp。股票卡 140 - 104 恰好接近收起态，
+                    // 但术语卡 158 - 104 会停在 54dp，导致收回后的胶囊 Y 轴
+                    // 留下固定的变高。负向拖拽须和宽度一样按收起进度插值，
+                    // 使任意展开内容都精确落到 collapsedHeight。
+                    gestureEnabled && dragY < 0f ->
+                        expandedBaseHeight - (expandedBaseHeight - collapsedHeight) * closeProgress
                     gestureEnabled -> (expandedBaseHeight + dragY).coerceIn(collapsedHeight, fullScreenHeight)
                     e && dropTextOnly -> collapsedHeight
                     e && compareVisible() -> 146f
