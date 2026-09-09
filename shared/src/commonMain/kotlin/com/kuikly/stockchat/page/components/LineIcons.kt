@@ -64,6 +64,21 @@ fun ViewContainer<*, *>.LineIconPlus(color: Color, size: Float) {
     }
 }
 
+/**
+ * 关闭叉（Lucide `x` 对齐）：附件缩略图删除、弹层关闭。
+ * 小尺寸下使用，画成对角双线段。
+ */
+fun ViewContainer<*, *>.LineIconClose(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2.6f) {
+        beginPath()
+        moveTo(6.5f, 6.5f)
+        lineTo(17.5f, 17.5f)
+        moveTo(17.5f, 6.5f)
+        lineTo(6.5f, 17.5f)
+        stroke()
+    }
+}
+
 /** Microphone: voice input. */
 fun ViewContainer<*, *>.LineIconMic(color: Color, size: Float) {
     lineIcon(color, size) {

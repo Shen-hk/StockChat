@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 输入栏媒体附件：拍照/图库/文档选择结果统一落在 cacheDir/composer_media。 -->
+<paths>
+    <cache-path
+        name="composer_media"
+        path="composer_media/" />
+</paths>

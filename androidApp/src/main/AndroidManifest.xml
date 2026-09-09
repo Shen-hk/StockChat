@@ -5,6 +5,11 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- 输入栏拍照入口：Android 11+ 包可见性过滤下，不声明则
+             resolveActivity(ACTION_IMAGE_CAPTURE) 返回 null，误报无相机。 -->
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
     </queries>
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -27,5 +32,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 输入栏拍照：ACTION_IMAGE_CAPTURE 的 EXTRA_OUTPUT 缓存 URI 授权。
+             注意宿主不声明 CAMERA 权限（声明了反而要求运行时授权，而拍摄由
+             相机应用持权完成）。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.composer_file_provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

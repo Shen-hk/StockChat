@@ -48,6 +48,13 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
         drawerFlingHost?.invoke(emptyMap<String, Any>())
     }
 
+    /**
+     * 输入栏媒体选择结果回调（KRBridgeModule registerComposerMediaResult 注册）。
+     * 图库/拍照/文档的 onActivityResult 命中后交由 KRBridgeModule 处理（复制到
+     * 缓存等耗时操作），完成后 invoke 通知 Kuikly 页面。onDestroy 清空防泄漏。
+     */
+    internal var composerMediaResultHost: KuiklyRenderCallback? = null
+
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         // 只读不消费：侦察器永不返回 true/拦截，Kuikly 视图层触摸流不受影响。
         drawerFlingDetector.onTouchEvent(
@@ -83,7 +90,13 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
     override fun onDestroy() {
         super.onDestroy()
         drawerFlingHost = null
+        composerMediaResultHost = null
         kuiklyRenderViewDelegator.onDetach()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        KRBridgeModule.handleComposerMediaResult(this, requestCode, resultCode, data)
     }
 
     override fun onPause() {

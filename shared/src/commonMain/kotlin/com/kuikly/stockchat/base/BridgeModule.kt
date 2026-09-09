@@ -96,6 +96,22 @@ internal class BridgeModule : Module() {
         callNativeMethod("openComposerMediaSource", methodArgs, callbackFn)
     }
 
+    /**
+     * 注册原生媒体选择结果回调（Android 宿主实现，keepCallback 多次触发）。
+     * 图库/拍照/文档选完后宿主把内容复制到缓存，再回传
+     * {type:"ok", kind:"image"|"file", path, name, source}；取消回传 {type:"cancel"}。
+     * 其他宿主走 call 的 else 分支回错误码，页侧静默忽略。
+     */
+    fun registerComposerMediaResult(callbackFn: CallbackFn) {
+        toNative(
+            true,
+            "registerComposerMediaResult",
+            JSONObject().toString(),
+            callbackFn,
+            false,
+        )
+    }
+
     fun startVoiceRecording(callbackFn: CallbackFn) {
         toNative(
             true,

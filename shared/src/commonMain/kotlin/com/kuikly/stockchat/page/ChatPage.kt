@@ -73,6 +73,9 @@ import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_CLOSE
 import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_DETAIL
 import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_RETURN
 import com.kuikly.stockchat.page.components.LineIconAudioLines
+import com.kuikly.stockchat.page.components.LineIconClose
+import com.kuikly.stockchat.page.components.LineIconFileText
+import com.kuikly.stockchat.page.components.LineIconChevronRight
 import com.kuikly.stockchat.page.components.LineIconKeyboard
 import com.kuikly.stockchat.page.components.LineIconChevronUp
 import com.kuikly.stockchat.page.components.LineIconPlus
@@ -146,6 +149,7 @@ import com.tencent.kuikly.core.views.TextArea
 import com.tencent.kuikly.core.views.TextAreaView
 import com.tencent.kuikly.core.views.TextInputState
 import com.tencent.kuikly.core.views.Input
+import com.tencent.kuikly.core.views.Image
 import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.CanvasContext
 import com.tencent.kuikly.core.views.Scroller
@@ -305,7 +309,15 @@ internal class ChatPage : BasePager() {
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
-    private var inputPanel: InputPanel by observable(InputPanel.NONE)
+    // 输入栏「+」媒体来源弹层（底部卡片 + 蒙层）：折叠/展开两态的 + 共用。
+    // mounted → presented 两帧入场（R4）；version 守卫防快速开合串帧。
+    private var mediaSheetMounted: Boolean by observable(false)
+    private var mediaSheetPresented: Boolean by observable(false)
+    private var mediaSheetVersion = 0
+    // 已选附件（图库/拍照/文档）。图片显示缩略图，文档显示名称胶囊，均可删除。
+    private var composerAttachments: List<ComposerAttachment> by observable(emptyList())
+    private var composerAttachmentSeq = 0
+    private var composerMediaHostRegistered = false
     // ===== @ 提及与 / 指令状态机（规范见 docs/10-输入栏@提及与斜杠指令交互规范_v1.0.md） =====
     // 联想面板维度（与 MEDIA 面板正交）：@ 触发 / / 触发 / 命令参数槽位。
     private var assistantPanel: AssistantPanel by observable(AssistantPanel.NONE)
@@ -481,6 +493,7 @@ internal class ChatPage : BasePager() {
         pendingRouteFocusNote = pagerData.params.optString("focusNote")
         StockCardRenderers.ensureRegistered()
         registerDrawerFlingHostIfNeeded()
+        registerComposerMediaResultHostIfNeeded()
     }
 
     override fun pageDidDisappear() {
@@ -1006,8 +1019,10 @@ internal class ChatPage : BasePager() {
                             vif({ page.isComposerVisuallyExpanded() && page.assistantPanel != AssistantPanel.NONE }) {
                                 page.renderAssistantPanel(this)
                             }
-                            vif({ page.isComposerVisuallyExpanded() && page.inputPanel == InputPanel.MEDIA }) {
-                                MediaInputRow(page.theme) { action -> page.handleMediaAction(action) }
+                            // 已选附件预览：折叠/展开两态都显示，位于文字上方；
+                            // 图片是缩略图 + 右上角删除叉，文档是名称胶囊。
+                            vif({ page.composerAttachments.isNotEmpty() }) {
+                                page.renderComposerAttachmentRow(this)
                             }
                             // TextArea 必须永远挂在同一个父节点下。折叠/展开只改布局和
                             // 周边操作区，不再用 vif 替换输入组件，避免聚焦期间原生
@@ -1040,6 +1055,8 @@ internal class ChatPage : BasePager() {
                                             }
                                             LineIconPlus(color = Color(0xFF000000), size = 24f)
                                         }
+                                        // 折叠态「+」：与展开态同款底部媒体来源弹层。
+                                        event { click { page.openMediaSheet() } }
                                     }
                                 }
                                 View {
@@ -1235,10 +1252,10 @@ internal class ChatPage : BasePager() {
                                                 touchEnable(!page.isVoiceBusy())
                                             }
                                             LineIconPlus(
-                                                color = if (page.inputPanel == InputPanel.MEDIA) page.theme.brand else page.theme.textSecondary,
+                                                color = page.theme.textSecondary,
                                                 size = 22f,
                                             )
-                                            event { click { page.toggleMediaPanel() } }
+                                            event { click { page.openMediaSheet() } }
                                         }
                                     }
                                     View {
@@ -1403,6 +1420,17 @@ internal class ChatPage : BasePager() {
                         onPrimaryAction = { symbol -> page.addWatchlistFromEntity(symbol) },
                     )
                 }
+            }
+            // 输入栏「+」媒体来源弹层：全屏蒙层 + 底部卡片（图库/拍照/文档）。
+            // 放在 CardSheetHost 之后，压住卡片与输入栏；抽屉在其上不受影响。
+            vif({ page.mediaSheetMounted }) {
+                MediaActionSheetHost(
+                    theme = page.theme,
+                    presented = page.mediaSheetPresented,
+                    bottomInset = page.pagerData.safeAreaInsets.bottom,
+                    onDismiss = { page.dismissMediaSheet() },
+                    onAction = { page.handleMediaAction(it) },
+                )
             }
             // 左缘手势条：抽屉关闭时贴左缘右滑可跟手展开。放在 CardSheetHost 之后、
             // ChatDrawer 之前——卡片与抽屉呈现时自然被上层视图盖住；灵动岛展开卡
@@ -1617,6 +1645,62 @@ internal class ChatPage : BasePager() {
         drawerFlingHostRegistered = true
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
             .registerDrawerFlingHost { _ -> handleNativeDrawerFling() }
+    }
+
+    /**
+     * 注册原生媒体选择结果回调（Android 宿主专有通道）：图库/拍照/文档选择
+     * 完成后，宿主把内容复制到缓存文件，再经 keepCallback 回传路径与名称。
+     * created 里注册一次；回调跨进程往返后可能不在渲染线程，页侧只做
+     * observable 赋值（赋值本身线程安全，重渲染由渲染管线调度）。
+     */
+    private fun registerComposerMediaResultHostIfNeeded() {
+        if (composerMediaHostRegistered) return
+        composerMediaHostRegistered = true
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
+            .registerComposerMediaResult { data -> handleComposerMediaResult(data) }
+    }
+
+    private fun handleComposerMediaResult(data: JSONObject?) {
+        if (isWillDestroy()) return
+        if (data == null || data.optString("type") != "ok") return
+        val path = data.optString("path")
+        if (path.isBlank()) return
+        if (composerAttachments.size >= MAX_COMPOSER_ATTACHMENTS) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("最多添加${MAX_COMPOSER_ATTACHMENTS}个附件")
+            return
+        }
+        val attachment = ComposerAttachment(
+            id = "att_${++composerAttachmentSeq}",
+            path = path,
+            name = data.optString("name"),
+            isImage = data.optString("kind") == "image",
+        )
+        composerAttachments = composerAttachments + attachment
+        KLog.i(COMPOSER_LOG_TAG, "mediaResult kind=${attachment.kind} name=${attachment.displayName}")
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+    }
+
+    /** 输入框附件预览的删除叉（显式点击，无需撤销条）。 */
+    private fun removeComposerAttachment(id: String) {
+        composerAttachments = composerAttachments.filter { it.id != id }
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+    }
+
+    private fun clearComposerAttachments() {
+        if (composerAttachments.isNotEmpty()) composerAttachments = emptyList()
+    }
+
+    /** 只带附件无文字时的兜底引导语，保证发送管线有正文。 */
+    private fun defaultAttachmentPrompt(): String {
+        val attachments = composerAttachments
+        val hasImage = attachments.any { it.isImage }
+        val docName = attachments.firstOrNull { !it.isImage }?.name.orEmpty()
+        return when {
+            hasImage && docName.isNotEmpty() -> "帮我解读这张图片和文档《$docName》"
+            hasImage -> "帮我解读这张图片"
+            docName.isNotEmpty() -> "帮我解读文档《$docName》"
+            else -> "帮我解读这些资料"
+        }
     }
 
     /**
@@ -1901,8 +1985,9 @@ internal class ChatPage : BasePager() {
             trackComposerEvent("slash_cmd_send", "commandId" to it.commandId, "argCount" to it.args.count { entry -> entry.value.isNotBlank() })
         }
         viewModel.send(payload)
-        // 发送后清理输入期固化状态：mentions / 命令注册；最近提及列表保留供下次推荐。
+        // 发送后清理输入期固化状态：mentions / 命令注册 / 附件；最近提及列表保留供下次推荐。
         mentionEntities.clear()
+        clearComposerAttachments()
         clearActiveCommand()
         commandValidationMessage = ""
         closeAssistantPanel()
@@ -2016,22 +2101,42 @@ internal class ChatPage : BasePager() {
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).reportDT(eventCode, data)
     }
 
-    private fun toggleMediaPanel() {
-        val willShow = inputPanel != InputPanel.MEDIA
-        cancelVoiceSession()
-        if (willShow) {
+    /**
+     * 「+」（折叠/展开两态共用）唤起底部媒体来源卡片。先收输入态（键盘落下、
+     * 输入栏回默认态，草稿保留），再挂载弹层并两帧翻 presented 播入场（R4）。
+     */
+    private fun openMediaSheet() {
+        val version = ++mediaSheetVersion
+        KLog.i(COMPOSER_LOG_TAG, "openMediaSheet")
+        if (isComposerVisuallyExpanded()) {
             blurComposer()
+            collapseComposer()
         }
-        inputPanel = if (willShow) InputPanel.MEDIA else InputPanel.NONE
+        mediaSheetPresented = false
+        mediaSheetMounted = true
+        setTimeout(16) {
+            if (version == mediaSheetVersion && !isWillDestroy()) mediaSheetPresented = true
+        }
+    }
+
+    /** 蒙层点击 / 取消：presented 先归位，收尾动画播完再卸载。 */
+    private fun dismissMediaSheet() {
+        val version = ++mediaSheetVersion
+        mediaSheetPresented = false
+        setTimeout(260) {
+            if (version == mediaSheetVersion && !mediaSheetPresented && !isWillDestroy()) {
+                mediaSheetMounted = false
+            }
+        }
     }
 
     private fun handleMediaAction(action: ComposerMediaAction) {
-        // 选完图片/拍照后整条输入栏回到默认态，不留在"半展开"的悬空状态。
-        collapseComposer()
-        blurComposer()
+        // 选完入口即收弹层，再交原生拉起图库/相机/文档选择器。
+        dismissMediaSheet()
         val bridge = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
         bridge.hapticImpact()
         bridge.openComposerMediaSource(action.source)
+        trackComposerEvent("composer_media_open", "source" to action.source)
     }
 
     private fun resetSessionUiState() {
@@ -2133,7 +2238,6 @@ internal class ChatPage : BasePager() {
             scheduleComposerChromePresentation(true)
         }
         if (voiceState != VoiceState.IDLE) cancelVoiceSession()
-        if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
         if (requestFocus) {
             composerFocusLocked = true
             if (wasExpanded) inputRef?.view?.focus() else scheduleComposerFocusAfterExpansion()
@@ -2181,8 +2285,7 @@ internal class ChatPage : BasePager() {
         if (
             !composerFocusLocked ||
             !composerExpanded ||
-            voiceState != VoiceState.IDLE ||
-            inputPanel == InputPanel.MEDIA
+            voiceState != VoiceState.IDLE
         ) return
         // 预算检查：连续恢复次数用尽前不再自动 refocus，防止 focus/blur 死循环。
         // 预算由一次未被 blur 打断的稳定焦点会话重置（见 inputFocus），不能用
@@ -2199,8 +2302,7 @@ internal class ChatPage : BasePager() {
                 requestVersion != composerFocusRequestVersion ||
                 !composerFocusLocked ||
                 !composerExpanded ||
-                voiceState != VoiceState.IDLE ||
-                inputPanel == InputPanel.MEDIA
+                voiceState != VoiceState.IDLE
             ) return@setTimeout
             composerBlurRecoverAttempts++
             KLog.i(COMPOSER_LOG_TAG, "recoverUnexpectedBlur version=$blurVersion attempts=$composerBlurRecoverAttempts")
@@ -2230,7 +2332,6 @@ internal class ChatPage : BasePager() {
         // 折叠态图标此刻挂载：先保持 presented=true 让它们落到隐藏态并注册
         // 入场动画，翻转回 false 后对称回放（R4/R5）。
         scheduleComposerChromePresentation(false)
-        inputPanel = InputPanel.NONE
         clearActiveCommand()
         closeAssistantPanel()
         cancelVoiceSession()
@@ -2238,7 +2339,7 @@ internal class ChatPage : BasePager() {
 
     /** Reads observable state inside each vif predicate so Kuikly can re-render it. */
     private fun isComposerExpanded(): Boolean =
-        composerExpanded || inputPanel != InputPanel.NONE || keyboardVisible || keyboardHeight > 0f || voiceState != VoiceState.IDLE
+        composerExpanded || keyboardVisible || keyboardHeight > 0f || voiceState != VoiceState.IDLE
 
     /**
      * 输入栏的"视觉展开"态：与 [isComposerExpanded] 的唯一区别是排除录音态。
@@ -2246,7 +2347,7 @@ internal class ChatPage : BasePager() {
      * 挂载、展开态图标行不得插入，否则中段布局会在按住瞬间跳高。
      */
     private fun isComposerVisuallyExpanded(): Boolean =
-        composerExpanded || inputPanel != InputPanel.NONE || keyboardVisible || keyboardHeight > 0f
+        composerExpanded || keyboardVisible || keyboardHeight > 0f
 
     /**
      * 点击非输入栏区域的两段式收起（用户要求恢复的原逻辑）：
@@ -2322,7 +2423,6 @@ internal class ChatPage : BasePager() {
             // 从折叠态长按语音时展开态图标为新挂载，同样走两帧入场（R4）。
             if (!voiceSourceExpanded) scheduleComposerChromePresentation(true)
         }
-        inputPanel = InputPanel.NONE
         closeAssistantPanel()
         commandValidationMessage = ""
         voiceCancelArmed = false
@@ -2544,6 +2644,80 @@ internal class ChatPage : BasePager() {
         context.lineTo(inset, inset + radius)
         context.arc(inset + radius, inset + radius, radius, PI.toFloat(), (PI * 1.5f).toFloat(), false)
         context.closePath()
+    }
+
+    /**
+     * 输入栏附件预览行：位于文字上方，折叠/展开两态都显示（挂在胶囊内、
+     * 输入行之前）。图片显示缩略图 + 右上角删除叉；文档显示图标 + 名称胶囊。
+     */
+    private fun renderComposerAttachmentRow(container: ViewContainer<*, *>) {
+        container.View {
+            attr { flexDirectionRow(); marginTop(10f); paddingLeft(2f) }
+            this@ChatPage.composerAttachments.forEach { attachment ->
+                if (attachment.isImage) {
+                    View {
+                        attr {
+                            size(56f, 56f)
+                            marginRight(8f)
+                            borderRadius(12f)
+                        }
+                        Image {
+                            attr {
+                                src("file://" + attachment.path)
+                                size(56f, 56f)
+                                borderRadius(12f)
+                                backgroundColor(Color(0x11000000))
+                            }
+                        }
+                        // 删除叉：显式点击目标，不需要撤销条。
+                        View {
+                            attr {
+                                absolutePosition(top = 3f, right = 3f)
+                                size(16f, 16f)
+                                allCenter()
+                                borderRadius(8f)
+                                backgroundColor(Color(0x8C000000))
+                            }
+                            LineIconClose(color = Color(0xFFFFFFFF), size = 9f)
+                            event { click { this@ChatPage.removeComposerAttachment(attachment.id) } }
+                        }
+                    }
+                } else {
+                    View {
+                        attr {
+                            flexDirectionRow()
+                            alignItemsCenter()
+                            height(56f)
+                            marginRight(8f)
+                            paddingLeft(12f)
+                            paddingRight(10f)
+                            backgroundColor(this@ChatPage.theme.surfaceMuted)
+                            borderRadius(12f)
+                        }
+                        LineIconFileText(this@ChatPage.theme.textSecondary, 18f)
+                        Text {
+                            attr {
+                                text(attachment.displayName)
+                                fontSizeScaled(12f)
+                                color(this@ChatPage.theme.textSecondary)
+                                marginLeft(6f)
+                                marginRight(4f)
+                            }
+                        }
+                        View {
+                            attr {
+                                size(18f, 18f)
+                                allCenter()
+                                borderRadius(9f)
+                                backgroundColor(Color(0x1A000000))
+                            }
+                            LineIconClose(color = this@ChatPage.theme.textSecondary, size = 9f)
+                            event { click { this@ChatPage.removeComposerAttachment(attachment.id) } }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun renderComposerTextArea(container: ViewContainer<*, *>, isolated: Boolean = false) {
@@ -4009,7 +4183,12 @@ internal class ChatPage : BasePager() {
         )
         // Completion event is authoritative. The timeout is only a renderer
         // fallback and is phase-gated, so stale callbacks cannot move the card.
-        setTimeout(280) { completeIslandMotion(ISLAND_ANIMATION_RETURN) }
+        // 兜底必须 ≥ 系统内最长 morph 时长（0.44s easeOut）：settle 变化消费的是
+        // 上一轮（跟手帧）注册的动画，时长不可控；若在动画在飞时翻转状态，
+        // attr 重跑会消费掉在飞动画而 height 同值跳过不挂新动画——高度冻结在
+        // 翻转时刻的插值点（用户反馈 2026-09-09「收回后胶囊固定在 ~53dp」：
+        // 旧值 280ms / 0.44s ≈ 87% 进度，正好冻在 140→39.6 的 53dp 处）。
+        setTimeout(560) { completeIslandMotion(ISLAND_ANIMATION_RETURN) }
     }
 
     private fun settleIslandClosedFromGesture() {
@@ -4018,7 +4197,8 @@ internal class ChatPage : BasePager() {
             phase = IslandGesturePhase.CLOSING,
             offsetY = -104f,
         )
-        setTimeout(280) { completeIslandMotion(ISLAND_ANIMATION_CLOSE) }
+        // 同 settleIslandGestureBack：兜底必须盖过最长 morph（0.44s），见上注释。
+        setTimeout(560) { completeIslandMotion(ISLAND_ANIMATION_CLOSE) }
     }
 
     private fun openIslandDetailFromGesture(symbol: String) {
@@ -4237,8 +4417,6 @@ internal class ChatPage : BasePager() {
     }
 
     private fun loadAtCandidates(session: TriggerSession) {
-        // 进入 @ 面板时确保 MEDIA 面板关闭（两面板正交，但同屏只展示一个联想区）。
-        if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
         val list = AtCandidateProvider.rank(session.query, recentMentions, watchlistStore.symbols())
         atCandidates.clear()
         atCandidates.addAll(list)
@@ -4253,7 +4431,6 @@ internal class ChatPage : BasePager() {
     }
 
     private fun loadSlashCandidates(session: TriggerSession) {
-        if (inputPanel == InputPanel.MEDIA) inputPanel = InputPanel.NONE
         val q = session.query
         // 命令名定型（精确命中）→ 进入参数槽位态。
         val resolved = CommandRegistry.resolve(q)
@@ -4970,7 +5147,6 @@ internal class ChatPage : BasePager() {
         mentionEntities.clear()
         clearActiveCommand()
         closeAssistantPanel()
-        inputPanel = InputPanel.NONE
         // 推荐问句/联想词/历史标的：统一从 expandComposer 进入，输入态与键盘一起到位。
         expandComposer(requestFocus = true)
     }
@@ -5285,9 +5461,6 @@ private data class ChatQuoteState(
 )
 
 
-/** MEDIA（相册/拍照面板）维度；@ / / 联想面板走 [AssistantPanel]，两者正交。 */
-private enum class InputPanel { NONE, MEDIA }
-
 /**
  * 联想面板最多可见行数：候选条数超过这个行数后，面板定高、超出部分在框内滚动。
  * 固定为 3 行——既避免面板把输入栏顶得太高，也能覆盖绝大多数"输入几个字即命中"的场景。
@@ -5322,48 +5495,136 @@ private fun assistantPanelHeight(rowCount: Int, rowHeight: Float): Float {
 }
 
 /**
- * 联想面板维度（规范 10 §2）：与 [InputPanel]（控制 MEDIA/默认态）正交。
- * @ 提及、/ 命令选择、/ 命令参数槽位三态在此维度切换。
+ * 联想面板维度（规范 10 §2）：@ 提及、/ 命令选择、/ 命令参数槽位三态在此维度切换。
  */
 private enum class AssistantPanel { NONE, AT_MENTION, SLASH, COMMAND_PARAMS }
 
-private enum class ComposerMediaAction(val source: String, val label: String) {
-    PHOTO_LIBRARY("library", "选照片"),
-    CAMERA("camera", "拍照"),
+/** 输入栏「+」可选的媒体来源（底部弹层三入口）。 */
+private enum class ComposerMediaAction(val source: String, val label: String, val caption: String) {
+    PHOTO_LIBRARY("library", "上传图库", "从手机相册选择图片"),
+    CAMERA("camera", "拍照", "拍摄一张照片"),
+    DOCUMENT("document", "手机文档", "选择文件交给 AI 解读"),
 }
 
-private fun ViewContainer<*, *>.MediaInputRow(theme: StockChatTheme, onSelect: (ComposerMediaAction) -> Unit) {
+/** 输入栏已选附件：图片存本地缓存路径（file:// 预览），文档存展示名。 */
+data class ComposerAttachment(val id: String, val path: String, val name: String, val isImage: Boolean) {
+    val kind: String get() = if (isImage) "image" else "file"
+
+    /** Kuikly core 无文本截断 API，展示名在代码里限长。 */
+    val displayName: String
+        get() {
+            val base = name.ifBlank { if (isImage) "图片" else "文档" }
+            return if (base.length <= 14) base else base.take(7) + "…" + base.takeLast(6)
+        }
+}
+
+private const val MAX_COMPOSER_ATTACHMENTS = 4
+
+/**
+ * 底部媒体来源弹层：全屏蒙层 + 底部圆角卡片。蒙层或「取消」关闭；三个入口行
+ * 均为「图标圆盘 + 标题/说明 + 右箭头」。R4 两帧入场由页侧 openMediaSheet /
+ * dismissMediaSheet 驱动（mounted 隐藏挂载 → presented 翻转播动画）。
+ */
+private fun ViewContainer<*, *>.MediaActionSheetHost(
+    theme: StockChatTheme,
+    presented: Boolean,
+    bottomInset: Float,
+    onDismiss: () -> Unit,
+    onAction: (ComposerMediaAction) -> Unit,
+) {
     View {
-        attr { marginTop(8f); padding(8f); flexDirectionRow(); backgroundColor(theme.surface); borderRadius(12f) }
-        listOf(ComposerMediaAction.PHOTO_LIBRARY, ComposerMediaAction.CAMERA).forEachIndexed { index, action ->
+        attr {
+            absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+            backgroundColor(Color(0x59000000))
+            opacity(if (presented) 1f else 0f)
+            animate(Animation.easeOut(0.20f), presented)
+        }
+        event { click { onDismiss() } }
+    }
+    View {
+        attr {
+            absolutePosition(left = 0f, right = 0f, bottom = 0f)
+            paddingLeft(12f)
+            paddingRight(12f)
+            paddingBottom(bottomInset + 12f)
+            opacity(if (presented) 1f else 0f)
+            transform(Translate(0f, if (presented) 0f else 48f))
+            animate(Animation.easeOut(0.26f), presented)
+        }
+        View {
+            attr {
+                borderRadius(22f)
+                backgroundColor(theme.surface)
+                paddingTop(10f)
+                paddingLeft(10f)
+                paddingRight(10f)
+                paddingBottom(12f)
+                boxShadow(BoxShadow(0f, 10f, 30f, Color(0x000000, 0.18f)))
+            }
             View {
-                attr {
-                    flex(1f)
-                    height(42f)
-                    if (index == 0) marginRight(8f)
-                    flexDirectionRow()
-                    alignItemsCenter()
-                    paddingLeft(12f)
-                    paddingRight(12f)
-                    backgroundColor(theme.brandSoft)
-                    borderRadius(10f)
+                attr { flexDirectionRow(); alignItemsCenter(); height(36f); paddingLeft(6f); paddingRight(6f) }
+                Text {
+                    attr {
+                        text("添加内容")
+                        flex(1f)
+                        fontSizeScaled(15f)
+                        fontWeightSemiBold()
+                        color(theme.textPrimary)
+                    }
                 }
+                Text {
+                    attr { text("取消"); fontSizeScaled(13f); color(theme.textSecondary) }
+                    event { click { onDismiss() } }
+                }
+            }
+            ComposerMediaAction.values().forEachIndexed { index, action ->
                 View {
                     attr {
-                        size(26f, 26f)
-                        marginRight(8f)
-                        allCenter()
-                        backgroundColor(theme.surface)
-                        borderRadius(13f)
+                        flexDirectionRow()
+                        alignItemsCenter()
+                        height(60f)
+                        marginTop(if (index == 0) 6f else 8f)
+                        paddingLeft(12f)
+                        paddingRight(12f)
+                        backgroundColor(theme.brandSoft)
+                        borderRadius(16f)
                     }
-                    if (action == ComposerMediaAction.PHOTO_LIBRARY) {
-                        LineIconPhoto(color = theme.brand, size = 15f)
-                    } else {
-                        LineIconCamera(color = theme.brand, size = 15f)
+                    View {
+                        attr {
+                            size(38f, 38f)
+                            allCenter()
+                            backgroundColor(theme.surface)
+                            borderRadius(19f)
+                            marginRight(12f)
+                        }
+                        when (action) {
+                            ComposerMediaAction.PHOTO_LIBRARY -> LineIconPhoto(theme.brand, 20f)
+                            ComposerMediaAction.CAMERA -> LineIconCamera(theme.brand, 20f)
+                            ComposerMediaAction.DOCUMENT -> LineIconFileText(theme.brand, 20f)
+                        }
                     }
+                    View {
+                        attr { flex(1f) }
+                        Text {
+                            attr {
+                                text(action.label)
+                                fontSizeScaled(15f)
+                                fontWeightMedium()
+                                color(theme.textPrimary)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text(action.caption)
+                                fontSizeScaled(11f)
+                                color(theme.textTertiary)
+                                marginTop(2f)
+                            }
+                        }
+                    }
+                    LineIconChevronRight(theme.textTertiary, 16f)
+                    event { click { onAction(action) } }
                 }
-                Text { attr { text(action.label); fontSizeScaled(13f); fontWeightMedium(); color(theme.brand) } }
-                event { click { onSelect(action) } }
             }
         }
     }

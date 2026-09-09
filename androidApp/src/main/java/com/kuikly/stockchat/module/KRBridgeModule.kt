@@ -33,12 +33,14 @@ import android.view.View
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.tencent.kuikly.core.render.android.export.KuiklyRenderBaseModule
 import com.tencent.kuikly.core.render.android.export.KuiklyRenderCallback
 import com.kuikly.stockchat.KRApplication
 import com.kuikly.stockchat.KuiklyRenderActivity
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -86,6 +88,11 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "openComposerMediaSource" -> {
                 openComposerMediaSource(params, callback)
+            }
+
+            // 页面注册「媒体选择结果」回调；host 挂在 Activity 上，onDestroy 清空。
+            "registerComposerMediaResult" -> {
+                (activity as? KuiklyRenderActivity)?.composerMediaResultHost = callback
             }
 
             "startVoiceRecording" -> {
@@ -203,7 +210,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     }
 
     private fun startVoiceRecording(callback: KuiklyRenderCallback?) {
-        val currentActivity = activity
+        val currentActivity = activity as? KuiklyRenderActivity
         if (currentActivity == null || callback == null) {
             callback?.invoke(errorPayload("UNAVAILABLE", "页面不可用"))
             return
@@ -251,33 +258,69 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         mapOf("type" to "error", "error" to error, "message" to message)
 
     private fun openComposerMediaSource(params: String?, callback: KuiklyRenderCallback?) {
-        val source = JSONObject(params ?: "{}").optString("source")
-        val intent = when (source) {
-            "camera" -> Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-            else -> Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
-                type = "image/*"
-            }
-        }
-        val currentActivity = activity
-        if (currentActivity == null) {
+        val currentActivity = activity as? KuiklyRenderActivity
+        if (currentActivity == null || callback == null) {
             callback?.invoke(mapOf("code" to -1, "message" to "页面不可用"))
             return
         }
-        if (intent.resolveActivity(currentActivity.packageManager) == null) {
-            val label = if (source == "camera") "相机" else "相册"
-            Toast.makeText(KRApplication.application, "未找到可用$label", Toast.LENGTH_SHORT).show()
-            callback?.invoke(mapOf("code" to -1, "message" to "未找到可用$label"))
-            return
-        }
+        val source = JSONObject(params ?: "{}").optString("source")
         try {
-            currentActivity.startActivity(intent)
-            callback?.invoke(mapOf("code" to 0, "source" to source))
+            when (source) {
+                "camera" -> launchCameraSource(currentActivity)
+                "document" -> launchDocumentSource(currentActivity)
+                else -> launchLibrarySource(currentActivity)
+            }
         } catch (error: Exception) {
+            Log.w("StockChatBridge", "openComposerMediaSource failed: $source", error)
             Toast.makeText(KRApplication.application, "打开失败，请稍后重试", Toast.LENGTH_SHORT).show()
-            callback?.invoke(mapOf("code" to -1, "message" to error.message.orEmpty()))
+            callback.invoke(mapOf("code" to -1, "message" to error.message.orEmpty()))
         }
     }
 
+    /** 图库：系统相册选择器，单张图片。 */
+    private fun launchLibrarySource(currentActivity: KuiklyRenderActivity) {
+        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+            type = "image/*"
+        }
+        currentActivity.startActivityForResult(intent, RC_COMPOSER_LIBRARY)
+    }
+
+    /**
+     * 拍照：输出直接写到缓存目录（FileProvider URI）。注意宿主**不声明**
+     * CAMERA 权限——声明了反而要求运行时授权，而 ACTION_IMAGE_CAPTURE
+     * 由相机应用持权拍摄，宿主无需该权限。
+     */
+    private fun launchCameraSource(currentActivity: KuiklyRenderActivity) {
+        val dir = File(currentActivity.cacheDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
+        val file = File(dir, "camera_${System.currentTimeMillis()}.jpg")
+        pendingCameraFile = file
+        val uri = FileProvider.getUriForFile(
+            currentActivity,
+            currentActivity.packageName + ".composer_file_provider",
+            file,
+        )
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+            putExtra(MediaStore.EXTRA_OUTPUT, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        currentActivity.startActivityForResult(intent, RC_COMPOSER_CAMERA)
+    }
+
+    /** 文档：系统文档选择器，任意可打开的文件类型。 */
+    private fun launchDocumentSource(currentActivity: KuiklyRenderActivity) {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }
+        currentActivity.startActivityForResult(intent, RC_COMPOSER_DOCUMENT)
+    }
+
+    /**
+     * onActivityResult 统一入口（Activity 转发）：把选中内容复制到
+     * cache/composer_media 下的宿主私有文件，再经 composerMediaResultHost
+     * 回传 {type:"ok", kind, path, name, source}；取消回传 {type:"cancel"}。
+     * 复制在后台线程执行，结果统一 post 回主线程（与 Kuikly 桥接约定一致）。
+     */
     private fun copyToPasteboard(params: String?) {
         if (params == null) {
             return
@@ -442,6 +485,143 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     companion object {
         const val MODULE_NAME = "HRBridgeModule"
         private const val REQUEST_RECORD_AUDIO = 8301
+
+        // 输入栏媒体选择（onActivityResult 请求码，避开语音的 8301）。
+        const val RC_COMPOSER_LIBRARY = 8311
+        const val RC_COMPOSER_CAMERA = 8312
+        const val RC_COMPOSER_DOCUMENT = 8313
+        const val COMPOSER_MEDIA_DIR = "composer_media"
+
+        /** 拍照输出文件（EXTRA_OUTPUT 指定的缓存路径，onActivityResult 时取走）。 */
+        @Volatile
+        internal var pendingCameraFile: File? = null
+
+        /**
+         * onActivityResult 统一入口（Activity 转发）：把选中内容复制到
+         * cache/composer_media 下的宿主私有文件，再经 composerMediaResultHost
+         * 回传 {type:"ok", kind, path, name, source}；取消回传 {type:"cancel"}。
+         * 复制在后台线程执行，结果统一 post 回主线程（与 Kuikly 桥接约定一致）。
+         */
+        fun handleComposerMediaResult(activity: KuiklyRenderActivity, requestCode: Int, resultCode: Int, data: Intent?) {
+            val host = activity.composerMediaResultHost
+            if (host == null) {
+                pendingCameraFile = null
+                return
+            }
+            val source = when (requestCode) {
+                RC_COMPOSER_LIBRARY -> "library"
+                RC_COMPOSER_CAMERA -> "camera"
+                RC_COMPOSER_DOCUMENT -> "document"
+                else -> return
+            }
+            if (resultCode != android.app.Activity.RESULT_OK) {
+                pendingCameraFile = null
+                host.invoke(mapOf("type" to "cancel", "source" to source))
+                return
+            }
+            when (requestCode) {
+                RC_COMPOSER_CAMERA -> {
+                    val file = pendingCameraFile
+                    pendingCameraFile = null
+                    if (file == null || !file.exists() || file.length() == 0L) {
+                        host.invoke(mapOf("type" to "cancel", "source" to source))
+                        return
+                    }
+                    deliverMediaResult(activity, host, source, file, "image", file.name)
+                }
+                RC_COMPOSER_LIBRARY, RC_COMPOSER_DOCUMENT -> {
+                    val uri = data?.data
+                    if (uri == null) {
+                        host.invoke(mapOf("type" to "cancel", "source" to source))
+                        return
+                    }
+                    copyPickedContent(activity, uri, source) { kind, file, name ->
+                        if (kind == null || file == null) {
+                            activity.runOnUiThread { host.invoke(mapOf("type" to "cancel", "source" to source)) }
+                        } else {
+                            deliverMediaResult(activity, host, source, file, kind, name)
+                        }
+                    }
+                }
+            }
+        }
+
+        /** 结果回传（统一 post 回主线程）。 */
+        private fun deliverMediaResult(
+            activity: KuiklyRenderActivity,
+            host: KuiklyRenderCallback,
+            source: String,
+            file: File,
+            kind: String,
+            name: String,
+        ) {
+            activity.runOnUiThread {
+                host.invoke(
+                    mapOf(
+                        "type" to "ok",
+                        "kind" to kind,
+                        "path" to file.absolutePath,
+                        "name" to name,
+                        "source" to source,
+                    )
+                )
+            }
+        }
+
+        /**
+         * 把 content:// 选中内容复制到宿主缓存。kind 按真实 MIME 判定：
+         * image/ 通配类型回传图片（可缩略图预览），其余按文档回传。复制在后台线程。
+         */
+        private fun copyPickedContent(
+            activity: KuiklyRenderActivity,
+            uri: Uri,
+            source: String,
+            onResult: (kind: String?, file: File?, name: String) -> Unit,
+        ) {
+            Thread {
+                var kind: String? = null
+                var file: File? = null
+                var name = ""
+                try {
+                    val resolver = activity.contentResolver
+                    val mime = resolver.getType(uri).orEmpty()
+                    name = queryDisplayName(resolver, uri)
+                    val isImage = mime.startsWith("image/") || name.endsWith(".jpg") ||
+                        name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp") ||
+                        name.endsWith(".gif")
+                    val extension = when {
+                        mime.contains("/") && !mime.endsWith("*") -> mime.substringAfter('/').substringBefore('+')
+                        name.contains('.') -> name.substringAfterLast('.')
+                        else -> if (isImage) "jpg" else "dat"
+                    }
+                    val dir = File(activity.cacheDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
+                    val target = File(dir, "pick_${System.currentTimeMillis()}.$extension")
+                    resolver.openInputStream(uri)?.use { input ->
+                        target.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    if (target.exists() && target.length() > 0L) {
+                        kind = if (isImage) "image" else "file"
+                        file = target
+                        if (name.isBlank()) name = target.name
+                    }
+                } catch (error: Throwable) {
+                    Log.w("StockChatBridge", "copyPickedContent failed: $source", error)
+                }
+                onResult(kind, file, name)
+            }.start()
+        }
+
+        private fun queryDisplayName(resolver: android.content.ContentResolver, uri: Uri): String {
+            return try {
+                resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0 && cursor.moveToFirst()) cursor.getString(index).orEmpty() else ""
+                } ?: ""
+            } catch (_: Throwable) {
+                ""
+            }
+        }
+
         private val VOICE_LOCK = Any()
         private var activeVoiceSession: AndroidSpeechRecognitionSession? = null
 
