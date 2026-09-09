@@ -13,6 +13,7 @@ import com.kuikly.stockchat.data.provider.SseEventParser
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.BrokenCardBlock
 import com.kuikly.stockchat.richtext.EntityMarkdownAdapter
+import com.kuikly.stockchat.richtext.stripStreamingCardMarkup
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -95,6 +96,15 @@ class ChatInfrastructureTest {
 
         assertEquals("## 结论\n\n- **[贵州茅台](stockchat-entity://0)**的 [PE](stockchat-entity://1) 偏高", adapted.content)
         assertEquals(listOf("贵州茅台", "PE"), adapted.entities.map { it.text })
+    }
+
+    @Test
+    fun streamingCardMarkupIsHiddenUntilTheStructuredCardCanMount() {
+        val openCard = "先给结论\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}"
+        val completedCard = "$openCard\n```\n补充说明"
+
+        assertEquals("先给结论\n\n> 正在准备行情卡片…\n\n", stripStreamingCardMarkup(openCard))
+        assertEquals("先给结论\n\n> 正在准备行情卡片…\n\n\n补充说明", stripStreamingCardMarkup(completedCard))
     }
 
     @Test
