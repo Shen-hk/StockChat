@@ -9,3 +9,4 @@ internal actual fun platformCurrentDate(compact: Boolean): String {
     return if (compact) value.replace("-", "") else value
 }
 internal actual fun platformCurrentHour(): Int = Date().getHours()
+internal actual fun platformCurrentMinuteOfDay(): Int = Date().getHours() * 60 + Date().getMinutes()

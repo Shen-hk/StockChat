@@ -9,3 +9,7 @@ internal actual fun platformCurrentTimeMillis(): Long = System.currentTimeMillis
 internal actual fun platformCurrentDate(compact: Boolean): String =
     SimpleDateFormat(if (compact) "yyyyMMdd" else "yyyy-MM-dd", Locale.US).format(Date())
 internal actual fun platformCurrentHour(): Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+internal actual fun platformCurrentMinuteOfDay(): Int {
+    val cal = Calendar.getInstance()
+    return cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
+}

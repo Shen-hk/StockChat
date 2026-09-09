@@ -2,6 +2,7 @@ package com.kuikly.stockchat.data.provider
 
 import platform.Foundation.NSCalendar
 import platform.Foundation.NSCalendarUnitHour
+import platform.Foundation.NSCalendarUnitMinute
 import platform.Foundation.NSDateFormatter
 import platform.Foundation.NSLocale
 import platform.Foundation.NSDate
@@ -16,3 +17,10 @@ internal actual fun platformCurrentDate(compact: Boolean): String = NSDateFormat
 }
 internal actual fun platformCurrentHour(): Int =
     NSCalendar.currentCalendar.component(NSCalendarUnitHour, fromDate = NSDate()).toInt()
+
+internal actual fun platformCurrentMinuteOfDay(): Int {
+    val cal = NSCalendar.currentCalendar
+    val hour = cal.component(NSCalendarUnitHour, fromDate = NSDate()).toInt()
+    val minute = cal.component(NSCalendarUnitMinute, fromDate = NSDate()).toInt()
+    return hour * 60 + minute
+}
