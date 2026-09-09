@@ -1,9 +1,13 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.AiChatMessage
 import com.kuikly.stockchat.chat.ChatDependencies
+import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
@@ -73,7 +77,7 @@ import kotlin.math.max
  */
 @Page(Routes.MARKET, supportInLocal = true)
 internal class MarketPage : BasePager() {
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
     private var overview: MarketOverview by observable(OfflineMarketInsightProvider().overviewValue())
@@ -111,6 +115,10 @@ internal class MarketPage : BasePager() {
     private var aiPulse: Boolean by observable(false)
     private var aiPulseRevision = 0
     private var aiProvider: AiProvider? = null
+    private var aiGeneration = 0
+    // 流式平滑器（复用聊天页）：网络回调在后台线程触发，observable 只能主线程写，
+    // 与 StockDetailPage 同一处修复（后台直写曾造成闪退与流式内容不刷新）。
+    private var activeAiTypewriter: TypewriterSmoother? = null
     private val aiDependencies by lazy { ChatDependencies.forPager(pagerId) }
 
     /**
@@ -313,24 +321,48 @@ internal class MarketPage : BasePager() {
             return
         }
         aiProvider?.stop()
+        activeAiTypewriter?.cancel()
         aiText = ""
         aiState = 1
         triggerAiPulse()
         val provider = aiDependencies.aiProviderFactory(config)
         aiProvider = provider
+        // 线程纪律：provider 回调来自后台线程，observable 写入只在主线程发生
+        // （onPublish 为节拍器主线程回调；onDone/onError 经 setTimeout(0) 跳回）。
+        val generation = ++aiGeneration
+        var content = ""
+        val smoother = TypewriterSmoother(pagerId) { revealed ->
+            if (generation != aiGeneration) return@TypewriterSmoother
+            aiText = revealed
+            if (aiState == 1 && revealed.isNotEmpty()) aiState = 2
+        }
+        activeAiTypewriter = smoother
         provider.ask(
             messages = listOf(AiChatMessage("user", buildAiPrompt())),
             onDelta = { delta ->
-                aiText += delta
-                if (aiState == 1) aiState = 2
+                content += delta
+                if (generation == aiGeneration) smoother.append(delta)
             },
             onDone = {
-                if (aiState <= 2) aiState = if (aiText.isBlank()) 0 else 3
+                if (generation != aiGeneration) return@ask
+                val fullContent = content
+                smoother.complete {
+                    setTimeout(0) {
+                        if (generation != aiGeneration) return@setTimeout
+                        if (aiState <= 2) aiState = if (fullContent.isBlank()) 0 else 3
+                    }
+                }
             },
             onError = { message ->
-                if (aiState == 1 || aiState == 2) {
-                    aiText = message
-                    aiState = 4
+                if (generation != aiGeneration) return@ask
+                setTimeout(0) {
+                    if (generation != aiGeneration) return@setTimeout
+                    smoother.flushNow()
+                    smoother.cancel()
+                    if (aiState == 1 || aiState == 2) {
+                        aiText = message
+                        aiState = 4
+                    }
                 }
             },
         )
@@ -339,6 +371,10 @@ internal class MarketPage : BasePager() {
     /** 流式中的再点击 = 中断：保留已生成的部分文本（落为 done），否则回到 idle。 */
     private fun stopAiBriefing() {
         aiProvider?.stop()
+        aiGeneration++
+        activeAiTypewriter?.flushNow()
+        activeAiTypewriter?.cancel()
+        activeAiTypewriter = null
         aiPulseRevision += 1
         aiState = if (aiText.isNotBlank()) 3 else 0
     }
@@ -424,30 +460,30 @@ internal class MarketPage : BasePager() {
                                 }
                             }
                         }
-                        Text { attr { text(phase.label); marginLeft(6f); fontSize(11f); fontWeightSemiBold(); color(theme.textPrimary) } }
-                        Text { attr { text(page.refreshStatusText()); flex(1f); textAlignRight(); fontSize(10f); color(theme.textTertiary) } }
+                        Text { attr { text(phase.label); marginLeft(6f); fontSizeScaled(11f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                        Text { attr { text(page.refreshStatusText()); flex(1f); textAlignRight(); fontSizeScaled(10f); color(theme.textTertiary) } }
                     }
-                    phase.notice?.let { Text { attr { text(it); marginTop(6f); fontSize(10.5f); color(theme.flat) } } }
+                    phase.notice?.let { Text { attr { text(it); marginTop(6f); fontSizeScaled(10.5f); color(theme.flat) } } }
 
                     // B · Hero sits on the atmosphere, not in another generic card.
                     // No motion here, so a rebuild-on-refresh is the simplest correct binding.
                     vbind({ page.overview }) {
                         val data = page.overview
-                        Text { attr { text(page.moodHeadline(data)); marginTop(18f); fontSize(30f); lineHeight(38f); fontWeightBold(); color(theme.textPrimary) } }
+                        Text { attr { text(page.moodHeadline(data)); marginTop(18f); fontSizeScaled(30f); lineHeightScaled(38f); fontWeightBold(); color(theme.textPrimary) } }
                         View { attr { marginTop(11f); flexDirectionRow(); flexWrapWrap() }
                             MarketPill("情绪周期 · ${page.moodLabel(data.moodScore)}", page.moodColor(data.moodScore))
                             MarketPill("恐贪 ${data.moodScore}", theme.brand)
                             MarketPill(page.threshold(data.indices.firstOrNull()?.changePercent), theme.flat)
                         }
                         View { attr { marginTop(12f); paddingLeft(9f); borderLeft(Border(2f, BorderStyle.SOLID, theme.brand)) }
-                            Text { attr { text(data.explanation); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
+                            Text { attr { text(data.explanation); fontSizeScaled(12f); lineHeightScaled(18f); color(theme.textSecondary) } }
                         }
                     }
                 }
 
                 // C · z1 secondary index cards under a z3 main glass card.
-                Text { attr { text("指数带"); marginTop(4f); fontSize(17f); fontWeightBold(); color(theme.textPrimary) } }
-                Text { attr { text("点位、方向与当日区间"); marginTop(3f); fontSize(10f); color(theme.textTertiary) } }
+                Text { attr { text("指数带"); marginTop(4f); fontSizeScaled(17f); fontWeightBold(); color(theme.textPrimary) } }
+                Text { attr { text("点位、方向与当日区间"); marginTop(3f); fontSizeScaled(10f); color(theme.textTertiary) } }
                 View { attr { marginTop(9f); marginLeft(8f); marginRight(8f); flexDirectionRow(); opacity(0.90f) }
                     vbind({ page.overview }) {
                         page.overview.indices.drop(1).take(2).forEachIndexed { index, item ->
@@ -469,9 +505,9 @@ internal class MarketPage : BasePager() {
                                         animate(Animation.easeOut(0.26f).delay(0.06f * index), page.stripEntered)
                                     }
                                 }
-                                Text { attr { text(item.name); fontSize(11f); color(theme.textSecondary) } }
-                                Text { attr { text(Format.price(item.price)); marginTop(8f); fontSize(19f); fontWeightBold(); color(theme.textPrimary) } }
-                                Text { attr { text(Format.percent(item.changePercent)); marginTop(3f); fontSize(12f); fontWeightSemiBold(); color(page.changeColor(item.changePercent)) } }
+                                Text { attr { text(item.name); fontSizeScaled(11f); color(theme.textSecondary) } }
+                                Text { attr { text(Format.price(item.price)); marginTop(8f); fontSizeScaled(19f); fontWeightBold(); color(theme.textPrimary) } }
+                                Text { attr { text(Format.percent(item.changePercent)); marginTop(3f); fontSizeScaled(12f); fontWeightSemiBold(); color(page.changeColor(item.changePercent)) } }
                             }
                         }
                     }
@@ -494,7 +530,7 @@ internal class MarketPage : BasePager() {
                             }
                         }
                         View { attr { flex(1f) }
-                            Text { attr { text(page.overview.indices.firstOrNull()?.name ?: "行情接入中"); fontSize(12f); color(theme.textSecondary) } }
+                            Text { attr { text(page.overview.indices.firstOrNull()?.name ?: "行情接入中"); fontSizeScaled(12f); color(theme.textSecondary) } }
                             View {
                                 attr {
                                     marginTop(4f); paddingLeft(4f); paddingRight(4f); borderRadius(4f)
@@ -506,7 +542,7 @@ internal class MarketPage : BasePager() {
                                 Text {
                                     attr {
                                         text(page.overview.indices.firstOrNull()?.let { Format.price(it.price) } ?: "--")
-                                        fontSize(38f); lineHeight(43f); fontWeightBold()
+                                        fontSizeScaled(38f); lineHeightScaled(43f); fontWeightBold()
                                         color(if (page.tickPhase in 1..2) page.changeColor(page.tickDirection) else theme.textPrimary)
                                     }
                                 }
@@ -514,7 +550,7 @@ internal class MarketPage : BasePager() {
                         }
                         View {
                             attr { padding(7f); borderRadius(7f); backgroundColor(page.changeSoft(page.overview.indices.firstOrNull()?.changePercent ?: 0.0)) }
-                            Text { attr { text(Format.percent(page.overview.indices.firstOrNull()?.changePercent ?: 0.0)); fontSize(15f); fontWeightBold(); color(page.changeColor(page.overview.indices.firstOrNull()?.changePercent ?: 0.0)) } }
+                            Text { attr { text(Format.percent(page.overview.indices.firstOrNull()?.changePercent ?: 0.0)); fontSizeScaled(15f); fontWeightBold(); color(page.changeColor(page.overview.indices.firstOrNull()?.changePercent ?: 0.0)) } }
                         }
                     }
                     // A calm mini trend, not a fake price prediction chart.
@@ -523,7 +559,7 @@ internal class MarketPage : BasePager() {
                             View { attr { flex(1f); marginRight(if (index == 11) 0f else 3f); height(height); borderRadius(2f); backgroundColor(page.changeColor(page.overview.indices.firstOrNull()?.changePercent ?: 0.0).opacity(if (index == 11) 0.92f else 0.25f)) } }
                         }
                     }
-                    Text { attr { text(if (phase.live) "分时走势 · 最新点持续更新" else "收盘走势 · 非交易时段已静止"); marginTop(5f); fontSize(9.5f); color(theme.textTertiary) } }
+                    Text { attr { text(if (phase.live) "分时走势 · 最新点持续更新" else "收盘走势 · 非交易时段已静止"); marginTop(5f); fontSizeScaled(9.5f); color(theme.textTertiary) } }
                     View { attr { marginTop(10f); flexDirectionRow() }
                         MarketIndexFact("成交", theme) { page.overview.turnoverAmount?.let(page::turnoverText) ?: "待接入" }
                         MarketIndexFact("最高", theme) { page.overview.indices.firstOrNull()?.high?.let(Format::price) ?: "待接入" }
@@ -537,10 +573,10 @@ internal class MarketPage : BasePager() {
                             val name = item.name
                             val change = item.changePercent
                             View { attr { height(28f); marginRight(6f); marginBottom(6f); paddingLeft(9f); paddingRight(9f); allCenter(); borderRadius(14f); backgroundColor(theme.surface); border(Border(1f, BorderStyle.SOLID, if (abs(change) > 2.0) page.changeColor(change).opacity(0.52f) else theme.divider)) }
-                                Text { attr { text("$name ${Format.percent(change)}"); fontSize(10.5f); color(page.changeColor(change)) } }
+                                Text { attr { text("$name ${Format.percent(change)}"); fontSizeScaled(10.5f); color(page.changeColor(change)) } }
                             }
                         }
-                        if (data.indices.size <= 3) Text { attr { text("更多指数数据接入中"); marginTop(5f); fontSize(10f); color(theme.textTertiary) } }
+                        if (data.indices.size <= 3) Text { attr { text("更多指数数据接入中"); marginTop(5f); fontSizeScaled(10f); color(theme.textTertiary) } }
                     }
                 }
 
@@ -552,13 +588,13 @@ internal class MarketPage : BasePager() {
                         val volume = data.turnoverAmount
                         val volumeDeviation = page.volumeDeviation()
                         View { attr { flexDirectionRow(); alignItemsFlexEnd() }
-                            Text { attr { text(volume?.let(page::turnoverText) ?: "--"); fontSize(27f); lineHeight(31f); fontWeightBold(); color(theme.textPrimary) } }
-                            Text { attr { text(volumeDeviation?.let { "较5日均 ${Format.percent(it)}" } ?: "成交额待接入"); marginLeft(8f); marginBottom(3f); fontSize(10.5f); color(volumeDeviation?.let(page::changeColor) ?: theme.flat) } }
+                            Text { attr { text(volume?.let(page::turnoverText) ?: "--"); fontSizeScaled(27f); lineHeightScaled(31f); fontWeightBold(); color(theme.textPrimary) } }
+                            Text { attr { text(volumeDeviation?.let { "较5日均 ${Format.percent(it)}" } ?: "成交额待接入"); marginLeft(8f); marginBottom(3f); fontSizeScaled(10.5f); color(volumeDeviation?.let(page::changeColor) ?: theme.flat) } }
                         }
                         listOf("今日" to volume, "昨日" to data.yesterdayTurnoverAmount, "5日均" to data.fiveDayAverageTurnoverAmount).forEachIndexed { index, (label, value) ->
                             val width = if (value != null && volume != null && volume > 0) (154f * (value / volume).toFloat()).coerceIn(14f, 154f) else 26f
                             View { attr { marginTop(10f); flexDirectionRow(); alignItemsCenter() }
-                                Text { attr { text(label); width(34f); fontSize(10f); color(theme.textTertiary) } }
+                                Text { attr { text(label); width(34f); fontSizeScaled(10f); color(theme.textTertiary) } }
                                 View { attr { width(160f); height(6f); borderRadius(3f); backgroundColor(theme.surfaceMuted) }
                                     // A3 柱体从基线生长（spec 22 §3.2）：320ms + 40ms stagger。
                                     // width 是普通 attr，animate 会补间它的变化；vbind 重建后
@@ -574,7 +610,7 @@ internal class MarketPage : BasePager() {
                                         }
                                     }
                                 }
-                                Text { attr { text(value?.let(page::turnoverText) ?: "--"); flex(1f); marginLeft(8f); textAlignRight(); fontSize(10f); color(theme.textSecondary) } }
+                                Text { attr { text(value?.let(page::turnoverText) ?: "--"); flex(1f); marginLeft(8f); textAlignRight(); fontSizeScaled(10f); color(theme.textSecondary) } }
                             }
                         }
                     }
@@ -590,12 +626,12 @@ internal class MarketPage : BasePager() {
                         val flatFraction = data.flatCount.toFloat() / total
                         val fallingFraction = data.fallingCount.toFloat() / total
                         View { attr { flexDirectionRow(); alignItemsFlexEnd() }
-                            View { attr { flex(1f) }; Text { attr { text(data.risingCount.toString()); fontSize(25f); fontWeightBold(); color(theme.rise) } }; Text { attr { text("上涨"); marginTop(2f); fontSize(10f); color(theme.textTertiary) } } }
+                            View { attr { flex(1f) }; Text { attr { text(data.risingCount.toString()); fontSizeScaled(25f); fontWeightBold(); color(theme.rise) } }; Text { attr { text("上涨"); marginTop(2f); fontSizeScaled(10f); color(theme.textTertiary) } } }
                             View { attr { width(82f); allCenter() }
                                 Text {
                                     attr {
                                         text("红盘 ${Format.decimal(risingFraction.toDouble() * 100, 1)}%")
-                                        fontSize(11f); fontWeightSemiBold(); color(theme.textSecondary)
+                                        fontSizeScaled(11f); fontWeightSemiBold(); color(theme.textSecondary)
                                         // A2：数字在条生长到约 70% 时淡入（delay ≈ 0.52s × 0.7）。
                                         opacity(if (page.breadthEntered || !page.motionEnabled()) 1f else 0f)
                                         if (page.motionEnabled()) {
@@ -605,7 +641,7 @@ internal class MarketPage : BasePager() {
                                     }
                                 }
                             }
-                            View { attr { flex(1f) }; Text { attr { text(data.fallingCount.toString()); textAlignRight(); fontSize(25f); fontWeightBold(); color(theme.fall) } }; Text { attr { text("下跌"); marginTop(2f); textAlignRight(); fontSize(10f); color(theme.textTertiary) } } }
+                            View { attr { flex(1f) }; Text { attr { text(data.fallingCount.toString()); textAlignRight(); fontSizeScaled(25f); fontWeightBold(); color(theme.fall) } }; Text { attr { text("下跌"); marginTop(2f); textAlignRight(); fontSizeScaled(10f); color(theme.textTertiary) } } }
                         }
                         // A2 宽度条从中心分界线向两侧生长（spec 22 §3.3）：整条 scaleX 0→1
                         // 520ms，中心 origin 下两段同时伸展——它们是同一个事实的两面。
@@ -628,7 +664,7 @@ internal class MarketPage : BasePager() {
                             View { attr { flex(flatFraction); backgroundColor(theme.flat) } }
                             View { attr { flex(fallingFraction); backgroundColor(theme.fall) } }
                         }
-                        Text { attr { text("涨跌差 ${data.risingCount - data.fallingCount} · 涨幅>5% / 跌幅>5% 待接入 · 平盘 ${data.flatCount}"); marginTop(8f); fontSize(10f); color(theme.textTertiary) } }
+                        Text { attr { text("涨跌差 ${data.risingCount - data.fallingCount} · 涨幅>5% / 跌幅>5% 待接入 · 平盘 ${data.flatCount}"); marginTop(8f); fontSizeScaled(10f); color(theme.textTertiary) } }
                     }
                 }
 
@@ -654,9 +690,9 @@ internal class MarketPage : BasePager() {
                                     }
                                 }
                             }
-                            Text { attr { text(page.shortTermMetric(index).first); fontSize(10f); color(if (page.shortTermAlert() && index >= 2) theme.onBrand.opacity(0.78f) else theme.textTertiary) } }
-                            Text { attr { text(page.shortTermMetric(index).second); marginTop(7f); fontSize(17f); fontWeightBold(); color(if (page.shortTermAlert() && index >= 2) theme.onBrand else if (index == 0) theme.rise else if (index == 1) theme.fall else theme.textPrimary) } }
-                            Text { attr { text(page.shortTermMetric(index).third); marginTop(4f); fontSize(8.5f); lineHeight(12f); color(if (page.shortTermAlert() && index >= 2) theme.onBrand.opacity(0.76f) else theme.textTertiary) } }
+                            Text { attr { text(page.shortTermMetric(index).first); fontSizeScaled(10f); color(if (page.shortTermAlert() && index >= 2) theme.onBrand.opacity(0.78f) else theme.textTertiary) } }
+                            Text { attr { text(page.shortTermMetric(index).second); marginTop(7f); fontSizeScaled(17f); fontWeightBold(); color(if (page.shortTermAlert() && index >= 2) theme.onBrand else if (index == 0) theme.rise else if (index == 1) theme.fall else theme.textPrimary) } }
+                            Text { attr { text(page.shortTermMetric(index).third); marginTop(4f); fontSizeScaled(8.5f); lineHeightScaled(12f); color(if (page.shortTermAlert() && index >= 2) theme.onBrand.opacity(0.76f) else theme.textTertiary) } }
                             event {
                                 click {
                                     val value = page.shortTermMetric(index).second
@@ -680,7 +716,7 @@ internal class MarketPage : BasePager() {
                 }
                 View { attr { padding(15f); borderRadius(16f); backgroundColor(theme.surface); boxShadow(BoxShadow(0f, 2f, 8f, theme.textPrimary.opacity(0.05f))) }
                     vif({ (page.overview.yesterdayHighestBoard ?: 0) > (page.overview.highestBoard ?: 0) }) {
-                        Text { attr { text("┄┄ 昨日最高 ${page.overview.yesterdayHighestBoard ?: 0} 板"); fontSize(10f); color(theme.flat) } }
+                        Text { attr { text("┄┄ 昨日最高 ${page.overview.yesterdayHighestBoard ?: 0} 板"); fontSizeScaled(10f); color(theme.flat) } }
                     }
                     (1..4).reversed().forEachIndexed { index, level ->
                         View {
@@ -703,7 +739,7 @@ internal class MarketPage : BasePager() {
                                     animate(Animation.easeOut(0.28f).delay(0.06f * (level - 1)), page.ladderEntered)
                                 }
                             }
-                            Text { attr { text(if (level == 1) "首板" else "${level}板"); width(34f); fontSize(10f); color(theme.textSecondary) } }
+                            Text { attr { text(if (level == 1) "首板" else "${level}板"); width(34f); fontSizeScaled(10f); color(theme.textSecondary) } }
                             View {
                                 attr {
                                     val count = page.ladderCount(level)
@@ -717,17 +753,17 @@ internal class MarketPage : BasePager() {
                                         animate(Animation.easeOut(0.18f), page.expandedBoardLevel)
                                     }
                                 }
-                                Text { attr { text(page.ladderCount(level).let { if (it > 0) " $it" else " —" }); fontSize(10f); fontWeightSemiBold(); color(if (page.ladderCount(level) > 0) theme.rise else theme.textTertiary) } }
+                                Text { attr { text(page.ladderCount(level).let { if (it > 0) " $it" else " —" }); fontSizeScaled(10f); fontWeightSemiBold(); color(if (page.ladderCount(level) > 0) theme.rise else theme.textTertiary) } }
                                 event { click { page.toggleBoardLevel(level) }; longPress { params -> if (params.state == "start") page.showBoardPeek(level) } }
                             }
                         }
                         vif({ page.expandedBoardLevel == level }) {
                             View { attr { marginLeft(34f); marginTop(5f); padding(8f); borderRadius(8f); backgroundColor(theme.riseSoft); opacity(0.96f) }
-                                Text { attr { text(page.boardSampleText(level)); fontSize(10f); lineHeight(15f); color(theme.textSecondary) } }
+                                Text { attr { text(page.boardSampleText(level)); fontSizeScaled(10f); lineHeightScaled(15f); color(theme.textSecondary) } }
                             }
                         }
                     }
-                    Text { attr { text("条宽表示涨停池样本家数 · 点按展开样本 · 长按快速预览"); marginTop(10f); fontSize(10f); color(theme.textTertiary) } }
+                    Text { attr { text("条宽表示涨停池样本家数 · 点按展开样本 · 长按快速预览"); marginTop(10f); fontSizeScaled(10f); color(theme.textTertiary) } }
                 }
 
                 // H · sector lead is the raised card; #2–6 remain in a quieter ranking layer.
@@ -744,7 +780,7 @@ internal class MarketPage : BasePager() {
                                     animate(Animation.easeOut(0.18f), page.sectorTab)
                                 }
                             }
-                            Text { attr { text(label); fontSize(10.5f); fontWeightMedium(); color(if (page.sectorTab == index) theme.textPrimary else theme.textTertiary) } }
+                            Text { attr { text(label); fontSizeScaled(10.5f); fontWeightMedium(); color(if (page.sectorTab == index) theme.textPrimary else theme.textTertiary) } }
                             event { click { page.selectSectorTab(index) } }
                         }
                     }
@@ -789,8 +825,8 @@ internal class MarketPage : BasePager() {
                                                             animate(Animation.easeOut(0.20f), page.selectedSectorCode.orEmpty())
                                                         }
                                                     }
-                                                    Text { attr { text(sector.name); fontSize(9f); color(theme.textPrimary) } }
-                                                    Text { attr { text(Format.percent(sector.changePercent)); marginTop(5f); fontSize(10f); fontWeightSemiBold(); color(page.changeColor(sector.changePercent)) } }
+                                                    Text { attr { text(sector.name); fontSizeScaled(9f); color(theme.textPrimary) } }
+                                                    Text { attr { text(Format.percent(sector.changePercent)); marginTop(5f); fontSizeScaled(10f); fontWeightSemiBold(); color(page.changeColor(sector.changePercent)) } }
                                                     event {
                                                         click { page.selectedSectorCode = if (page.selectedSectorCode == sector.code) null else sector.code }
                                                         longPress { params -> if (params.state == "start") page.showSectorPeek(sector.code) }
@@ -803,7 +839,7 @@ internal class MarketPage : BasePager() {
                             }
                         }
                     }
-                    Text { attr { text("色阶仅表示涨跌强度"); marginTop(2f); fontSize(10f); color(theme.textTertiary) } }
+                    Text { attr { text("色阶仅表示涨跌强度"); marginTop(2f); fontSizeScaled(10f); color(theme.textTertiary) } }
                     vif({ page.selectedHeatmapSector() != null }) {
                         View {
                             attr {
@@ -814,17 +850,17 @@ internal class MarketPage : BasePager() {
                                 border(Border(1f, BorderStyle.SOLID, page.changeColor(page.selectedHeatmapSector()?.changePercent ?: 0.0).opacity(0.34f)))
                             }
                             View { attr { flexDirectionRow(); alignItemsCenter() }
-                                Text { attr { text(page.selectedHeatmapSector()?.name ?: ""); flex(1f); fontSize(15f); fontWeightBold(); color(theme.textPrimary) } }
-                                Text { attr { text(Format.percent(page.selectedHeatmapSector()?.changePercent ?: 0.0)); fontSize(18f); fontWeightBold(); color(page.changeColor(page.selectedHeatmapSector()?.changePercent ?: 0.0)) } }
+                                Text { attr { text(page.selectedHeatmapSector()?.name ?: ""); flex(1f); fontSizeScaled(15f); fontWeightBold(); color(theme.textPrimary) } }
+                                Text { attr { text(Format.percent(page.selectedHeatmapSector()?.changePercent ?: 0.0)); fontSizeScaled(18f); fontWeightBold(); color(page.changeColor(page.selectedHeatmapSector()?.changePercent ?: 0.0)) } }
                             }
                             Text {
                                 attr {
                                     val sector = page.selectedHeatmapSector()
                                     text(if (sector == null) "" else "主力 ${Format.compactAmount(sector.mainFlow)} · 上涨 ${sector.risingCount} · 下跌 ${sector.fallingCount}")
-                                    marginTop(6f); fontSize(10f); color(theme.textSecondary)
+                                    marginTop(6f); fontSizeScaled(10f); color(theme.textSecondary)
                                 }
                             }
-                            Text { attr { text("点按查看口径与板块样本"); marginTop(7f); fontSize(10f); color(theme.brand) } }
+                            Text { attr { text("点按查看口径与板块样本"); marginTop(7f); fontSizeScaled(10f); color(theme.brand) } }
                             event { click { page.selectedHeatmapSector()?.let { page.showSectorPeek(it.code) } } }
                         }
                     }
@@ -837,20 +873,20 @@ internal class MarketPage : BasePager() {
                         val leader = ranked.firstOrNull()
                         View { attr { marginTop(10f); padding(16f); borderRadius(20f); backgroundColor(theme.marketGlass); border(Border(1f, BorderStyle.SOLID, theme.marketGlassEdge)); boxShadow(BoxShadow(0f, 9f, 22f, theme.textPrimary.opacity(0.08f))) }
                             View { attr { flexDirectionRow(); alignItemsCenter() }
-                                View { attr { flex(1f) }; Text { attr { text(leader?.name ?: "暂无板块数据"); fontSize(17f); fontWeightBold(); color(theme.textPrimary) } }; Text { attr { text(leader?.let { "主力 ${Format.compactAmount(it.mainFlow)} · 上涨 ${it.risingCount} / 下跌 ${it.fallingCount}" } ?: "板块明细接入中"); marginTop(4f); fontSize(10f); color(theme.textTertiary) } } }
-                                Text { attr { text(leader?.let { Format.percent(it.changePercent) } ?: "--"); fontSize(22f); fontWeightBold(); color(page.changeColor(leader?.changePercent ?: 0.0)) } }
+                                View { attr { flex(1f) }; Text { attr { text(leader?.name ?: "暂无板块数据"); fontSizeScaled(17f); fontWeightBold(); color(theme.textPrimary) } }; Text { attr { text(leader?.let { "主力 ${Format.compactAmount(it.mainFlow)} · 上涨 ${it.risingCount} / 下跌 ${it.fallingCount}" } ?: "板块明细接入中"); marginTop(4f); fontSizeScaled(10f); color(theme.textTertiary) } } }
+                                Text { attr { text(leader?.let { Format.percent(it.changePercent) } ?: "--"); fontSizeScaled(22f); fontWeightBold(); color(page.changeColor(leader?.changePercent ?: 0.0)) } }
                             }
                             event { click { leader?.let { page.showSectorPeek(it.code) } } }
                         }
                         View { attr { marginTop(8f); padding(10f); borderRadius(15f); backgroundColor(theme.surfaceMuted); opacity(0.90f) }
                             ranked.drop(1).take(5).forEachIndexed { rank, sector ->
                                 View { attr { marginTop(if (rank == 0) 0f else 9f); flexDirectionRow(); alignItemsCenter() }
-                                    Text { attr { text("${rank + 2}"); width(22f); fontSize(10f); color(theme.textTertiary) } }
-                                    Text { attr { text(sector.name); width(76f); fontSize(11f); color(theme.textPrimary) } }
+                                    Text { attr { text("${rank + 2}"); width(22f); fontSizeScaled(10f); color(theme.textTertiary) } }
+                                    Text { attr { text(sector.name); width(76f); fontSizeScaled(11f); color(theme.textPrimary) } }
                                     View { attr { flex(1f); height(5f); borderRadius(3f); backgroundColor(theme.surface) }
                                         View { attr { width((112f * (abs(sector.changePercent) / 6.0).toFloat()).coerceIn(8f, 112f)); height(5f); borderRadius(3f); backgroundColor(page.changeColor(sector.changePercent).opacity(0.58f)) } }
                                     }
-                                    Text { attr { text(Format.percent(sector.changePercent)); width(50f); marginLeft(7f); textAlignRight(); fontSize(10f); color(page.changeColor(sector.changePercent)) } }
+                                    Text { attr { text(Format.percent(sector.changePercent)); width(50f); marginLeft(7f); textAlignRight(); fontSizeScaled(10f); color(page.changeColor(sector.changePercent)) } }
                                     event { click { page.showSectorPeek(sector.code) } }
                                 }
                             }
@@ -871,8 +907,8 @@ internal class MarketPage : BasePager() {
                             Triple("龙虎榜", "机构 vs 游资", "交易席位数据待接入"),
                         ).forEachIndexed { index, row ->
                             View { attr { paddingTop(10f); paddingBottom(10f); flexDirectionRow(); alignItemsCenter(); borderBottom(Border(1f, BorderStyle.SOLID, theme.divider.opacity(0.72f))) }
-                                View { attr { flex(1f) }; Text { attr { text(row.first); fontSize(12f); fontWeightSemiBold(); color(theme.textPrimary) } }; Text { attr { text(row.third); marginTop(3f); fontSize(9.5f); color(theme.textTertiary) } } }
-                                Text { attr { text(row.second); width(84f); textAlignRight(); fontSize(12f); fontWeightSemiBold(); color(if (row.first == "北向资金") page.changeColor(data.northboundFlow ?: 0.0) else theme.textPrimary) } }
+                                View { attr { flex(1f) }; Text { attr { text(row.first); fontSizeScaled(12f); fontWeightSemiBold(); color(theme.textPrimary) } }; Text { attr { text(row.third); marginTop(3f); fontSizeScaled(9.5f); color(theme.textTertiary) } } }
+                                Text { attr { text(row.second); width(84f); textAlignRight(); fontSizeScaled(12f); fontWeightSemiBold(); color(if (row.first == "北向资金") page.changeColor(data.northboundFlow ?: 0.0) else theme.textPrimary) } }
                                 event {
                                     click {
                                         val detail = when (index) {
@@ -886,7 +922,7 @@ internal class MarketPage : BasePager() {
                             }
                         }
                     }
-                    Text { attr { text("北向资金存在不同统计口径，展示前需核对来源与时间范围。"); marginTop(11f); fontSize(10f); lineHeight(15f); color(theme.flat) } }
+                    Text { attr { text("北向资金存在不同统计口径，展示前需核对来源与时间范围。"); marginTop(11f); fontSizeScaled(10f); lineHeightScaled(15f); color(theme.flat) } }
                 }
 
                 // B · AI 复盘卡（doc 31 §1）：idle → thinking（骨架呼吸）→ streaming（打字机）
@@ -910,14 +946,14 @@ internal class MarketPage : BasePager() {
                     View {
                         attr { flexDirectionRow(); alignItemsCenter() }
                         View { attr { width(22f); height(22f); borderRadius(7f); backgroundColor(theme.brand); allCenter() }
-                            Text { attr { text("✦"); fontSize(12f); fontWeightBold(); color(theme.onBrand) } }
+                            Text { attr { text("✦"); fontSizeScaled(12f); fontWeightBold(); color(theme.onBrand) } }
                         }
-                        Text { attr { text("让 AI 讲讲今天"); marginLeft(8f); flex(1f); fontSize(14f); fontWeightBold(); color(theme.textPrimary) } }
-                        Text { attr { text(page.aiActionLabel()); fontSize(11f); fontWeightSemiBold(); color(theme.brand) } }
+                        Text { attr { text("让 AI 讲讲今天"); marginLeft(8f); flex(1f); fontSizeScaled(14f); fontWeightBold(); color(theme.textPrimary) } }
+                        Text { attr { text(page.aiActionLabel()); fontSizeScaled(11f); fontWeightSemiBold(); color(theme.brand) } }
                         event { click { page.toggleAiBriefing() } }
                     }
                     vif({ page.aiState == 0 }) {
-                        Text { attr { text("基于本页已展示的指数、宽度、量能与情绪数据，让 AI 用一段话讲清今天市场的结构。"); marginTop(8f); fontSize(11f); lineHeight(16f); color(theme.textSecondary) } }
+                        Text { attr { text("基于本页已展示的指数、宽度、量能与情绪数据，让 AI 用一段话讲清今天市场的结构。"); marginTop(8f); fontSizeScaled(11f); lineHeightScaled(16f); color(theme.textSecondary) } }
                     }
                     vif({ page.aiState == 1 }) {
                         // 思考态骨架与输出文本同构（spec 22 §5.1）；呼吸是 aiPulse 驱动的
@@ -943,7 +979,7 @@ internal class MarketPage : BasePager() {
                                     }
                                 }
                             }
-                            Text { attr { text("正在汇总页面数据（指数 · 宽度 · 量能 · 情绪）…"); marginTop(10f); fontSize(10f); color(theme.brand) } }
+                            Text { attr { text("正在汇总页面数据（指数 · 宽度 · 量能 · 情绪）…"); marginTop(10f); fontSizeScaled(10f); color(theme.brand) } }
                         }
                     }
                     vif({ page.aiState == 2 || page.aiState == 3 || page.aiState == 4 }) {
@@ -952,15 +988,15 @@ internal class MarketPage : BasePager() {
                                 // 打字机：attr 内读 aiText，每个 delta 重跑本 attr 更新文本，
                                 // 视图不重挂（R1）；流式态尾随一个光标字符。
                                 text(page.aiText + if (page.aiState == 2) " ▍" else "")
-                                marginTop(10f); fontSize(12f); lineHeight(20f)
+                                marginTop(10f); fontSizeScaled(12f); lineHeightScaled(20f)
                                 color(if (page.aiState == 4) theme.fall else theme.textPrimary)
                             }
                         }
                     }
                     vif({ page.aiState == 3 }) {
                         View { attr { marginTop(10f); flexDirectionRow(); alignItemsCenter() }
-                            Text { attr { text("AI 生成 · 仅供参考，不构成投资建议"); flex(1f); fontSize(9.5f); color(theme.textTertiary) } }
-                            Text { attr { text("追问 ›"); fontSize(11f); fontWeightSemiBold(); color(theme.brand) }
+                            Text { attr { text("AI 生成 · 仅供参考，不构成投资建议"); flex(1f); fontSizeScaled(9.5f); color(theme.textTertiary) } }
+                            Text { attr { text("追问 ›"); fontSizeScaled(11f); fontWeightSemiBold(); color(theme.brand) }
                                 event { click { page.openChatWithQuestion(page.aiFollowUpQuestion()) } } }
                         }
                     }
@@ -979,8 +1015,8 @@ internal class MarketPage : BasePager() {
                                     } + if (uncoveredTotal > 0) "；停牌等未计入 ${uncoveredTotal} 只" else "，全部计入"
                                 )
                                 marginTop(14f)
-                                fontSize(10f)
-                                lineHeight(15f)
+                                fontSizeScaled(10f)
+                                lineHeightScaled(15f)
                                 color(theme.textTertiary)
                             }
                         }
@@ -989,10 +1025,10 @@ internal class MarketPage : BasePager() {
                 vbind({ page.overview.stamp }) {
                     SourceStampLine(page.overview.stamp, theme)
                 }
-                Text { attr { text("数据仅供信息参考，不构成投资建议。行情数据可能延迟或存在不同统计口径。"); marginTop(10f); fontSize(10f); lineHeight(15f); color(theme.textTertiary) } }
+                Text { attr { text("数据仅供信息参考，不构成投资建议。行情数据可能延迟或存在不同统计口径。"); marginTop(10f); fontSizeScaled(10f); lineHeightScaled(15f); color(theme.textTertiary) } }
             }
             // `peek` mounts the overlay, `peekVisible` animates it (see showPeek).
-            Text { attr { absolutePosition(top = 260f, left = 20f); zIndex(99, useOutline = false); text(page.debugScroll + " | sticky=" + page.stickyIndexVisible); fontSize(11f); color(com.tencent.kuikly.core.base.Color.RED) } }
+            Text { attr { absolutePosition(top = 260f, left = 20f); zIndex(99, useOutline = false); text(page.debugScroll + " | sticky=" + page.stickyIndexVisible); fontSizeScaled(11f); color(com.tencent.kuikly.core.base.Color.RED) } }
             vif({ page.peek != null }) {
                 View {
                     attr {
@@ -1024,11 +1060,11 @@ internal class MarketPage : BasePager() {
                         }
                     }
                     View { attr { flexDirectionRow(); alignItemsCenter() }
-                        Text { attr { text(page.peek?.title ?: ""); flex(1f); fontSize(13f); fontWeightBold(); color(page.theme.textPrimary) } }
-                        Text { attr { text("关闭"); fontSize(11f); color(page.theme.brand) }; event { click { page.dismissPeek() } } }
+                        Text { attr { text(page.peek?.title ?: ""); flex(1f); fontSizeScaled(13f); fontWeightBold(); color(page.theme.textPrimary) } }
+                        Text { attr { text("关闭"); fontSizeScaled(11f); color(page.theme.brand) }; event { click { page.dismissPeek() } } }
                     }
-                    Text { attr { text(page.peek?.primary ?: ""); marginTop(8f); fontSize(23f); fontWeightBold(); color(page.theme.textPrimary) } }
-                    Text { attr { text(page.peek?.detail ?: ""); marginTop(6f); fontSize(11f); lineHeight(16f); color(page.theme.textSecondary) } }
+                    Text { attr { text(page.peek?.primary ?: ""); marginTop(8f); fontSizeScaled(23f); fontWeightBold(); color(page.theme.textPrimary) } }
+                    Text { attr { text(page.peek?.detail ?: ""); marginTop(6f); fontSizeScaled(11f); lineHeightScaled(16f); color(page.theme.textSecondary) } }
                 }
             }
             AppTopBar(
@@ -1129,15 +1165,15 @@ internal class MarketPage : BasePager() {
 
 private fun ViewContainer<*, *>.MarketPill(text: String, color: Color) {
     View { attr { height(24f); marginRight(6f); marginBottom(5f); paddingLeft(8f); paddingRight(8f); allCenter(); borderRadius(12f); backgroundColor(color.opacity(0.11f)) }
-        Text { attr { text(text); fontSize(10f); fontWeightMedium(); color(color) } }
+        Text { attr { text(text); fontSizeScaled(10f); fontWeightMedium(); color(color) } }
     }
 }
 
 /** `value` is a closure so the figure is read inside attr and stays live. */
 private fun ViewContainer<*, *>.MarketIndexFact(label: String, theme: StockChatTheme, value: () -> String) {
     View { attr { flex(1f) }
-        Text { attr { text(label); fontSize(9.5f); color(theme.textTertiary) } }
-        Text { attr { text(value()); marginTop(3f); fontSize(11f); fontWeightSemiBold(); color(theme.textPrimary) } }
+        Text { attr { text(label); fontSizeScaled(9.5f); color(theme.textTertiary) } }
+        Text { attr { text(value()); marginTop(3f); fontSizeScaled(11f); fontWeightSemiBold(); color(theme.textPrimary) } }
     }
 }
 
@@ -1148,8 +1184,8 @@ private fun ViewContainer<*, *>.MarketSectionTitle(
     onTap: (() -> Unit)? = null,
 ) {
     View { attr { marginTop(23f); marginBottom(9f); flexDirectionRow(); alignItemsFlexEnd() }
-        Text { attr { text(title); fontSize(17f); fontWeightBold(); color(theme.textPrimary) } }
-        Text { attr { text(subtitle); marginLeft(7f); marginBottom(2f); fontSize(10f); color(theme.textTertiary) } }
+        Text { attr { text(title); fontSizeScaled(17f); fontWeightBold(); color(theme.textPrimary) } }
+        Text { attr { text(subtitle); marginLeft(7f); marginBottom(2f); fontSizeScaled(10f); color(theme.textTertiary) } }
         if (onTap != null) event { click { onTap() } }
     }
 }
