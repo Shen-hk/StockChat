@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#08090f">
+<title>股问行情 · 个股详情页原型（紫金矿业）</title>
+<style>
+/* finesse · register=h5 · morph=A-app-shell · A=midnight+amber · B=system-800/400
+ * C=price-hero+scrub-chart+AI-card-stack+point-ladder · D=SVG-tline+candles+ladder
+ * E=trading-desk · SOUL=6 SPECTACLE=4 DENSITY=8 */
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+:root {
+  --page: #08090f;
+  --bg: #12141c;
+  --panel-2: #1a1d27;
+  --border: rgba(255,255,255,.07);
+  --ink-1: #eceef5;
+  --ink-2: #a8adbd;
+  --ink-3: #848aa0;
+  --accent: #E8A33D;
+  --accent-soft: rgba(232,163,61,.13);
+  --on-accent: #141008;
+  --up: #FF5F56;      /* 中国口径：涨红 */
+  --down: #3FCB86;    /* 跌绿 */
+  --flat: #848aa0;
+  --r: 18px;
+  --r-sm: 12px;
+  --ease: cubic-bezier(.32,.86,.28,1);
+  --shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+html, body { height: 100%; overflow-x: clip; }
+body {
+  overflow: hidden;
+  background: #08090b;
+  display: flex; align-items: center; justify-content: center;
+  font-family: -apple-system, "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", sans-serif;
+  color: var(--ink-1);
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum"; }
+.c-up { color: var(--up); } .c-down { color: var(--down); } .c-flat { color: var(--flat); } .c-acc { color: var(--accent); }
+
+.phone {
+  position: relative; width: 100%; height: 100%; overflow: hidden;
+  background: var(--page);
+  display: flex; flex-direction: column;
+}
+@media (min-width: 560px) {
+  body { background: radial-gradient(120% 90% at 50% 0%, #1c180f 0%, #08090b 62%); }
+  .phone {
+    width: 406px; height: min(880px, 94vh);
+    border-radius: 46px;
+    border: 1px solid rgba(255,255,255,.1);
+    box-shadow: 0 46px 120px -30px rgba(0,0,0,.9), 0 0 0 10px #0b0c0e;
+  }
+}
+
+/* ---------- 状态栏 ---------- */
+.status {
+  flex: none;
+  height: calc(env(safe-area-inset-top) + 44px);
+  padding: env(safe-area-inset-top) 24px 0;
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 12.5px; font-weight: 500; z-index: 30;
+}
+.status .sicons { display: flex; align-items: center; gap: 6px; }
+
+/* ---------- 滚动主体 ---------- */
+#app {
+  flex: 1; overflow-y: auto; overflow-x: clip;
+  padding-bottom: calc(env(safe-area-inset-bottom) + 104px);
+  scrollbar-width: none;
+}
+#app::-webkit-scrollbar { width: 0; }
+
+/* ---------- 顶栏 ---------- */
+.d-top {
+  flex: none; height: 52px; padding: 0 12px;
+  display: flex; align-items: center; gap: 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--page);
+}
+.d-top .t { flex: 1; min-width: 0; padding-left: 4px; }
+.d-top .t b { display: block; font-size: 16px; font-weight: 700; }
+.d-top .t i { font-style: normal; font-size: 11.5px; color: var(--ink-3); }
+.iconbtn {
+  width: 42px; height: 42px; border-radius: 50%;
+  display: grid; place-items: center; color: var(--ink-2);
+  transition: transform .15s var(--ease), background .15s;
+}
+.iconbtn:active { transform: scale(.9); background: var(--panel-2); }
+.iconbtn.starred { color: var(--accent); }
+
+/* ---------- 价格区 ---------- */
+.px-head { padding: 16px 20px 4px; }
+.px-line { display: flex; align-items: baseline; gap: 10px; }
+.px-line .big { font-size: 42px; font-weight: 800; letter-spacing: -.02em; }
+.px-line .pill { padding: 3px 9px; border-radius: 8px; font-size: 14px; font-weight: 700; }
+.pill.u { background: rgba(255,95,86,.14); color: var(--up); }
+.pill.d { background: rgba(63,203,134,.13); color: var(--down); }
+.px-sub { display: flex; gap: 16px; font-size: 12.5px; color: var(--ink-3); margin-top: 6px; }
+.px-sub b { font-weight: 600; }
+
+/* ---------- 图表 ---------- */
+.chart-sec { padding: 10px 20px 0; }
+.ctabs {
+  display: flex; gap: 18px; align-items: center;
+  font-size: 13px; color: var(--ink-3); padding: 6px 0 4px;
+}
+.ctabs button { padding: 4px 2px; color: var(--ink-3); transition: color .2s; }
+.ctabs button.on { color: var(--ink-1); font-weight: 700; box-shadow: inset 0 -2px 0 var(--accent); }
+.ctabs .legend { margin-left: auto; display: flex; gap: 10px; font-size: 10.5px; }
+.ctabs .legend i { display: inline-block; width: 8px; height: 2px; border-radius: 2px; margin-right: 4px; vertical-align: 2px; }
+.chart-box { position: relative; }
+.chart-box svg { display: block; width: 100%; height: auto; }
+.cross { position: absolute; inset: 0; touch-action: pan-y; }
+.tip {
+  position: absolute; top: 6px; transform: translateX(-50%);
+  padding: 5px 9px; border-radius: 9px;
+  background: rgba(35,39,50,.95); border: 1px solid var(--border);
+  font-size: 11px; white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity .15s;
+}
+.tip.on { opacity: 1; }
+
+/* ---------- 指标网格 ---------- */
+.stats {
+  margin: 14px 20px 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+  background: var(--border); border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden;
+}
+.stats .st { background: var(--bg); padding: 10px 12px; }
+.stats .st i { font-style: normal; font-size: 10.5px; color: var(--ink-3); display: block; }
+.stats .st b { font-size: 13.5px; font-weight: 600; margin-top: 3px; display: block; }
+
+/* ---------- 通用卡片 ---------- */
+.sec { margin: 14px 20px 0; }
+.sec-h { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
+.sec-h .ic { width: 22px; height: 22px; border-radius: 7px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; flex: none; }
+.sec-h b { font-size: 14.5px; font-weight: 700; }
+.sec-h .upd { margin-left: auto; font-size: 10.5px; color: var(--ink-3); }
+.card {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 14px 15px;
+}
+
+/* ---------- AI 综合研判 ---------- */
+.grade-row { display: flex; align-items: center; gap: 14px; }
+.grade-row .g b { font-size: 22px; font-weight: 800; color: var(--accent); }
+.grade-row .g span { font-size: 11px; color: var(--ink-3); display: block; margin-top: 2px; }
+.meter { flex: 1; min-width: 0; }
+.meter .track {
+  position: relative; height: 6px; border-radius: 99px;
+  background: linear-gradient(90deg, rgba(63,203,134,.4), rgba(132,138,160,.35), rgba(255,95,86,.4));
+}
+.meter .knob {
+  position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2.5px solid var(--page);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 3px rgba(232,163,61,.25);
+}
+.meter .scale { display: flex; justify-content: space-between; font-size: 10px; color: var(--ink-3); margin-top: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.chip {
+  font-size: 11.5px; padding: 4px 10px; border-radius: 99px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--ink-2);
+}
+.chip.hot { background: rgba(255,95,86,.12); border-color: rgba(255,95,86,.25); color: var(--up); }
+.chip.acc { background: var(--accent-soft); border-color: rgba(232,163,61,.25); color: var(--accent); }
+.ai-sum { font-size: 13px; line-height: 1.7; color: var(--ink-2); margin-top: 12px; }
+.ai-sum b { color: var(--ink-1); }
+.attr-toggle {
+  margin-top: 12px; width: 100%; height: 36px; border-radius: 10px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  font-size: 12.5px; color: var(--ink-2);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: transform .15s var(--ease);
+}
+.attr-toggle:active { transform: scale(.98); }
+.attr { display: none; margin-top: 10px; }
+.attr.on { display: block; animation: rise .35s var(--ease) both; }
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+.attr .arow {
+  display: grid; grid-template-columns: 52px 1fr; gap: 10px;
+  padding: 9px 0; border-top: 1px dashed var(--border);
+}
+.attr .arow i { font-style: normal; font-size: 11.5px; color: var(--accent); padding-top: 1px; }
+.attr .arow p { font-size: 12.5px; line-height: 1.6; color: var(--ink-2); }
+
+/* ---------- 关键点位梯 ---------- */
+.ladder { position: relative; height: 108px; margin-top: 6px; }
+.ladder .bar {
+  position: absolute; left: 0; right: 0; top: 54px; height: 4px; border-radius: 99px;
+  background: linear-gradient(90deg, rgba(63,203,134,.55), rgba(232,163,61,.5) 53%, rgba(255,95,86,.55));
+}
+.ladder .mark { position: absolute; transform: translateX(-50%); text-align: center; }
+.ladder .mark .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); margin: 0 auto; }
+.ladder .mark .lb { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; }
+.ladder .mark .pv { font-size: 12.5px; font-weight: 700; margin-top: 1px; }
+.ladder .mark.top .lb { margin-bottom: 3px; }
+.ladder .mark.cur .dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(232,163,61,.2); }
+.ladder .mark.cur .pv { color: var(--accent); font-size: 13.5px; }
+.op-note {
+  margin-top: 10px; padding: 10px 12px; border-radius: 10px;
+  background: var(--accent-soft); border: 1px solid rgba(232,163,61,.2);
+  font-size: 12.5px; line-height: 1.65; color: var(--ink-2);
+}
+.op-note b { color: var(--accent); font-size: 11px; letter-spacing: .05em; }
+
+/* ---------- 风险提醒 ---------- */
+.risk { display: flex; gap: 11px; }
+.risk .ric { flex: none; width: 32px; height: 32px; border-radius: 10px; background: rgba(232,163,61,.16); color: var(--accent); display: grid; place-items: center; }
+.risk p { font-size: 12.5px; line-height: 1.65; color: var(--ink-2); }
+.risk p b { color: var(--ink-1); }
+
+/* ---------- 追问 chips ---------- */
+.ask-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.ask-row button {
+  padding: 9px 14px; border-radius: 99px;
+  background: var(--bg); border: 1px solid var(--border);
+  font-size: 12.5px; color: var(--ink-2);
+  display: flex; align-items: center; gap: 6px;
+  transition: transform .15s var(--ease);
+}
+.ask-row button:active { transform: scale(.96); border-color: rgba(232,163,61,.4); color: var(--accent); }
+
+/* ---------- 快讯 ---------- */
+.news .nrow { padding: 11px 0; border-top: 1px dashed var(--border); display: flex; gap: 10px; }
+.news .nrow:first-child { border-top: 0; padding-top: 2px; }
+.news .tm { flex: none; font-size: 11px; color: var(--ink-3); padding-top: 2px; width: 38px; }
+.news p { font-size: 13px; line-height: 1.55; color: var(--ink-2); }
+.news p b { color: var(--ink-1); font-weight: 600; }
+
+.disc { padding: 16px 20px 8px; text-align: center; font-size: 10.5px; color: var(--ink-3); line-height: 1.7; }
+
+/* ---------- 底部操作条 ---------- */
+.bottom-bar {
+  position: absolute; left: 0; right: 0; z-index: 50;
+  bottom: calc(env(safe-area-inset-bottom) + 12px);
+  padding: 10px 16px; display: flex; gap: 10px;
+  background: linear-gradient(transparent, var(--page) 34%);
+}
+.bb-btn {
+  height: 48px; border-radius: 15px; font-size: 14.5px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  transition: transform .15s var(--ease);
+}
+.bb-btn:active { transform: scale(.97); }
+.bb-ghost { flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--ink-1); }
+.bb-ghost.starred { color: var(--accent); border-color: rgba(232,163,61,.4); }
+.bb-fill { flex: 1.5; background: var(--accent); color: var(--on-accent); box-shadow: 0 10px 24px -10px rgba(232,163,61,.6); }
+.home-ind {
+  position: absolute; left: 50%; transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom) + 5px);
+  width: 118px; height: 4px; border-radius: 99px;
+  background: var(--ink-1); opacity: .16; z-index: 51;
+}
+
+.toast {
+  position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 84px);
+  transform: translate(-50%, 8px);
+  z-index: 70; padding: 9px 16px; border-radius: 99px;
+  background: rgba(35,39,50,.95); border: 1px solid var(--border);
+  font-size: 12.5px; white-space: nowrap;
+  opacity: 0; pointer-events: none;
+  transition: opacity .25s ease, transform .25s var(--ease);
+}
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+</style>
+</head>
+<body>
+<div class="phone">
+
+  <div class="status">
+    <span class="num" id="clock">9:41</span>
+    <span class="sicons">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4.5" y="4.5" width="3" height="6.5" rx="1"/><rect x="9" y="2" width="3" height="9" rx="1"/><rect x="13.5" y="0" width="3" height="11" rx="1" opacity=".35"/></svg>
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="currentColor"><path d="M8 9.2a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8ZM8 5.6c-1.7 0-3.2.7-4.3 1.8l1.4 1.4A4.1 4.1 0 0 1 8 7.6c1.1 0 2.1.4 2.9 1.2l1.4-1.4A6 6 0 0 0 8 5.6Z" transform="translate(0 -1.5)"/><path d="M8 1.5C5.2 1.5 2.6 2.6.7 4.5l1.4 1.4A8 8 0 0 1 8 3.5c2.3 0 4.4.9 5.9 2.4l1.4-1.4A10 10 0 0 0 8 1.5Z" transform="translate(0 -1.5)"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="currentColor" opacity=".4"/><rect x="2" y="2" width="14" height="8" rx="1.6" fill="currentColor"/><path d="M23.5 4v4a2.2 2.2 0 0 0 0-4Z" fill="currentColor" opacity=".4"/></svg>
+    </span>
+  </div>
+
+  <div class="d-top">
+    <a class="iconbtn" href="entry-page-prototype.html" aria-label="返回行情列表">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 6-6 6 6 6"/></svg>
+    </a>
+    <div class="t"><b>紫金矿业</b><i class="num">SH601899 · 有色金属</i></div>
+    <button class="iconbtn" id="starTop" aria-label="加自选" onclick="toggleStar()">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path id="starPath" d="m12 3 2.7 5.6 6.1.8-4.5 4.3 1.1 6.1L12 16.9l-5.4 2.9 1.1-6.1L3.2 9.4l6.1-.8L12 3Z"/></svg>
+    </button>
+    <button class="iconbtn" aria-label="更多" onclick="toast('更多操作：原型下一步')">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+    </button>
+  </div>
+
+  <div id="app">
+
+    <!-- 价格区 -->
+    <div class="px-head num">
+      <div class="px-line">
+        <span class="big">19.84</span>
+        <span class="pill u">+4.31%</span>
+      </div>
+      <div class="px-sub">
+        <span>涨跌 <b class="c-up">+0.82</b></span>
+        <span>昨收 <b>19.02</b></span>
+        <span>今开 <b>19.10</b></span>
+        <span class="c-flat">A股 · 已收盘</span>
+      </div>
+    </div>
+
+    <!-- 图表 -->
+    <div class="chart-sec">
+      <div class="ctabs">
+        <button class="on" data-v="tl">分时</button>
+        <button data-v="dk">日K</button>
+        <span class="legend" id="legend"></span>
+      </div>
+      <div class="chart-box" id="chartBox">
+        <div id="chart"></div>
+        <div class="cross" id="cross"></div>
+        <div class="tip num" id="tip"></div>
+      </div>
+    </div>
+
+    <!-- 指标 -->
+    <div class="stats num">
+      <div class="st"><i>最高</i><b class="c-up">19.90</b></div>
+      <div class="st"><i>最低</i><b class="c-down">18.94</b></div>
+      <div class="st"><i>成交量</i><b>186.3万手</b></div>
+      <div class="st"><i>成交额</i><b>36.7亿</b></div>
+      <div class="st"><i>换手率</i><b>0.86%</b></div>
+      <div class="st"><i>量比</i><b class="c-up">1.68</b></div>
+      <div class="st"><i>振幅</i><b>5.05%</b></div>
+      <div class="st"><i>市盈TTM</i><b>18.6</b></div>
+    </div>
+
+    <!-- AI 综合研判 -->
+    <div class="sec">
+      <div class="sec-h">
+        <span class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/></svg></span>
+        <b>AI 综合研判</b>
+        <span class="upd num">15:00 收盘后更新 · 模拟演示</span>
+      </div>
+      <div class="card">
+        <div class="grade-row">
+          <div class="g"><b>偏强</b><span>短线趋势评级</span></div>
+          <div class="meter">
+            <div class="track"><div class="knob" style="left:76%"></div></div>
+            <div class="scale"><span>偏空</span><span>震荡</span><span>强势</span></div>
+          </div>
+        </div>
+        <div class="chips">
+          <span class="chip hot">放量上攻 · 量比 1.68</span>
+          <span class="chip">站上 20 日均线</span>
+          <span class="chip acc">MACD 金叉</span>
+          <span class="chip acc">主力连续 3 日净流入</span>
+        </div>
+        <p class="ai-sum">今日<b>放量上涨 4.31%</b>，逼近前期平台颈线 <b>20.45 元</b>。国际金价创阶段新高带动板块情绪，主力资金净流入居有色板块首位。短线趋势<b>偏强</b>，若放量站稳颈线上方则打开上行空间；但近 20 日累计涨幅已达 18.6%，需留意乖离扩大后的回踩。</p>
+        <button class="attr-toggle" onclick="toggleAttr(this)">
+          展开归因明细
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="attr">
+          <div class="arow"><i>消息面</i><p>国际金价刷新阶段新高、铜价同步走强；公司 8 月矿产铜产量同比增长 8.2%，量价齐升逻辑强化。</p></div>
+          <div class="arow"><i>资金面</i><p>今日主力资金净流入约 4.2 亿元，位列有色金属板块第一；北向资金近 5 日累计增持 0.4%。</p></div>
+          <div class="arow"><i>技术面</i><p>日 K 收长阳，突破 20 日均线且均线呈多头排列；MACD 金叉后红柱放大，量能配合良好。</p></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 关键点位 -->
+    <div class="sec">
+      <div class="sec-h">
+        <span class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19h16"/><path d="M7 15V9"/><path d="M12 15V5"/><path d="M17 15v-4"/></svg></span>
+        <b>关键点位</b>
+        <span class="upd">模拟演示数据</span>
+      </div>
+      <div class="card">
+        <div class="ladder num" id="ladder"></div>
+        <div class="op-note num"><b>操作提示</b><br>若放量站稳 20.45 上方，视为平台突破确认；若冲高回落，关注 19.20（5 日线）支撑有效性。以上为演示用模拟推演，不构成投资建议。</div>
+      </div>
+    </div>
+
+    <!-- 风险提醒 -->
+    <div class="sec">
+      <div class="sec-h">
+        <span class="ic" style="background:rgba(232,163,61,.16)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 10v4"/><path d="M12 17.2v.1"/></svg></span>
+        <b>风险提醒</b>
+      </div>
+      <div class="card risk">
+        <span class="ric"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 10v4"/><path d="M12 17.2v.1"/></svg></span>
+        <p>近 <b>20 个交易日累计上涨 18.6%</b>，短期乖离率偏高，追高需注意波动放大。<b>9 月 23 日</b>将有 <b>2.34 亿股</b>定增限售股解禁（约占总股本 0.9%），解禁前后情绪面扰动可能增加。</p>
+      </div>
+    </div>
+
+    <!-- 追问 -->
+    <div class="sec">
+      <div class="sec-h">
+        <span class="ic"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 1 1-4.6-7.6"/><path d="M9.5 10a2.5 2.5 0 0 1 4.9.8c0 1.7-2.4 2-2.4 3.2"/><path d="M12 17.2v.1"/></svg></span>
+        <b>继续问 AI</b>
+      </div>
+      <div class="ask-row">
+        <button onclick="toast('跳转 AI 问股对话页：原型下一步')">为什么今天大涨？</button>
+        <button onclick="toast('跳转 AI 问股对话页：原型下一步')">主力资金流向哪里？</button>
+        <button onclick="toast('跳转 AI 问股对话页：原型下一步')">帮我解读日K形态</button>
+        <button onclick="toast('跳转 AI 问股对话页：原型下一步')">这条新闻什么影响？</button>
+      </div>
+    </div>
+
+    <!-- 快讯 -->
+    <div class="sec news card">
+      <div class="nrow"><span class="tm num">09:41</span><p><b>国际金价刷新阶段新高</b>，A 股黄金股集体走高，板块主力资金净流入居前。<span class="c-flat">（模拟快讯）</span></p></div>
+      <div class="nrow"><span class="tm num">09:02</span><p><b>公司公告：</b>8 月矿产铜产量同比增长 8.2%，矿产金产量同比增长 5.4%。<span class="c-flat">（模拟公告摘要）</span></p></div>
+    </div>
+
+    <p class="disc">AI 生成内容由模型产出，仅供演示参考，不构成任何投资建议<br>行情与研报数据均为模拟数据</p>
+  </div>
+
+  <!-- 底部操作条 -->
+  <div class="bottom-bar">
+    <button class="bb-btn bb-ghost" id="starBtn" onclick="toggleStar()">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path id="starPath2" d="m12 3 2.7 5.6 6.1.8-4.5 4.3 1.1 6.1L12 16.9l-5.4 2.9 1.1-6.1L3.2 9.4l6.1-.8L12 3Z"/></svg>
+      <span id="starTxt">加自选</span>
+    </button>
+    <button class="bb-btn bb-fill" onclick="toast('跳转 AI 问股对话页：原型下一步')">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z"/></svg>
+      问 AI · 解读紫金矿业
+    </button>
+  </div>
+  <div class="home-ind"></div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt2 = n => n.toFixed(2);
+let starred = false;
+/* ---- 星标 ---- */
+function toggleStar() {
+  starred = !starred;
+  ['starTop', 'starBtn'].forEach(id => $(id).classList.toggle('starred', starred));
+  $('starPath').setAttribute('fill', starred ? 'currentColor' : 'none');
+  $('starPath2').setAttribute('fill', starred ? 'currentColor' : 'none');
+  $('starTxt').textContent = starred ? '已加自选' : '加自选';
+  toast(starred ? '已加入自选（演示）' : '已移出自选（演示）');
+};
+
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('on'), 2200);
+}
+function toggleAttr(btn) {
+  const box = btn.nextElementSibling;
+  const open = box.classList.toggle('on');
+  btn.firstChild.textContent = open ? '收起归因明细' : '展开归因明细';
+}
+
+/* ================= 分时数据 ================= */
+function seeded(seed) {
+  let s = seed % 2147483647; if (s <= 0) s += 2147483646;
+  return () => ((s = s * 16807 % 2147483647) - 1) / 2147483646;
+}
+const PREV = 19.02, CLOSE = 19.84;
+const r1 = seeded(601899);
+const TL = [];
+{
+  let v = PREV;
+  for (let i = 0; i <= 240; i++) {
+    const t = i / 240;
+    const target = PREV + (CLOSE - PREV) * (t * t * (3 - 2 * t));
+    v = v + (target - v) * .06 + (i === 240 ? 0 : (r1() - .48) * .028);
+    TL.push(v);
+  }
+  TL[240] = CLOSE;
+}
+function tLabel(i) { /* 0..240 -> 09:30..15:00（含午休折叠） */
+  const m = i <= 120 ? 570 + i : 780 + (i - 120);
+  return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+}
+
+/* ================= 日K数据 ================= */
+const DK = [];
+{
+  const r2 = seeded(1899);
+  let p = 15.9;
+  for (let i = 0; i < 39; i++) {
+    const drift = .0035 + (i > 24 ? .005 : 0);
+    const o = p * (1 + (r2() - .5) * .012);
+    const c = o * (1 + drift + (r2() - .48) * .022);
+    const h = Math.max(o, c) * (1 + r2() * .008);
+    const l = Math.min(o, c) * (1 - r2() * .008);
+    DK.push({ o, c, h, l }); p = c;
+  }
+  const k = CLOSE / p;
+  DK.forEach(d => { d.o *= k; d.c *= k; d.h *= k; d.l *= k; });
+  DK.push({ o: 19.10, c: CLOSE, h: 19.90, l: 18.94 });
+}
+function ma(series, n) {
+  return series.map((_, i) => {
+    if (i < n - 1) return null;
+    let s = 0; for (let j = i - n + 1; j <= i; j++) s += series[j].c;
+    return s / n;
+  });
+}
+
+/* ================= SVG 绘制 ================= */
+const CW = 358, CH = 190, PADR = 40, VOLH = 34;
+function svgTL() {
+  const W = CW - PADR, lo = Math.min(...TL, PREV), hi = Math.max(...TL, PREV), span = hi - lo || 1;
+  const x = i => (i / 240) * W, y = v => 6 + (1 - (v - lo) / span) * (CH - VOLH - 18);
+  const line = TL.map((v, i) => x(i).toFixed(1) + ',' + y(v).toFixed(1)).join(' ');
+  const area = `M${x(0)},${y(TL[0])} ` + TL.map((v, i) => `L${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ') + ` L${W},${CH - VOLH - 6} L0,${CH - VOLH - 6} Z`;
+  /* 分时成交量 */
+  const rv = seeded(99); const vols = TL.map((_, i) => 12 + rv() * (i > 200 ? 78 : 46) * (1 + Math.abs(TL[i] - TL[i - 1] || 0) * 40));
+  const vmax = Math.max(...vols);
+  const bars = vols.map((v, i) => {
+    const bw = W / 241, up = i === 0 || TL[i] >= TL[i - 1];
+    return `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${(CH - (v / vmax) * (VOLH - 6)).toFixed(1)}" width="${bw.toFixed(2)}" height="${((v / vmax) * (VOLH - 6)).toFixed(1)}" fill="${up ? 'rgba(255,95,86,.5)' : 'rgba(63,203,134,.5)'}"/>`;
+  }).join('');
+  const yl = v => `<text x="${W + 6}" y="${(y(v) + 3.5).toFixed(1)}" font-size="9.5" fill="#848aa0">${fmt2(v)}</text>`;
+  const xl = [[0, '09:30'], [120, '11:30/13:00'], [240, '15:00']].map(([i, t]) =>
+    `<text x="${Math.min(x(i), W - 4)}" y="${CH - 2}" font-size="9.5" fill="#848aa0" text-anchor="${i === 0 ? 'start' : i === 240 ? 'end' : 'middle'}">${t}</text>`).join('');
+  return `<svg viewBox="0 0 ${CW} ${CH}" class="num">
+    <line x1="0" x2="${W}" y1="${y(PREV)}" y2="${y(PREV)}" stroke="rgba(255,255,255,.14)" stroke-dasharray="3 4"/>
+    <path d="${area}" fill="url(#gTL)"/>
+    <polyline points="${line}" fill="none" stroke="var(--up)" stroke-width="1.6" stroke-linejoin="round"/>
+    ${bars}
+    ${yl(hi)}${yl(PREV)}${yl(lo)}${xl}
+    <defs><linearGradient id="gTL" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="rgba(255,95,86,.28)"/><stop offset="1" stop-color="rgba(255,95,86,0)"/>
+    </linearGradient></defs>
+  </svg>`;
+}
+function svgDK() {
+  const W = CW - PADR, top = 8, h = CH - VOLH - 12;
+  const lo = Math.min(...DK.map(d => d.l)), hi = Math.max(...DK.map(d => d.h)), span = hi - lo;
+  const N = DK.length, bw = W / N;
+  const x = i => i * bw + bw / 2, y = v => top + (1 - (v - lo) / span) * h;
+  const ma5 = ma(DK, 5), ma10 = ma(DK, 10);
+  const pl = arr => arr.map((v, i) => v == null ? '' : `${i === 0 || arr[i - 1] == null ? 'M' : 'L'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const candles = DK.map((d, i) => {
+    const up = d.c >= d.o, col = up ? 'var(--up)' : 'var(--down)';
+    const yo = y(d.o), yc = y(d.c), bw2 = Math.max(bw * .62, 1.5);
+    return `<line x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(d.h).toFixed(1)}" y2="${y(d.l).toFixed(1)}" stroke="${col}" stroke-width="1"/>
+      <rect x="${(x(i) - bw2 / 2).toFixed(1)}" y="${Math.min(yo, yc).toFixed(1)}" width="${bw2.toFixed(1)}" height="${Math.max(Math.abs(yc - yo), 1).toFixed(1)}" fill="${up ? col : col}"/>`;
+  }).join('');
+  const vseed = seeded(3);
+  const vvals = DK.map(d => 20 + vseed() * 60 + Math.abs(d.c - d.o) * 600);
+  const vmax = Math.max(...vvals);
+  const vbars = DK.map((d, i) => {
+    const v = vvals[i];
+    const up = d.c >= d.o;
+    return `<rect x="${(x(i) - bw * .31).toFixed(1)}" y="${(CH - (v / vmax) * (VOLH - 8) - 6).toFixed(1)}" width="${(bw * .62).toFixed(1)}" height="${((v / vmax) * (VOLH - 8)).toFixed(1)}" fill="${up ? 'rgba(255,95,86,.45)' : 'rgba(63,203,134,.45)'}"/>`;
+  }).join('');
+  const yl = v => `<text x="${W + 6}" y="${(y(v) + 3.5).toFixed(1)}" font-size="9.5" fill="#848aa0">${fmt2(v)}</text>`;
+  return `<svg viewBox="0 0 ${CW} ${CH}" class="num">
+    ${candles}
+    <path d="${pl(ma5)}" fill="none" stroke="#E8A33D" stroke-width="1.2"/>
+    <path d="${pl(ma10)}" fill="none" stroke="#7B8CFF" stroke-width="1.2"/>
+    ${vbars}
+    ${yl(hi)}${yl(lo)}
+    <text x="0" y="${top + 8}" font-size="9.5" fill="#E8A33D">MA5</text>
+    <text x="26" y="${top + 8}" font-size="9.5" fill="#7B8CFF">MA10</text>
+  </svg>`;
+}
+
+let view = 'tl';
+function renderChart() {
+  $('chart').innerHTML = view === 'tl' ? svgTL() : svgDK();
+  $('legend').innerHTML = view === 'tl'
+    ? `<span><i style="background:var(--up)"></i>价格</span><span><i style="background:rgba(255,255,255,.25)"></i>昨收</span>`
+    : `<span><i style="background:#E8A33D"></i>MA5</span><span><i style="background:#7B8CFF"></i>MA10</span>`;
+}
+renderChart();
+document.querySelector('.ctabs').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b || b.dataset.v === view) return;
+  view = b.dataset.v;
+  document.querySelectorAll('.ctabs button').forEach(x => x.classList.toggle('on', x === b));
+  renderChart();
+});
+
+/* ================= 分时十字线 ================= */
+const cross = $('cross'), tip = $('tip');
+const NSVG = 'http://www.w3.org/2000/svg';
+let crossLine = null, crossDot = null;
+function crossMove(e) {
+  if (view !== 'tl') return;
+  const box = $('chartBox').getBoundingClientRect();
+  const W = CW - PADR, scale = box.width / CW;
+  const px = (e.clientX - box.left) / scale;
+  if (px < 0 || px > W) return crossOut();
+  const i = Math.round(px / W * 240), v = TL[i];
+  const py = 6 + (1 - (v - Math.min(...TL, PREV)) / (Math.max(...TL, PREV) - Math.min(...TL, PREV))) * (CH - VOLH - 18);
+  if (!crossLine) {
+    crossLine = document.createElementNS(NSVG, 'line');
+    crossDot = document.createElementNS(NSVG, 'circle');
+    crossDot.setAttribute('r', '3'); crossDot.setAttribute('fill', 'var(--up)');
+    crossLine.setAttribute('stroke', 'rgba(255,255,255,.3)'); crossLine.setAttribute('stroke-dasharray', '3 3');
+    $('chart').querySelector('svg').append(crossLine, crossDot);
+  }
+  const x = (i / 240 * W).toFixed(1);
+  crossLine.setAttribute('x1', x); crossLine.setAttribute('x2', x);
+  crossLine.setAttribute('y1', '6'); crossLine.setAttribute('y2', CH - VOLH - 6);
+  crossDot.setAttribute('cx', x); crossDot.setAttribute('cy', py.toFixed(1));
+  tip.textContent = `${tLabel(i)} · ${fmt2(v)} · ${(v / PREV - 1) * 100 > 0 ? '+' : ''}${((v / PREV - 1) * 100).toFixed(2)}%`;
+  const tx = Math.min(Math.max(px, 62), box.width / scale - 62);
+  tip.style.left = (tx * scale) + 'px'; tip.classList.add('on');
+}
+function crossOut() {
+  tip.classList.remove('on');
+  if (crossLine) { crossLine.remove(); crossDot.remove(); crossLine = null; crossDot = null; }
+}
+cross.addEventListener('pointermove', crossMove);
+cross.addEventListener('pointerleave', crossOut);
+cross.addEventListener('pointercancel', crossOut);
+cross.addEventListener('pointerdown', crossMove);
+
+/* ================= 关键点位梯 ================= */
+{
+  const lo = 18.65, hi = 20.90;
+  const marks = [
+    { v: 20.90, lb: '压力二 · 前高', pos: 'top' },
+    { v: 20.45, lb: '压力一 · 平台颈线', pos: 'top' },
+    { v: 19.84, lb: '现价', pos: 'cur' },
+    { v: 19.20, lb: '支撑一 · 5日线', pos: 'bot' },
+    { v: 18.65, lb: '支撑二 · 10日线', pos: 'bot' },
+  ];
+  $('ladder').innerHTML = marks.map(m => {
+    let p = (m.v - lo) / (hi - lo) * 100;
+    let tf = 'transform:translateX(-50%);';
+    if (p > 90) { tf = 'transform:translateX(-100%);text-align:right;'; p = 100; }
+    if (p < 10) { tf = 'transform:translateX(0);text-align:left;'; p = 0; }
+    const pv = m.pos === 'cur' ? 'cur' : (m.v > 19.84 ? 'c-up' : 'c-down');
+    const topStyle = m.pos === 'bot' ? 'bottom:64px' : m.pos === 'cur' ? 'top:2px' : 'top:0';
+    return `<div class="mark ${m.pos === 'cur' ? 'cur' : ''} ${m.pos !== 'bot' ? 'top' : ''}" style="left:${p}%;${tf}${topStyle}">
+      ${m.pos !== 'bot' ? `<div class="lb">${m.lb}</div><div class="pv ${m.pos === 'cur' ? '' : pv}">${fmt2(m.v)}</div>` : `<div class="pv ${pv}">${fmt2(m.v)}</div><div class="lb">${m.lb}</div>`}
+      <div class="dot" style="margin-top:6px${p === 100 ? ';margin-left:auto' : ''}${p === 0 ? ';margin-right:auto' : ''}"></div>
+    </div>`;
+  }).join('') + '<div class="bar"></div>';
+}
+
+/* ================= 时钟 ================= */
+function tick() { $('clock').textContent = new Date().toTimeString().slice(0, 5); }
+tick(); setInterval(tick, 15000);
+</script>
+</body>
+</html>

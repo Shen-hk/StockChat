@@ -35,6 +35,8 @@ Kotlin-js-store
 /rm-*.xml
 /doc34-*.png
 /walk-*.png
+/verify-*.png
+/verify-*.xml
 /.playwright-cli/
 /preview/
 *.bak.*
