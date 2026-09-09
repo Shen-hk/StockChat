@@ -49,7 +49,9 @@ class CoreAlgorithmsTest {
         val first = MockDataBank.quote("600519.SH")
         val second = MockDataBank.quote("600519.SH")
         assertEquals(first, second)
-        assertEquals(48, first?.timeline?.size)
+        // Demo timeline now models every A-share trading minute (09:30–15:00,
+        // excluding the lunch break), rather than the retired 48-point series.
+        assertEquals(241, first?.timeline?.size)
     }
 
     @Test
