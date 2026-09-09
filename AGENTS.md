@@ -42,6 +42,13 @@ Consequences:
 
 When debugging a silent Kuikly animation, inspect reactive dependency registration and event hit testing before changing timing or easing.
 
+## R6 — attr/theme accessor pitfalls (consolidated 2026-09-09, appearance/settings phase)
+
+- **Deep builder closures: use explicit `page.theme`.** Inside nested `vif`/component closures the page-level property can fail to resolve as an implicit receiver (`'val theme' cannot be called in this context`). Batch rewrites that introduce `theme.` references must compile right after; fix stragglers to `page.theme.<x>`.
+- **Data-class equality ≠ identity of intent.** Resolver functions that `copy()` a theme (e.g. `appTheme()` with font-scale applied) produce values that never equal the base palette singleton. Compare a discriminating field (like `page` color) or a key tuple, never the whole data class.
+- **Early pager lifecycle: native bridge may not be attached.** `created()`-time `toNative` calls can be silently dropped. Gate first bridge syncs on `viewDidLoad`, and dedupe retries with a "last synced value" guard so dropped early calls can't suppress the first real one.
+- **Edits can be silently swallowed (EBUSY/IDE lock).** After editing files also open in the IDE, grep the expected marker; on EBUSY retry the same edit. Same for Gradle `fileHashes.lock` access-denied — `gradlew --stop` then retry.
+
 ---
 
 # Vibe coding workflow conventions
