@@ -183,11 +183,17 @@ internal class StockDetailPage : BasePager() {
     private var bandRange: Triple<Int, Int, Boolean>? by observable(null)       // ②/B2 区间高亮带 (start,end,fromSentence)
     private var selectedSentence: Int by observable(-1)                         // ② 选中的解读句
     private var tapePreview: NewsItem? by observable(null)                      // B1 长按先览
+    private var tapePreviewAnchorX = 0f                                         // B1 气泡锚点（长按 pageX）
+    private var tapePreviewAnchorY = 0f                                         // B1 气泡锚点（长按 pageY）
     private var tapePreviewVersion = 0                                          // B1 先览消失计时 revision
     private var revisitExpanded: Boolean by observable(false)                   // A1 回访卡展开
     private var watchlistEntryVersion: Int by observable(0)                     // A1 自选条目变更重建键
     private var reasonChipsVisible: Boolean by observable(false)                // H1 快捷理由 chips
     private var hintVersion = 0                                                 // watchlistHint toast 计时 revision
+    // F1 公告/研报长按预览（2026-09-09，对齐 MarketPage peek 范式）：peek 挂载、
+    // peekVisible 过渡，两拍翻转保证淡入动画成立；点蒙层/「关闭」收回。
+    private var disclosurePeek: DisclosureItem? by observable(null)
+    private var disclosurePeekVisible: Boolean by observable(false)
     // ② 句图联动锚点（真实化，2026-09-08）：不再写死槽位。点句时从句子内容
     // 端侧推导——优先解析句内 HH:MM 映射分时索引（LLM 只负责引用时间，坐标
     // 由 AnchorIndex 计算），无时间词时按当日真实分时（最高/最低/开盘时刻）回退。
@@ -316,45 +322,57 @@ internal class StockDetailPage : BasePager() {
                         }
                     }
 
-                    // ---- Hero 行情（卡外价格行，直接铺在氛围底上） ----
+                    // ---- Hero 行情（卡外价格行，直接铺在氛围底上）----
+                    // 2026-09-09 版式：价格 / 涨跌额 / 涨跌胶囊沿基线对齐（alignItemsFlexEnd），
+                    // 胶囊宽度随文本自适应——不再是「大数字旁半悬空的定宽胶囊」。
                     View {
                         attr { marginTop(2f) }
                         View {
-                            attr { flexDirectionRow(); alignItemsCenter() }
+                            attr { flexDirectionRow(); alignItemsFlexEnd() }
+                            TickerText(
+                                text = { Format.price(page.quote.price) },
+                                previousText = { page.previousPriceText },
+                                loading = { page.quoteLoading },
+                                fontSize = page.theme.type.display,
+                                width = { 142f },
+                                color = { page.toneColor() },
+                                theme = page.theme,
+                                lift = { page.tickerLift },
+                                directionUp = { page.tickerDirectionUp },
+                                reduceMotion = page.reduceMotion,
+                            )
+                            // 涨跌胶囊：宽度按文本长度自适应（lambda 传入，attr 闭包内随 quote 刷新，R1）
                             View {
-                                attr { flex(1f); flexDirectionRow(); alignItemsCenter() }
+                                attr {
+                                    marginLeft(8f)
+                                    marginBottom(4f)
+                                    paddingTop(3f); paddingBottom(3f); paddingLeft(9f); paddingRight(9f)
+                                    backgroundColor(page.toneColor())
+                                    borderRadius(page.theme.inputRadius)
+                                    alignItemsCenter(); justifyContentCenter()
+                                }
                                 TickerText(
-                                    text = { Format.price(page.quote.price) },
-                                    previousText = { page.previousPriceText },
+                                    text = { Format.percent(page.quote.changePercent) },
+                                    previousText = { page.previousPercentText },
                                     loading = { page.quoteLoading },
-                                    fontSize = page.theme.type.display,
-                                    width = 142f,
-                                    color = { page.toneColor() },
+                                    fontSize = page.theme.type.sm,
+                                    width = { (Format.percent(page.quote.changePercent).length * 6.6f + 6f).coerceAtLeast(50f) },
+                                    color = { page.theme.onBrand },
                                     theme = page.theme,
                                     lift = { page.tickerLift },
                                     directionUp = { page.tickerDirectionUp },
                                     reduceMotion = page.reduceMotion,
                                 )
-                                View {
-                                    attr {
-                                        marginLeft(page.theme.spacing.sm)
-                                        paddingTop(3f); paddingBottom(3f); paddingLeft(10f); paddingRight(10f)
-                                        backgroundColor(page.toneColor())
-                                        borderRadius(page.theme.inputRadius)
-                                        alignItemsCenter(); justifyContentCenter()
-                                    }
-                                    TickerText(
-                                        text = { Format.percent(page.quote.changePercent) },
-                                        previousText = { page.previousPercentText },
-                                        loading = { page.quoteLoading },
-                                        fontSize = page.theme.type.sm,
-                                        width = 70f,
-                                        color = { page.theme.onBrand },
-                                        theme = page.theme,
-                                        lift = { page.tickerLift },
-                                        directionUp = { page.tickerDirectionUp },
-                                        reduceMotion = page.reduceMotion,
-                                    )
+                            }
+                            // 涨跌额（元）：胶囊右侧弱一档的同行事实
+                            Text {
+                                attr {
+                                    text(Format.signed(page.quote.change))
+                                    marginLeft(8f)
+                                    marginBottom(6f)
+                                    fontSize(page.theme.type.sm)
+                                    fontWeightMedium()
+                                    color(page.toneColor().opacity(0.85f))
                                 }
                             }
                         }
@@ -408,8 +426,9 @@ internal class StockDetailPage : BasePager() {
                         // B1 情绪点 + 摘要头「利好/利空」：端侧词典打分，涨红跌绿（U2）
                         sentimentOf = { item -> scoreNewsSentiment(item.title).isPositive },
                         onTapItem = { page.onNewsTapped(it) },
-                        // B1 长按先览（U5 400ms）：TAPE_PREVIEW 层，松手 700ms 后消失（5s 兜底）
-                        onLongPressItem = { page.showTapePreview(it) },
+                        // B1 长按先览（U5 400ms）：TAPE_PREVIEW 层，松手 700ms 后消失（5s 兜底）；
+                        // pageX/pageY = 触摸点在根 Page 坐标系，气泡锚定所按胶囊正下方
+                        onLongPressItem = { item, pressX, pressY -> page.showTapePreview(item, pressX, pressY) },
                         onLongPressRelease = { page.scheduleTapePreviewDismiss() },
                         onAskAi = { page.askAboutNews(it) },
                         onOpenUrl = { news ->
@@ -474,13 +493,34 @@ internal class StockDetailPage : BasePager() {
                                 )
                             }
                             vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
-                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx, { page.selectedKLineIndex }) { page.selectedKLineIndex = it }
+                                KLineChart(
+                                    container = this,
+                                    model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY),
+                                    context = ctx,
+                                    selectedIndex = { page.selectedKLineIndex },
+                                    onSelectIndex = { page.selectedKLineIndex = it },
+                                    chartHeight = 396f,
+                                )
                             }
                             vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK }) {
-                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx, { page.selectedKLineIndex }) { page.selectedKLineIndex = it }
+                                KLineChart(
+                                    container = this,
+                                    model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK),
+                                    context = ctx,
+                                    selectedIndex = { page.selectedKLineIndex },
+                                    onSelectIndex = { page.selectedKLineIndex = it },
+                                    chartHeight = 396f,
+                                )
                             }
                             vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH }) {
-                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx, { page.selectedKLineIndex }) { page.selectedKLineIndex = it }
+                                KLineChart(
+                                    container = this,
+                                    model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH),
+                                    context = ctx,
+                                    selectedIndex = { page.selectedKLineIndex },
+                                    onSelectIndex = { page.selectedKLineIndex = it },
+                                    chartHeight = 396f,
+                                )
                             }
                         // 玻璃数据条（今开/最高/最低/换手）：从蒙层改为图表下方独立一行，
                         // 不再悬浮遮挡量能带（用户 2026-09-08 反馈）
@@ -740,6 +780,8 @@ internal class StockDetailPage : BasePager() {
                             actionLabel = { page.aiActionLabel() },
                             remoteSentences = { page.currentInsightSentences() },
                             preparing = { page.aiAwaitingFacts },
+                            breath = { page.livePulse },
+                            reduceMotion = page.reduceMotion,
                             theme = page.theme,
                             onAction = { page.toggleAiInsight() },
                             selectedSentence = { page.selectedSentence },
@@ -815,9 +857,11 @@ internal class StockDetailPage : BasePager() {
                                     items = page.insight.disclosures.take(3),
                                     theme = page.theme,
                                     inset = true,
-                                ) { title ->
-                                    page.toastHint(materialityOf(title).rule)
-                                }
+                                    // 2026-09-09 修复：原为具名 onPeek + 尾随 lambda 混用（编译错误），
+                                    // 改为全具名；尾随 lambda 原本意图即 onExplain
+                                    onExplain = { title -> page.toastHint(materialityOf(title).rule) },
+                                    onPeek = { item -> page.showDisclosurePeek(item) },
+                                )
                             }
 
                             // ---- F3 多空观点光谱：并入公告与研报同一张卡（原型 .balance 在 ann-card 内） ----
@@ -907,18 +951,21 @@ internal class StockDetailPage : BasePager() {
                         )
                     }
                 }
-                // B1 长按先览小气泡（对齐 doc 29 原型 .preview：~200px 小浮框、压在
-                // 页面上不推挤布局；此前误做成弹幕带卡内全宽大长框，把走势卡顶下去）。
-                // 原型气泡跟随按压胶囊；跨端拿不到胶囊屏幕坐标，取顶栏下方 8dp 常驻锚点
-                // （弹幕带位于详情页头部区，滚动后仍与手指落点同屏）。
+                // B1 长按先览小气泡（doc 29 原型 .preview：fixed 浮层、left=胶囊左缘钳右、
+                // top=胶囊底+8——「像聊天气泡一样从所按消息上引出来」）。锚点取长按事件
+                // 的 pageX/pageY（触摸点在根 Page 坐标系，Kuikly LongPressParams 原生提供，
+                // 无需估算胶囊布局位置）；finger 在胶囊上（高 28），+20 ≈ 胶囊底+8。
+                // 松手 700ms 消失由页侧计时调度；原型同为 position:fixed，显示期间不随页面滚动。
                 vif({ page.overlayArbiter.active == DetailOverlay.TAPE_PREVIEW && page.tapePreview != null }) {
                     vbind({ page.tapePreview?.id ?: "" }) {
                         val preview = page.tapePreview
                         if (preview != null) {
-                            val positive = scoreNewsSentiment(preview.title).isPositive
+                            val sentiment = scoreNewsSentiment(preview.title).isPositive
+                            val left = (page.tapePreviewAnchorX - 20f)
+                                .coerceIn(12f, (page.pagerData.pageViewWidth - 248f).coerceAtLeast(12f))
                             View {
                                 attr {
-                                    absolutePosition(left = 14f, top = page.pagerData.statusBarHeight + 52f)
+                                    absolutePosition(left = left, top = page.tapePreviewAnchorY + 20f)
                                     width(236f)
                                     padding(10f)
                                     borderRadius(12f)
@@ -929,10 +976,16 @@ internal class StockDetailPage : BasePager() {
                                 }
                                 Text {
                                     attr {
-                                        text("${formatTapeTime(preview.time)} · ${if (positive == true) "利好" else "利空"}")
+                                        text("${formatTapeTime(preview.time)} · ${if (sentiment == true) "利好" else if (sentiment == false) "利空" else "中性"}")
                                         fontSizeScaled(10f)
                                         fontWeightSemiBold()
-                                        color(page.theme.textPrimary)
+                                        color(
+                                            when (sentiment) {
+                                                true -> page.theme.rise
+                                                false -> page.theme.fall
+                                                null -> page.theme.textTertiary
+                                            }
+                                        )
                                     }
                                 }
                                 Text {
@@ -953,6 +1006,105 @@ internal class StockDetailPage : BasePager() {
                                     }
                                 }
                                 event { click { page.onNewsTapped(preview) } }
+                            }
+                        }
+                    }
+                }
+                // F1 公告/研报长按预览（2026-09-09）：蒙层 + 底部浮卡，MarketPage peek 同构。
+                vif({ page.disclosurePeek != null }) {
+                    View {
+                        attr {
+                            absolutePositionAllZero()
+                            zIndex(20, useOutline = false)
+                            backgroundColor(page.theme.textPrimary.opacity(0.26f))
+                            val shown = page.disclosurePeekVisible
+                            opacity(if (shown) 1f else 0f)
+                            touchEnable(shown)
+                            if (!page.reduceMotion) animate(Animation.easeOut(0.20f), page.disclosurePeekVisible)
+                        }
+                        event { click { page.dismissDisclosurePeek() } }
+                    }
+                    View {
+                        attr {
+                            absolutePosition(
+                                left = 14f,
+                                right = 14f,
+                                bottom = 76f + page.pagerData.safeAreaInsets.bottom,
+                            )
+                            zIndex(21, useOutline = false)
+                            padding(16f)
+                            borderRadius(18f)
+                            backgroundColor(page.theme.surface)
+                            border(Border(1f, BorderStyle.SOLID, page.theme.divider))
+                            boxShadow(BoxShadow(0f, 14f, 30f, page.theme.textPrimary.opacity(0.18f)))
+                            val shown = page.disclosurePeekVisible
+                            opacity(if (shown) 1f else 0f)
+                            touchEnable(shown)
+                            if (!page.reduceMotion) {
+                                transform(scale = Scale(if (shown) 1f else 0.96f, if (shown) 1f else 0.96f))
+                                animate(Animation.easeOut(0.20f), page.disclosurePeekVisible)
+                            }
+                        }
+                        View {
+                            attr { flexDirectionRow(); alignItemsCenter() }
+                            Text {
+                                attr {
+                                    text(page.disclosurePeek?.title ?: "")
+                                    flex(1f)
+                                    fontSizeScaled(13f)
+                                    fontWeightBold()
+                                    color(page.theme.textPrimary)
+                                    lineHeightScaled(18f)
+                                }
+                            }
+                            Text {
+                                attr { text("关闭"); fontSizeScaled(11f); color(page.theme.brand) }
+                                event { click { page.dismissDisclosurePeek() } }
+                            }
+                        }
+                        Text {
+                            attr {
+                                text(
+                                    (page.disclosurePeek?.let { "${it.kind.label} · ${it.publisher} · ${it.date}" } ?: "")
+                                )
+                                marginTop(8f)
+                                fontSizeScaled(10f)
+                                color(page.theme.textTertiary)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text(
+                                    page.disclosurePeek?.let { item ->
+                                        val verdict = when (materialityOf(item.title).level) {
+                                            Materiality.HIGH -> "高重要度"
+                                            Materiality.MID -> "中重要度"
+                                            Materiality.LOW -> "低重要度"
+                                        }
+                                        "端侧评级：$verdict · ${materialityOf(item.title).rule}"
+                                    } ?: ""
+                                )
+                                marginTop(8f)
+                                fontSizeScaled(11f)
+                                lineHeightScaled(16f)
+                                color(page.theme.textSecondary)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text(page.disclosurePeek?.summary?.takeIf { it.isNotBlank() } ?: "")
+                                marginTop(6f)
+                                fontSizeScaled(11f)
+                                lineHeightScaled(16f)
+                                color(page.theme.textSecondary)
+                            }
+                        }
+                        Text {
+                            attr {
+                                text(page.disclosurePeek?.stamp?.source?.takeIf { it.isNotBlank() }?.let { "来源：$it · 只述事实，不构成建议" } ?: "只述事实，不构成建议")
+                                marginTop(8f)
+                                fontSizeScaled(9f)
+                                color(page.theme.textTertiary)
                             }
                         }
                     }
@@ -985,6 +1137,25 @@ internal class StockDetailPage : BasePager() {
         val version = ++hintVersion
         setTimeout(2800) {
             if (version == hintVersion) watchlistHint = ""
+        }
+    }
+
+    // ───────────── F1 公告/研报长按预览（MarketPage peek 同构） ─────────────
+
+    private fun showDisclosurePeek(item: DisclosureItem) {
+        disclosurePeek = item
+        // peek 是挂载旗（vif）、peekVisible 是过渡旗：不能同拍翻转，否则没有淡入
+        if (reduceMotion) disclosurePeekVisible = true
+        else setTimeout(1) { if (disclosurePeek != null) disclosurePeekVisible = true }
+    }
+
+    private fun dismissDisclosurePeek() {
+        if (!disclosurePeekVisible) return
+        disclosurePeekVisible = false
+        if (reduceMotion) {
+            disclosurePeek = null
+        } else {
+            setTimeout(200) { if (!disclosurePeekVisible) disclosurePeek = null }
         }
     }
 
@@ -1172,8 +1343,12 @@ internal class StockDetailPage : BasePager() {
     /**
      * B1 长按先览（doc §4.2）：TAPE_PREVIEW 层；气泡在「松手 700ms 后」消失
      * （由 onLongPressRelease 调度），另留 5s 兜底防松手回调丢失。
+     * pressX/pressY = 长按事件 pageX/pageY（触摸点在根 Page 坐标系），气泡据此
+     * 锚定在所按胶囊正下方（原型 .preview：left=胶囊左缘钳右、top=胶囊底+8）。
      */
-    private fun showTapePreview(item: NewsItem) {
+    private fun showTapePreview(item: NewsItem, pressX: Float, pressY: Float) {
+        tapePreviewAnchorX = pressX
+        tapePreviewAnchorY = pressY
         tapePreview = item
         overlayArbiter.request(DetailOverlay.TAPE_PREVIEW)
         val version = ++tapePreviewVersion
@@ -1219,14 +1394,19 @@ internal class StockDetailPage : BasePager() {
         toastHint("已记入当初理由")
     }
 
-    /** ② 点解读句：端侧从句子内容推导真实锚点亮区间带；同句再点收起。 */
+    /**
+     * ② 点解读句：端侧从句子内容推导真实锚点亮区间带；同句再点收起。
+     * 2026-09-09 用户定案：句句要有区域对应——句内无时间词、也无「最高/最低/上午」
+     * 等语义词时，按句子序号在当日时间轴上等分近似圈区间（如实提示是近似定位）。
+     */
     private fun pickSentence(index: Int) {
         if (selectedSentence == index) {
             selectedSentence = -1
             bandRange = null
             return
         }
-        val sentence = currentInsightSentences().getOrNull(index)
+        val sentences = currentInsightSentences()
+        val sentence = sentences.getOrNull(index)
         if (sentence == null) {
             selectedSentence = -1
             bandRange = null
@@ -1234,8 +1414,16 @@ internal class StockDetailPage : BasePager() {
         }
         selectedSentence = index
         val anchor = computeSentenceAnchor(sentence)
-        bandRange = anchor?.let { Triple(it.first, it.second, true) }
-        if (anchor == null) toastHint("这句没有引用可定位的时间点，无法在走势图圈区间")
+        bandRange = if (anchor != null) {
+            Triple(anchor.first, anchor.second, true)
+        } else {
+            // 近似定位：该句占当日时间轴的 1/n 等分（n = 句子总数）
+            val n = AnchorIndex.INDEX_COUNT
+            val start = (index * n / sentences.size).coerceIn(0, n - 2)
+            val end = ((index + 1) * n / sentences.size).coerceAtMost(n - 1).coerceAtLeast(start + 1)
+            toastHint("这句没引用具体时间，按句子顺序近似圈出对应时段")
+            Triple(start, end, true)
+        }
     }
 
     /** 当前解读文本（远程 AI 优先，未请求/失败回退端侧模板）按句切分。 */
@@ -1739,7 +1927,8 @@ private fun ViewContainer<*, *>.TickerText(
     previousText: () -> String,
     loading: () -> Boolean,
     fontSize: Float,
-    width: Float,
+    // 宽度同样走 lambda：涨跌胶囊宽度随文本长度变化（attr 内读取，随 quote 刷新）
+    width: () -> Float,
     color: () -> Color,
     theme: StockChatTheme,
     lift: () -> Boolean,
@@ -1749,7 +1938,7 @@ private fun ViewContainer<*, *>.TickerText(
     vif({ loading() }) {
         View {
             attr {
-                width(width)
+                width(width())
                 height(fontSize * 0.72f)
                 borderRadius(6f)
                 backgroundColor(theme.surfaceMuted)
@@ -1759,7 +1948,7 @@ private fun ViewContainer<*, *>.TickerText(
     vif({ !loading() }) {
     View {
         attr {
-            width(width)
+            width(width())
             height(fontSize * 1.12f)
             overflow(true)
         }
@@ -2027,6 +2216,10 @@ private fun ViewContainer<*, *>.BusinessCardSlot(
                 alignSelfStretch()
                 marginTop(10f)
             }
+            card()
+            // 「今日相关」角标必须画在 card() 之后（2026-09-09 修复「今日相被盖住」）：
+            // 角标 absolutePosition(top=-8f) 骑在卡顶边上，若先于卡片挂载，后画的
+            // 卡身背景会把角标下半截（含文字下半）盖住。后画者在上，角标才完整可见。
             vif({ item.pinned }) {
                 View {
                     attr {
@@ -2049,7 +2242,6 @@ private fun ViewContainer<*, *>.BusinessCardSlot(
                     }
                 }
             }
-            card()
             vif({ compareShown.value }) {
                 IndustryCompareOverlay(theme, label)
             }
@@ -2113,7 +2305,8 @@ private fun ViewContainer<*, *>.ChartSegment(
     chartMode: () -> StockChartMode,
     chartPeriod: () -> StockChartPeriod,
     reduceMotion: Boolean,
-    // compact：缩小版，absolutePosition 悬浮在图左上（2026-09-08 版式调整）
+    // compact：缩小版，absolutePosition 悬浮在图左上（2026-09-08 版式调整；
+    // 2026-09-09 再贴左上角：left 10→2、top 10→2，收窄到 140，减少对绘图区的遮挡）
     compact: Boolean = false,
     onSelect: (StockChartMode, StockChartPeriod) -> Unit,
 ) {
@@ -2136,8 +2329,8 @@ private fun ViewContainer<*, *>.ChartSegment(
     View {
         attr {
             if (compact) {
-                absolutePosition(left = 10f, top = 10f)
-                width(148f)
+                absolutePosition(left = 2f, top = 2f)
+                width(140f)
             } else {
                 marginTop(theme.spacing.lg)
             }
@@ -2450,6 +2643,10 @@ private fun ViewContainer<*, *>.AiInsightBlock(
     onAction: () -> Unit,
     // true = 行情/资金事实尚未就绪、AI 请求还没发出（占位骨架，防先闪端侧模板再跳骨架）
     preparing: () -> Boolean = { false },
+    // 呼吸相位（复用页侧 livePulse 680ms 翻转）：占位骨架整体明暗呼吸，等待真实 AI
+    // 返回期间的「活着」反馈（2026-09-09 用户定案：呼吸占位框，替代静态骨架）
+    breath: () -> Boolean = { false },
+    reduceMotion: Boolean = false,
     selectedSentence: () -> Int = { -1 },
     onPickSentence: (Int) -> Unit = {},
 ) {
@@ -2492,11 +2689,12 @@ private fun ViewContainer<*, *>.AiInsightBlock(
                 val st = state()
                 val remote = remoteText().trim()
                 when {
-                    // thinking：骨架 + 进度说明（不引入循环 shimmer，静态占位）
+                    // thinking：呼吸占位框 + 进度说明（等真实 LLM 返回，不落端侧模板）
                     st == 1 -> {
                         AiInsightPlaceholder(
                             theme = theme,
                             message = "正在读取行情事实并生成解读…",
+                            breath = breath,
                         )
                     }
                     // 占位图：页面已打开但行情/资金事实还没就绪、AI 请求尚未发出。
@@ -2505,6 +2703,8 @@ private fun ViewContainer<*, *>.AiInsightBlock(
                         AiInsightPlaceholder(
                             theme = theme,
                             message = "行情与资金数据就绪后，会自动生成 AI 解读…",
+                            breath = breath,
+                            reduceMotion = reduceMotion,
                         )
                     }
                     // 远程流式/完成：逐句渲染 + 句图联动
@@ -2596,7 +2796,7 @@ private fun ViewContainer<*, *>.AiInsightBlock(
             // ② 句图联动可发现性提示
             Text {
                 attr {
-                    text("点句子可在走势图中高亮对应区间 · 锚点取自句内时间与真实分时")
+                    text("点句子在走势图高亮对应区间 · 时间取自句内引用，未引用时间的句子按顺序近似定位")
                     marginTop(8f)
                     fontSize(theme.type.meta)
                     color(theme.textTertiary)
@@ -2615,13 +2815,24 @@ private fun splitLocalReveal(summary: String, revealLimit: Int): List<String> {
 
 /**
  * AI 解读占位骨架（thinking / 等待事实就绪两态共用）：
- * 静态三行条 + 一行说明（AI 克制铁律：不引入循环 shimmer 装饰）。
+ * 三行条 + 一行说明，整体随 breath 相位做明暗呼吸（等待真实 AI 的「活着」反馈；
+ * breath 恒 false（reduceMotion）时静态显示）。
  */
 private fun ViewContainer<*, *>.AiInsightPlaceholder(
     theme: StockChatTheme,
     message: String,
+    breath: () -> Boolean = { false },
+    reduceMotion: Boolean = false,
 ) {
-    View { attr { marginTop(theme.spacing.md) }
+    // 呼吸：容器 opacity 随相位翻转 0.45↔1.0（R1/R2：attr 内读相位、animate 收尾；
+    // R5：每次翻转重跑 attr 都重新注册，下一拍消费上一拍注册的动画）。
+    // reduceMotion：恒全亮静态，不注册动画。
+    View {
+        attr {
+            marginTop(theme.spacing.md)
+            opacity(if (reduceMotion || breath()) 1f else 0.45f)
+            if (!reduceMotion) animate(Animation.easeOut(0.68f), breath())
+        }
         View { attr { width(220f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.14f)) } }
         View { attr { width(180f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.10f)); marginTop(9f) } }
         View { attr { width(200f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.08f)); marginTop(9f) } }
@@ -2813,6 +3024,9 @@ private fun ViewContainer<*, *>.DisclosureMaterialityBlock(
     theme: StockChatTheme,
     inset: Boolean = false,
     onExplain: (String) -> Unit,
+    // 长按条目 → 页级预览浮层（MarketPage peek 同款，2026-09-09 新增）：
+    // toast 稍纵即逝看不完详情，长按浮卡可停留细看（松手不消失，点蒙层/关闭收回）。
+    onPeek: (DisclosureItem) -> Unit,
 ) {
     vif({ items.isNotEmpty() }) {
         View {
@@ -2865,12 +3079,17 @@ private fun ViewContainer<*, *>.DisclosureMaterialityBlock(
                             color(theme.textTertiary)
                         }
                     }
-                    event { click { onExplain(item.title) } }
+                    event {
+                        click { onExplain(item.title) }
+                        longPress { params ->
+                            if (params.state == "start") onPeek(item)
+                        }
+                    }
                 }
             }
             Text {
                 attr {
-                    text("评级为端侧关键词规则，点条目可看判定依据 · 端侧规则")
+                    text("长按条目看详情 · 点按看判定依据 · 端侧规则")
                     marginTop(8f)
                     fontSize(theme.type.meta)
                     color(theme.textTertiary)

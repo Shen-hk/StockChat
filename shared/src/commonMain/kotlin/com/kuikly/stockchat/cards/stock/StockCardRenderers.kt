@@ -236,6 +236,7 @@ internal fun KLineChart(
     context: CardContext,
     selectedIndex: () -> Int = { -1 },
     onSelectIndex: ((Int) -> Unit)? = null,
+    chartHeight: Float = K_COMPACT_CHART_HEIGHT,
 ) {
     val sourceLines = when (model.period) {
         StockChartPeriod.DAY -> model.quote.kLines
@@ -255,7 +256,7 @@ internal fun KLineChart(
     if (lines.isEmpty()) {
         container.View {
             attr {
-                height(168f)
+                height(chartHeight)
                 marginTop(10f)
                 alignSelfStretch()
                 borderRadius(12f)
@@ -294,7 +295,7 @@ internal fun KLineChart(
         return (x / step).toInt().coerceIn(0, lines.lastIndex)
     }
     container.Canvas({
-        attr { height(168f); marginTop(10f); alignSelfStretch(); touchEnable(true) }
+        attr { height(chartHeight); marginTop(10f); alignSelfStretch(); touchEnable(true) }
         event {
             if (onSelectIndex != null) {
                 click { params -> onSelectIndex(resolveIndex(params.x)) }
@@ -312,10 +313,16 @@ internal fun KLineChart(
     }) { canvas, width, height ->
         measuredWidth = width
         if (lines.isEmpty() || width <= 0f) return@Canvas
+        // 图表可在详情页扩展至与分时图同高；所有价量坐标按当前 Canvas 高度同比放大，
+        // 不会出现只放大容器、蜡烛仍挤在顶部的空白区域。
+        val heightScale = height / K_COMPACT_CHART_HEIGHT
+        val priceHeight = K_COMPACT_PRICE_H * heightScale
+        val volumeTop = K_COMPACT_VOL_TOP * heightScale
+        val volumeHeight = K_COMPACT_VOL_H * heightScale
         val low = lines.minOf { it.low }
         val high = lines.maxOf { it.high }
         val range = (high - low).coerceAtLeast(0.0001)
-        fun y(value: Double) = ((high - value) / range * (K_PRICE_H - 8f) + 4f).toFloat()
+        fun y(value: Double) = ((high - value) / range * (priceHeight - 8f * heightScale) + 4f * heightScale).toFloat()
         val step = width / lines.size
         fun xOf(i: Int) = step * i + step / 2f
         val bodyW = (step * 0.66f).coerceIn(1.2f, 9f)
@@ -324,7 +331,7 @@ internal fun KLineChart(
         canvas.lineWidth(0.5f)
         canvas.strokeStyle(theme.divider)
         listOf(0.25f, 0.5f, 0.75f).forEach { ratio ->
-            val gy = K_PRICE_H * ratio
+            val gy = priceHeight * ratio
             canvas.beginPath()
             canvas.moveTo(0f, gy)
             canvas.lineTo(width, gy)
@@ -356,9 +363,9 @@ internal fun KLineChart(
         // ── 量能副图：红绿量能条（收≥开红，否则绿）──
         val maxVol = lines.maxOf { it.volume }.coerceAtLeast(1.0)
         lines.forEachIndexed { index, line ->
-            val h = (line.volume / maxVol * K_VOL_H).toFloat().coerceIn(1f, K_VOL_H)
+            val h = (line.volume / maxVol * volumeHeight).toFloat().coerceIn(1f, volumeHeight)
             val bx = xOf(index) - bodyW / 2f
-            val by = K_VOL_TOP + K_VOL_H - h
+            val by = volumeTop + volumeHeight - h
             canvas.beginPath()
             canvas.moveTo(bx, by)
             canvas.lineTo(bx + bodyW, by)
@@ -386,8 +393,8 @@ internal fun KLineChart(
         // ── 高/低价位角标（区间极值，看数据不点也能读）──
         canvas.font(9f)
         canvas.fillStyle(theme.textTertiary)
-        canvas.fillText("高 ${Format.price(high)}", 2f, 11f)
-        canvas.fillText("低 ${Format.price(low)}", 2f, K_PRICE_H - 5f)
+        canvas.fillText("高 ${Format.price(high)}", 2f, 11f * heightScale)
+        canvas.fillText("低 ${Format.price(low)}", 2f, priceHeight - 5f * heightScale)
 
         // ── 十字线：竖虚线贯穿价量两区 + 收价水平虚线 + 收价空心点 + 右端读数 ──
         val sel = effectiveSel()
@@ -398,7 +405,7 @@ internal fun KLineChart(
         canvas.setLineDash(listOf(4f, 5f))
         canvas.beginPath()
         canvas.moveTo(cx, 0f)
-        canvas.lineTo(cx, K_VOL_TOP + K_VOL_H)
+        canvas.lineTo(cx, volumeTop + volumeHeight)
         canvas.strokeStyle(theme.textTertiary.opacity(0.5f))
         canvas.lineWidth(0.8f)
         canvas.stroke()
@@ -517,9 +524,10 @@ private class KLineChartState {
     var selected by observable(-1)
 }
 
-private const val K_PRICE_H = 112f
-private const val K_VOL_TOP = 122f
-private const val K_VOL_H = 38f
+private const val K_COMPACT_CHART_HEIGHT = 168f
+private const val K_COMPACT_PRICE_H = 112f
+private const val K_COMPACT_VOL_TOP = 122f
+private const val K_COMPACT_VOL_H = 38f
 
 object AttributionCardRenderer : CardRenderer {
     override val cardType: String = "attribution"

@@ -381,6 +381,13 @@ private fun ViewContainer<*, *>.dotView(theme: StockChatTheme, color: () -> Colo
  * - **色条高 18f 完整容纳 18f 滑块**：Kuikly 子视图默认被父容器裁剪（overflow），
  *   且圆角容器 `overflow(true)` 失效——旧版 12f 色条把 18f 滑块上下各裁 3f，
  *   只剩一条缝（「按钮被遮住」的根因）。触控层另加上下 8f padding 扩大命中区。
+ * - **事件挂色条本层（2026-09-09 二次修正，「拖了没反应」根因）**：事件原先挂在
+ *   色条外围一层只有 padding、无背景无尺寸锚定的包装 View 上，真机上 touch 流
+ *   全程不到达（拖动/点按均无响应）。改为直接挂在色条（有背景色、几何确定，
+ *   是手指正下方的命中目标）上——与 QuickReasonChips「带背景 View 挂事件」的
+ *   已验证范式一致，并显式 touchEnable(true)（DetailTimelineChart 手势层同款）。
+ *   色条子树不挂事件（RowGestureLayer 同款约束），触摸流可达本层。事件挂到色条
+ *   后，touch/click 坐标系原点 = 色条左缘，selectAt 的 barW 映射因此更精确。
  */
 internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
     theme: StockChatTheme,
@@ -457,8 +464,7 @@ internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
             Text { attr { text("空"); fontSize(theme.type.meta); color(theme.fall) } }
         }
 
-        // 触控层：上下各扩 8f 命中区；touch 事件挂本层（色条子树不挂事件，
-        // 保证 Android 上触摸流能到达本层——RowGestureLayer 同款约束）
+        // 触控层：上下各扩 8f 命中区（纯留白包装，不挂事件）
         View {
             attr {
                 marginTop(2f)
@@ -466,12 +472,15 @@ internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
                 paddingBottom(8f)
             }
 
-            // 色条 + 滑块：18f 高完整容纳 18f 滑块，无任何溢出裁剪
+            // 色条 + 滑块：18f 高完整容纳 18f 滑块，无任何溢出裁剪。
+            // touch/click 事件直接挂本层（无背景的 padding 包装层收不到触摸流，
+            // 见 KDoc「事件挂色条本层」）；色条子树不挂事件，触摸流可达本层。
             View {
                 attr {
                     height(18f)
                     flexDirectionRow()
                     borderRadius(9f)
+                    touchEnable(true)
                 }
                 segments.forEachIndexed { i, seg ->
                     View {
@@ -495,43 +504,43 @@ internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
                         }
                     }
                 }
-            }
 
-            event {
-                click { params ->
-                    // 拖动过的手势不触发点选（click 在 touchUp 之后到达）
-                    if (!dragged) selectAt(params.x)
-                }
-                touchDown { e ->
-                    downX = e.x
-                    downY = e.y
-                    axis = 0
-                    dragged = false
-                    gestureDone = false
-                }
-                touchMove { e ->
-                    if (gestureDone || axis == 2) return@touchMove
-                    val dx = e.x - downX
-                    val dy = e.y - downY
-                    if (axis == 0) {
-                        if (abs(dx) <= RowGesture.AXIS_SLOP && abs(dy) <= RowGesture.AXIS_SLOP) return@touchMove
-                        // 横竖轴仲裁：横向占优才接管，打平让给纵向滚动
-                        axis = if (abs(dx) > abs(dy)) 1 else 2
+                event {
+                    click { params ->
+                        // 拖动过的手势不触发点选（click 在 touchUp 之后到达）
+                        if (!dragged) selectAt(params.x)
                     }
-                    if (axis == 1) {
-                        dragged = true
-                        selectAt(e.x)
+                    touchDown { e ->
+                        downX = e.x
+                        downY = e.y
+                        axis = 0
+                        dragged = false
+                        gestureDone = false
                     }
-                    // axis == 2：外层 Scroller 接管纵向滚动，随后以 touchCancel 收尾
-                }
-                touchUp { e ->
-                    if (gestureDone) return@touchUp
-                    gestureDone = true
-                    if (axis == 1) selectAt(e.x)
-                }
-                touchCancel { _ ->
-                    // 被外层 Scroller 拦截等系统取消：selected 已随最后位置落定，无需回滚
-                    gestureDone = true
+                    touchMove { e ->
+                        if (gestureDone || axis == 2) return@touchMove
+                        val dx = e.x - downX
+                        val dy = e.y - downY
+                        if (axis == 0) {
+                            if (abs(dx) <= RowGesture.AXIS_SLOP && abs(dy) <= RowGesture.AXIS_SLOP) return@touchMove
+                            // 横竖轴仲裁：横向占优才接管，打平让给纵向滚动
+                            axis = if (abs(dx) > abs(dy)) 1 else 2
+                        }
+                        if (axis == 1) {
+                            dragged = true
+                            selectAt(e.x)
+                        }
+                        // axis == 2：外层 Scroller 接管纵向滚动，随后以 touchCancel 收尾
+                    }
+                    touchUp { e ->
+                        if (gestureDone) return@touchUp
+                        gestureDone = true
+                        if (axis == 1) selectAt(e.x)
+                    }
+                    touchCancel { _ ->
+                        // 被外层 Scroller 拦截等系统取消：selected 已随最后位置落定，无需回滚
+                        gestureDone = true
+                    }
                 }
             }
         }

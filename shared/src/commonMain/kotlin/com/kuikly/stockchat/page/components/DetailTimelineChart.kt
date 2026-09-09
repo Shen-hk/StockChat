@@ -65,7 +65,7 @@ fun detailTimelineSeries(quote: Quote): List<Double> =
  * - R1：draw 闭包内读 quote/crosshair/drawProgress/pulse/state.selecting/state.selectRange/
  *   flags/state.flagDropProgress/band/sonarIndices 等 observable 建立依赖，数据变化驱动重绘；
  * - R4：入场 draw-on 由页侧 drawProgress 0→1 驱动（setTimeout 链，断链兜底在页侧）；
- * - 十字光标：touch 流 + 长按 400ms 进入 scrub（不用 pan——pan 在 Android DOWN 拍
+ * - 十字光标：touch 流 + 短长按 280ms 进入 scrub（不用 pan——pan 在 Android DOWN 拍
  *   即 requestDisallowInterceptTouchEvent 锁死父级 Scroller，普通上下滑动全被图表
  *   吃掉），长按显示 / move 跟随 / end 松手保留。
  *
@@ -103,7 +103,8 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     // 非响应式手势瞬态（事件闭包内读写，不驱动重绘）
     var downX = 0f
     var downY = 0f
-    var movedDist = 0f                                        // 按下到当前位移平方（≤64 即 ≤8dp）
+    var movedDist = 0f                                        // 按下到当前位移平方
+    var scrollingIntent = false                               // 纵向滑动意图：一旦成立，整段手势永不抢十字线
     var gestureDone = false                                   // 收尾幂等：up/cancel 只生效一次
     var scrubbing = false                                     // 长按已进入十字线 scrub 态
     var lpGen = 0                                             // 长按计时无取消句柄 → 代际计数失效
@@ -529,7 +530,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
         // 父级 Scroller 整段手势被锁死——用户上下滑动全变成十字线拖动。
         // touch 不做 disallow：未进 scrub 前纵向拖动被 Scroller 正常拦截（touchCancel
         // 收尾），页面照常滚动。用户定案：普通上下滑动=页面滚动、不点亮十字线；
-        // 长按 400ms 静止才进十字线 scrub，进入瞬间回调 onScrubActive(true) 让页面
+        // 短长按 280ms 才进十字线 scrub；纵向移动超过 6dp 会立即作废该入口，进入瞬间回调 onScrubActive(true) 让页面
         // 锁 Scroller 滚动（WatchlistPage 拖拽排序同款已验证机制），松手/取消恢复。
         // 长按计时用代际计数失效（RiskSkyChart 同款）。
         // ① 圈选即问：原单指长按拖动入口让位十字线后暂无触发路径（回调与绘制保留）。
@@ -552,13 +553,15 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     downX = e.x
                     downY = e.y
                     movedDist = 0f
+                    scrollingIntent = false
                     gestureDone = false
                     scrubbing = false
                     lpGen++
                     val myGen = lpGen
-                    setTimeout(400) {
-                        // 静止 400ms（移动 ≤8dp、未提前收尾）→ 进十字线 scrub 态
-                        if (myGen == lpGen && movedDist <= 64f && !gestureDone) {
+                    setTimeout(CROSSHAIR_HOLD_MS) {
+                        // 轻按停留 280ms 且没有纵向滚动意图才进十字线。横向微抖允许到 12dp，
+                        // 但纵向一旦超过 6dp 会在 touchMove 中立即作废，优先保证页面滚动。
+                        if (myGen == lpGen && !scrollingIntent && movedDist <= CROSSHAIR_HOLD_SLOP_SQ && !gestureDone) {
                             val slot = slotAt(downX)
                             if (slot >= 0) {
                                 scrubbing = true
@@ -596,8 +599,13 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                                 }
                             }
                         }
-                    } else if (movedDist > 64f) {
-                        lpGen++ // 普通滑动（含页面滚动启动）：作废长按计时
+                    } else if (abs(dy) > SCROLL_INTENT_DY) {
+                        // 页面向上/下滚是最高优先级：即使父 Scroller 尚未发来 cancel，
+                        // 也立刻撤销短长按，并禁止 touchUp 被误当作空白点按。
+                        scrollingIntent = true
+                        lpGen++
+                    } else if (movedDist > CROSSHAIR_HOLD_SLOP_SQ) {
+                        lpGen++ // 明显横移/抖动：作废短长按计时
                     }
                 }
 
@@ -616,7 +624,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         setTimeout(2000) {
                             if (myLeaveRev == scrubLeaveRevision) onScrubLeave()
                         }
-                    } else if (movedDist <= 64f) {
+                    } else if (!scrollingIntent && movedDist <= CROSSHAIR_HOLD_SLOP_SQ) {
                         // ④ 声呐点命中：落点距中心 ≤12dp，回调且不进 scrub；
                         // 未命中 = 空白轻点 → U1「点空白全关」入口
                         val hit = sonarHitTest(downX, downY)
@@ -724,6 +732,9 @@ private fun axisPercent(pct: Double): String =
 // 2026-09-08 版式调整：网格全幅铺满（AXIS_LEFT/RIGHT=0、PRICE_TOP=0，不留内边距），
 // 分段控件缩小悬浮到图左上后，卡头整行高度折给绘图区（PRICE 260→290、VOL 66→70）。
 private const val CHART_HEIGHT = 396f
+private const val CROSSHAIR_HOLD_MS = 280
+private const val SCROLL_INTENT_DY = 6f
+private const val CROSSHAIR_HOLD_SLOP_SQ = 144f // 12dp × 12dp
 private const val PRICE_TOP = 0f
 private const val PRICE_HEIGHT = 290f
 private const val VOL_TOP = 296f
