@@ -26,8 +26,6 @@ import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.SegmentBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
-import com.tencent.kuikly.core.base.Border
-import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Rotate
@@ -430,7 +428,8 @@ internal class GlossaryPage : BasePager() {
             }
             // 注意：卡片根节点不挂任何事件（点击居中由视口 click 反算，见 onFlowTap）。
             // 卡片内小交互元素（前置 chip / 进阶展开）各自保留 click，不受影响。
-            // 侧卡（未居中）：不渲染任何内容，只留「实体卡背」边框占位（2026-09-09 用户要求）
+            // 侧卡（未居中）：不渲染任何内容，只叠更深投影区分层次（2026-09-09
+            // 用户要求：卡片全白，层次感只靠阴影，去掉灰描边）。
             vif({ abs(idx * page.flowStep() - page.flowScrollPos) >= page.flowStep() / 2f }) {
                 page.renderFlowCardGhost(this)
             }
@@ -451,7 +450,9 @@ internal class GlossaryPage : BasePager() {
      * - 侧卡绕竖直中轴 rotateY（Android 渲染层已确认支持：KRCSSTransform.rotateY +
      *   setCameraDistance 透视，Rotate(angle,xAngle,yAngle) 第三参即 yAngle），
      *   右卡正角、左卡负角 = 外缘后退、内缘迎向中心（CoverFlow 贴圆柱朝内语义）；
-     * - 缩放 0.88 + 透明度 0.62 地板，侧卡呈「退后的阴影卡」质感。
+     * - 缩放 0.88，侧卡同尺寸退后。不再压透明度（2026-09-09 用户要求：
+     *   卡片全白，灰蒙感来自透明度透出灰底——层次感只靠每张卡的阴影），
+     *   仅对超出视口的远端卡做淡出防穿帮。
      */
     private fun applyFlowCardTransform(attr: com.tencent.kuikly.core.base.Attr, idx: Int) {
         val step = flowStep()
@@ -461,7 +462,9 @@ internal class GlossaryPage : BasePager() {
         val scale = 0.88f + 0.12f * expand
         val yAngle = FLOW_MAX_Y_ANGLE * near * if (off > 0f) 1f else -1f
         attr.zIndex((1000f - abs(off)).roundToInt(), useOutline = false)
-        attr.opacity(if (abs(off) > step * 1.7f) 0f else 0.75f + 0.25f * expand)
+        // 侧卡保持完全不透明白卡（2026-09-09 用户要求）；只在离屏远端淡出防穿帮。
+        val fadeOut = ((abs(off) - step * 1.2f) / (step * 0.5f)).coerceIn(0f, 1f)
+        attr.opacity(1f - fadeOut)
         attr.transform(
             rotate = Rotate(0f, 0f, yAngle),
             scale = Scale(scale, scale),
@@ -513,16 +516,15 @@ internal class GlossaryPage : BasePager() {
     }
 
     /**
-     * 侧卡「实体卡背」：不渲染任何内容（2026-09-09 用户要求：不用露出术语，只留边框有实感）。
-     * 根节点已带 surface 底 + 20f 圆角 + 基础投影，这里叠描边 + 更深的投影制造厚度。
+     * 侧卡「实体卡背」：不渲染任何内容（2026-09-09 用户要求：不用露出术语）。
+     * 根节点已带纯白底 + 20f 圆角 + 基础投影；这里不再叠描边（灰边会显脏），
+     * 只用更深的投影体现「退后一层」的距离感。
      */
     private fun renderFlowCardGhost(container: ViewContainer<*, *>) {
-        val page = this
         container.View {
             attr {
                 flex(1f)
                 borderRadius(20f)
-                border(Border(1.2f, BorderStyle.SOLID, page.theme.divider))
                 boxShadow(BoxShadow(0f, 14f, 32f, Color(0x000000, 0.13f)))
             }
         }
