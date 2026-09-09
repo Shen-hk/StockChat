@@ -100,6 +100,28 @@ data class DisclosureItem(
     val stamp: SourceStamp,
 )
 
+/** 评级光谱单档：档位标签（买入/增持/中性/减持）+ 家数 + 该档最近一份研报的观点原文。 */
+data class RatingSpectrumSegment(
+    val label: String,
+    val count: Int,
+    val quote: String,
+)
+
+/**
+ * F3 研报评级光谱。真实数据源 = 东财研报库近 90 天个股研报的 emRatingName 聚合；
+ * 在线失败/无覆盖时由 UI 回落到「示例 · 演示数据」占位段，不冒充真实机构观点。
+ */
+data class RatingSpectrum(
+    val segments: List<RatingSpectrumSegment>,
+    val stamp: SourceStamp,
+) {
+    val totalReports: Int get() = segments.sumOf { it.count }
+}
+
+interface RatingSpectrumProvider {
+    fun ratingSpectrum(symbol: String, onResult: (RatingSpectrum?) -> Unit)
+}
+
 data class FundamentalBundle(
     val financial: FinancialSummary?,
     val shareholder: ShareholderSnapshot?,
@@ -111,6 +133,7 @@ data class StockInsightBundle(
     val fundFlow: FundFlow? = null,
     val fundamentals: FundamentalBundle? = null,
     val disclosures: List<DisclosureItem> = emptyList(),
+    val ratingSpectrum: RatingSpectrum? = null,
     val loading: Boolean = false,
 )
 
@@ -260,6 +283,7 @@ class MarketInsightRepository(
     private val onlineDisclosures: DisclosureProvider,
     private val onlineMarket: MarketOverviewProvider,
     private val onlineIndustry: IndustryProvider? = null,
+    private val onlineRatingSpectrum: RatingSpectrumProvider? = null,
     private val fallback: OfflineMarketInsightProvider = OfflineMarketInsightProvider(),
 ) {
     private val stockCache = mutableMapOf<String, StockInsightBundle>()
@@ -287,6 +311,13 @@ class MarketInsightRepository(
         onlineDisclosures.disclosures(symbol) { value ->
             val resolved = value.ifEmpty { state.disclosures.ifEmpty { fallback.stock(symbol).disclosures } }
             state = state.copy(disclosures = resolved, loading = false)
+            stockCache[symbol] = state
+            onResult(state)
+        }
+        // F3 评级光谱独立加载：在线为空时保持 null，由 UI 回落演示段（不冒充真实观点）。
+        onlineRatingSpectrum?.ratingSpectrum(symbol) { value ->
+            val resolved = value ?: state.ratingSpectrum
+            state = state.copy(ratingSpectrum = resolved)
             stockCache[symbol] = state
             onResult(state)
         }

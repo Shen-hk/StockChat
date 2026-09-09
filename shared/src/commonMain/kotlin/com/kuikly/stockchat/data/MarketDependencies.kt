@@ -44,6 +44,7 @@ class MarketDependencies(
                     onlineDisclosures = eastMoney,
                     onlineMarket = eastMoney,
                     onlineIndustry = eastMoney,
+                    onlineRatingSpectrum = eastMoney,
                 ),
                 securitySearchProvider = eastMoney,
                 stockNewsProvider = eastMoney,

@@ -136,6 +136,42 @@ object EastMoneyInsightParser {
         )
     }
 
+    /**
+     * F3 研报评级光谱（2026-09-09 茅台实测）：report/list 每行带 emRatingName /
+     * sRatingName（买入/增持/中性/减持及各家变体），按档位聚合并保留每档最近一份
+     * 研报的「券商 日期：标题」作为观点原文。无评级字段的行不参与聚合；
+     * 全部为空时返回 null（UI 回落演示段）。
+     */
+    fun parseRatingSpectrum(root: JSONObject, asOf: String): RatingSpectrum? {
+        data class Row(val bucket: String, val date: String, val quote: String)
+        val rows = root.rows(null, "data").mapNotNull { row ->
+            val rating = row.optString("emRatingName").ifEmpty { row.optString("sRatingName") }
+            val bucket = ratingBucket(rating) ?: return@mapNotNull null
+            val title = row.optString("title").trim()
+            val publisher = row.optString("orgSName").ifEmpty { row.optString("orgName") }.ifEmpty { "券商研报" }
+            Row(bucket, row.date("publishDate"), "$publisher ${row.date("publishDate")}：${title.take(72)}")
+        }
+        if (rows.isEmpty()) return null
+        val segments = listOf("买入", "增持", "中性", "减持").mapNotNull { label ->
+            val bucket = rows.filter { it.bucket == label }
+            if (bucket.isEmpty()) return@mapNotNull null
+            val latest = bucket.maxBy { it.date }
+            RatingSpectrumSegment(label, bucket.size, latest.quote)
+        }
+        if (segments.isEmpty()) return null
+        return RatingSpectrum(segments, SourceStamp("东方财富研报库 · 券商评级", asOf, SourceTier.RESEARCH))
+    }
+
+    /** 券商评级措辞归档：各家口径不一（推荐/优于大市/持有等），按关键词就近归档。 */
+    private fun ratingBucket(rating: String): String? = when {
+        rating.isEmpty() -> null
+        "买入" in rating -> "买入"
+        "增持" in rating || "推荐" in rating || "优于" in rating -> "增持"
+        "中性" in rating || "持有" in rating || "观望" in rating || "区间" in rating -> "中性"
+        "减持" in rating || "卖出" in rating || "回避" in rating -> "减持"
+        else -> null
+    }
+
     fun withAnnouncementContent(item: DisclosureItem, contentRoot: JSONObject?): DisclosureItem {
         val content = contentRoot?.optJSONObject("data")?.optString("notice_content").orEmpty()
         if (content.isBlank()) return item
@@ -319,7 +355,7 @@ object EastMoneyInsightParser {
 
 class EastMoneyInsightProvider(
     override val pagerId: String,
-) : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, SecuritySearchProvider, IndustryProvider, StockNewsProvider, PagerScope {
+) : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, SecuritySearchProvider, IndustryProvider, StockNewsProvider, RatingSpectrumProvider, PagerScope {
     private val client = createPlatformHttpClient()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val throttle = Mutex()
@@ -458,6 +494,17 @@ class EastMoneyInsightProvider(
                 "&mTypeAndCode=$market.$code&type=1&pageSize=20&pageIndex=1"
             val root = request(url)
             deliver { onResult(root?.let(EastMoneyInsightParser::parseNews).orEmpty()) }
+        }
+    }
+
+    /** 近 90 天券商研报评级聚合（F3 光谱真实数据源）。beginTime 必填（缺失时接口 400）。 */
+    override fun ratingSpectrum(symbol: String, onResult: (RatingSpectrum?) -> Unit) {
+        scope.launch {
+            val code = symbol.substringBefore('.')
+            val begin = platformDateDaysAgo(90)
+            val url = "https://reportapi.eastmoney.com/report/list?pageSize=50&pageNo=1&qType=0&beginTime=$begin&endTime=${platformCurrentDate()}&code=$code"
+            val root = request(url)
+            deliver { onResult(root?.let { EastMoneyInsightParser.parseRatingSpectrum(it, platformCurrentDate()) }) }
         }
     }
 

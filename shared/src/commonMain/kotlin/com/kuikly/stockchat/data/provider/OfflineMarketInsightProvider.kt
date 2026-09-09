@@ -10,7 +10,7 @@ import com.kuikly.stockchat.data.config.DataSourceConfig
  *
  * 页面初始态引用本类的构造（形状与在线数据一致，避免可空类型扩散），开关切换页面层无感。
  */
-class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider {
+class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, RatingSpectrumProvider {
     private val realMode = DataSourceConfig.USE_REAL_MARKET_DATA
 
     // 真实模式：数据源未返回；模拟模式：演示数据戳。
@@ -118,4 +118,26 @@ class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, Disc
     override fun disclosures(symbol: String, onResult: (List<DisclosureItem>) -> Unit) = onResult(stock(symbol).disclosures)
     override fun overview(onResult: (MarketOverview?) -> Unit) = onResult(overviewValue())
     override fun hotspots(onResult: (HotspotSnapshot?) -> Unit) = onResult(hotspotValue())
+
+    /**
+     * F3 评级光谱离线兜底：模拟模式给与详情页演示段一致的占位光谱（明确标注演示数据）；
+     * 真实模式一律 null——在线源失败时由 UI 回落演示段，这里不重复产出。
+     */
+    override fun ratingSpectrum(symbol: String, onResult: (RatingSpectrum?) -> Unit) {
+        if (realMode) {
+            onResult(null)
+            return
+        }
+        onResult(
+            RatingSpectrum(
+                segments = listOf(
+                    RatingSpectrumSegment("买入", 4, "示例 · 演示数据：偏多观点的占位引用，仅用于展示评级光谱交互，不构成任何建议。"),
+                    RatingSpectrumSegment("增持", 3, "示例 · 演示数据：谨慎看多的占位引用，观点切换仅为形态演示。"),
+                    RatingSpectrumSegment("中性", 2, "示例 · 演示数据：中性观点的占位引用，等待更多数据验证。"),
+                    RatingSpectrumSegment("减持", 1, "示例 · 演示数据：偏空观点的占位引用，仅展示光谱另一端。"),
+                ),
+                stamp = stamp.copy(tier = SourceTier.RESEARCH),
+            )
+        )
+    }
 }
