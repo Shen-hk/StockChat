@@ -32,6 +32,9 @@ import com.kuikly.stockchat.chat.ChatViewModel
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.StreamState
 import com.kuikly.stockchat.chat.TypewriterSmoother
+import com.kuikly.stockchat.chat.scroll.state.ChatScrollCoordinator
+import com.kuikly.stockchat.chat.scroll.state.ChatScrollState
+import com.kuikly.stockchat.chat.scroll.state.KuiklyChatScrollScheduler
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.openGlossary
@@ -184,14 +187,6 @@ internal class ChatPage : BasePager() {
         // 滚动声波条数：新采样从右缘进入、历史整体左移（60ms/格），
         // 40 条 × (3+3) ≈ 240dp，铺满中段波形区。
         const val VOICE_AMP_BARS = 56
-        // 流式贴底循环在「非流式且不在贴底窗口」后的宽限拍数（120ms/拍 ≈ 2.4s），
-        // 覆盖流结束后的收尾长高（卡片解析、追问 chips、卡片行情异步到账）。
-        const val CHAT_FOLLOW_GRACE_TICKS = 20
-        // 流式尚未开始（首包未到）时贴底循环的最长存活拍数（120ms/拍 ≈ 19s）：
-        // 行情上下文解析 watchdog 最长 3s + LLM 首包延迟，宽限计数必须等见过
-        // STREAMING 才启动，否则循环会在流开始前退出、跟随彻底失去驱动。
-        // 同时兜底防「流永远不来」（网络挂死）时循环无限存活。
-        const val CHAT_FOLLOW_PRE_STREAM_MAX_TICKS = 160
         // 贴底目标偏移量的安全余量：native 侧对超出 contentH-viewH 的
         // setContentOffset 请求会静默无效，减 1px 规避浮点精度导致的误判。
         const val CHAT_SCROLL_HAIR_WIDTH = 1f
@@ -228,14 +223,17 @@ internal class ChatPage : BasePager() {
     private var chatContentHeight = 0f
     private var lastLoggedScrollY = -1f
     private var lastLoggedContentH = -1f
-    private var keepChatAtBottomVersion = 0
-    // 流式跟随开关：内容增长时自动贴底。用户上滑/按住（isDragging 且不在底部）
-    // 即暂停，拖回底部或重新发消息时恢复。
-    private var chatFollowStream = true
-    // 流式期间确实 flush 长高过：用于识别「流刚结束」的最后一次收尾长高。
-    private var chatStreamFlushed = false
-    // 流式贴底轮询循环（发送时启动，流结束+宽限后自灭）。
-    private var chatFollowLoop: Timer? = null
+    private val chatScrollState = ChatScrollState()
+    private val chatScrollCoordinator by lazy {
+        ChatScrollCoordinator(
+            state = chatScrollState,
+            scheduler = KuiklyChatScrollScheduler(),
+            onScrollToBottom = { animated -> scheduleScrollChatToBottom(animated) },
+            onResetFollowUps = ::resetFollowUps,
+            onScheduleFollowUps = ::scheduleFollowUpsPresentation,
+            log = { message -> KLog.i(COMPOSER_LOG_TAG, message) },
+        )
+    }
     private var peekSymbol: String by observable("")
     private var peekVisible: Boolean by observable(false)
     // Symbol whose long press was recognised but whose gesture has not ended.
@@ -509,6 +507,7 @@ internal class ChatPage : BasePager() {
         super.pageDidDisappear()
         pageVisible = false
         alertPollGeneration++
+        chatScrollCoordinator.onDisappear()
         // Coordinator cancels and version-guards every welcome callback here;
         // leaving a page must never let a stale timer mutate its observables.
         welcomeCoordinator.onDisappear()
@@ -533,6 +532,7 @@ internal class ChatPage : BasePager() {
         // Preload the island quote so the morph opens with data in place.
         requestQuote(islandSymbol)
         startAlertPolling()
+        chatScrollCoordinator.onAppear()
         welcomeCoordinator.onAppear(
             sessionEmpty = viewModel.messages.isEmpty(),
             fullMode = welcomeMode() == WelcomeMode.FULL,
@@ -543,6 +543,7 @@ internal class ChatPage : BasePager() {
 
     override fun pageWillDestroy() {
         welcomeCoordinator.onDestroy()
+        chatScrollCoordinator.onDestroy()
         super.pageWillDestroy()
     }
 
@@ -610,7 +611,7 @@ internal class ChatPage : BasePager() {
                         }
                         // 按住非交互区域（气泡/卡片自己的长按会被消费、不冒泡上来）
                         // 也视为用户接管列表，暂停跟随
-                        longPress { page.chatFollowStream = false }
+                        longPress { page.chatScrollCoordinator.onUserScroll(isAtBottom = false) }
                         // 点击列表非输入栏区域：展开态先收键盘，键盘已收起才回到默认态
                         click { page.handleOutsideTap() }
                     }
@@ -620,6 +621,12 @@ internal class ChatPage : BasePager() {
                     // 前缀拼 themeRebuildKey：欢迎区/气泡/卡片都以参数捕获 theme，
                     // 换肤（明暗/字号档）时靠键翻转整树重建拿到新配色。
                     vbind({ page.themeRebuildKey() + "|" + page.viewModel.activeSessionId }) {
+                        vbind({ page.viewModel.streamState }) {
+                            page.chatScrollCoordinator.onStreamStateObserved(
+                                page.viewModel.streamState == StreamState.STREAMING,
+                            )
+                            View { attr { height(0f); touchEnable(false) } }
+                        }
                         // 仅由消息是否为空决定欢迎区的存在。不要把这里再绑定到动效的
                         // mounted 状态：内容可见性必须独立于任何异步动画调度。
                         vif({ page.viewModel.messages.isEmpty() }) {
@@ -1751,12 +1758,8 @@ internal class ChatPage : BasePager() {
     private fun startNewChat() {
         updateDrawerOpen(false)
         welcomeCoordinator.onNewEmptySession()
-        keepChatAtBottomVersion = 0
+        chatScrollCoordinator.onNewChat()
         chatContentHeight = 0f
-        chatFollowStream = true
-        chatStreamFlushed = false
-        chatFollowLoop?.cancel()
-        chatFollowLoop = null
         resetSessionUiState()
         setComposerText("")
         viewModel.startNewChat()
@@ -2760,10 +2763,6 @@ internal class ChatPage : BasePager() {
         )
     }
 
-    private fun shouldKeepChatAtBottom(): Boolean =
-        keepChatAtBottomVersion > 0 ||
-            (viewModel.streamState == StreamState.STREAMING && chatFollowStream)
-
     /**
      * 内容长高统一入口。流式期间内容每 100ms flush 长高一次：非动画贴底最顺滑，
      * animated 连续重启动画会互相打断造成抖动。
@@ -2774,17 +2773,7 @@ internal class ChatPage : BasePager() {
      * 「流中 flush 过、现已非 STREAMING」的第一拍，补一段宽限贴底窗口。
      */
     private fun handleChatContentSizeGrew() {
-        if (viewModel.streamState == StreamState.STREAMING) {
-            chatStreamFlushed = true
-            resetFollowUps()
-        } else if (chatStreamFlushed) {
-            chatStreamFlushed = false
-            // 用户流式中已上滑离开（chatFollowStream=false）则不打扰。
-            if (chatFollowStream) keepChatAtBottomAfterStreamEnd()
-            // 流刚结束的第一拍：延迟弹出引导语 chips，避免与贴底滚动/卡片挂载抢帧。
-            scheduleFollowUpsPresentation()
-        }
-        if (shouldKeepChatAtBottom()) scheduleScrollChatToBottom(animated = false)
+        chatScrollCoordinator.onContentSizeGrew()
     }
 
     /** 引导语双态机：立即重置（新一轮流式/清屏时调用）。 */
@@ -2863,15 +2852,6 @@ internal class ChatPage : BasePager() {
         if (viewModel.regenerateAt(messageId)) keepChatAtBottomTemporarily()
     }
 
-    /** 流结束宽限贴底：只延长 keepChatAtBottomVersion 窗口，不改 chatFollowStream。 */
-    private fun keepChatAtBottomAfterStreamEnd() {
-        val version = ++keepChatAtBottomVersion
-        scheduleScrollChatToBottom(animated = false)
-        setTimeout(1500) {
-            if (keepChatAtBottomVersion == version) keepChatAtBottomVersion = 0
-        }
-    }
-
     /**
      * 流式跟随手势仲裁：用户手指拖拽中（isDragging）且不在底部 → 暂停跟随；
      * 拖回底部 → 自动恢复。程序化 setContentOffset 的 isDragging 为 false，
@@ -2899,7 +2879,9 @@ internal class ChatPage : BasePager() {
             if (away != chatBackToTopMounted) setChatBackToTopVisible(away)
         }
         if (!params.isDragging) return
-        chatFollowStream = params.offsetY >= params.contentHeight - params.viewHeight - 80f
+        chatScrollCoordinator.onUserScroll(
+            isAtBottom = params.offsetY >= params.contentHeight - params.viewHeight - 80f,
+        )
     }
 
     /**
@@ -2935,20 +2917,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun keepChatAtBottomTemporarily() {
-        chatFollowStream = true
-        val version = ++keepChatAtBottomVersion
-        // 入口这一跳走动画：用户从上方发消息/触发追问时，要看到从当前位置
-        // 滚到底部的过程，而不是硬跳。后续 follow loop / 内容长高的追加贴底
-        // 仍一律非动画（那些是流式期间的高频小步追平，animated 会互相打断，
-        // 且 native 侧 offset 状态在动画未完成时不同步，content 一长高就被
-        // 重新布局拉回旧位置，实测表现为「滚了又弹回」）。
-        scheduleScrollChatToBottom(animated = true)
-        // 2.5s：覆盖行情上下文解析的 3s watchdog——期间用户消息/占位气泡
-        // 已挂载长高，窗口内 follow loop 的贴底才生效（流开始后由 STREAMING 接管）。
-        setTimeout(2500) {
-            if (keepChatAtBottomVersion == version) keepChatAtBottomVersion = 0
-        }
-        startChatFollowLoop()
+        chatScrollCoordinator.onSendRequested()
     }
 
     /**
@@ -2978,55 +2947,6 @@ internal class ChatPage : BasePager() {
             val maxOffset = (contentH - viewH - CHAT_SCROLL_HAIR_WIDTH).coerceAtLeast(0f)
             scroller.setContentOffset(0f, maxOffset, animated)
             KLog.i(COMPOSER_LOG_TAG, "scrollBottom apply offset=$maxOffset contentH=$contentH viewH=$viewH animated=$animated")
-        }
-    }
-
-    /**
-     * 流式跟随循环：每 120ms 贴一次底，退出条件 = 非流式且不在贴底窗口后
-     * 再宽限约 1.6s（13 拍）。不依赖任何布局事件驱动——发送时启动，流式
-     * 期间内容每次长高都会被下一次 tick 追平，流结束收尾（卡片解析、
-     * 追问 chips 挂载）由「结束即续 1.5s 版本窗口」覆盖。
-     */
-    private fun startChatFollowLoop() {
-        chatFollowLoop?.cancel()
-        val timer = Timer()
-        chatFollowLoop = timer
-        var lastStreaming = false
-        // 是否已见过 STREAMING：宽限计数只在流真正开始过之后才允许累积。
-        // 发送 → 流开始之间隔着行情上下文解析（watchdog 最长 3s）+ LLM 首包
-        // 延迟，若在此期间按「空闲」计数，循环会在流开始前退出，而
-        // contentSizeChanged 事件实测不可靠，流式跟随将彻底失去驱动。
-        var sawStreaming = false
-        var preStreamTicks = 0
-        var idleTicks = 0
-        timer.schedule(120, 120) {
-            if (isWillDestroy()) {
-                timer.cancel()
-                if (chatFollowLoop === timer) chatFollowLoop = null
-                return@schedule
-            }
-            val streaming = viewModel.streamState == StreamState.STREAMING
-            if (streaming) sawStreaming = true
-            KLog.i(COMPOSER_LOG_TAG, "followLoop streaming=$streaming ver=$keepChatAtBottomVersion idle=$idleTicks follow=$chatFollowStream")
-            // 流式刚结束：补一段贴底窗口，让收尾长高也被跟随（尊重用户上滑）。
-            if (lastStreaming && !streaming && chatFollowStream) {
-                keepChatAtBottomAfterStreamEnd()
-            }
-            lastStreaming = streaming
-            idleTicks = if (streaming || keepChatAtBottomVersion > 0 || !sawStreaming) 0 else idleTicks + 1
-            // 流一直没来（网络挂死等）：上限拍数后自灭，防止循环无限存活。
-            if (!sawStreaming && preStreamTicks++ > CHAT_FOLLOW_PRE_STREAM_MAX_TICKS) {
-                KLog.i(COMPOSER_LOG_TAG, "followLoop preStream timeout")
-                timer.cancel()
-                if (chatFollowLoop === timer) chatFollowLoop = null
-                return@schedule
-            }
-            if (idleTicks > CHAT_FOLLOW_GRACE_TICKS) {
-                timer.cancel()
-                if (chatFollowLoop === timer) chatFollowLoop = null
-                return@schedule
-            }
-            if (shouldKeepChatAtBottom()) scheduleScrollChatToBottom(animated = false)
         }
     }
 
