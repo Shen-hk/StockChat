@@ -29,6 +29,7 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
 import android.view.HapticFeedbackConstants
+import android.view.View
 import android.widget.Toast
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -100,6 +101,12 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             }
 
             "getGlassMode" -> (activity as? KuiklyRenderActivity)?.currentGlassMode() ?: "simplified"
+
+            // 深色主题（含 App 内换肤覆盖）→ 状态栏图标切浅色；浅色恢复深色图标。
+            // setupImmersiveMode 默认 LIGHT_STATUS_BAR（深色图标），这里按页面解析结果翻转。
+            "setStatusBarIconsDark" -> {
+                setStatusBarIconsDark(params)
+            }
 
             // 页面注册「大且快右向横滑 → 抽屉展开」回调；host 挂在 Activity 上，
             // Activity 销毁时清空。keepCallback 由 Kuikly 侧 toNative(true,...) 控制。
@@ -173,6 +180,26 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
     private fun hapticImpact() {
         activity?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+    }
+
+    /**
+     * 页面解析出的最终主题明暗态（含 App 内「通用设置-主题」覆盖）→
+     * 状态栏图标方向。深色页面图标用浅色（清除 LIGHT_STATUS_BAR），
+     * 浅色页面恢复默认深色图标。桥调用可能不在主线程，统一 post。
+     */
+    private fun setStatusBarIconsDark(params: String?) {
+        val currentActivity = activity ?: return
+        val dark = params != null && JSONObject(params).optInt("dark", 0) == 1
+        currentActivity.runOnUiThread {
+            val decor = currentActivity.window?.decorView ?: return@runOnUiThread
+            @Suppress("DEPRECATION")
+            val flags = if (dark) {
+                decor.systemUiVisibility and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+            } else {
+                decor.systemUiVisibility or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            }
+            decor.systemUiVisibility = flags
+        }
     }
 
     private fun startVoiceRecording(callback: KuiklyRenderCallback?) {

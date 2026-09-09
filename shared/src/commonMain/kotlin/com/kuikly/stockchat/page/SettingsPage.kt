@@ -1,0 +1,329 @@
+package com.kuikly.stockchat.page
+
+import com.kuikly.stockchat.data.fontSizeScaled
+
+import com.kuikly.stockchat.base.BasePager
+import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.common.Routes
+import com.kuikly.stockchat.common.closePage
+import com.kuikly.stockchat.common.openPage
+import com.kuikly.stockchat.data.AppearancePrefs
+import com.kuikly.stockchat.data.FontScale
+import com.kuikly.stockchat.data.ThemeMode
+import com.kuikly.stockchat.page.components.AppTopBar
+import com.tencent.kuikly.core.annotations.Page
+import com.tencent.kuikly.core.base.Border
+import com.tencent.kuikly.core.base.BorderStyle
+import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.module.SharedPreferencesModule
+import com.tencent.kuikly.core.views.Scroller
+import com.tencent.kuikly.core.views.Text
+import com.tencent.kuikly.core.views.View
+
+/**
+ * 通用设置页（2026-09-09）：主题换肤（跟随系统/浅色/深色）+ 字号档位。
+ *
+ * 写入路径：click → SharedPreferencesModule 落盘 → reloadAppearance() 重读
+ * 到本页 observable → attr 经 appTheme()/选中态读取重算，实时换肤。
+ * 其他页面在 pageDidAppear 时同步重读（BasePager），跨页无响应式通道，
+ * 与系统夜间模式 themeDidChanged 同一生命周期约定。
+ */
+@Page(Routes.SETTINGS, supportInLocal = true)
+internal class SettingsPage : BasePager() {
+    private val theme: StockChatTheme get() = appTheme()
+
+    private fun persistAppearance(key: String, value: String) {
+        acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+            .setItem(key, value)
+        reloadAppearance()
+    }
+
+    override fun body(): ViewBuilder {
+        val page = this
+        return {
+            attr { backgroundColor(page.theme.page) }
+            AppTopBar(
+                title = "通用设置",
+                subtitle = "",
+                statusBarHeight = page.pagerData.statusBarHeight,
+                theme = page.theme,
+                backLabel = "‹",
+                onBack = { page.closePage() },
+            )
+            Scroller {
+                attr {
+                    flex(1f)
+                    // 竖向 Scroller 水平 padding 双倍扣除，padding(16f) 后右 padding 清 0（同 ChatPage/ApiConfigPage）。
+                    padding(16f)
+                    paddingRight(0f)
+                    paddingTop(page.pagerData.statusBarHeight + 73f)
+                    paddingBottom(28f + page.pagerData.safeAreaInsets.bottom)
+                }
+                SettingsSectionTitle("外观", "主题切换立即生效；跟随系统时随端侧昼夜模式自动切换。", page.theme)
+                View {
+                    attr { flexDirectionRow(); marginTop(12f) }
+                    val cardWidth = (page.pagerData.pageViewWidth - 32f - 16f) / 3f
+                    ThemeMode.entries.forEach { mode ->
+                        if (mode != ThemeMode.SYSTEM) View { attr { width(8f) } }
+                        ThemeModeCard(
+                            mode = mode,
+                            theme = page.theme,
+                            width = cardWidth,
+                            isSelected = { page.appearanceThemeModeId() == mode.id },
+                            onClick = { page.persistAppearance(AppearancePrefs.KEY_THEME_MODE, mode.id) },
+                        )
+                    }
+                }
+                SettingsSectionTitle("字体大小", "作用于正文与说明文字，预览即时更新。", page.theme)
+                View {
+                    attr { flexDirectionRow(); marginTop(12f); flexWrapWrap() }
+                    FontScale.entries.forEachIndexed { index, scale ->
+                        if (index > 0) View { attr { width(8f) } }
+                        FontScaleChip(
+                            scale = scale,
+                            theme = page.theme,
+                            isSelected = { page.appearanceFontScaleId() == scale.id },
+                            onClick = { page.persistAppearance(AppearancePrefs.KEY_FONT_SCALE, scale.id) },
+                        )
+                    }
+                }
+                FontPreviewCard(theme = page.theme)
+                SettingsSectionTitle("模型与数据", "", page.theme)
+                ApiConfigEntryRow(theme = page.theme) {
+                    page.openPage(Routes.API_CONFIG)
+                }
+                Text {
+                    attr {
+                        text("设置保存在本机，字号档位对全部页面即时生效。")
+                        marginTop(14f)
+                        fontSizeScaled(11f)
+                        color(page.theme.textTertiary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.SettingsSectionTitle(title: String, subtitle: String, theme: StockChatTheme) {
+    Text {
+        attr {
+            text(title)
+            marginTop(if (subtitle.isEmpty()) 20f else 20f)
+            fontSizeScaled(13f)
+            fontWeightSemiBold()
+            color(theme.textPrimary)
+        }
+    }
+    if (subtitle.isNotEmpty()) {
+        Text {
+            attr {
+                text(subtitle)
+                marginTop(4f)
+                fontSizeScaled(11f)
+                color(theme.textTertiary)
+            }
+        }
+    }
+}
+
+/** 主题模式卡：迷你色板预览（SYSTEM 显示浅/深对半，LIGHT/DARK 各自页面色 + 文字点）。 */
+private fun ViewContainer<*, *>.ThemeModeCard(
+    mode: ThemeMode,
+    theme: StockChatTheme,
+    width: Float,
+    isSelected: () -> Boolean,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            width(width)
+            height(76f)
+            borderRadius(12f)
+            backgroundColor(theme.surface)
+            border(Border(1f, BorderStyle.SOLID, if (isSelected()) theme.brand else theme.divider))
+            allCenter()
+        }
+        event { click { onClick() } }
+        // 色板：固定展示两主题的页面色，不随当前选中态变化（预览即所见）。
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            val previewPage = when (mode) {
+                ThemeMode.LIGHT -> StockChatTheme.Light.page
+                ThemeMode.DARK -> StockChatTheme.Dark.page
+                ThemeMode.SYSTEM -> theme.page // 跟随系统：用当前实况色 + 月牙标识
+            }
+            View {
+                attr {
+                    size(34f, 24f)
+                    borderRadius(6f)
+                    backgroundColor(previewPage)
+                    border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                    allCenter()
+                }
+                Text {
+                    attr {
+                        text(
+                            when (mode) {
+                                ThemeMode.SYSTEM -> "A"
+                                ThemeMode.LIGHT -> "A"
+                                ThemeMode.DARK -> "A"
+                            }
+                        )
+                        fontSizeScaled(11f)
+                        fontWeightBold()
+                        // SYSTEM 用当前实况文字色（预览底=当前实况页面色，恒有对比度）；
+                        // LIGHT/DARK 固定用各自色板的文字色（预览即所见）。
+                        color(
+                            when (mode) {
+                                ThemeMode.SYSTEM -> theme.textPrimary
+                                ThemeMode.LIGHT -> StockChatTheme.Light.textPrimary
+                                ThemeMode.DARK -> StockChatTheme.Dark.textPrimary
+                            }
+                        )
+                    }
+                }
+            }
+            View {
+                attr { marginLeft(8f) }
+                Text {
+                    attr {
+                        text(mode.label)
+                        fontSizeScaled(12f)
+                        fontWeightMedium()
+                        color(if (isSelected()) theme.brand else theme.textSecondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.FontScaleChip(
+    scale: FontScale,
+    theme: StockChatTheme,
+    isSelected: () -> Boolean,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            height(34f)
+            paddingLeft(14f)
+            paddingRight(14f)
+            borderRadius(17f)
+            backgroundColor(if (isSelected()) theme.brandSoft else theme.surfaceMuted)
+            allCenter()
+        }
+        event { click { onClick() } }
+        Text {
+            attr {
+                text(scale.label)
+                fontSizeScaled(13f)
+                fontWeightMedium()
+                color(if (isSelected()) theme.brand else theme.textSecondary)
+            }
+        }
+    }
+}
+
+/** 字号实时预览卡：一条问答气泡，字号取自 theme.type（已含档位缩放）。 */
+private fun ViewContainer<*, *>.FontPreviewCard(theme: StockChatTheme) {
+    View {
+        attr {
+            marginTop(12f)
+            borderRadius(theme.cardRadius)
+            backgroundColor(theme.surface)
+            padding(14f)
+        }
+        Text {
+            attr {
+                text("预览")
+                fontSize(theme.type.meta)
+                color(theme.textTertiary)
+            }
+        }
+        View {
+            attr {
+                marginTop(10f)
+                backgroundColor(theme.brandSoft)
+                borderRadius(14f)
+                padding(10f)
+            }
+            Text {
+                attr {
+                    text("市盈率是什么意思？")
+                    fontSize(theme.type.body)
+                    color(theme.textPrimary)
+                }
+            }
+        }
+        View {
+            attr {
+                marginTop(8f)
+                backgroundColor(theme.surfaceMuted)
+                borderRadius(14f)
+                padding(10f)
+            }
+            Text {
+                attr {
+                    text("市盈率（PE）= 股价 ÷ 每股收益，衡量市场愿意为公司每 1 元盈利支付的价格。")
+                    fontSize(theme.type.sm)
+                    lineHeight(theme.type.sm * 1.5f)
+                    color(theme.textPrimary)
+                }
+            }
+        }
+        Text {
+            attr {
+                text("行情数字由端侧直填，AI 只负责解释")
+                marginTop(8f)
+                fontSize(theme.type.meta)
+                color(theme.textTertiary)
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.ApiConfigEntryRow(theme: StockChatTheme, onClick: () -> Unit) {
+    View {
+        attr {
+            marginTop(12f)
+            height(60f)
+            paddingLeft(14f)
+            paddingRight(12f)
+            borderRadius(theme.cardRadius)
+            backgroundColor(theme.surface)
+            flexDirectionRow()
+            alignItemsCenter()
+        }
+        event { click { onClick() } }
+        View {
+            attr { flex(1f) }
+            Text {
+                attr {
+                    text("模型与 API 配置")
+                    fontSizeScaled(14f)
+                    fontWeightMedium()
+                    color(theme.textPrimary)
+                }
+            }
+            Text {
+                attr {
+                    text("接口地址、模型名与 API Key")
+                    marginTop(2f)
+                    fontSizeScaled(11f)
+                    color(theme.textTertiary)
+                }
+            }
+        }
+        Text {
+            attr {
+                text("›")
+                fontSizeScaled(20f)
+                color(theme.textTertiary)
+            }
+        }
+    }
+}

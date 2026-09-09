@@ -133,6 +133,18 @@ internal class BridgeModule : Module() {
     /** Returns the current host-selected material quality, if supported by the host. */
     fun getGlassMode(): String = syncCallNativeMethod("getGlassMode", null, null)
 
+    /**
+     * 状态栏图标明暗同步（Android 宿主实现；其他宿主走 call 的 else 分支回
+     * 错误码，页侧静默忽略）。dark=true 表示页面解析为深色主题，宿主应让
+     * 状态栏图标用浅色（清除 LIGHT_STATUS_BAR）；false 恢复深色图标。
+     * 由 BasePager 在最终主题（含 App 内换肤覆盖）变化时调用。
+     */
+    fun setStatusBarIconsDark(dark: Boolean) {
+        val methodArgs = JSONObject()
+        methodArgs.put("dark", if (dark) 1 else 0)
+        callNativeMethod(SET_STATUS_BAR_ICONS_DARK, methodArgs, null)
+    }
+
     fun openPage(
         url: String,
         closeCurPage: Boolean = false,
@@ -417,6 +429,7 @@ internal class BridgeModule : Module() {
         const val START_VOICE_RECORDING = "startVoiceRecording"
         const val STOP_VOICE_RECORDING = "stopVoiceRecording"
         const val CANCEL_VOICE_RECORDING = "cancelVoiceRecording"
+        const val SET_STATUS_BAR_ICONS_DARK = "setStatusBarIconsDark"
     }
 
 }

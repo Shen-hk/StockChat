@@ -18,6 +18,7 @@ object Routes {
     const val SEARCH = "GlobalSearchPage"
     const val CALENDAR = "MarketCalendarPage"
     const val ALERTS = "AlertCenterPage"
+    const val SETTINGS = "SettingsPage"
     const val LEGACY_ROUTER = "router"
 }
 
