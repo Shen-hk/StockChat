@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.BridgeModule
 import com.kuikly.stockchat.base.setTimeout
@@ -450,7 +453,7 @@ internal class ChatPage : BasePager() {
     private var composerChromeVersion = 0
     private var composerChromeTimer: Timer? = null
     private val composerReducedMotion by lazy { platformPrefersReducedMotion() }
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
     /** The document caps simultaneously visible real-time blur surfaces at two. */
     private val glassRenderer: GlassRenderer
         get() {
@@ -734,7 +737,7 @@ internal class ChatPage : BasePager() {
                         Text {
                             attr {
                                 text("“${page.ambiguousEntityText}”可能指以下标的")
-                                fontSize(12f)
+                                fontSizeScaled(12f)
                                 fontWeightMedium()
                                 color(page.theme.textPrimary)
                             }
@@ -753,7 +756,7 @@ internal class ChatPage : BasePager() {
                                         borderRadius(9f)
                                         backgroundColor(page.theme.surface)
                                     }
-                                    Text { attr { text(security?.name ?: symbol); fontSize(12f); color(page.theme.brand) } }
+                                    Text { attr { text(security?.name ?: symbol); fontSizeScaled(12f); color(page.theme.brand) } }
                                     event { click { page.chooseAmbiguousSymbol(symbol) } }
                                 }
                             }
@@ -777,7 +780,7 @@ internal class ChatPage : BasePager() {
                         GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
                         View {
                             attr { flex(1f) }
-                            if (quote == null) Text { attr { text("正在获取 ${page.peekSymbol} 的行情…"); fontSize(12f); color(page.theme.textTertiary) } }
+                            if (quote == null) Text { attr { text("正在获取 ${page.peekSymbol} 的行情…"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
                             else CardShell(
                                 StockQuoteCardModel(quote),
                                 CardContext(page.theme, CardDensity.MINI, { page.openStockDetail(it) }, glass = page.glassRenderer),
@@ -785,12 +788,12 @@ internal class ChatPage : BasePager() {
                         }
                         View {
                             attr { padding(9f); borderRadius(9f); backgroundColor(page.theme.surfaceMuted) }
-                            Text { attr { text("收起"); fontSize(11f); color(page.theme.textSecondary) } }
+                            Text { attr { text("收起"); fontSizeScaled(11f); color(page.theme.textSecondary) } }
                             event { click { page.dismissPeek() } }
                         }
                         View {
                             attr { marginLeft(7f); padding(9f); borderRadius(9f); backgroundColor(page.theme.brand) }
-                            Text { attr { text("看详情"); fontSize(11f); fontWeightMedium(); color(page.theme.onBrand) } }
+                            Text { attr { text("看详情"); fontSizeScaled(11f); fontWeightMedium(); color(page.theme.onBrand) } }
                             event { click { page.openStockDetail(page.peekSymbol) } }
                         }
                     }
@@ -879,7 +882,7 @@ internal class ChatPage : BasePager() {
                             }
                             View {
                                 attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
-                                Text { attr { text("复制"); fontSize(13f); color(page.theme.textPrimary) } }
+                                Text { attr { text("复制"); fontSizeScaled(13f); color(page.theme.textPrimary) } }
                                 event { click { page.copyMessageToPasteboard() } }
                             }
                             if (page.messageActionFollowUp) {
@@ -889,7 +892,7 @@ internal class ChatPage : BasePager() {
                                 View {
                                     attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
                                     Text {
-                                        attr { text("追问"); fontSize(13f); fontWeightMedium(); color(page.theme.brand) }
+                                        attr { text("追问"); fontSizeScaled(13f); fontWeightMedium(); color(page.theme.brand) }
                                     }
                                     event { click { page.quoteMessageIntoComposer() } }
                                 }
@@ -1077,13 +1080,13 @@ internal class ChatPage : BasePager() {
                                                 height(48f)
                                                 allCenter()
                                                 borderRadius(16f)
-                                                backgroundColor(Color(0xFFFFFFFF))
+                                                backgroundColor(page.theme.surface)
                                             }
                                             vif({ page.voiceState == VoiceState.IDLE }) {
                                                 Text {
                                                     attr {
                                                         text("按住 说话")
-                                                        fontSize(15f)
+                                                        fontSizeScaled(15f)
                                                         color(page.theme.textSecondary)
                                                     }
                                                 }
@@ -1158,7 +1161,7 @@ internal class ChatPage : BasePager() {
                                             Text {
                                                 attr {
                                                     text("@")
-                                                    fontSize(18f)
+                                                    fontSizeScaled(18f)
                                                     fontWeightSemiBold()
                                                     color(page.theme.brand)
                                                 }
@@ -1184,7 +1187,7 @@ internal class ChatPage : BasePager() {
                                             Text {
                                                 attr {
                                                     text("/")
-                                                    fontSize(18f)
+                                                    fontSizeScaled(18f)
                                                     fontWeightSemiBold()
                                                     color(page.theme.brand)
                                                 }
@@ -1267,7 +1270,7 @@ internal class ChatPage : BasePager() {
                                                 Text {
                                                     attr {
                                                         text("↑")
-                                                        fontSize(18f)
+                                                        fontSizeScaled(18f)
                                                         fontWeightSemiBold()
                                                         color(if (page.isCommandSendBlocked()) page.theme.textTertiary else page.theme.onBrand)
                                                     }
@@ -1301,19 +1304,33 @@ internal class ChatPage : BasePager() {
                         touchEnable(true)
                         animate(Animation.easeOut(0.2f), page.compareCard != null)
                     }
-                    event { click { } }
+                    // 蒙层即收回（2026-09-09）：点面板外任意区域 = 退出对比，
+                    // 与面板内「退出」同走 clearCompare（含灵动岛几何复位）。
+                    event { click { page.clearCompare() } }
                 }
-                page.compareCard?.let { compareModel ->
-                    ActiveComparePanel(
-                        model = compareModel,
-                        theme = page.theme,
-                        insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
-                        insightText = { page.compareInsightText },
-                        insightError = { page.compareInsightError },
-                        onRetryInsight = { page.retryCompareInsight() },
-                        onOpenStock = { page.openStockDetail(it) },
-                        onClose = { page.clearCompare() },
-                    )
+                // 底部锚定容器（2026-09-09）：此前面板是根容器的流式子节点，
+                // 而根容器的兄弟节点全部 absolutePosition（主内容层/顶栏/输入栏），
+                // 流式位置落在 y=0 → 面板被顶到屏幕最上面。改为全屏容器 +
+                // justifyContentFlexEnd 锚底，AI 解读流式输出逐字到达、面板高度
+                // 连续小步生长时，顶缘随之向上拉长，底缘不动。
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        justifyContentFlexEnd()
+                        paddingBottom(page.pagerData.safeAreaInsets.bottom)
+                    }
+                    page.compareCard?.let { compareModel ->
+                        ActiveComparePanel(
+                            model = compareModel,
+                            theme = page.theme,
+                            insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
+                            insightText = { page.compareInsightText },
+                            insightError = { page.compareInsightError },
+                            onRetryInsight = { page.retryCompareInsight() },
+                            onOpenStock = { page.openStockDetail(it) },
+                            onClose = { page.clearCompare() },
+                        )
+                    }
                 }
             }
             // 术语对比弹窗：双槽位填满即弹出（与股票 compareCard 同款触发），
@@ -1330,20 +1347,29 @@ internal class ChatPage : BasePager() {
                         touchEnable(true)
                         animate(Animation.easeOut(0.2f), page.islandTermCompareVisible)
                     }
-                    event { click { } }
+                    // 蒙层即收回（2026-09-09）：同股票对比蒙层，点击 = 退出术语对比。
+                    event { click { page.clearIslandCompare() } }
                 }
-                Glossary.byKey(page.islandTermCompareLeftKey)?.let { leftEntry ->
-                    Glossary.byKey(page.islandTermCompareRightKey)?.let { rightEntry ->
-                        TermComparePanel(
-                            left = leftEntry,
-                            right = rightEntry,
-                            theme = page.theme,
-                            insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
-                            insightText = { page.compareInsightText },
-                            insightError = { page.compareInsightError },
-                            onRetryInsight = { page.retryCompareInsight() },
-                            onClose = { page.clearIslandCompare() },
-                        )
+                // 底部锚定容器：同股票对比弹窗（2026-09-09），锚底 + 流式向上生长。
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        justifyContentFlexEnd()
+                        paddingBottom(page.pagerData.safeAreaInsets.bottom)
+                    }
+                    Glossary.byKey(page.islandTermCompareLeftKey)?.let { leftEntry ->
+                        Glossary.byKey(page.islandTermCompareRightKey)?.let { rightEntry ->
+                            TermComparePanel(
+                                left = leftEntry,
+                                right = rightEntry,
+                                theme = page.theme,
+                                insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
+                                insightText = { page.compareInsightText },
+                                insightError = { page.compareInsightError },
+                                onRetryInsight = { page.retryCompareInsight() },
+                                onClose = { page.clearIslandCompare() },
+                            )
+                        }
                     }
                 }
             }
@@ -1421,7 +1447,7 @@ internal class ChatPage : BasePager() {
                     onOpenSearch = { page.openPage(Routes.SEARCH) },
                     onOpenAlerts = { page.openPage(Routes.ALERTS) },
                     onToggleIsland = { page.toggleIsland() },
-                    onSettings = { page.updateDrawerOpen(false); page.openPage(Routes.API_CONFIG) },
+                    onSettings = { page.updateDrawerOpen(false); page.openPage(Routes.SETTINGS) },
                 )
             }
         }
@@ -2528,8 +2554,8 @@ internal class ChatPage : BasePager() {
             container.TextArea {
                 attr {
                     flex(1f)
-                    fontSize(14f)
-                    lineHeight(21f)
+                    fontSizeScaled(14f)
+                    lineHeightScaled(21f)
                     minHeight(21f)
                     maxHeight(40f)
                     color(this@ChatPage.theme.textPrimary)
@@ -2578,8 +2604,8 @@ internal class ChatPage : BasePager() {
             // 跟 maxHeight 等动态属性一起重放，会在展开布局时重启刚建立的连接，
             // 形成“键盘有反应、正文无光标”的僵尸 InputConnection。
             attr {
-                fontSize(14f)
-                lineHeight(21f)
+                fontSizeScaled(14f)
+                lineHeightScaled(21f)
                 backgroundColor(Color(0xFFFFFFFF, 0f))
                 placeholder("问一只股票或一个术语")
                 returnKeyTypeSend()
@@ -2671,14 +2697,14 @@ internal class ChatPage : BasePager() {
             Text {
                 attr {
                     text(page.deepContextNotes.joinToString("、"))
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightMedium()
                     color(page.theme.brand)
                     flex(1f)
                 }
             }
             Text {
-                attr { text("取消"); fontSize(11f); color(page.theme.textSecondary) }
+                attr { text("取消"); fontSizeScaled(11f); color(page.theme.textSecondary) }
                 event {
                     click {
                         page.deepContextNotes.clear()
@@ -2704,7 +2730,7 @@ internal class ChatPage : BasePager() {
             Text {
                 attr {
                     text(page.commandValidationMessage)
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     color(page.theme.rise)
                 }
             }
@@ -3065,7 +3091,7 @@ internal class ChatPage : BasePager() {
                 Text {
                     attr {
                         text(page.entityDragName)
-                        fontSize(13f)
+                        fontSizeScaled(13f)
                         fontWeightSemiBold()
                         color(page.theme.onBrand)
                     }
@@ -3083,7 +3109,7 @@ internal class ChatPage : BasePager() {
                             }
                         )
                         marginTop(2f)
-                        fontSize(9f)
+                        fontSizeScaled(9f)
                         color(page.theme.onBrand.opacity(0.78f))
                     }
                 }
@@ -3814,6 +3840,8 @@ internal class ChatPage : BasePager() {
     }
 
     private var islandAnimating = false
+    // DRAGGING 看门狗修订号：pan 终点事件丢失时自愈用（见 armIslandDragWatchdog）。
+    private var islandDragWatchdogRevision = 0
     // 容器变换交接：路由触发（160ms 主触发 + 420ms 兜底 + 动画完成事件）
     // 三路竞争，用幂等门保证只跑一次。
     private var islandDetailHandoffDone = false
@@ -3824,6 +3852,33 @@ internal class ChatPage : BasePager() {
     private fun resetIslandMotion(snap: Boolean = false) {
         islandGestureMotion = IslandGestureMotion(revision = ++islandMotionRevision, snap = snap)
         islandAnimating = false
+    }
+
+    /**
+     * DRAGGING 看门狗（用户反馈 2026-09-09「收回后胶囊变高」）：
+     * 岛跟手缩放时手势源视图（卡底把手）自身在重布局，原生侧可能丢弃
+     * end/cancel——motion 永远停在 DRAGGING，胶囊停在中间高度（比收起态
+     * 39.6dp 高），且 IDLE 门把 toggleIsland 与新手势全部挡死，无法恢复。
+     * RETURNING/CLOSING/OPENING_DETAIL 相位都有 timeout 兜底，唯独 DRAGGING
+     * 没有；本看门狗补齐：每次 start/move 重置 800ms 定时器，到点仍处于
+     * DRAGGING（期间无任何事件到达 = 事件流已死）即按与松手一致的阈值
+     * 收敛到确定端点。settle 后相位离开 DRAGGING，正常松手的 end 回调
+     * 晚到也会被相位门挡掉，不会二次触发。
+     */
+    private fun armIslandDragWatchdog() {
+        val revision = ++islandDragWatchdogRevision
+        setTimeout(800) {
+            if (revision == islandDragWatchdogRevision) {
+                if (islandGestureMotion.phase == IslandGesturePhase.DRAGGING) {
+                    val deltaY = islandGestureMotion.offsetY
+                    when {
+                        deltaY <= -16f -> settleIslandClosedFromGesture()
+                        deltaY >= 20f -> openIslandDetailFromGesture(islandSymbol)
+                        else -> settleIslandGestureBack()
+                    }
+                }
+            }
+        }
     }
 
     private fun forceIslandCollapsedForDetailRoute() {
@@ -3903,15 +3958,23 @@ internal class ChatPage : BasePager() {
                 if (
                     !islandExpanded ||
                     islandAnimating ||
-                    islandGestureMotion.phase != IslandGesturePhase.IDLE ||
                     isIslandCompareLobbyVisible() ||
                     isIslandTermCompareLobbyVisible()
                 ) return
+                // 死手势接管（同看门狗根因）：end/cancel 丢失后 motion 卡在
+                // DRAGGING，原 IDLE 门会让此后所有手势与点按全部失效。新 pan
+                // 的 start 即证明旧事件流已死，仅对 DRAGGING 残留直接接管；
+                // RETURNING/CLOSING 等 settle 相位仍按原样忽略，等补间完成。
+                if (islandGestureMotion.phase != IslandGesturePhase.IDLE) {
+                    if (islandGestureMotion.phase != IslandGesturePhase.DRAGGING) return
+                    resetIslandMotion()
+                }
                 islandGestureStartY = y
                 islandGestureMotion = islandGestureMotion.copy(
                     phase = IslandGesturePhase.DRAGGING,
                     offsetY = 0f,
                 )
+                armIslandDragWatchdog()
             }
             "move" -> if (islandGestureMotion.phase == IslandGesturePhase.DRAGGING) {
                 val maxDown = (pagerData.pageViewHeight * 0.42f).coerceAtLeast(180f)
@@ -3919,6 +3982,7 @@ internal class ChatPage : BasePager() {
                     phase = IslandGesturePhase.DRAGGING,
                     offsetY = (y - islandGestureStartY).coerceIn(-104f, maxDown),
                 )
+                armIslandDragWatchdog()
             }
             "end", "cancel" -> {
                 if (islandGestureMotion.phase != IslandGesturePhase.DRAGGING) return
@@ -4468,7 +4532,7 @@ internal class ChatPage : BasePager() {
             if (page.triggerComposing) {
                 View {
                     attr { height(44f); alignItemsCenter(); justifyContentCenter() }
-                    Text { attr { text("输入中…"); fontSize(12f); color(page.theme.textTertiary) } }
+                    Text { attr { text("输入中…"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
                 }
             } else if (page.atCandidates.isEmpty()) {
                 View {
@@ -4476,7 +4540,7 @@ internal class ChatPage : BasePager() {
                     Text {
                         attr {
                             text(if (query.isEmpty()) "没有可推荐的标的" else "没有匹配“$query”的标的")
-                            fontSize(12f)
+                            fontSizeScaled(12f)
                             color(page.theme.textTertiary)
                         }
                     }
@@ -4522,19 +4586,19 @@ internal class ChatPage : BasePager() {
             attr { flex(1f); flexDirectionRow(); alignItemsCenter(); marginRight(8f) }
             val (pre, hit, suf) = page.splitHighlight(entry.name, query)
             if (pre.isNotEmpty()) {
-                row.Text { attr { text(pre); fontSize(14f); color(page.theme.textPrimary) } }
+                row.Text { attr { text(pre); fontSizeScaled(14f); color(page.theme.textPrimary) } }
             }
             if (hit.isNotEmpty()) {
-                row.Text { attr { text(hit); fontSize(14f); fontWeightBold(); color(page.theme.brand) } }
+                row.Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(page.theme.brand) } }
             }
             if (suf.isNotEmpty()) {
-                row.Text { attr { text(suf); fontSize(14f); color(page.theme.textPrimary) } }
+                row.Text { attr { text(suf); fontSizeScaled(14f); color(page.theme.textPrimary) } }
             }
         }
         row.Text {
             attr {
                 text(entry.symbol)
-                fontSize(11f)
+                fontSizeScaled(11f)
                 color(page.theme.textTertiary)
                 width(74f)
                 textAlignRight()
@@ -4547,13 +4611,13 @@ internal class ChatPage : BasePager() {
                 alignItemsCenter(); justifyContentCenter()
                 backgroundColor(page.theme.surfaceMuted); borderRadius(4f)
             }
-            row.Text { attr { text(entry.market); fontSize(9f); color(page.theme.textSecondary) } }
+            row.Text { attr { text(entry.market); fontSizeScaled(9f); color(page.theme.textSecondary) } }
         }
         // 涨跌幅右对齐定宽：红涨绿跌（中国习惯），无涨跌的板块走另一分支。
         row.Text {
             attr {
                 text(page.formatChgPct(entry.chgPct))
-                fontSize(12f)
+                fontSizeScaled(12f)
                 fontWeightSemiBold()
                 color(page.chgColor(entry.chgPct))
                 width(48f)
@@ -4567,7 +4631,7 @@ internal class ChatPage : BasePager() {
                 alignItemsCenter(); justifyContentCenter()
                 backgroundColor(page.theme.surfaceMuted); borderRadius(4f)
             }
-            row.Text { attr { text(candidate.source); fontSize(9f); color(page.theme.textSecondary) } }
+            row.Text { attr { text(candidate.source); fontSizeScaled(9f); color(page.theme.textSecondary) } }
         }
     }
 
@@ -4579,19 +4643,19 @@ internal class ChatPage : BasePager() {
             attr { flex(1f); flexDirectionRow(); alignItemsCenter(); marginRight(8f) }
             val (pre, hit, suf) = page.splitHighlight(entry.name, query)
             if (pre.isNotEmpty()) {
-                row.Text { attr { text(pre); fontSize(14f); color(page.theme.brand) } }
+                row.Text { attr { text(pre); fontSizeScaled(14f); color(page.theme.brand) } }
             }
             if (hit.isNotEmpty()) {
-                row.Text { attr { text(hit); fontSize(14f); fontWeightBold(); color(page.theme.brand) } }
+                row.Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(page.theme.brand) } }
             }
             if (suf.isNotEmpty()) {
-                row.Text { attr { text(suf); fontSize(14f); color(page.theme.brand) } }
+                row.Text { attr { text(suf); fontSizeScaled(14f); color(page.theme.brand) } }
             }
         }
         row.Text {
             attr {
                 text("共 ${entry.boardCount} 只")
-                fontSize(11f)
+                fontSizeScaled(11f)
                 color(page.theme.textTertiary)
                 marginRight(6f)
             }
@@ -4602,7 +4666,7 @@ internal class ChatPage : BasePager() {
                 alignItemsCenter(); justifyContentCenter()
                 backgroundColor(page.theme.brandSoft); borderRadius(4f)
             }
-            row.Text { attr { text("板块"); fontSize(9f); color(page.theme.brand) } }
+            row.Text { attr { text("板块"); fontSizeScaled(9f); color(page.theme.brand) } }
         }
         row.View {
             attr {
@@ -4610,7 +4674,7 @@ internal class ChatPage : BasePager() {
                 alignItemsCenter(); justifyContentCenter()
                 backgroundColor(page.theme.surfaceMuted); borderRadius(4f)
             }
-            row.Text { attr { text(candidate.source); fontSize(9f); color(page.theme.textSecondary) } }
+            row.Text { attr { text(candidate.source); fontSizeScaled(9f); color(page.theme.textSecondary) } }
         }
     }
 
@@ -4662,13 +4726,13 @@ internal class ChatPage : BasePager() {
             if (page.slashUnknown.isNotEmpty()) {
                 View {
                     attr { padding(10f); flexDirectionColumn() }
-                    Text { attr { text("未识别命令：/${page.slashUnknown}"); fontSize(12f); color(page.theme.textSecondary) } }
-                    Text { attr { text("将作为普通文本发送"); fontSize(10f); color(page.theme.textTertiary) } }
+                    Text { attr { text("未识别命令：/${page.slashUnknown}"); fontSizeScaled(12f); color(page.theme.textSecondary) } }
+                    Text { attr { text("将作为普通文本发送"); fontSizeScaled(10f); color(page.theme.textTertiary) } }
                     val suggestions = CommandRegistry.suggest(page.slashUnknown)
                     if (suggestions.isNotEmpty()) {
                         View {
                             attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
-                            Text { attr { text("你是不是想用"); fontSize(10f); color(page.theme.textTertiary); marginRight(6f) } }
+                            Text { attr { text("你是不是想用"); fontSizeScaled(10f); color(page.theme.textTertiary); marginRight(6f) } }
                             suggestions.forEach { command ->
                                 View {
                                     attr {
@@ -4680,7 +4744,7 @@ internal class ChatPage : BasePager() {
                                         backgroundColor(page.theme.brandSoft)
                                         borderRadius(7f)
                                     }
-                                    Text { attr { text("/${command.name}"); fontSize(11f); color(page.theme.brand) } }
+                                    Text { attr { text("/${command.name}"); fontSizeScaled(11f); color(page.theme.brand) } }
                                     event { click { page.selectSlashCommand(command) } }
                                 }
                             }
@@ -4690,7 +4754,7 @@ internal class ChatPage : BasePager() {
             } else if (page.slashCandidates.isEmpty()) {
                 View {
                     attr { height(36f); alignItemsCenter(); justifyContentCenter() }
-                    Text { attr { text("输入 / 唤起指令"); fontSize(12f); color(page.theme.textTertiary) } }
+                    Text { attr { text("输入 / 唤起指令"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
                 }
             } else {
                 Scroller {
@@ -4711,12 +4775,12 @@ internal class ChatPage : BasePager() {
                             event { click { page.selectSlashCommand(command) } }
                             View {
                                 attr { width(28f); height(28f); marginRight(10f); alignItemsCenter(); justifyContentCenter(); backgroundColor(page.theme.brandSoft); borderRadius(8f) }
-                                Text { attr { text(command.icon); fontSize(14f); color(page.theme.brand) } }
+                                Text { attr { text(command.icon); fontSizeScaled(14f); color(page.theme.brand) } }
                             }
                             View {
                                 attr { flex(1f); flexDirectionColumn() }
-                                Text { attr { text("/${command.name}"); fontSize(13f); color(page.theme.textPrimary) } }
-                                Text { attr { text(command.desc); fontSize(10f); color(page.theme.textTertiary) } }
+                                Text { attr { text("/${command.name}"); fontSizeScaled(13f); color(page.theme.textPrimary) } }
+                                Text { attr { text(command.desc); fontSizeScaled(10f); color(page.theme.textTertiary) } }
                             }
                         }
                     }
@@ -4757,9 +4821,9 @@ internal class ChatPage : BasePager() {
                 attr { flexDirectionRow(); alignItemsCenter(); marginBottom(8f) }
                 View {
                     attr { width(24f); height(24f); marginRight(8f); alignItemsCenter(); justifyContentCenter(); backgroundColor(page.theme.brandSoft); borderRadius(6f) }
-                    Text { attr { text(command.icon); fontSize(12f); color(page.theme.brand) } }
+                    Text { attr { text(command.icon); fontSizeScaled(12f); color(page.theme.brand) } }
                 }
-                Text { attr { text("/${command.name} · 参数"); fontSize(13f); color(page.theme.textPrimary) } }
+                Text { attr { text("/${command.name} · 参数"); fontSizeScaled(13f); color(page.theme.textPrimary) } }
             }
             command.params.forEach { param ->
                 val filled = args[param.key].orEmpty()
@@ -4779,10 +4843,10 @@ internal class ChatPage : BasePager() {
                         borderRadius(8f)
                     }
                     View { attr { flex(1f); flexDirectionColumn() }
-                        Text { attr { text(param.label + if (param.required) " *" else "（可选）"); fontSize(11f); color(if (param.key == currentKey) page.theme.brand else page.theme.textSecondary) } }
-                        Text { attr { text(if (filled.isNotEmpty()) filled else param.placeholder); fontSize(12f); color(if (filled.isNotEmpty()) page.theme.textPrimary else page.theme.textTertiary) } }
+                        Text { attr { text(param.label + if (param.required) " *" else "（可选）"); fontSizeScaled(11f); color(if (param.key == currentKey) page.theme.brand else page.theme.textSecondary) } }
+                        Text { attr { text(if (filled.isNotEmpty()) filled else param.placeholder); fontSizeScaled(12f); color(if (filled.isNotEmpty()) page.theme.textPrimary else page.theme.textTertiary) } }
                     }
-                    Text { attr { text(when (param.type) { ParamType.SECURITY -> "@" ; ParamType.ENUM -> "选" ; else -> "文" }); fontSize(9f); color(page.theme.textTertiary) } }
+                    Text { attr { text(when (param.type) { ParamType.SECURITY -> "@" ; ParamType.ENUM -> "选" ; else -> "文" }); fontSizeScaled(9f); color(page.theme.textTertiary) } }
                 }
             }
             if (currentParam?.type == ParamType.SECURITY) {
@@ -4792,7 +4856,7 @@ internal class ChatPage : BasePager() {
                     attr {
                         text(if (query.isEmpty()) "选择${currentParam.label}" else "匹配「$query」")
                         marginTop(10f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -4821,7 +4885,7 @@ internal class ChatPage : BasePager() {
                     attr {
                         text("选择${currentParam.label}")
                         marginTop(10f)
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -4838,7 +4902,7 @@ internal class ChatPage : BasePager() {
                                 backgroundColor(page.theme.brandSoft)
                                 borderRadius(8f)
                             }
-                            Text { attr { text(option); fontSize(12f); fontWeightMedium(); color(page.theme.brand) } }
+                            Text { attr { text(option); fontSizeScaled(12f); fontWeightMedium(); color(page.theme.brand) } }
                             event { click { page.selectParamEnumOption(option) } }
                         }
                     }
@@ -4849,7 +4913,7 @@ internal class ChatPage : BasePager() {
                 Text {
                     attr {
                         text(if (missing.isEmpty()) "必填已完成，可继续补可选参数或发送" else "继续输入 @标的 或文字填充必填参数")
-                        fontSize(10f)
+                        fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
@@ -5298,7 +5362,7 @@ private fun ViewContainer<*, *>.MediaInputRow(theme: StockChatTheme, onSelect: (
                         LineIconCamera(color = theme.brand, size = 15f)
                     }
                 }
-                Text { attr { text(action.label); fontSize(13f); fontWeightMedium(); color(theme.brand) } }
+                Text { attr { text(action.label); fontSizeScaled(13f); fontWeightMedium(); color(theme.brand) } }
                 event { click { onSelect(action) } }
             }
         }

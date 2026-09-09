@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.cards.components.CardShell
 import com.kuikly.stockchat.cards.core.CardAssembler
 import com.kuikly.stockchat.cards.core.CardContext
@@ -152,7 +155,7 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                 selectCancel { actions.onTextSelectCancel(message.id) }
             }
             if (user) {
-                Text { attr { text(message.content); fontSize(16f); lineHeight(24f); fontWeightMedium(); color(theme.onBrand) } }
+                Text { attr { text(message.content); fontSizeScaled(16f); lineHeightScaled(24f); fontWeightMedium(); color(theme.onBrand) } }
             } else {
                 vif({ message.streaming }) {
                     View {
@@ -181,8 +184,8 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                         Text {
                             attr {
                                 text("结构化内容暂时无法展示：${error.message.orEmpty()}")
-                                fontSize(12f)
-                                lineHeight(18f)
+                                fontSizeScaled(12f)
+                                lineHeightScaled(18f)
                                 color(theme.textSecondary)
                             }
                         }
@@ -319,7 +322,7 @@ private fun ViewContainer<*, *>.AssistantContent(
                         },
                     )
                     flex(1f)
-                    fontSize(9f)
+                    fontSizeScaled(9f)
                     color(if (message.failed) theme.brand else theme.textTertiary)
                 }
             }
@@ -406,7 +409,7 @@ private fun ViewContainer<*, *>.StructuredContentUnavailable(
             Text {
                 attr {
                     text("CARD")
-                    fontSize(10f)
+                    fontSizeScaled(10f)
                     fontWeightMedium()
                     color(theme.textTertiary)
                 }
@@ -417,7 +420,7 @@ private fun ViewContainer<*, *>.StructuredContentUnavailable(
             Text {
                 attr {
                     text("${type.ifEmpty { "结构化内容" }} 加载失败")
-                    fontSize(13f)
+                    fontSizeScaled(13f)
                     fontWeightMedium()
                     color(theme.textSecondary)
                 }
@@ -426,7 +429,7 @@ private fun ViewContainer<*, *>.StructuredContentUnavailable(
                 attr {
                     text("可单独重试这张卡片")
                     marginTop(3f)
-                    fontSize(10f)
+                    fontSizeScaled(10f)
                     color(theme.textTertiary)
                 }
             }
@@ -443,7 +446,7 @@ private fun ViewContainer<*, *>.StructuredContentUnavailable(
             Text {
                 attr {
                     text(if (retrying) "重试中" else "重试")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightMedium()
                     color(if (retrying) theme.textTertiary else theme.brand)
                 }
@@ -539,7 +542,7 @@ private fun ViewContainer<*, *>.SuggestionRow(
                 Text {
                     attr {
                         text(suggestion.text)
-                        fontSize(12f)
+                        fontSizeScaled(12f)
                         color(if (suggestion.type == "drill") theme.brand else theme.textSecondary)
                     }
                 }
@@ -567,24 +570,24 @@ private fun ViewContainer<*, *>.NestedConversation(
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
             View { attr { width(2f); height(18f); marginRight(7f); backgroundColor(theme.brand); borderRadius(1f) } }
-            Text { attr { text(state.title); fontSize(11f); fontWeightMedium(); color(theme.brand); flex(1f) } }
-            Text { attr { text(if (state.collapsed) "展开" else "收起"); fontSize(11f); color(theme.brand) } }
+            Text { attr { text(state.title); fontSizeScaled(11f); fontWeightMedium(); color(theme.brand); flex(1f) } }
+            Text { attr { text(if (state.collapsed) "展开" else "收起"); fontSizeScaled(11f); color(theme.brand) } }
             event { click { onToggle(state.cardId) } }
         }
         if (!state.collapsed) {
-            Text { attr { text(state.response); marginTop(8f); fontSize(12f); lineHeight(18f); color(theme.textSecondary) } }
+            Text { attr { text(state.response); marginTop(8f); fontSizeScaled(12f); lineHeightScaled(18f); color(theme.textSecondary) } }
             View {
                 attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
                 View {
                     attr { flex(1f); height(34f); paddingLeft(9f); paddingRight(9f); backgroundColor(theme.surface); borderRadius(8f); justifyContentCenter() }
                     Input {
-                        attr { height(32f); fontSize(12f); color(theme.textPrimary); placeholder("继续追问"); placeholderColor(theme.textTertiary) }
+                        attr { height(32f); fontSizeScaled(12f); color(theme.textPrimary); placeholder("继续追问"); placeholderColor(theme.textTertiary) }
                         event { textDidChange { onInput(state.cardId, it.text) } }
                     }
                 }
                 View {
                     attr { marginLeft(6f); height(34f); paddingLeft(10f); paddingRight(10f); allCenter(); backgroundColor(theme.brand); borderRadius(8f) }
-                    Text { attr { text(if (state.streaming) "…" else "发送"); fontSize(11f); color(theme.onBrand) } }
+                    Text { attr { text(if (state.streaming) "…" else "发送"); fontSizeScaled(11f); color(theme.onBrand) } }
                     if (!state.streaming) event { click { onSend(state.cardId) } }
                 }
             }
