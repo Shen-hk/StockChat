@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.common.Format
@@ -63,7 +65,9 @@ fun detailTimelineSeries(quote: Quote): List<Double> =
  * - R1：draw 闭包内读 quote/crosshair/drawProgress/pulse/state.selecting/state.selectRange/
  *   flags/state.flagDropProgress/band/sonarIndices 等 observable 建立依赖，数据变化驱动重绘；
  * - R4：入场 draw-on 由页侧 drawProgress 0→1 驱动（setTimeout 链，断链兜底在页侧）；
- * - 十字光标：横向 pan 捕获（不抢 Scroller 纵向滚动），start 显示 / move 跟随 / end 清除。
+ * - 十字光标：touch 流 + 长按 400ms 进入 scrub（不用 pan——pan 在 Android DOWN 拍
+ *   即 requestDisallowInterceptTouchEvent 锁死父级 Scroller，普通上下滑动全被图表
+ *   吃掉），长按显示 / move 跟随 / end 松手保留。
  *
  * 本次扩展（doc 29）：④ 异动声呐、① 圈选即问、⑤ 十字线停顿预填、B2 新闻旗标（图侧）、
  * ② 句图联动区间带。全部以「新增可选参数 + 默认值」方式扩展，默认参数下绘制与交互
@@ -88,6 +92,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     onSelectStateChange: (Boolean) -> Unit = {},       // ① 进入/退出圈选态（页面显隐 hint）
     onScrubPause: (Int) -> Unit = {},                  // ⑤ scrub 停顿 600ms 回调
     onScrubLeave: () -> Unit = {},                     // ⑤ 松手离开 scrub（页面 2s 后清预填）
+    onScrubActive: (Boolean) -> Unit = {},             // 长按进/出 scrub（页面锁/解锁 Scroller 滚动）
     onBlankTap: () -> Unit = {},                       // U1 点空白（非声呐、非拖动的轻点）回调
     sonarDrift: () -> Float = { 0f },                  // ④ 声呐气泡横向漂移相位（0..1 循环，页面步进驱动）
 ) {
@@ -99,8 +104,9 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     var downX = 0f
     var downY = 0f
     var movedDist = 0f                                        // 按下到当前位移平方（≤64 即 ≤8dp）
-    var longPressFired = false
-    var longPressCancelled = false                            // 移动 >8dp 置真，使待触发长按失效
+    var gestureDone = false                                   // 收尾幂等：up/cancel 只生效一次
+    var scrubbing = false                                     // 长按已进入十字线 scrub 态
+    var lpGen = 0                                             // 长按计时无取消句柄 → 代际计数失效
     var pauseSlot = -1
     var pauseRevision = 0                                     // 槽位变化即自增，使旧停顿计时失效（免 clearTimeout）
     var scrubLeaveRevision = 0                                // 松手 revision：使旧的 2s 清预填计时失效
@@ -160,105 +166,15 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
         attr {
             height(CHART_HEIGHT)
         }
+        // Canvas 只负责绘制：touchEnable(false)——① Canvas 的基础 Event 没有
+        // touchDown/touchMove/touchUp/touchCancel（它们在 GroupEvent 上）；
+        // ② 内容子树挂触摸会吞整条触摸流（RowGestureLayer 实测），手势统一由
+        // 上方同尺寸手势覆盖层承担。
         Canvas({
             attr {
                 absolutePositionAllZero()
                 height(CHART_HEIGHT)
-                touchEnable(true)
-            }
-            // 十字光标：pan 直接挂 Canvas（KLineChart 同款实测范式，无 capture——
-            // 独立覆盖层 + capture(HORIZONTAL) 在 Scroller 内收不到事件）。
-            // event 必须与 attr 同级挂在视图初始化作用域上，不能写进 attr 闭包。
-            // 本次在 pan 内扩展：① 长按 400ms 进圈选（与 scrub 互斥）、④ 轻点声呐、
-            // ⑤ scrub 停顿 600ms 预填。长按计时用 setTimeout 实现（U5：400ms/8dp）。
-            event {
-                pan { params ->
-                    val q = quote()
-                    if (q.timeline.isEmpty()) return@pan
-                    val n = q.timeline.size
-                    val plotW = (containerWidth - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
-                    val slotOf: (Float) -> Int = { x ->
-                        ((x - AXIS_LEFT) / plotW * 240f).roundToInt().coerceIn(0, n - 1)
-                    }
-
-                    // 按下：记录起点，启动 400ms 长按计时（① 圈选入口）
-                    if (params.state == "start") {
-                        downX = params.x
-                        downY = params.y
-                        movedDist = 0f
-                        longPressFired = false
-                        longPressCancelled = false
-                        setTimeout(400) {
-                            // 移动 >8dp 或已释放则失效；与 scrub 互斥
-                            if (!longPressFired && !longPressCancelled && movedDist <= 64f && !state.selecting) {
-                                longPressFired = true
-                                val idx = slotOf(downX)
-                                state.selecting = true
-                                state.selectRange = Pair(idx, idx)
-                                onSelectStateChange(true)
-                            }
-                        }
-                    }
-
-                    if (state.selecting) {
-                        // ① 圈选拖动态：实时更新预览带，不进 scrub（与 scrub 互斥）
-                        if (!params.isEnd) {
-                            val idx = slotOf(params.x)
-                            state.selectRange = Pair(state.selectRange.first, idx)
-                        }
-                    } else {
-                        // 原有 scrub：松手保留光标（KLineChart 选中同款语义）
-                        if (!params.isEnd || params.state == "start") {
-                            val slot = slotOf(params.x)
-                            onScrub(slot)
-                            // ⑤ scrub 停顿 600ms：位置变化则重置计时，一次停顿只回调一次
-                            if (slot != pauseSlot) {
-                                pauseSlot = slot
-                                pauseRevision++
-                                val myRev = pauseRevision
-                                setTimeout(600) {
-                                    if (myRev == pauseRevision) onScrubPause(pauseSlot)
-                                }
-                            }
-                        }
-                        // 移动 >8dp 取消长按计时；累计位移供松手判定 tap / 圈选
-                        if (params.state == "move") {
-                            val dx = params.x - downX
-                            val dy = params.y - downY
-                            val d2 = dx * dx + dy * dy
-                            if (d2 > movedDist) movedDist = d2
-                            if (movedDist > 64f && !longPressFired) longPressCancelled = true
-                        }
-                    }
-
-                    // 松手：清理计时；圈选则判定回调，否则判定声呐点命中 / 空白轻点，
-                    // 并调度「离开 scrub 2s 清预填」（一次松手只调度一份，再次交互即失效）
-                    if (params.isEnd) {
-                        longPressCancelled = true
-                        pauseRevision++ // 使任何待触发停顿计时失效
-                        if (state.selecting) {
-                            val (s, e) = state.selectRange
-                            if (abs(e - s) >= 3) onCircleSelect(min(s, e), max(s, e))
-                            state.selecting = false
-                            state.selectRange = Pair(-1, -1)
-                            onSelectStateChange(false)
-                        } else {
-                            if (movedDist <= 64f) {
-                                // ④ 声呐点命中：落点距中心 ≤12dp，回调且不进 scrub；
-                                // 未命中 = 空白轻点 → U1「点空白全关」入口
-                                val hit = sonarHitTest(downX, downY)
-                                if (hit >= 0) onSonarTap(hit) else onBlankTap()
-                            }
-                            // ⑤ 离开 scrub：2s 后清预填（期间任何新松手都会使本计时失效）
-                            scrubLeaveRevision++
-                            val myLeaveRev = scrubLeaveRevision
-                            setTimeout(2000) {
-                                if (myLeaveRev == scrubLeaveRevision) onScrubLeave()
-                            }
-                        }
-                        longPressFired = false
-                    }
-                }
+                touchEnable(false)
             }
         }) { canvas, width, _ ->
             val q = quote()
@@ -607,6 +523,122 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
             }
         }
 
+        // ── 手势覆盖层（RowGestureLayer 同款 touch 范式，2026-09-09 重构）──
+        // 旧方案 pan 直接挂 Canvas：Android 渲染层 KRCSSGestureDetector 对带 pan 的
+        // view 在 DOWN 拍即 requestDisallowInterceptTouchEvent(true)（字节码证实），
+        // 父级 Scroller 整段手势被锁死——用户上下滑动全变成十字线拖动。
+        // touch 不做 disallow：未进 scrub 前纵向拖动被 Scroller 正常拦截（touchCancel
+        // 收尾），页面照常滚动。用户定案：普通上下滑动=页面滚动、不点亮十字线；
+        // 长按 400ms 静止才进十字线 scrub，进入瞬间回调 onScrubActive(true) 让页面
+        // 锁 Scroller 滚动（WatchlistPage 拖拽排序同款已验证机制），松手/取消恢复。
+        // 长按计时用代际计数失效（RiskSkyChart 同款）。
+        // ① 圈选即问：原单指长按拖动入口让位十字线后暂无触发路径（回调与绘制保留）。
+        View {
+            attr {
+                absolutePositionAllZero()
+                height(CHART_HEIGHT)
+                touchEnable(true)
+            }
+            event {
+                // 槽位换算每次现读 quote（event 闭包只在初始化执行一次，不能缓存 q）
+                fun slotAt(x: Float): Int {
+                    val q = quote()
+                    if (q.timeline.isEmpty()) return -1
+                    val plotW = (containerWidth - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
+                    return ((x - AXIS_LEFT) / plotW * 240f).roundToInt().coerceIn(0, q.timeline.size - 1)
+                }
+
+                touchDown { e ->
+                    downX = e.x
+                    downY = e.y
+                    movedDist = 0f
+                    gestureDone = false
+                    scrubbing = false
+                    lpGen++
+                    val myGen = lpGen
+                    setTimeout(400) {
+                        // 静止 400ms（移动 ≤8dp、未提前收尾）→ 进十字线 scrub 态
+                        if (myGen == lpGen && movedDist <= 64f && !gestureDone) {
+                            val slot = slotAt(downX)
+                            if (slot >= 0) {
+                                scrubbing = true
+                                onScrubActive(true)
+                                onScrub(slot)
+                                pauseSlot = slot
+                                pauseRevision++
+                                val myRev = pauseRevision
+                                setTimeout(600) {
+                                    if (myRev == pauseRevision) onScrubPause(pauseSlot)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                touchMove { e ->
+                    if (gestureDone) return@touchMove
+                    val dx = e.x - downX
+                    val dy = e.y - downY
+                    val d2 = dx * dx + dy * dy
+                    if (d2 > movedDist) movedDist = d2
+                    if (scrubbing) {
+                        // scrub 态：十字线跟随手指 x（页面滚动已由 onScrubActive 锁定）
+                        val slot = slotAt(e.x)
+                        if (slot >= 0) {
+                            onScrub(slot)
+                            // ⑤ scrub 停顿 600ms：位置变化则重置计时，一次停顿只回调一次
+                            if (slot != pauseSlot) {
+                                pauseSlot = slot
+                                pauseRevision++
+                                val myRev = pauseRevision
+                                setTimeout(600) {
+                                    if (myRev == pauseRevision) onScrubPause(pauseSlot)
+                                }
+                            }
+                        }
+                    } else if (movedDist > 64f) {
+                        lpGen++ // 普通滑动（含页面滚动启动）：作废长按计时
+                    }
+                }
+
+                touchUp { _ ->
+                    if (gestureDone) return@touchUp
+                    gestureDone = true
+                    lpGen++
+                    pauseRevision++ // 使任何待触发停顿/长按计时失效
+                    if (scrubbing) {
+                        scrubbing = false
+                        onScrubActive(false)
+                        // 松手保留十字线（KLineChart 选中同款语义）；
+                        // ⑤ 离开 scrub：2s 后清预填（期间任何新松手都会使本计时失效）
+                        scrubLeaveRevision++
+                        val myLeaveRev = scrubLeaveRevision
+                        setTimeout(2000) {
+                            if (myLeaveRev == scrubLeaveRevision) onScrubLeave()
+                        }
+                    } else if (movedDist <= 64f) {
+                        // ④ 声呐点命中：落点距中心 ≤12dp，回调且不进 scrub；
+                        // 未命中 = 空白轻点 → U1「点空白全关」入口
+                        val hit = sonarHitTest(downX, downY)
+                        if (hit >= 0) onSonarTap(hit) else onBlankTap()
+                    }
+                }
+
+                touchCancel { _ ->
+                    // 被外层 Scroller 拦截（未进 scrub 的纵向滚动）或系统打断：
+                    // 只清理计时与 scrub 锁，不触发 tap/松手语义
+                    if (gestureDone) return@touchCancel
+                    gestureDone = true
+                    lpGen++
+                    pauseRevision++
+                    if (scrubbing) {
+                        scrubbing = false
+                        onScrubActive(false)
+                    }
+                }
+            }
+        }
+
         // ── B2 旗标下落协调层：检测新落旗并启动 550ms 弹性下落（尺寸 0、不可见、不接收事件）。
         //    flags() 在 attr 闭包内读取建立响应式依赖（R1）；reduceMotion 直接落位。──
         View {
@@ -656,7 +688,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         Text {
                             attr {
                                 text("${point.time} · 量 ${point.volume.roundToInt()}手")
-                                fontSize(9f)
+                                fontSizeScaled(9f)
                                 color(theme.textTertiary)
                             }
                         }
@@ -664,7 +696,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                             attr {
                                 text("${Format.price(point.price)}  ${Format.percent(pct)}")
                                 marginTop(2f)
-                                fontSize(11f)
+                                fontSizeScaled(11f)
                                 fontWeightSemiBold()
                                 color(valueColor)
                             }
@@ -673,7 +705,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                             attr {
                                 text("均价 ${Format.price(averages[idx])}")
                                 marginTop(2f)
-                                fontSize(9f)
+                                fontSizeScaled(9f)
                                 color(theme.textSecondary)
                             }
                         }

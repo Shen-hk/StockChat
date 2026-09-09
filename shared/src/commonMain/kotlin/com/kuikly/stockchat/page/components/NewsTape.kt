@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.tencent.kuikly.core.base.Border
@@ -29,6 +32,8 @@ internal fun ViewContainer<*, *>.NewsTape(
     selected: () -> NewsItem?,
     // 情绪判定：true=利好(rise) / false=利空(fall) / null=中性不染色；页侧 scoreNewsSentiment
     sentimentOf: (NewsItem) -> Boolean?,
+    // 该条是否已落旗（页侧 droppedNewsIds）：摘要条事实行据此切换文案
+    flagged: (NewsItem) -> Boolean = { false },
     onTapItem: (NewsItem) -> Unit,
     onLongPressItem: ((NewsItem) -> Unit)? = null,
     onLongPressRelease: (() -> Unit)? = null,
@@ -115,7 +120,7 @@ internal fun ViewContainer<*, *>.NewsTape(
                                     fontSize(theme.type.label)
                                     fontWeightSemiBold()
                                     color(theme.textPrimary)
-                                    lineHeight(16f)
+                                    lineHeightScaled(16f)
                                 }
                             }
                             vif({ news.summary.isNotEmpty() }) {
@@ -124,7 +129,7 @@ internal fun ViewContainer<*, *>.NewsTape(
                                         text(news.summary)
                                         marginTop(4f)
                                         fontSize(theme.type.meta)
-                                        lineHeight(15f)
+                                        lineHeightScaled(15f)
                                         color(theme.textSecondary)
                                     }
                                 }
@@ -134,7 +139,10 @@ internal fun ViewContainer<*, *>.NewsTape(
                                 attr { marginTop(7f); flexDirectionRow(); alignItemsCenter() }
                                 Text {
                                     attr {
-                                        text("旗标已落在走势图对应位置 · 端侧规则")
+                                        text(
+                                            if (flagged(news)) "旗标已落在走势图对应位置 · 端侧规则"
+                                            else "该条资讯无当日时间锚点，未落旗 · 端侧规则"
+                                        )
                                         fontSize(theme.type.meta)
                                         color(theme.textTertiary)
                                         flex(1f)
@@ -239,7 +247,7 @@ private fun ViewContainer<*, *>.TapePill(
         Text {
             attr {
                 text(pillText(item))
-                fontSize(10.5f)
+                fontSizeScaled(10.5f)
                 if (selected()?.id == item.id) fontWeightSemiBold()
                 color(if (selected()?.id == item.id) theme.textPrimary else theme.textSecondary)
             }
@@ -268,7 +276,8 @@ private fun pillText(item: NewsItem): String {
     return "$time  " + truncateByWidth(item.title, PILL_TITLE_UNITS)
 }
 
-private fun truncateByWidth(text: String, maxUnits: Float): String {
+/** 按字符显示宽度截断（CJK=1 / 拉丁=0.5）；B1 先览小气泡复用。 */
+internal fun truncateByWidth(text: String, maxUnits: Float): String {
     var w = 0f
     for ((i, ch) in text.withIndex()) {
         w += if (ch.code > 0x2E7F) 1f else 0.5f
@@ -277,7 +286,8 @@ private fun truncateByWidth(text: String, maxUnits: Float): String {
     return text
 }
 
-private fun formatTapeTime(raw: String): String {
+/** `2026-09-07 10:23:42` → `09-07 10:23`；B1 先览小气泡复用。 */
+internal fun formatTapeTime(raw: String): String {
     // `2026-09-07 10:23:42` → `09-07 10:23`
     return if (raw.length >= 16) raw.substring(5, 16) else raw
 }

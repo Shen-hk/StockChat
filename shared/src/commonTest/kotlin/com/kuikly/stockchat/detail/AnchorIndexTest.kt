@@ -72,4 +72,30 @@ class AnchorIndexTest {
         assertEquals("", AnchorIndex.indexToTimeLabel(-1))
         assertEquals("", AnchorIndex.indexToTimeLabel(240))
     }
+
+    @Test
+    fun clampedMappingCoversNonSessionTimes() {
+        // 交易时段内与严格版一致
+        assertEquals(0, AnchorIndex.timeStringToIndexClamped("09:30"))
+        assertEquals(13, AnchorIndex.timeStringToIndexClamped("09:43"))
+        assertEquals(119, AnchorIndex.timeStringToIndexClamped("11:30"))
+        assertEquals(120, AnchorIndex.timeStringToIndexClamped("13:00"))
+        assertEquals(239, AnchorIndex.timeStringToIndexClamped("15:00"))
+        // 盘前发布 → 开盘位（东财资讯常见 07:xx/08:xx 发布）
+        assertEquals(0, AnchorIndex.timeStringToIndexClamped("07:30"))
+        assertEquals(0, AnchorIndex.timeStringToIndexClamped("09:29"))
+        // 午休发布 → 早盘末位
+        assertEquals(119, AnchorIndex.timeStringToIndexClamped("11:45"))
+        assertEquals(119, AnchorIndex.timeStringToIndexClamped("12:00"))
+        // 盘后/晚间发布 → 尾盘位（东财 Art_ShowTime 多为盘后，落旗主路径）
+        assertEquals(239, AnchorIndex.timeStringToIndexClamped("15:01"))
+        assertEquals(239, AnchorIndex.timeStringToIndexClamped("16:30"))
+        assertEquals(239, AnchorIndex.timeStringToIndexClamped("21:35"))
+        assertEquals(239, AnchorIndex.timeStringToIndexClamped("23:59"))
+        // 非法串仍返回 null
+        assertNull(AnchorIndex.timeStringToIndexClamped("25:00"))
+        assertNull(AnchorIndex.timeStringToIndexClamped("ab:cd"))
+        assertNull(AnchorIndex.timeStringToIndexClamped("13:60"))
+        assertNull(AnchorIndex.timeStringToIndexClamped("0930"))
+    }
 }

@@ -1,5 +1,8 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.page.detail.FactorSpec
@@ -116,7 +119,7 @@ internal fun ViewContainer<*, *>.RevisitCard(
                 attr {
                     // 合并为一条，避免窄屏把日期和值拆成两列造成 2 行高度。
                     text("★  当初理由 · $entryTimeLabel 加自选 · 当时 " + if (entryPrice > 0) Format.price(entryPrice) else "—")
-                    fontSize(11f)
+                    fontSizeScaled(11f)
                     fontWeightSemiBold()
                     color(theme.textSecondary)
                     flex(1f)
@@ -126,7 +129,7 @@ internal fun ViewContainer<*, *>.RevisitCard(
                 attr {
                     text(if (expanded()) "⌃" else "›")
                     marginLeft(8f)
-                    fontSize(12f)
+                    fontSizeScaled(12f)
                     color(theme.textTertiary)
                 }
             }
@@ -175,7 +178,7 @@ internal fun ViewContainer<*, *>.RevisitCard(
                         text("理由：${if (reason.isBlank()) "未写理由" else reason}")
                         marginTop(10f)
                         fontSize(theme.type.meta)
-                        lineHeight(15f)
+                        lineHeightScaled(15f)
                         color(theme.textTertiary)
                     }
                 }
@@ -186,7 +189,7 @@ internal fun ViewContainer<*, *>.RevisitCard(
                         text(eventsSummary)
                         marginTop(6f)
                         fontSize(theme.type.label)
-                        lineHeight(16f)
+                        lineHeightScaled(16f)
                         color(theme.textSecondary)
                     }
                 }
@@ -440,8 +443,8 @@ internal fun ViewContainer<*, *>.BalanceSpectrumBlock(
 
         View {
             attr { flexDirectionRow(); alignItemsCenter() }
-            Text { attr { text("研报评级光谱 · 拖动看观点"); flex(1f); fontSize(9f); color(theme.textTertiary) } }
-            Text { attr { text("近 90 天 ${segments.sumOf { it.count }} 份"); fontSize(9f); color(theme.textTertiary) } }
+            Text { attr { text("研报评级光谱 · 拖动看观点"); flex(1f); fontSizeScaled(9f); color(theme.textTertiary) } }
+            Text { attr { text("近 90 天 ${segments.sumOf { it.count }} 份"); fontSizeScaled(9f); color(theme.textTertiary) } }
         }
         // 两端多/空
         View {
@@ -569,8 +572,8 @@ private fun ViewContainer<*, *>.QuotePanel(
         Text {
             attr {
                 text(quote)
-                fontSize(10f)
-                lineHeight(15f)
+                fontSizeScaled(10f)
+                lineHeightScaled(15f)
                 color(theme.textSecondary)
             }
         }
@@ -620,7 +623,7 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
         Text {
             attr {
                 text("拖动理解贡献敏感度，数学重算非预测")
-                fontSize(8.5f)
+                fontSizeScaled(8.5f)
                 color(theme.textTertiary)
             }
         }
@@ -653,10 +656,14 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
                     // 轨道：高 16f 完整容纳 16f knob——Kuikly 子视图默认被父容器裁剪
                     // （overflow），且圆角容器 overflow(true) 失效，旧版 8f 轨道把
                     // knob 上下各裁 4f 只剩一条缝（「按钮被遮住」的根因）。
+                    // flexDirectionRow 必须显式声明：Kuikly View 默认纵向 flex，
+                    // 缺了它 flex() 分配的是高度而非宽度，knob 被 alignItemsCenter
+                    // 恒定水平居中（「拖动不跟手、圆点钉在原地」的根因）。
                     View {
                         attr {
                             width(trackW)
                             height(16f)
+                            flexDirectionRow()
                             alignItemsCenter()
                         }
                         // 细轨线：绝对定位铺底（对齐原型 3px 细线；本层无圆角不会被裁）
@@ -823,7 +830,7 @@ internal fun ViewContainer<*, *>.FactorReplayBlock(
                         " · 未解释部分 " + signedPct(residual) +
                         "（实际 − 重算，模型未覆盖的成分）"
                 )
-                fontSize(8.5f)
+                fontSizeScaled(8.5f)
                 color(theme.textTertiary)
             }
         }
@@ -852,6 +859,13 @@ private val INDUSTRY_SAMPLE_PEERS: List<Pair<String, Double>> = listOf(
  * E3 卡内覆盖层：行业 Top5 横条（只读）。由 BusinessCardSlot 的长按手势驱动：
  * longPress start 挂载、松手 2.2s 后由调用方卸载（弹回）。touchEnable(false)
  * 保证不拦截手势，松手事件仍落在卡片上。
+ *
+ * 尺寸对齐契约（2026-09-09 修复「对比视图与卡片大小不一致」）：
+ * 本覆盖层由 BusinessCardSlot 挂在**只包住 CardShell 卡身**的锚点容器内
+ * （CardShell 以 noTopMargin/pinnedRing 关掉自身上边距，与标签的间距由锚点
+ * 的 marginTop 统一负责），因此 absolutePositionAllZero 四边贴满锚点
+ * 即与正常卡片同宽、同高、同位。padding(14f) 亦与 CardShell 的 padding(14f)
+ * 对齐。若调整 CardShell 卡面 chrome 或锚点结构，需同步此处。
  */
 internal fun ViewContainer<*, *>.IndustryCompareOverlay(
     theme: StockChatTheme,
@@ -864,7 +878,7 @@ internal fun ViewContainer<*, *>.IndustryCompareOverlay(
             backgroundColor(theme.surface.opacity(0.97f))
             borderRadius(theme.cardRadius)
             border(Border(1f, BorderStyle.SOLID, theme.divider))
-            padding(12f)
+            padding(14f)
             touchEnable(false)
         }
         Text {
@@ -915,7 +929,7 @@ internal fun ViewContainer<*, *>.IndustryCompareOverlay(
             attr {
                 marginTop(8f)
                 text("松手约 2 秒后自动弹回 · 只述事实，不构成建议")
-                fontSize(8.5f)
+                fontSizeScaled(8.5f)
                 color(theme.textTertiary)
             }
         }

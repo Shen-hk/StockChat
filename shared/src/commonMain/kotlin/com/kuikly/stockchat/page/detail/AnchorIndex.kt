@@ -49,6 +49,28 @@ object AnchorIndex {
     }
 
     /**
+     * "HH:MM" → 分时索引（夹紧版）：盘前发布 → 0（09:30 开盘位）、午休 → 119（早盘末位）、
+     * 盘后/晚间发布 → 239（尾盘位）。真实资讯的 Art_ShowTime 多为盘前/盘后发布，
+     * 严格版 [timeStringToIndex] 对这些一律返回 null，导致「点按落旗」永远落不上——
+     * B2 落旗走本夹紧版，保证任何可解析时间都有可视落点。非法串返回 null。
+     */
+    fun timeStringToIndexClamped(hhmm: String): Int? {
+        val parts = hhmm.split(":")
+        if (parts.size != 2) return null
+        val h = parts[0].toIntOrNull() ?: return null
+        val m = parts[1].toIntOrNull() ?: return null
+        if (h < 0 || h > 23 || m < 0 || m > 59) return null
+        val t = h * 60 + m
+        return when {
+            t < MORNING_START -> 0
+            t <= MORNING_END -> minOf(t - MORNING_START, 119)
+            t < AFTERNOON_START -> 119
+            t <= AFTERNOON_END -> minOf(AFTERNOON_OFFSET + (t - AFTERNOON_START), 239)
+            else -> 239
+        }
+    }
+
+    /**
      * 分时索引 → "HH:MM" 标签；越界返回空串。
      */
     fun indexToTimeLabel(index: Int): String {

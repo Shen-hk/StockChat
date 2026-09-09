@@ -1,10 +1,14 @@
 package com.kuikly.stockchat.page
 
+import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.data.lineHeightScaled
+
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.chat.AiChatMessage
 import com.kuikly.stockchat.chat.ChatDependencies
+import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
@@ -38,6 +42,7 @@ import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.StockInsightBundle
 import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
+import com.kuikly.stockchat.data.provider.RatingSpectrum
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
 // doc 29 集成：共享基建 + 板块组件（事件回调经这些基建接线）
@@ -67,6 +72,8 @@ import com.kuikly.stockchat.page.components.MaterialityBadge
 import com.kuikly.stockchat.page.components.QuickReasonChips
 import com.kuikly.stockchat.page.components.RevisitCard
 import com.kuikly.stockchat.page.components.detailTimelineSeries
+import com.kuikly.stockchat.page.components.formatTapeTime
+import com.kuikly.stockchat.page.components.truncateByWidth
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.kuikly.stockchat.page.components.DetailTimelineChart
@@ -133,6 +140,14 @@ internal class StockDetailPage : BasePager() {
     private var aiRemoteRequested = false
     private val aiChatDependencies by lazy { ChatDependencies.forPager(pagerId) }
     private var aiRemoteProvider: AiProvider? = null
+    // 流式平滑器（复用聊天页 TypewriterSmoother）：网络回调在 Dispatchers.Default
+    // 后台线程触发，observable 只能在主线程写——此前 onDelta 直写 aiRemoteText 曾
+    // 导致详情页偶发闪退（非 UI 线程碰视图层）与流式内容不刷新。delta 一律先进
+    // 平滑器缓冲，由主线程节拍器逐字释放；顺带把「整段蹦出」变成打字机手感。
+    private var activeAiTypewriter: TypewriterSmoother? = null
+    // 占位图状态：页面已打开但行情/资金事实尚未就绪、AI 请求还没发出时显示骨架
+    // 占位（此前这段时间显示端侧模板文字，随后跳骨架，观感又慢又割裂）。
+    private var aiAwaitingFacts: Boolean by observable(false)
     private var expandedAttributionKey: String by observable("")
     private var selectedKLineIndex: Int by observable(-1)
     private var livePulseVersion = 0
@@ -145,11 +160,14 @@ internal class StockDetailPage : BasePager() {
     private var crosshairIndex: Int by observable(-1)
     private var drawProgress: Float by observable(0f)
     private var drawVersion = 0
+    // 长按十字线 scrub 期间锁外层 Scroller 滚动（DetailTimelineChart onScrubActive 驱动，
+    // WatchlistPage 拖拽排序同款机制）；普通上下滚动不进 scrub、永不锁
+    private var chartScrubLock: Boolean by observable(false)
     private var newsList: List<NewsItem> by observable(emptyList())
     private var newsSummary: NewsItem? by observable(null)
     private var insight: StockInsightBundle by observable(OfflineMarketInsightProvider().stock("600519.SH"))
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
-    private val theme: StockChatTheme get() = if (isNightMode()) StockChatTheme.Dark else StockChatTheme.Light
+    private val theme: StockChatTheme get() = appTheme()
 
     // ---- doc 29 集成状态：基建 + 13 个交互（U1 全部经 overlayArbiter 仲裁） ----
     private val overlayArbiter = OverlayArbiter()
@@ -200,6 +218,12 @@ internal class StockDetailPage : BasePager() {
             // 行情+洞察就绪后启动真实 AI 解读（未配置/无分时数据则保持端侧模板）
             maybeStartAiInsight()
         }
+        // 占位图：等行情/资金事实就绪期间显示骨架（见 aiAwaitingFacts 注释）。
+        // 4s 兜底：极端弱网一直等不到分时则回落端侧模板，不无限占位。
+        aiAwaitingFacts = true
+        setTimeout(4000) {
+            if (!aiRemoteRequested && aiRemoteState == 0) aiAwaitingFacts = false
+        }
         startAiReveal()
         // 新闻弹幕带：东财个股资讯（失败回 Mock 由 Fallback 链外置；此处空列表=整条隐藏）
         dependencies.stockNewsProvider.stockNews(symbol) { items ->
@@ -237,6 +261,8 @@ internal class StockDetailPage : BasePager() {
         drawVersion++
         // 离开页面即中断进行中的 AI 解读流（generation 失效使残留回调全部 no-op）
         aiRemoteProvider?.stop()
+        activeAiTypewriter?.cancel()
+        activeAiTypewriter = null
         aiRemoteGeneration++
         if (aiRemoteState == 1 || aiRemoteState == 2) {
             aiRemoteState = if (aiRemoteText.isNotBlank()) 3 else 0
@@ -277,6 +303,9 @@ internal class StockDetailPage : BasePager() {
                         // 头图的额外空白。
                         paddingTop(page.pagerData.statusBarHeight + 69f)
                         paddingBottom(100f)
+                        // 十字线长按 scrub 期间锁定滚动（scrub 结束恢复）；R1：attr 闭包内
+                        // 读 observable，scrub 进/出时本 attr 重跑
+                        scrollEnable(!page.chartScrubLock)
                     }
                     event {
                         scroll { params ->
@@ -388,53 +417,8 @@ internal class StockDetailPage : BasePager() {
                             page.overlayArbiter.close()
                             page.openUrl(news.url)
                         },
+                        flagged = { page.isNewsFlagged(it) },
                     )
-
-                    // ---- B1 先览小卡（弹幕带下方，U1 仲裁 + 2s 自动消失） ----
-                    vif({ page.overlayArbiter.active == DetailOverlay.TAPE_PREVIEW && page.tapePreview != null }) {
-                        vbind({ page.tapePreview?.id ?: "" }) {
-                            val preview = page.tapePreview
-                            if (preview != null) {
-                                View {
-                                    attr {
-                                        marginTop(8f)
-                                        padding(10f)
-                                        borderRadius(14f)
-                                        backgroundColor(page.theme.surface)
-                                        border(Border(1f, BorderStyle.SOLID, page.theme.brand.opacity(0.5f)))
-                                        boxShadow(BoxShadow(0f, 4f, 14f, page.theme.brand.opacity(0.12f)))
-                                    }
-                                    Text {
-                                        attr {
-                                            text(preview.title)
-                                            fontSize(page.theme.type.label)
-                                            fontWeightSemiBold()
-                                            color(page.theme.textPrimary)
-                                            lineHeight(16f)
-                                        }
-                                    }
-                                    Text {
-                                        attr {
-                                            text((preview.summary.ifEmpty { preview.title }).take(30))
-                                            marginTop(4f)
-                                            fontSize(page.theme.type.meta)
-                                            color(page.theme.textSecondary)
-                                            lineHeight(15f)
-                                        }
-                                    }
-                                    Text {
-                                        attr {
-                                            text("点按查看行情反应 · 端侧规则")
-                                            marginTop(4f)
-                                            fontSize(page.theme.type.meta)
-                                            color(page.theme.brand)
-                                        }
-                                    }
-                                    event { click { page.onNewsTapped(preview) } }
-                                }
-                            }
-                        }
-                    }
 
                     // ---- 走势主卡（2026-09-08：去掉白色大框，图表直接浮在氛围底上）----
                     // 入场动效：欢迎引导卡同款上滑淡入（RevealBlock，index 0 起阶梯）
@@ -481,6 +465,8 @@ internal class StockDetailPage : BasePager() {
                                     onScrubPause = { page.makePrefill(it) },
                                     // ⑤ 松手离开 scrub：2s 后清预填（chart 侧 revision 去抖）
                                     onScrubLeave = { page.prefillQuestion = "" },
+                                    // 长按进/出 scrub：锁/解锁外层 Scroller 滚动
+                                    onScrubActive = { page.chartScrubLock = it },
                                     // U1 点空白（非声呐轻点）：关闭图表气泡并清其区间带
                                     onBlankTap = { page.closeChartBubble() },
                                     // ④ 声呐气泡横向漂移相位（页面步进驱动）
@@ -488,13 +474,13 @@ internal class StockDetailPage : BasePager() {
                                 )
                             }
                             vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
-                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx, page.selectedKLineIndex) { page.selectedKLineIndex = it }
+                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY), ctx, { page.selectedKLineIndex }) { page.selectedKLineIndex = it }
                             }
                             vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK }) {
-                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx, page.selectedKLineIndex) { page.selectedKLineIndex = it }
+                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK), ctx, { page.selectedKLineIndex }) { page.selectedKLineIndex = it }
                             }
                             vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH }) {
-                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx, page.selectedKLineIndex) { page.selectedKLineIndex = it }
+                                KLineChart(this, StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH), ctx, { page.selectedKLineIndex }) { page.selectedKLineIndex = it }
                             }
                         // 玻璃数据条（今开/最高/最低/换手）：从蒙层改为图表下方独立一行，
                         // 不再悬浮遮挡量能带（用户 2026-09-08 反馈）
@@ -528,7 +514,7 @@ internal class StockDetailPage : BasePager() {
                                             Text {
                                                 attr {
                                                     text(label)
-                                                    fontSize(9f)
+                                                    fontSizeScaled(9f)
                                                     color(page.theme.textTertiary)
                                                 }
                                             }
@@ -536,7 +522,7 @@ internal class StockDetailPage : BasePager() {
                                                 attr {
                                                     text(value)
                                                     marginLeft(3f)
-                                                    fontSize(10f)
+                                                    fontSizeScaled(10f)
                                                     fontWeightMedium()
                                                     color(color)
                                                 }
@@ -576,7 +562,7 @@ internal class StockDetailPage : BasePager() {
                                 attr {
                                     absolutePosition(left = 16f, top = 46f)
                                     text("圈选中：拖动选择区间，松手看统计")
-                                    fontSize(10f)
+                                    fontSizeScaled(10f)
                                     fontWeightMedium()
                                     color(page.theme.brand)
                                     opacity(if (page.circleHintPresented) 1f else 0f)
@@ -609,7 +595,7 @@ internal class StockDetailPage : BasePager() {
                                     Text {
                                         attr {
                                             text("AI · 端侧规则")
-                                            fontSize(9f)
+                                            fontSizeScaled(9f)
                                             fontWeightSemiBold()
                                             color(page.theme.brand)
                                             flex(1f)
@@ -618,7 +604,7 @@ internal class StockDetailPage : BasePager() {
                                     Text {
                                         attr {
                                             text("×")
-                                            fontSize(12f)
+                                            fontSizeScaled(12f)
                                             color(page.theme.textTertiary)
                                         }
                                     }
@@ -628,8 +614,8 @@ internal class StockDetailPage : BasePager() {
                                     attr {
                                         text(page.chartBubble)
                                         marginTop(6f)
-                                        fontSize(11.5f)
-                                        lineHeight(17f)
+                                        fontSizeScaled(11.5f)
+                                        lineHeightScaled(17f)
                                         color(page.theme.textPrimary)
                                     }
                                 }
@@ -647,7 +633,7 @@ internal class StockDetailPage : BasePager() {
                                     Text {
                                         attr {
                                             text("去对话深聊 ›")
-                                            fontSize(11f)
+                                            fontSizeScaled(11f)
                                             fontWeightSemiBold()
                                             color(page.theme.brand)
                                         }
@@ -730,8 +716,8 @@ internal class StockDetailPage : BasePager() {
                             Text {
                                 attr {
                                     text(page.buildOneLineAttribution())
-                                    fontSize(11.5f)
-                                    lineHeight(17f)
+                                    fontSizeScaled(11.5f)
+                                    lineHeightScaled(17f)
                                     color(page.theme.textSecondary)
                                 }
                             }
@@ -753,6 +739,7 @@ internal class StockDetailPage : BasePager() {
                             revealLimit = { page.aiRevealLimit },
                             actionLabel = { page.aiActionLabel() },
                             remoteSentences = { page.currentInsightSentences() },
+                            preparing = { page.aiAwaitingFacts },
                             theme = page.theme,
                             onAction = { page.toggleAiInsight() },
                             selectedSentence = { page.selectedSentence },
@@ -834,19 +821,19 @@ internal class StockDetailPage : BasePager() {
                             }
 
                             // ---- F3 多空观点光谱：并入公告与研报同一张卡（原型 .balance 在 ann-card 内） ----
-                            BalanceSpectrumBlock(
-                                theme = page.theme,
-                                segments = listOf(
-                                    BalanceSegment("买入", 4, page.theme.rise, "示例 · 演示数据：偏多观点的占位引用，仅用于展示评级光谱交互，不构成任何建议。"),
-                                    BalanceSegment("增持", 3, page.theme.rise.opacity(0.55f), "示例 · 演示数据：谨慎看多的占位引用，观点切换仅为形态演示。"),
-                                    BalanceSegment("中性", 2, page.theme.textTertiary, "示例 · 演示数据：中性观点的占位引用，等待更多数据验证。"),
-                                    BalanceSegment("减持", 1, page.theme.fall, "示例 · 演示数据：偏空观点的占位引用，仅展示光谱另一端。"),
-                                ),
-                                initialIndex = 0,
-                                containerWidth = page.pagerData.pageViewWidth - 28f,
-                                reduceMotion = page.reduceMotion,
-                                inset = true,
-                            )
+                            // vbind({insight})：真实评级光谱（东财研报库近 90 天 emRatingName 聚合）
+                            // 随 insight 加载重建（R1：builder 闭包不追踪 observable）；在线缺失时
+                            // 回落演示段（明确标注 示例 · 演示数据），光谱不空转。
+                            vbind({ page.insight }) {
+                                BalanceSpectrumBlock(
+                                    theme = page.theme,
+                                    segments = balanceSegmentsFor(page.insight.ratingSpectrum, page.theme),
+                                    initialIndex = 0,
+                                    containerWidth = page.pagerData.pageViewWidth - 28f,
+                                    reduceMotion = page.reduceMotion,
+                                    inset = true,
+                                )
+                            }
                         }
                     }
 
@@ -918,6 +905,56 @@ internal class StockDetailPage : BasePager() {
                             onPick = { page.pickQuickReason(it) },
                             reduceMotion = page.reduceMotion,
                         )
+                    }
+                }
+                // B1 长按先览小气泡（对齐 doc 29 原型 .preview：~200px 小浮框、压在
+                // 页面上不推挤布局；此前误做成弹幕带卡内全宽大长框，把走势卡顶下去）。
+                // 原型气泡跟随按压胶囊；跨端拿不到胶囊屏幕坐标，取顶栏下方 8dp 常驻锚点
+                // （弹幕带位于详情页头部区，滚动后仍与手指落点同屏）。
+                vif({ page.overlayArbiter.active == DetailOverlay.TAPE_PREVIEW && page.tapePreview != null }) {
+                    vbind({ page.tapePreview?.id ?: "" }) {
+                        val preview = page.tapePreview
+                        if (preview != null) {
+                            val positive = scoreNewsSentiment(preview.title).isPositive
+                            View {
+                                attr {
+                                    absolutePosition(left = 14f, top = page.pagerData.statusBarHeight + 52f)
+                                    width(236f)
+                                    padding(10f)
+                                    borderRadius(12f)
+                                    backgroundColor(page.theme.surface)
+                                    border(Border(1f, BorderStyle.SOLID, page.theme.brand.opacity(0.5f)))
+                                    boxShadow(BoxShadow(0f, 8f, 22f, page.theme.textPrimary.opacity(0.16f)))
+                                    touchEnable(true)
+                                }
+                                Text {
+                                    attr {
+                                        text("${formatTapeTime(preview.time)} · ${if (positive == true) "利好" else "利空"}")
+                                        fontSizeScaled(10f)
+                                        fontWeightSemiBold()
+                                        color(page.theme.textPrimary)
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        text(truncateByWidth(preview.title, 42f))
+                                        marginTop(4f)
+                                        fontSizeScaled(10f)
+                                        lineHeightScaled(14f)
+                                        color(page.theme.textSecondary)
+                                    }
+                                }
+                                Text {
+                                    attr {
+                                        text("点按展开与落旗 · 端侧规则")
+                                        marginTop(5f)
+                                        fontSizeScaled(9.5f)
+                                        color(page.theme.brand)
+                                    }
+                                }
+                                event { click { page.onNewsTapped(preview) } }
+                            }
+                        }
                     }
                 }
                 DetailBottomBar(
@@ -1059,10 +1096,14 @@ internal class StockDetailPage : BasePager() {
         )
     }
 
-    /** B2 旗标落点：优先用新闻真实发布时间换算分时索引；无时间字段时退关键词静态映射。 */
+    /**
+     * B2 旗标落点：新闻发布时间夹紧映射到当日分时索引（盘前→开盘 09:30、午休→早盘末、
+     * 盘后→尾盘 15:00）。东财 Art_ShowTime 多为盘前/盘后发布，此前严格映射对这些
+     * 一律返回 null，导致「点按落旗」永远落不上（2026-09-09 修复）；无时间字段时退关键词静态映射。
+     */
     private fun newsFlagIndex(item: NewsItem): Int? {
         if (item.time.length >= 16) {
-            AnchorIndex.timeStringToIndex(item.time.substring(11, 16))?.let { return it }
+            AnchorIndex.timeStringToIndexClamped(item.time.substring(11, 16))?.let { return it }
         }
         return when {
             listOf("北向", "早盘").any { item.title.contains(it) } -> AnchorIndex.timeStringToIndex("09:47")
@@ -1073,21 +1114,14 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
-    /** B2 点按条目：落旗（重复点按收起）+ 区间高亮带（12 点宽，圈选/句图同容器互斥）。 */
-    private fun toggleNewsFlag(item: NewsItem) {
+    /** B2 落旗：旗标 + 区间高亮带（12 点宽）。旗色/标签 = 发布后 1h 真实走势，只述事实不写因果。 */
+    private fun dropNewsFlag(item: NewsItem) {
         val idx = newsFlagIndex(item)
         if (idx == null) {
-            toastHint("该条新闻不在今日分时时段内，未落旗")
-            return
-        }
-        if (item.id in droppedNewsIds) {
-            droppedNewsIds.remove(item.id)
-            chartFlags = chartFlags.filterNot { it.index == idx }
-            if (bandRange?.first == idx) bandRange = null
+            toastHint("该条资讯缺少可用时间锚点，未落旗")
             return
         }
         droppedNewsIds.add(item.id)
-        // 旗色/标签 = 发布后 1h 真实走势（序列不足 1h 则用至今），只述事实不写因果
         val series = detailTimelineSeries(quote)
         var isPositive = quote.change >= 0.0
         var label = ""
@@ -1104,27 +1138,35 @@ internal class StockDetailPage : BasePager() {
         bandRange = Triple(idx, (idx + 12).coerceAtMost(AnchorIndex.INDEX_COUNT - 1), false)
     }
 
+    /** B2 收旗：移除该条旗标与高亮带（未落过旗则无操作）。 */
+    private fun removeNewsFlag(item: NewsItem) {
+        if (item.id !in droppedNewsIds) return
+        droppedNewsIds.remove(item.id)
+        newsFlagIndex(item)?.let { idx ->
+            chartFlags = chartFlags.filterNot { it.index == idx }
+            if (bandRange?.first == idx) bandRange = null
+        }
+    }
+
+    /** 摘要条事实行用：该条是否已落旗。 */
+    fun isNewsFlagged(item: NewsItem): Boolean = item.id in droppedNewsIds
+
     /**
      * B1/B2 弹幕条目点按（doc §4.3「点按条目或旗落旗，重复点按收起」）：
-     * 未落旗 → 摘要条（NEWS_SUMMARY，弹幕带下方）+ 落旗；已落旗 → 收旗收条。
+     * 收起/再展开以摘要条状态为准，与旗标是否落成功解耦——此前 toggle 挂在
+     * droppedNewsIds 上，未落旗条目永不入集合，「收起 ×」点了只会重新打开同一条
+     * （2026-09-09 修复「点按后收起/再点起无效」）。
      */
     private fun onNewsTapped(item: NewsItem) {
-        val idx = newsFlagIndex(item)
-        if (item.id in droppedNewsIds) {
-            droppedNewsIds.remove(item.id)
-            if (idx != null) {
-                chartFlags = chartFlags.filterNot { it.index == idx }
-                if (bandRange?.first == idx) bandRange = null
-            }
-            if (newsSummary?.id == item.id) {
-                newsSummary = null
-                overlayArbiter.close()
-            }
+        if (newsSummary?.id == item.id) {
+            newsSummary = null
+            overlayArbiter.close()
+            removeNewsFlag(item)
             return
         }
         newsSummary = item
         overlayArbiter.request(DetailOverlay.NEWS_SUMMARY)
-        toggleNewsFlag(item)
+        dropNewsFlag(item)
     }
 
     /**
@@ -1433,6 +1475,7 @@ internal class StockDetailPage : BasePager() {
         if (quote.timeline.isEmpty()) return
         if (insight.loading) return
         aiRemoteRequested = true
+        aiAwaitingFacts = false
         requestAiInsight()
     }
 
@@ -1447,6 +1490,10 @@ internal class StockDetailPage : BasePager() {
         if (aiRemoteState == 1 || aiRemoteState == 2) {
             aiRemoteProvider?.stop()
             aiRemoteGeneration++
+            // 已收到的部分先全部显示再停（与聊天页 stop 范式一致）
+            activeAiTypewriter?.flushNow()
+            activeAiTypewriter?.cancel()
+            activeAiTypewriter = null
             aiRemoteState = if (aiRemoteText.isNotBlank()) 3 else 0
         } else {
             requestAiInsight()
@@ -1458,11 +1505,13 @@ internal class StockDetailPage : BasePager() {
         val configError = config.validationError()
         if (configError != null) {
             // 未配置时保持端侧模板，不弹页跳转；错误信息在来源行如实展示
+            aiAwaitingFacts = false
             aiRemoteState = 0
             aiRemoteError = "未配置 AI API（$configError）"
             return
         }
         aiRemoteProvider?.stop()
+        activeAiTypewriter?.cancel()
         val generation = ++aiRemoteGeneration
         aiRemoteText = ""
         aiRemoteError = ""
@@ -1472,28 +1521,48 @@ internal class StockDetailPage : BasePager() {
         bandRange = null
         val provider = aiChatDependencies.aiProviderFactory(config)
         aiRemoteProvider = provider
+        // 线程纪律：provider 回调全部来自 Dispatchers.Default 后台线程。
+        // observable 写入只允许发生在 onPublish（主线程节拍器回调）与
+        // setTimeout(0) 跳回主线程之后；后台线程直写曾造成闪退与不刷新。
+        var content = ""
+        val smoother = TypewriterSmoother(pagerId) { revealed ->
+            if (generation != aiRemoteGeneration) return@TypewriterSmoother
+            aiRemoteText = revealed
+            if (aiRemoteState == 1 && revealed.isNotEmpty()) aiRemoteState = 2
+        }
+        activeAiTypewriter = smoother
         provider.ask(
             messages = listOf(AiChatMessage("user", buildAiInsightPrompt())),
             onDelta = { delta ->
-                if (generation != aiRemoteGeneration) return@ask
-                aiRemoteText += delta
-                if (aiRemoteState == 1) aiRemoteState = 2
+                content += delta
+                if (generation == aiRemoteGeneration) smoother.append(delta)
             },
             onDone = {
                 if (generation != aiRemoteGeneration) return@ask
-                if (aiRemoteState <= 2) {
-                    if (sanitizeAiText(aiRemoteText).isEmpty()) {
-                        aiRemoteError = "接口未返回有效内容"
-                        aiRemoteState = 4
-                    } else {
-                        aiRemoteState = 3
+                val fullContent = content
+                // 显示端把已收到的文本打完再落定（收尾回调由节拍器在主线程触发）
+                smoother.complete {
+                    setTimeout(0) {
+                        if (generation != aiRemoteGeneration) return@setTimeout
+                        if (sanitizeAiText(fullContent).isEmpty()) {
+                            aiRemoteError = "接口未返回有效内容"
+                            aiRemoteState = 4
+                        } else {
+                            aiRemoteState = 3
+                        }
                     }
                 }
             },
             onError = { message ->
                 if (generation != aiRemoteGeneration) return@ask
-                aiRemoteError = message
-                aiRemoteState = 4
+                // 出错也把已收到的部分流式文本放出来，再如实标错（跳回主线程写状态）
+                setTimeout(0) {
+                    if (generation != aiRemoteGeneration) return@setTimeout
+                    smoother.flushNow()
+                    smoother.cancel()
+                    aiRemoteError = message
+                    aiRemoteState = 4
+                }
             },
         )
     }
@@ -1619,7 +1688,7 @@ private fun ViewContainer<*, *>.SectionLabel(
                     color(theme.brand)
                 }
                 strong -> {
-                    fontSize(12f)
+                    fontSizeScaled(12f)
                     fontWeightBold()
                     color(theme.textPrimary)
                 }
@@ -1791,7 +1860,7 @@ private fun ViewContainer<*, *>.LegendItem(theme: StockChatTheme, color: () -> C
             attr {
                 text(label)
                 marginLeft(3f)
-                fontSize(9f)
+                fontSizeScaled(9f)
                 color(theme.textTertiary)
             }
         }
@@ -1814,7 +1883,7 @@ private fun ViewContainer<*, *>.SecondaryMetricRow(
                 Text {
                     attr {
                         text(item.label)
-                        fontSize(9.5f)
+                        fontSizeScaled(9.5f)
                         color(theme.textTertiary)
                     }
                 }
@@ -1822,7 +1891,7 @@ private fun ViewContainer<*, *>.SecondaryMetricRow(
                     attr {
                         text(item.value)
                         marginTop(2f)
-                        fontSize(12f)
+                        fontSizeScaled(12f)
                         fontWeightMedium()
                         color(item.valueColor ?: theme.textSecondary)
                     }
@@ -1888,10 +1957,9 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
                             if (columnIndex == 0) marginRight(6f) else marginLeft(6f)
                         }
                         RevealBlock(baseIndex + rowIndex * 2 + columnIndex, entranceVisible, reduceMotion) {
-                            BusinessCardSlot(item, theme, onFootnoteClick) {
-                                SectionLabel(item.label, theme)
-                                CardShell(item.model, context)
-                            }
+                            BusinessCardSlot(item, theme, onFootnoteClick, label = item.label, card = {
+                                CardShell(item.model, context, pinnedRing = item.pinned, noTopMargin = true)
+                            })
                         }
                     }
                 }
@@ -1903,35 +1971,33 @@ private fun ViewContainer<*, *>.BusinessInsightGrid(
     BusinessDataHeader(theme)
     items.forEachIndexed { index, item ->
         RevealBlock(baseIndex + index, entranceVisible, reduceMotion) {
-            BusinessCardSlot(item, theme, onFootnoteClick) {
-                SectionLabel(item.label, theme)
-                CardShell(item.model, context)
-            }
+            BusinessCardSlot(item, theme, onFootnoteClick, label = item.label, card = {
+                CardShell(item.model, context, pinnedRing = item.pinned, noTopMargin = true)
+            })
         }
     }
 }
 
 /**
- * doc 29 E1/E2/E3 业务卡槽：置顶卡加 brand 描边 + 「今日相关」角标；
- * 有注脚的卡在卡底加 brand 小字（点击展示判定依据 + 「· 端侧规则」）；
- * 长按 400ms（U5）→ E3 行业对比覆盖层（只读），松手 2.2s 后弹回。
+ * doc 29 E1/E2/E3 业务卡槽：置顶卡由 CardShell(pinnedRing) 在卡自身边框上画 brand
+ * 描边 + 「今日相关」角标（v1.0 描边画在外层 wrapper 上，与卡片之间隔着标签和
+ * 边距，光圈外一圈留白、不贴合，已废弃）；有注脚的卡在卡底加 brand 小字（点击
+ * 展示判定依据 + 「· 端侧规则」）；长按 400ms（U5）→ E3 行业对比覆盖层（只读），
+ * 松手 2.2s 后弹回。
  */
 private fun ViewContainer<*, *>.BusinessCardSlot(
     item: BusinessInsightItem,
     theme: StockChatTheme,
     onFootnoteClick: (CardFootnote) -> Unit,
-    content: ViewContainer<*, *>.() -> Unit,
+    label: String,
+    card: ViewContainer<*, *>.() -> Unit,
 ) {
     // E3 覆盖层状态（BlockState：observable 委托仅支持类成员，局部状态收敛）
     val compareShown = BlockState(false)
     var compareHideRevision = 0
     View {
         attr {
-            if (item.pinned) {
-                borderRadius(theme.cardRadius)
-                border(Border(1.2f, BorderStyle.SOLID, theme.brand.opacity(0.5f)))
-                padding(2f)
-            }
+            alignSelfStretch()
         }
         // E3 长按行业比：start 挂载覆盖层；end/cancel 起算 2.2s 弹回。
         // 重按会使旧计时失效（revision），长按中不会中途消失。
@@ -1951,29 +2017,43 @@ private fun ViewContainer<*, *>.BusinessCardSlot(
                 }
             }
         }
-        vif({ item.pinned }) {
-            View {
-                attr {
-                    absolutePosition(top = -1f, right = 10f)
-                    height(16f)
-                    paddingLeft(8f)
-                    paddingRight(8f)
-                    allCenter()
-                    borderRadius(8f)
-                    backgroundColor(theme.brand)
-                    touchEnable(false)
-                }
-                Text {
+        SectionLabel(label, theme)
+        // 卡片锚点容器：「今日相关」角标与 E3 覆盖层都以它为定位基准。
+        // CardShell 以 noTopMargin/pinnedRing 关掉自身上边距，锚点上边距统一
+        // 补回与标签的间距，于是锚点边界 = 卡片边界（置顶与否皆成立）——
+        // 覆盖层 absolutePositionAllZero 即与正常卡片同宽、同高、同位。
+        View {
+            attr {
+                alignSelfStretch()
+                marginTop(10f)
+            }
+            vif({ item.pinned }) {
+                View {
                     attr {
-                        text("今日相关")
-                        fontSize(9f)
-                        fontWeightSemiBold()
-                        color(theme.onBrand)
+                        absolutePosition(top = -8f, right = 10f)
+                        height(16f)
+                        paddingLeft(8f)
+                        paddingRight(8f)
+                        allCenter()
+                        borderRadius(8f)
+                        backgroundColor(theme.brand)
+                        touchEnable(false)
+                    }
+                    Text {
+                        attr {
+                            text("今日相关")
+                            fontSizeScaled(9f)
+                            fontWeightSemiBold()
+                            color(theme.onBrand)
+                        }
                     }
                 }
             }
+            card()
+            vif({ compareShown.value }) {
+                IndustryCompareOverlay(theme, label)
+            }
         }
-        content()
         vif({ item.footnote != null }) {
             View {
                 attr { marginTop(6f); flexDirectionRow(); alignItemsCenter() }
@@ -1995,9 +2075,6 @@ private fun ViewContainer<*, *>.BusinessCardSlot(
                 fontSize(theme.type.meta)
                 color(theme.textTertiary)
             }
-        }
-        vif({ compareShown.value }) {
-            IndustryCompareOverlay(theme, item.label)
         }
     }
 }
@@ -2123,7 +2200,9 @@ private fun ViewContainer<*, *>.ChartSegment(
                         Text {
                             attr {
                                 text(label)
-                                fontSize(if (compact) 10f else theme.type.label)
+                                // 混合分支：literal 走 fontSizeScaled，token 分支已含档位缩放，
+                                // 直接包裹会双重放大，故改为双 literal（label token 当前基线 11f）。
+                                fontSizeScaled(if (compact) 10f else 11f)
                                 fontWeightSemiBold()
                                 color(if (active()) theme.brand else theme.textSecondary)
                             }
@@ -2311,7 +2390,7 @@ private fun ViewContainer<*, *>.DetailBottomBar(
                     backgroundColor(theme.brand)
                     boxShadow(BoxShadow(0f, 4f, 12f, theme.brand.opacity(0.35f)))
                 }
-                Text { attr { text("↑"); fontSize(18f); fontWeightSemiBold(); color(theme.onBrand) } }
+                Text { attr { text("↑"); fontSizeScaled(18f); fontWeightSemiBold(); color(theme.onBrand) } }
                 event { click { onAskAi() } }
             }
         }
@@ -2369,6 +2448,8 @@ private fun ViewContainer<*, *>.AiInsightBlock(
     remoteSentences: () -> List<String>,
     theme: StockChatTheme,
     onAction: () -> Unit,
+    // true = 行情/资金事实尚未就绪、AI 请求还没发出（占位骨架，防先闪端侧模板再跳骨架）
+    preparing: () -> Boolean = { false },
     selectedSentence: () -> Int = { -1 },
     onPickSentence: (Int) -> Unit = {},
 ) {
@@ -2413,12 +2494,18 @@ private fun ViewContainer<*, *>.AiInsightBlock(
                 when {
                     // thinking：骨架 + 进度说明（不引入循环 shimmer，静态占位）
                     st == 1 -> {
-                        View { attr { marginTop(theme.spacing.md) }
-                            View { attr { width(220f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.14f)) } }
-                            View { attr { width(180f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.10f)); marginTop(9f) } }
-                            View { attr { width(200f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.08f)); marginTop(9f) } }
-                            Text { attr { text("正在读取行情事实并生成解读…"); marginTop(10f); fontSize(10f); color(theme.brand) } }
-                        }
+                        AiInsightPlaceholder(
+                            theme = theme,
+                            message = "正在读取行情事实并生成解读…",
+                        )
+                    }
+                    // 占位图：页面已打开但行情/资金事实还没就绪、AI 请求尚未发出。
+                    // 此前这段时间显示端侧模板文字、随后再跳骨架，观感慢且割裂。
+                    st == 0 && preparing() -> {
+                        AiInsightPlaceholder(
+                            theme = theme,
+                            message = "行情与资金数据就绪后，会自动生成 AI 解读…",
+                        )
                     }
                     // 远程流式/完成：逐句渲染 + 句图联动
                     remote.isNotEmpty() && st in 2..3 -> {
@@ -2490,10 +2577,11 @@ private fun ViewContainer<*, *>.AiInsightBlock(
             }
             // 底部来源行（如实标注内容来源——这是「真 AI」与「端侧规则」的分界线）
             vbind({ state() to (remoteModel() to remoteError()) }) {
-                val label = when (state()) {
-                    1 -> "正在调用 AI（${remoteModel()}）· 流式生成中"
-                    2, 3 -> "AI 生成（${remoteModel()}）· 仅供参考，不构成投资建议"
-                    4 -> if (remoteText().isNotBlank()) "AI 流中断，以上为已生成的部分内容" else "AI 调用失败，以上为端侧规则摘要（未调用 AI）"
+                val label = when {
+                    state() == 1 -> "正在调用 AI（${remoteModel()}）· 流式生成中"
+                    state() == 0 && preparing() -> "等待行情与资金数据就绪 · 就绪后自动调用 AI"
+                    state() == 2 || state() == 3 -> "AI 生成（${remoteModel()}）· 仅供参考，不构成投资建议"
+                    state() == 4 -> if (remoteText().isNotBlank()) "AI 流中断，以上为已生成的部分内容" else "AI 调用失败，以上为端侧规则摘要（未调用 AI）"
                     else -> "端侧规则摘要 · 未调用 AI（配置 API 后点「生成」获得真实解读）"
                 }
                 Text {
@@ -2525,6 +2613,22 @@ private fun splitLocalReveal(summary: String, revealLimit: Int): List<String> {
     return revealed.split(Regex("[。，]")).map { it.trim() }.filter { it.isNotEmpty() }
 }
 
+/**
+ * AI 解读占位骨架（thinking / 等待事实就绪两态共用）：
+ * 静态三行条 + 一行说明（AI 克制铁律：不引入循环 shimmer 装饰）。
+ */
+private fun ViewContainer<*, *>.AiInsightPlaceholder(
+    theme: StockChatTheme,
+    message: String,
+) {
+    View { attr { marginTop(theme.spacing.md) }
+        View { attr { width(220f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.14f)) } }
+        View { attr { width(180f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.10f)); marginTop(9f) } }
+        View { attr { width(200f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.08f)); marginTop(9f) } }
+        Text { attr { text(message); marginTop(10f); fontSizeScaled(10f); color(theme.brand) } }
+    }
+}
+
 /** 逐句渲染（首句强调 + 后续圆点行），流式态末句尾随光标；点句回调带全局句序号。 */
 private fun ViewContainer<*, *>.InsightSentences(
     sentences: List<String>,
@@ -2545,7 +2649,7 @@ private fun ViewContainer<*, *>.InsightSentences(
                 fontSize(theme.type.body)
                 fontWeightSemiBold()
                 color(if (selectedSentence() == 0) theme.brand else theme.textPrimary)
-                lineHeight(21f)
+                lineHeightScaled(21f)
             }
         }
         event { click { onPickSentence(0) } }
@@ -2565,7 +2669,7 @@ private fun ViewContainer<*, *>.InsightSentences(
                     flex(1f)
                     text(displayText(s, index == sentences.size - 2))
                     fontSize(theme.type.sm)
-                    lineHeight(19f)
+                    lineHeightScaled(19f)
                     color(if (selectedSentence() == index + 1) theme.brand else theme.textSecondary)
                 }
             }
@@ -2637,7 +2741,7 @@ private fun ViewContainer<*, *>.AttributionBlock(
                     text(factor.description)
                     marginTop(4f)
                     fontSize(theme.type.label)
-                    lineHeight(16f)
+                    lineHeightScaled(16f)
                     color(theme.textSecondary)
                 }
             }
@@ -2685,7 +2789,7 @@ private fun ViewContainer<*, *>.AttributionBlock(
                             text("这项归因主要说明它对当日涨跌的相对影响强弱，需要和其它原因一起看。")
                             marginTop(5f)
                             fontSize(theme.type.label)
-                            lineHeight(16f)
+                            lineHeightScaled(16f)
                             color(theme.textSecondary)
                         }
                     }
@@ -2751,7 +2855,7 @@ private fun ViewContainer<*, *>.DisclosureMaterialityBlock(
                             // F1：高重要度整行加粗
                             if (level() == Materiality.HIGH) fontWeightBold() else fontWeightMedium()
                             color(theme.textPrimary)
-                            lineHeight(16f)
+                            lineHeightScaled(16f)
                         }
                     }
                     Text {
@@ -2801,7 +2905,7 @@ private fun ViewContainer<*, *>.NewsSection(theme: StockChatTheme) {
                 attr {
                     text(item.first)
                     fontSize(theme.type.sm)
-                    lineHeight(19f)
+                    lineHeightScaled(19f)
                     color(theme.textPrimary)
                 }
             }
@@ -2815,4 +2919,30 @@ private fun ViewContainer<*, *>.NewsSection(theme: StockChatTheme) {
             }
         }
     }
+}
+
+// ───────────────────────── F3 研报评级光谱（真实数据 + 演示兜底） ─────────────────────────
+
+/**
+ * 真实评级光谱（东财研报库近 90 天 emRatingName 聚合）→ BalanceSegment；
+ * 在线缺失/无覆盖时回落演示段（维持原占位形态与「示例 · 演示数据」标注），光谱不空转。
+ */
+private fun balanceSegmentsFor(spectrum: RatingSpectrum?, theme: StockChatTheme): List<BalanceSegment> {
+    val real = spectrum?.segments
+        ?.takeIf { it.isNotEmpty() }
+        ?.map { seg -> BalanceSegment(seg.label, seg.count, ratingSpectrumColor(seg.label, theme), seg.quote) }
+    return real ?: listOf(
+        BalanceSegment("买入", 4, theme.rise, "示例 · 演示数据：偏多观点的占位引用，仅用于展示评级光谱交互，不构成任何建议。"),
+        BalanceSegment("增持", 3, theme.rise.opacity(0.55f), "示例 · 演示数据：谨慎看多的占位引用，观点切换仅为形态演示。"),
+        BalanceSegment("中性", 2, theme.textTertiary, "示例 · 演示数据：中性观点的占位引用，等待更多数据验证。"),
+        BalanceSegment("减持", 1, theme.fall, "示例 · 演示数据：偏空观点的占位引用，仅展示光谱另一端。"),
+    )
+}
+
+/** 档位配色：多端看涨红/看跌绿，中性走次要文本色。 */
+private fun ratingSpectrumColor(label: String, theme: StockChatTheme) = when (label) {
+    "买入" -> theme.rise
+    "增持" -> theme.rise.opacity(0.55f)
+    "减持" -> theme.fall
+    else -> theme.textTertiary
 }
