@@ -35,6 +35,11 @@ import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollCoordinator
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollState
 import com.kuikly.stockchat.chat.scroll.state.KuiklyChatScrollScheduler
+import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentCoordinator
+import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentState
+import com.kuikly.stockchat.chat.composer.state.KuiklyMediaSheetScheduler
+import com.kuikly.stockchat.chat.composer.state.MAX_COMPOSER_ATTACHMENTS
+import com.kuikly.stockchat.chat.composer.state.MediaSheetCoordinator
 import com.kuikly.stockchat.chat.sheet.state.CardSheetCoordinator
 import com.kuikly.stockchat.chat.sheet.state.CardSheetState
 import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
@@ -340,14 +345,12 @@ internal class ChatPage : BasePager() {
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
-    // 输入栏「+」媒体来源弹层（底部卡片 + 蒙层）：折叠/展开两态的 + 共用。
-    // mounted → presented 两帧入场（R4）；version 守卫防快速开合串帧。
-    private var mediaSheetMounted: Boolean by observable(false)
-    private var mediaSheetPresented: Boolean by observable(false)
-    private var mediaSheetVersion = 0
-    // 已选附件（图库/拍照/文档）。图片显示缩略图，文档显示名称胶囊，均可删除。
-    private var composerAttachments: List<ComposerAttachment> by observable(emptyList())
-    private var composerAttachmentSeq = 0
+    // 输入栏媒体面板与附件数据均由独立 Coordinator 管理；Page 仅处理原生 Effect。
+    private val composerAttachmentState = ComposerAttachmentState()
+    private val composerAttachmentCoordinator = ComposerAttachmentCoordinator(composerAttachmentState)
+    private val mediaSheetCoordinator by lazy {
+        MediaSheetCoordinator(composerAttachmentState, KuiklyMediaSheetScheduler())
+    }
     private var composerMediaHostRegistered = false
     // ===== @ 提及与 / 指令状态机（规范见 docs/10-输入栏@提及与斜杠指令交互规范_v1.0.md） =====
     // 联想面板维度（与 MEDIA 面板正交）：@ 触发 / / 触发 / 命令参数槽位。
@@ -512,6 +515,7 @@ internal class ChatPage : BasePager() {
         pageVisible = false
         alertPollGeneration++
         chatScrollCoordinator.onDisappear()
+        mediaSheetCoordinator.reset()
         // Coordinator cancels and version-guards every welcome callback here;
         // leaving a page must never let a stale timer mutate its observables.
         welcomeCoordinator.onDisappear()
@@ -548,6 +552,7 @@ internal class ChatPage : BasePager() {
     override fun pageWillDestroy() {
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
+        mediaSheetCoordinator.reset()
         super.pageWillDestroy()
     }
 
@@ -1053,7 +1058,7 @@ internal class ChatPage : BasePager() {
                             }
                             // 已选附件预览：折叠/展开两态都显示，位于文字上方；
                             // 图片是缩略图 + 右上角删除叉，文档是名称胶囊。
-                            vif({ page.composerAttachments.isNotEmpty() }) {
+                            vif({ page.composerAttachmentState.attachments.isNotEmpty() }) {
                                 page.renderComposerAttachmentRow(this)
                             }
                             // TextArea 必须永远挂在同一个父节点下。折叠/展开只改布局和
@@ -1467,10 +1472,10 @@ internal class ChatPage : BasePager() {
             }
             // 输入栏「+」媒体来源弹层：全屏蒙层 + 底部卡片（图库/拍照/文档）。
             // 放在 CardSheetHost 之后，压住卡片与输入栏；抽屉在其上不受影响。
-            vif({ page.mediaSheetMounted }) {
+            vif({ page.composerAttachmentState.mediaSheetMounted }) {
                 MediaActionSheetHost(
                     theme = page.theme,
-                    presented = page.mediaSheetPresented,
+                    presented = page.composerAttachmentState.mediaSheetPresented,
                     bottomInset = page.pagerData.safeAreaInsets.bottom,
                     onDismiss = { page.dismissMediaSheet() },
                     onAction = { page.handleMediaAction(it) },
@@ -1709,42 +1714,32 @@ internal class ChatPage : BasePager() {
         if (data == null || data.optString("type") != "ok") return
         val path = data.optString("path")
         if (path.isBlank()) return
-        if (composerAttachments.size >= MAX_COMPOSER_ATTACHMENTS) {
-            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("最多添加${MAX_COMPOSER_ATTACHMENTS}个附件")
-            return
-        }
-        val attachment = ComposerAttachment(
-            id = "att_${++composerAttachmentSeq}",
+        val attachment = composerAttachmentCoordinator.add(
             path = path,
             name = data.optString("name"),
             isImage = data.optString("kind") == "image",
         )
-        composerAttachments = composerAttachments + attachment
+        if (attachment == null) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("最多添加${MAX_COMPOSER_ATTACHMENTS}个附件")
+            return
+        }
         KLog.i(COMPOSER_LOG_TAG, "mediaResult kind=${attachment.kind} name=${attachment.displayName}")
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
     }
 
     /** 输入框附件预览的删除叉（显式点击，无需撤销条）。 */
     private fun removeComposerAttachment(id: String) {
-        composerAttachments = composerAttachments.filter { it.id != id }
+        composerAttachmentCoordinator.remove(id)
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
     }
 
     private fun clearComposerAttachments() {
-        if (composerAttachments.isNotEmpty()) composerAttachments = emptyList()
+        composerAttachmentCoordinator.clear()
     }
 
     /** 只带附件无文字时的兜底引导语，保证发送管线有正文。 */
     private fun defaultAttachmentPrompt(): String {
-        val attachments = composerAttachments
-        val hasImage = attachments.any { it.isImage }
-        val docName = attachments.firstOrNull { !it.isImage }?.name.orEmpty()
-        return when {
-            hasImage && docName.isNotEmpty() -> "帮我解读这张图片和文档《$docName》"
-            hasImage -> "帮我解读这张图片"
-            docName.isNotEmpty() -> "帮我解读文档《$docName》"
-            else -> "帮我解读这些资料"
-        }
+        return composerAttachmentCoordinator.defaultPrompt()
     }
 
     /**
@@ -1940,28 +1935,17 @@ internal class ChatPage : BasePager() {
      * 输入栏回默认态，草稿保留），再挂载弹层并两帧翻 presented 播入场（R4）。
      */
     private fun openMediaSheet() {
-        val version = ++mediaSheetVersion
         KLog.i(COMPOSER_LOG_TAG, "openMediaSheet")
         if (isComposerVisuallyExpanded()) {
             blurComposer()
             collapseComposer()
         }
-        mediaSheetPresented = false
-        mediaSheetMounted = true
-        setTimeout(16) {
-            if (version == mediaSheetVersion && !isWillDestroy()) mediaSheetPresented = true
-        }
+        mediaSheetCoordinator.open()
     }
 
     /** 蒙层点击 / 取消：presented 先归位，收尾动画播完再卸载。 */
     private fun dismissMediaSheet() {
-        val version = ++mediaSheetVersion
-        mediaSheetPresented = false
-        setTimeout(260) {
-            if (version == mediaSheetVersion && !mediaSheetPresented && !isWillDestroy()) {
-                mediaSheetMounted = false
-            }
-        }
+        mediaSheetCoordinator.dismiss()
     }
 
     private fun handleMediaAction(action: ComposerMediaAction) {
@@ -2483,7 +2467,10 @@ internal class ChatPage : BasePager() {
     private fun renderComposerAttachmentRow(container: ViewContainer<*, *>) {
         container.View {
             attr { flexDirectionRow(); marginTop(10f); paddingLeft(2f) }
-            this@ChatPage.composerAttachments.forEach { attachment ->
+            // `attachments` is a value observable rather than ObservableList: rebuild this
+            // compact preview row inside vbind so every add/remove is reactive (R1).
+            vbind({ this@ChatPage.composerAttachmentState.attachments }) {
+                this@ChatPage.composerAttachmentState.attachments.forEach { attachment ->
                 if (attachment.isImage) {
                     View {
                         attr {
@@ -2545,6 +2532,7 @@ internal class ChatPage : BasePager() {
                             event { click { this@ChatPage.removeComposerAttachment(attachment.id) } }
                         }
                     }
+                }
                 }
             }
         }
@@ -5228,20 +5216,6 @@ private enum class ComposerMediaAction(val source: String, val label: String, va
     CAMERA("camera", "拍照", "拍摄一张照片"),
     DOCUMENT("document", "手机文档", "选择文件交给 AI 解读"),
 }
-
-/** 输入栏已选附件：图片存本地缓存路径（file:// 预览），文档存展示名。 */
-data class ComposerAttachment(val id: String, val path: String, val name: String, val isImage: Boolean) {
-    val kind: String get() = if (isImage) "image" else "file"
-
-    /** Kuikly core 无文本截断 API，展示名在代码里限长。 */
-    val displayName: String
-        get() {
-            val base = name.ifBlank { if (isImage) "图片" else "文档" }
-            return if (base.length <= 14) base else base.take(7) + "…" + base.takeLast(6)
-        }
-}
-
-private const val MAX_COMPOSER_ATTACHMENTS = 4
 
 /**
  * 底部媒体来源弹层：全屏蒙层 + 底部圆角卡片。蒙层或「取消」关闭；三个入口行
