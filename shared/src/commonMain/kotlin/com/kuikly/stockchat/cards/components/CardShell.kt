@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.cards.components
 
+import com.kuikly.stockchat.data.fontSizeScaled
+
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.CardEvent
@@ -29,7 +31,7 @@ fun ViewContainer<*, *>.CollapsibleCard(model: CardModel, context: CardContext) 
     CardShell(model, context)
 }
 
-fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
+fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext, pinnedRing: Boolean = false, noTopMargin: Boolean = false) {
     val theme = context.theme
     val focusEnabled = context.cardKey.isNotEmpty() && context.onFocusChanged != null
     val focused = focusEnabled && context.focusedCardKey == context.cardKey
@@ -52,7 +54,11 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
                 padding(0f)
             } else {
                 alignSelfStretch()
-                marginTop(10f)
+                // pinnedRing（详情页「今日相关」置顶卡）与 noTopMargin（详情页业务卡
+                // 锚点容器）都表示：与上方标签的间距由外层锚点容器的 marginTop 负责，
+                // 卡身直接贴满锚点 → 锚点边界 = 卡片边界（置顶与否皆成立），
+                // E3 行业对比覆盖层 / brand 描边 / 角标都以锚点为基准严丝合缝。
+                if (!pinnedRing && !noTopMargin) marginTop(10f)
                 padding(14f)
                 backgroundColor(if (compareSelected) theme.brandSoft else theme.surface)
                 borderRadius(theme.cardRadius)
@@ -61,7 +67,11 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
             transform(scale = if (focused) Scale(1.04f, 1.04f) else Scale.DEFAULT)
             animate(Animation.easeOut(0.2f), focused)
             if (focused || compareSelected) border(Border(2f, BorderStyle.SOLID, theme.brand))
-            else if (context.density != CardDensity.MINI) {
+            else if (pinnedRing && context.density != CardDensity.MINI) {
+                // doc 29 E1 置顶卡描边：直接画在卡自身边框上。v1.0 画在外层 wrapper，
+                // 与卡片之间隔着标签与边距，光圈外一圈留白、视觉上不贴合。
+                border(Border(1.2f, BorderStyle.SOLID, theme.brand.opacity(0.5f)))
+            } else if (context.density != CardDensity.MINI) {
                 val edge = context.glass.resolve(theme.glass.cardEdge)
                 border(Border(edge.strokeWidth, BorderStyle.SOLID, Color(0xFFFFFF, edge.strokeAlpha)))
             }
@@ -116,7 +126,7 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
                 attr {
                     text("待对比：再点另一张行情卡")
                     marginTop(8f)
-                    fontSize(10f)
+                    fontSizeScaled(10f)
                     color(theme.brand)
                 }
             }
@@ -134,7 +144,7 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext) {
                 Text {
                     attr {
                         text(if (context.expanded) "收起 ▲" else "查看完整内容 ▼")
-                        fontSize(11f)
+                        fontSizeScaled(11f)
                         fontWeightMedium()
                         color(theme.brand)
                     }
@@ -188,7 +198,7 @@ private fun ViewContainer<*, *>.CardAction(label: String, theme: com.kuikly.stoc
             paddingLeft(2f)
             paddingRight(2f)
         }
-        Text { attr { text(label); fontSize(11f); color(theme.brand) } }
+        Text { attr { text(label); fontSizeScaled(11f); color(theme.brand) } }
         event { click { action() } }
     }
 }
@@ -197,7 +207,7 @@ private fun ViewContainer<*, *>.SkeletonCard(type: String, theme: com.kuikly.sto
     Text {
         attr {
             text("正在准备 ${type.ifEmpty { "结构化内容" }}")
-            fontSize(13f)
+            fontSizeScaled(13f)
             color(theme.textSecondary)
         }
     }
@@ -215,7 +225,7 @@ private fun ViewContainer<*, *>.UnknownCard(model: UnknownCardModel, theme: com.
     Text {
         attr {
             text("该内容类型暂不支持")
-            fontSize(15f)
+            fontSizeScaled(15f)
             fontWeightMedium()
             color(theme.textPrimary)
         }
@@ -224,7 +234,7 @@ private fun ViewContainer<*, *>.UnknownCard(model: UnknownCardModel, theme: com.
         attr {
             text("类型：${model.cardType}")
             marginTop(6f)
-            fontSize(12f)
+            fontSizeScaled(12f)
             color(theme.textTertiary)
         }
     }
