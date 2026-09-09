@@ -45,13 +45,22 @@ fun PagerScope.openStockDetail(
  * The note is deliberately separate from the natural-language question: it is
  * preserved in SendPayload context instead of teaching every caller to prefix
  * its question with implementation details.
+ *
+ * [focusSymbol]：结构化焦点标的（如 "600519.SH"）。带标的的场景（详情页、
+ * 预警卡、风险星图）务必传入——问题文本里不含股票名时，聊天页靠它把标的
+ * 固化为发送侧提及，AI 才知道"问的是哪只股票"，行情上下文也会随之注入。
  */
-fun PagerScope.openChatWithQuestion(question: String, focusNote: String = "") {
+fun PagerScope.openChatWithQuestion(question: String, focusNote: String = "", focusSymbol: String = "") {
     getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
         Routes.CHAT,
         JSONObject().apply {
             put("question", question)
             if (focusNote.isNotBlank()) put("focusNote", focusNote)
+            if (focusSymbol.isNotBlank()) put("focusSymbol", focusSymbol)
+            // 「问AI」跳转标记：宿主路由据此收拢导航栈。没有它的话，
+            // 「详情 ⇄ 对话」反复横跳会把历史页一层层压在栈里，
+            // 返回键要逐页退完所有旧页才能回到最初的对话页。
+            put("openedViaAskAi", "1")
         },
     )
 }

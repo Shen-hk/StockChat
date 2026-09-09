@@ -27,6 +27,7 @@ import com.kuikly.stockchat.cards.stock.KLineChart
 import com.kuikly.stockchat.cards.stock.MarketCardRenderers
 import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.kuikly.stockchat.common.Format
@@ -152,6 +153,7 @@ internal class StockDetailPage : BasePager() {
     private var selectedKLineIndex: Int by observable(-1)
     private var livePulseVersion = 0
     private var aiRevealVersion = 0
+    private var tickerLiftVersion = 0
     // ④ 声呐气泡横向漂移相位（0..1 循环，R1：draw 闭包内读取驱动 Canvas 重绘）。
     // 50 步 × 60ms ≈ 3s 一个往返周期；reduceMotion 恒 0（原地呼吸不漂移）。
     private var sonarDrift: Float by observable(0f)
@@ -182,6 +184,16 @@ internal class StockDetailPage : BasePager() {
     private var chartFlags: List<ChartFlag> by observable(emptyList())          // B2 图侧新闻旗标
     private var bandRange: Triple<Int, Int, Boolean>? by observable(null)       // ②/B2 区间高亮带 (start,end,fromSentence)
     private var selectedSentence: Int by observable(-1)                         // ② 选中的解读句
+    // ---- ① 圈选即问 · AI 区间解读（2026-09-09）：圈选松手 → 端侧统计立即入气泡，
+    // 随后流式生成 AI 解读追加在气泡内（用户结合图看）。状态机与 aiRemote* 同构：
+    // 0 端侧 / 1 thinking / 2 streaming / 3 done / 4 失败（回退端侧统计并如实标注）。
+    private var circleAiState: Int by observable(0)
+    private var circleAiText: String by observable("")
+    private var circleAiError: String by observable("")
+    private var circleAiModel: String by observable("")
+    private var circleAiGeneration = 0
+    private var circleAiTypewriter: TypewriterSmoother? = null
+    private var circleAiProvider: AiProvider? = null
     private var tapePreview: NewsItem? by observable(null)                      // B1 长按先览
     private var tapePreviewAnchorX = 0f                                         // B1 气泡锚点（长按 pageX）
     private var tapePreviewAnchorY = 0f                                         // B1 气泡锚点（长按 pageY）
@@ -217,6 +229,9 @@ internal class StockDetailPage : BasePager() {
             quoteLoading = false
             dataModeLabel = result.mode.quoteLabel()
         }
+        // 兜底：行情回调整体丢失（极端弱网/断链）时不让顶部价格永远停在骨架空态；
+        // 复位后由「更新于 等待刷新」如实表达未刷新成功。回调正常到达时同值写不通知。
+        setTimeout(6000) { if (quoteLoading) quoteLoading = false }
         insight = dependencies.insightRepository.cachedStock(symbol)
         dependencies.insightRepository.loadStock(symbol) {
             insight = it
@@ -244,6 +259,9 @@ internal class StockDetailPage : BasePager() {
         entranceVisible = reduceMotion
         if (!reduceMotion) {
             setTimeout(0) { entranceVisible = true }
+            // R5 断链兜底：ref→setTimeout 丢链时 RevealBlock 全体（图表/指标板/AI 块）
+            // 不得停在 opacity 0（同值写不通知，幂等安全；同 handoffPresented 做法）。
+            setTimeout(600) { entranceVisible = true }
         }
         // 交接淡入 R4 两帧翻转：首帧 opacity 0 挂载（对齐全屏玻璃帧），
         // 下一帧翻转为可见触发淡入。500ms 兜底防 ref→setTimeout 链路丢失
@@ -273,6 +291,8 @@ internal class StockDetailPage : BasePager() {
         if (aiRemoteState == 1 || aiRemoteState == 2) {
             aiRemoteState = if (aiRemoteText.isNotBlank()) 3 else 0
         }
+        // 圈选 AI 流同样随页面离开中断
+        resetCircleAiStream()
     }
 
     override fun body(): ViewBuilder {
@@ -601,7 +621,7 @@ internal class StockDetailPage : BasePager() {
                             Text {
                                 attr {
                                     absolutePosition(left = 16f, top = 46f)
-                                    text("圈选中：拖动选择区间，松手看统计")
+                                    text("圈选中：松手生成这段走势的解读")
                                     fontSizeScaled(10f)
                                     fontWeightMedium()
                                     color(page.theme.brand)
@@ -634,7 +654,7 @@ internal class StockDetailPage : BasePager() {
                                     attr { flexDirectionRow(); alignItemsCenter() }
                                     Text {
                                         attr {
-                                            text("AI · 端侧规则")
+                                            text(page.chartBubbleSourceLabel())
                                             fontSizeScaled(9f)
                                             fontWeightSemiBold()
                                             color(page.theme.brand)
@@ -657,6 +677,39 @@ internal class StockDetailPage : BasePager() {
                                         fontSizeScaled(11.5f)
                                         lineHeightScaled(17f)
                                         color(page.theme.textPrimary)
+                                    }
+                                }
+                                // ① 圈选 AI 解读：流式段落（打字机逐字），对照图就地阅读
+                                vif({ page.circleAiState == 1 && page.circleAiText.isBlank() }) {
+                                    Text {
+                                        attr {
+                                            text("正在生成区间解读…")
+                                            marginTop(4f)
+                                            fontSizeScaled(11f)
+                                            color(page.theme.textTertiary)
+                                        }
+                                    }
+                                }
+                                vif({ page.circleAiText.isNotBlank() }) {
+                                    Text {
+                                        attr {
+                                            text(page.circleAiText)
+                                            marginTop(4f)
+                                            fontSizeScaled(11.5f)
+                                            lineHeightScaled(17f)
+                                            color(page.theme.textPrimary)
+                                        }
+                                    }
+                                }
+                                vif({ page.circleAiState == 4 }) {
+                                    Text {
+                                        attr {
+                                            text("AI 调用失败：${page.circleAiError} · 以上为端侧统计")
+                                            marginTop(4f)
+                                            fontSizeScaled(10f)
+                                            lineHeightScaled(14f)
+                                            color(page.theme.textTertiary)
+                                        }
                                     }
                                 }
                                 View {
@@ -682,7 +735,8 @@ internal class StockDetailPage : BasePager() {
                                         click {
                                             page.openChatWithQuestion(
                                                 page.chipStore.promptFragment() +
-                                                    "「${page.chartBubble}」帮我从资金面和消息面深聊这段走势。"
+                                                    "「${page.chartBubble}」帮我从资金面和消息面深聊${page.quote.name}这段走势。",
+                                                focusSymbol = page.symbol,
                                             )
                                         }
                                     }
@@ -1118,10 +1172,11 @@ internal class StockDetailPage : BasePager() {
                     reduceMotion = page.reduceMotion,
                     onToggleWatchlist = { page.toggleWatchlist() },
                     onBackToChat = { page.closePage() },
-                    // ③「问 AI」：问题 = 抓取上下文片段 +（停顿预填 或 默认解读问句）
+                    // ③「问 AI」：问题 = 抓取上下文片段 +（停顿预填 或 默认解读问句），
+                    // 并把当前标的作为结构化焦点传入（问题文本可能被用户改写）。
                     onAskAi = {
                         val base = page.prefillQuestion.ifEmpty { page.askAiQuestion() }
-                        page.openChatWithQuestion(page.chipStore.promptFragment() + base)
+                        page.openChatWithQuestion(page.chipStore.promptFragment() + base, focusSymbol = page.symbol)
                     },
                     chips = { page.chipStore.chips },
                     onRemoveChip = { page.chipStore.remove(it.key) },
@@ -1205,9 +1260,22 @@ internal class StockDetailPage : BasePager() {
     /** ④/① 就地气泡统一入口：仲裁器切换 + R4 两帧入场翻转。 */
     private fun showChartBubble(text: String) {
         chartBubble = text
+        // 新气泡内容一律重置上一段圈选 AI 流（generation 失效使旧回调全部 no-op）
+        resetCircleAiStream()
         overlayArbiter.request(DetailOverlay.CHART_BUBBLE)
         chartBubblePresented = false
         setTimeout(0) { chartBubblePresented = true }
+    }
+
+    /** ① 中断圈选 AI 流并回到端侧态（generation 失效 + 停 provider + 停打字机）。 */
+    private fun resetCircleAiStream() {
+        circleAiProvider?.stop()
+        circleAiTypewriter?.cancel()
+        circleAiTypewriter = null
+        circleAiGeneration++
+        circleAiText = ""
+        circleAiError = ""
+        circleAiState = 0
     }
 
     /**
@@ -1218,10 +1286,15 @@ internal class StockDetailPage : BasePager() {
         if (overlayArbiter.active == DetailOverlay.CHART_BUBBLE) {
             overlayArbiter.close()
             bandRange = null
+            // 关气泡即中断圈选 AI 流（气泡已不可见，流完也无处展示）
+            resetCircleAiStream()
         }
     }
 
-    /** ① 圈选松手：区间起止价、涨跌幅、极值全部端侧统计（纯事实）。 */
+    /**
+     * ① 圈选松手：端侧统计（区间起止价、涨跌幅、极值，纯事实）立即入气泡，
+     * 随后流式生成 AI 区间解读追加展示——用户正对照图看，解读就地呈现。
+     */
     private fun onCircleSelected(start: Int, end: Int) {
         val series = detailTimelineSeries(quote)
         if (series.size < 2) return
@@ -1242,6 +1315,128 @@ internal class StockDetailPage : BasePager() {
                 "区间${if (pct >= 0) "上行" else "下行"} ${Format.percent(pct)}，" +
                 "区间极值 ${Format.price(seg.min())}–${Format.price(seg.max())}",
         )
+        requestCircleAi(lo, hi)
+    }
+
+    /** ① 气泡来源行：圈选 AI 流式期间如实标注状态（与 AI 解读块同一「真 AI/端侧」分界）。 */
+    private fun chartBubbleSourceLabel(): String = when (circleAiState) {
+        1, 2 -> "AI 生成中（$circleAiModel）"
+        3 -> "AI 生成（$circleAiModel）· 仅供参考"
+        4 -> "端侧统计 · AI 调用失败"
+        else -> "AI · 端侧规则"
+    }
+
+    /**
+     * ① 圈选 AI 流式解读：复用聊天页同一套 API 配置与 DeepSeek 通路（与 AI 解读块
+     * 同范式）。端侧先算好区间全部事实槽位喂给模型，只允许引用区间内 HH:MM 时间；
+     * 未配置 API 时保持端侧统计（不打扰、不跳页），失败如实标注。
+     */
+    private fun requestCircleAi(lo: Int, hi: Int) {
+        val config = aiChatDependencies.configStore.load()
+        if (config.validationError() != null) return
+        val generation = ++circleAiGeneration
+        circleAiText = ""
+        circleAiError = ""
+        circleAiModel = config.model
+        circleAiState = 1
+        val provider = aiChatDependencies.aiProviderFactory(config)
+        circleAiProvider = provider
+        // 线程纪律：provider 回调全部来自后台线程，observable 写入须经打字机节拍器
+        // 或 setTimeout(0) 跳回主线程（与 requestAiInsight 同款，此前直写曾闪退）。
+        var content = ""
+        val smoother = TypewriterSmoother(pagerId) { revealed ->
+            if (generation != circleAiGeneration) return@TypewriterSmoother
+            circleAiText = revealed
+            if (circleAiState == 1 && revealed.isNotEmpty()) circleAiState = 2
+        }
+        circleAiTypewriter = smoother
+        provider.ask(
+            messages = listOf(AiChatMessage("user", buildCircleAiPrompt(lo, hi))),
+            onDelta = { delta ->
+                content += delta
+                if (generation == circleAiGeneration) smoother.append(delta)
+            },
+            onDone = {
+                if (generation != circleAiGeneration) return@ask
+                val fullContent = content
+                smoother.complete {
+                    setTimeout(0) {
+                        if (generation != circleAiGeneration) return@setTimeout
+                        if (sanitizeAiText(fullContent).isEmpty()) {
+                            circleAiError = "接口未返回有效内容"
+                            circleAiState = 4
+                        } else {
+                            circleAiState = 3
+                        }
+                    }
+                }
+            },
+            onError = { message ->
+                if (generation != circleAiGeneration) return@ask
+                setTimeout(0) {
+                    if (generation != circleAiGeneration) return@setTimeout
+                    smoother.flushNow()
+                    smoother.cancel()
+                    circleAiError = message
+                    circleAiState = 4
+                }
+            },
+        )
+    }
+
+    /** ① 圈选区间事实槽位（唯一事实来源），端侧算全，模型只允许引用区间内时间点。 */
+    private fun buildCircleAiPrompt(lo: Int, hi: Int): String {
+        val q = quote
+        val timeline = q.timeline
+        val seg = timeline.subList(lo, (hi + 1).coerceAtMost(timeline.size))
+        val series = detailTimelineSeries(q)
+        val p0 = series[lo]
+        val p1 = series[hi]
+        val pct = if (p0 != 0.0) (p1 - p0) / p0 * 100.0 else 0.0
+        val highPt = seg.maxByOrNull { it.price }
+        val lowPt = seg.minByOrNull { it.price }
+        // 区间终点与均价线关系（均价 = 真实 amount 口径，与图上虚线一致）
+        val averages = TimeLineCalculator.averagePrices(timeline, q.previousClose)
+        val avgEnd = averages.getOrNull(hi)
+        val vsAvg = if (avgEnd != null && avgEnd > 0.0) {
+            "区间终点${if (p1 >= avgEnd) "高于" else "低于"}均价线（${Format.price(avgEnd)}）"
+        } else null
+        // 区间量能 vs 全天每分钟均量（放量/缩量，只述倍数事实）
+        val dayAvgVol = timeline.map { it.volume }.average().takeIf { !it.isNaN() } ?: 0.0
+        val segAvgVol = seg.map { it.volume }.average().takeIf { !it.isNaN() } ?: 0.0
+        val volDesc = if (dayAvgVol > 0.0) {
+            val ratio = segAvgVol / dayAvgVol
+            when {
+                ratio >= 1.5 -> "区间量能明显放大（约为全天每分钟均量的 ${Format.decimal(ratio, 1)} 倍）"
+                ratio <= 0.6 -> "区间量能收缩（约为全天每分钟均量的 ${Format.decimal(ratio, 1)} 倍）"
+                else -> "区间量能与全天每分钟均量相当"
+            }
+        } else null
+        val vsPrev = if (q.previousClose > 0.0) {
+            val a = (p0 - q.previousClose) / q.previousClose * 100.0
+            val b = (p1 - q.previousClose) / q.previousClose * 100.0
+            "区间起点较昨收 ${Format.percent(a)}，终点较昨收 ${Format.percent(b)}"
+        } else null
+        val facts = buildList {
+            add("圈选区间：${AnchorIndex.indexToTimeLabel(lo)} 至 ${AnchorIndex.indexToTimeLabel(hi)}")
+            add("区间起点 ${Format.price(p0)}，终点 ${Format.price(p1)}，区间涨跌 ${Format.percent(pct)}")
+            if (highPt != null) add("区间最高 ${Format.price(highPt.price)}（出现于 ${highPt.time}）")
+            if (lowPt != null) add("区间最低 ${Format.price(lowPt.price)}（出现于 ${lowPt.time}）")
+            vsAvg?.let { add(it) }
+            vsPrev?.let { add(it) }
+            volDesc?.let { add(it) }
+        }
+        return buildString {
+            appendLine("你是 A 股个股解读助手。用户刚在 ${q.name}（${q.symbol}）当日分时图上圈选了一段区间，请基于下面的圈选区间真实数据，用 2-3 句简体中文解读这段走势（用户正对照分时图阅读，请紧扣区间内事实）。")
+            appendLine()
+            appendLine("硬性要求：")
+            appendLine("1. 每句话必须至少引用一个具体分时时间点（HH:MM，仅限 09:30-11:30 或 13:00-15:00，且必须落在圈选区间内）；没有时间依据的句子不要写。")
+            appendLine("2. 只陈述与解释以上数据体现的事实，不预测后续涨跌，不给出买卖、仓位建议。")
+            appendLine("3. 直接输出句子，每句以句号结尾；不要小标题、序号、加粗、markdown 或任何卡片协议。")
+            appendLine()
+            appendLine("圈选区间数据（唯一事实来源，禁止编造未提供的数字）：")
+            facts.forEach { appendLine("- $it") }
+        }
     }
 
     /** ⑤ scrub 停顿 600ms：只预填不发送；恢复滑动（onScrub）即清空；松手 2s 后清除。 */
@@ -1375,7 +1570,7 @@ internal class StockDetailPage : BasePager() {
     private fun askAboutNews(news: NewsItem) {
         overlayArbiter.close()
         newsSummary = null
-        openChatWithQuestion(chipStore.promptFragment() + "「${news.title}」这条新闻是什么意思？")
+        openChatWithQuestion(chipStore.promptFragment() + "「${news.title}」这条新闻是什么意思？", focusSymbol = symbol)
     }
 
     /** H1 快捷理由：写入自选 + 理由 + 当时价，展开 A1 回访卡（doc §4.13 验收链路）。 */
@@ -1527,8 +1722,16 @@ internal class StockDetailPage : BasePager() {
     private fun watchlistReason(): String =
         watchlistStore.list().firstOrNull { it.symbol == symbol }?.reason.orEmpty()
 
-    private fun applyQuote(next: Quote) {
+    private fun applyQuote(input: Quote) {
         val old = quote
+        // 序列只增不减：快照先行到达时 timeline/kLines 为空（腾讯快照不带分时），
+        // 绝不能用空序列覆盖已有分时——否则图表塌成一条昨收基线横线、K线页签空白，
+        // 且分时请求失败时永不恢复。真实序列到达（非空）时才整体替换。
+        var next = input
+        if (next.timeline.isEmpty() && old.timeline.isNotEmpty()) next = next.copy(timeline = old.timeline)
+        if (next.kLines.isEmpty() && old.kLines.isNotEmpty()) next = next.copy(kLines = old.kLines)
+        if (next.weekKLines.isEmpty() && old.weekKLines.isNotEmpty()) next = next.copy(weekKLines = old.weekKLines)
+        if (next.monthKLines.isEmpty() && old.monthKLines.isNotEmpty()) next = next.copy(monthKLines = old.monthKLines)
         val changed = old.price != next.price || old.changePercent != next.changePercent
         previousPriceText = Format.price(old.price)
         previousPercentText = Format.percent(old.changePercent)
@@ -1538,15 +1741,21 @@ internal class StockDetailPage : BasePager() {
         // doc 29 ④ 异动声呐：分时到达后跑一次端侧检测（成交量暂不参与确认，见已知简化）。
         // 同屏 ≤3 点（doc §4.4 呼吸预算，U4），超出的按 |涨跌幅| 降序舍弃。
         sonarPoints = detectAnomalies(detailTimelineSeries(next), null).take(3)
-        // 分时到位后择机启动真实 AI 解读（等 800ms 让资金流/财报尽量落位）
-        if (next.timeline.isNotEmpty()) setTimeout(800) { maybeStartAiInsight() }
+        // 分时首次到达后择机启动真实 AI 解读（等 800ms 让资金流/财报尽量落位）；
+        // 只在分时"新到"时调度一次，不再随快照/K线回调重复 setTimeout。
+        if (next.timeline.isNotEmpty() && old.timeline.isEmpty()) setTimeout(800) { maybeStartAiInsight() }
         if (changed) playTicker()
     }
 
     private fun playTicker() {
         if (reduceMotion) return
         tickerLift = true
-        setTimeout(180) { tickerLift = false }
+        // 复位双保险（R5：setTimeout 链在 Android 上会丢回调）：180ms 正常复位 +
+        // 600ms 断链兜底。同值写不通知，兜底触发时幂等；version 防旧 timer
+        // 把新一轮 lift 提前拍死在半程（动画播一半顶部数据卡在半透明态）。
+        val version = ++tickerLiftVersion
+        setTimeout(180) { if (version == tickerLiftVersion) tickerLift = false }
+        setTimeout(600) { if (version == tickerLiftVersion) tickerLift = false }
     }
 
     private fun playWatchlistFeedback() {

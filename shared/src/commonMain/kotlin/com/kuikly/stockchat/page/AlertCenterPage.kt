@@ -406,7 +406,7 @@ internal class AlertCenterPage : BasePager() {
                         View {
                             attr { marginTop(10f); flexDirectionRow() }
                             page.renderAction(this, "问 AI", primary = true) {
-                                page.openChatWithQuestion(msg.askQuestion)
+                                page.openChatWithQuestion(msg.askQuestion, focusSymbol = msg.symbol)
                             }
                             if (msg.symbol.isNotEmpty()) {
                                 page.renderAction(this, "看详情", primary = false) {

@@ -111,6 +111,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     var pauseSlot = -1
     var pauseRevision = 0                                     // 槽位变化即自增，使旧停顿计时失效（免 clearTimeout）
     var scrubLeaveRevision = 0                                // 松手 revision：使旧的 2s 清预填计时失效
+    var selectingCircle = false                               // ① 圈选态（瞬态；响应式镜像在 state.selecting）
     var droppedKnown = emptySet<Int>()                        // 已启动下落动画的旗标 index
 
     // ④ 声呐点命中测试：落点距某声呐中心 ≤12dp（平方 144）返回其 index，否则 -1
@@ -533,7 +534,9 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
         // 短长按 280ms 才进十字线 scrub；纵向移动超过 6dp 会立即作废该入口，进入瞬间回调 onScrubActive(true) 让页面
         // 锁 Scroller 滚动（WatchlistPage 拖拽排序同款已验证机制），松手/取消恢复。
         // 长按计时用代际计数失效（RiskSkyChart 同款）。
-        // ① 圈选即问：原单指长按拖动入口让位十字线后暂无触发路径（回调与绘制保留）。
+        // ① 圈选即问（2026-09-09 实装）：横向拖动（位移 >14dp 且明显占优于纵向）进入
+        // 圈选态，拖动实时更新预览带，松手回调 onCircleSelect——与纵向滚动（最高
+        // 优先级）、280ms 短长按十字线 scrub 三者互斥，互不抢占。
         View {
             attr {
                 absolutePositionAllZero()
@@ -556,6 +559,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     scrollingIntent = false
                     gestureDone = false
                     scrubbing = false
+                    selectingCircle = false
                     lpGen++
                     val myGen = lpGen
                     setTimeout(CROSSHAIR_HOLD_MS) {
@@ -606,6 +610,24 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         lpGen++
                     } else if (movedDist > CROSSHAIR_HOLD_SLOP_SQ) {
                         lpGen++ // 明显横移/抖动：作废短长按计时
+                        // ① 圈选即问（2026-09-09 实装）：横向拖动位移明显占优于纵向时
+                        // 进入圈选（走到这里 dy 必 ≤ 6dp，纵向滚动意图已在前序分支排除）。
+                        // 进入即锁 Scroller（onScrubActive），后续纵向漂移不再被外层
+                        // 拦截，手势全程留在本层；松手/取消在 touchUp/touchCancel 收尾。
+                        if (!selectingCircle &&
+                            abs(dx) > CIRCLE_ENTER_DX &&
+                            abs(dx) > abs(dy) * 1.5f
+                        ) {
+                            selectingCircle = true
+                            state.selecting = true
+                            onSelectStateChange(true)
+                            onScrubActive(true)
+                        }
+                        if (selectingCircle) {
+                            val s = slotAt(downX)
+                            val e2 = slotAt(e.x)
+                            if (s >= 0 && e2 >= 0) state.selectRange = Pair(s, e2)
+                        }
                     }
                 }
 
@@ -624,6 +646,17 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         setTimeout(2000) {
                             if (myLeaveRev == scrubLeaveRevision) onScrubLeave()
                         }
+                    } else if (selectingCircle) {
+                        // ① 圈选收尾：退出圈选态 + 解锁 Scroller，有效区间回调页面
+                        //（区间有效性 [hi-lo≥3] 由页面侧校验，短区间 toast 提示）
+                        selectingCircle = false
+                        state.selecting = false
+                        onSelectStateChange(false)
+                        onScrubActive(false)
+                        val s = state.selectRange.first
+                        val e2 = state.selectRange.second
+                        state.selectRange = Pair(-1, -1)
+                        if (s >= 0 && e2 >= 0 && s != e2) onCircleSelect(s, e2)
                     } else if (!scrollingIntent && movedDist <= CROSSHAIR_HOLD_SLOP_SQ) {
                         // ④ 声呐点命中：落点距中心 ≤12dp，回调且不进 scrub；
                         // 未命中 = 空白轻点 → U1「点空白全关」入口
@@ -642,6 +675,14 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     if (scrubbing) {
                         scrubbing = false
                         onScrubActive(false)
+                    }
+                    if (selectingCircle) {
+                        // 圈选中被拦截/打断：静默退出，不回调松手语义（幂等收尾）
+                        selectingCircle = false
+                        state.selecting = false
+                        onSelectStateChange(false)
+                        onScrubActive(false)
+                        state.selectRange = Pair(-1, -1)
                     }
                 }
             }
@@ -735,6 +776,7 @@ private const val CHART_HEIGHT = 396f
 private const val CROSSHAIR_HOLD_MS = 280
 private const val SCROLL_INTENT_DY = 6f
 private const val CROSSHAIR_HOLD_SLOP_SQ = 144f // 12dp × 12dp
+private const val CIRCLE_ENTER_DX = 14f         // ① 圈选进入阈值：横向位移须超过此值且明显占优于纵向
 private const val PRICE_TOP = 0f
 private const val PRICE_HEIGHT = 290f
 private const val VOL_TOP = 296f

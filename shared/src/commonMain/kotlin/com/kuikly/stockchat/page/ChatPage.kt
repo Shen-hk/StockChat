@@ -42,8 +42,6 @@ import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.LocalAlertProvider
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
-import com.kuikly.stockchat.data.config.DataSourceConfig
-import com.kuikly.stockchat.data.mock.MockQuoteProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.kuikly.stockchat.data.entity.Glossary
@@ -341,6 +339,11 @@ internal class ChatPage : BasePager() {
     // 上下文标记（/深水区等），注入 system context（规范 §4.8）。
     private val deepContextNotes = mutableListOf<String>()
     private var deepContextVersion: Int by observable(0)
+    // 路由带来的焦点标的（详情页/预警/星图等场景经 openChatWithQuestion 传入）。
+    // 不进 mentionEntities（那里靠文本对账，问题文本里没有 @名称 会被剔除），
+    // 而是在 buildSendPayload 组包时无条件并入 mentions——入口显式给了标的，
+    // 信任之；与文本扫描结果由 ChatQuoteContext 按 symbol 去重。
+    private var routeFocusMention: MentionEntity? = null
     private var commandValidationMessage: String by observable("")
     // / 命令参数态（规范 §5.4）。参数值不落字段，每次从输入文本实时解析，
     // 保证面板显示与最终发送用的是同一套解析结果。
@@ -426,8 +429,6 @@ internal class ChatPage : BasePager() {
     private val glossaryStore get() = dependencies.glossaryStore
     private var alertPollGeneration = 0
     private val deliveredAlertBuckets = mutableSetOf<String>()
-    // 数据源开关：模拟模式下行情回落 MockDataBank（原状态）；真实模式此字段不参与请求。
-    private val mockQuoteProvider = MockQuoteProvider()
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
     private var welcomeKeywordText: String by observable("行情")
@@ -452,6 +453,7 @@ internal class ChatPage : BasePager() {
     private val welcomeReducedMotion by lazy { platformPrefersReducedMotion() }
     private var pendingRouteQuestion: String = ""
     private var pendingRouteFocusNote: String = ""
+    private var pendingRouteFocusSymbol: String = ""
     // 输入框渐变描边流动相位（0..2π）：composerRimFlowTimer 以 20fps 推进，
     // renderComposerGradientRim 的 Canvas draw 闭包内读取本值驱动重绘
     // （VoiceBar 同款 ReactiveObserver 范式）。页面不可见即停，省电。
@@ -491,6 +493,7 @@ internal class ChatPage : BasePager() {
         glassMode = hostGlassRenderer.mode
         pendingRouteQuestion = pagerData.params.optString("question")
         pendingRouteFocusNote = pagerData.params.optString("focusNote")
+        pendingRouteFocusSymbol = pagerData.params.optString("focusSymbol")
         StockCardRenderers.ensureRegistered()
         registerDrawerFlingHostIfNeeded()
         registerComposerMediaResultHostIfNeeded()
@@ -603,7 +606,9 @@ internal class ChatPage : BasePager() {
                     // activeSessionId 是会话树的重建键。新建对话时先替换整棵会话
                     // 内容树，再由内部 vif/vfor 画空态或消息；这是应用内等价于用户
                     // 手动退出、重新进入页面的恢复动作，规避原生列表复用偶发残留。
-                    vbind({ page.viewModel.activeSessionId }) {
+                    // 前缀拼 themeRebuildKey：欢迎区/气泡/卡片都以参数捕获 theme，
+                    // 换肤（明暗/字号档）时靠键翻转整树重建拿到新配色。
+                    vbind({ page.themeRebuildKey() + "|" + page.viewModel.activeSessionId }) {
                         // 仅由消息是否为空决定欢迎区的存在。不要把这里再绑定到动效的
                         // mounted 状态：内容可见性必须独立于任何异步动画调度。
                         vif({ page.viewModel.messages.isEmpty() }) {
@@ -691,6 +696,10 @@ internal class ChatPage : BasePager() {
                 }
                 // Declare the overlay after its backdrop source so Android paints
                 // the glass above the moving conversation rather than beneath it.
+                // ChatTopNav 以参数捕获 theme（body 只跑一次的首帧快照），attr 内
+                // 读到的都是旧值；必须靠 vbind 键翻转整树重建，换肤时状态栏底色
+                // 渐变层与导航行两层才会跟随新主题。
+                vbind({ page.themeRebuildKey() }) {
                 ChatTopNav(
                     statusBarHeight = page.pagerData.statusBarHeight,
                     theme = page.theme,
@@ -737,6 +746,7 @@ internal class ChatPage : BasePager() {
                     onMenu = { page.updateDrawerOpen(!page.drawerOpen) },
                     onNewChat = { page.startNewChat() },
                 )
+                }
                 vif({ page.ambiguousSymbols.isNotEmpty() }) {
                     View {
                         attr {
@@ -915,7 +925,6 @@ internal class ChatPage : BasePager() {
                 }
                 val composerSheetMaterial = page.theme.glass.sheet
                 val composerGlassRenderer = page.glassRenderer
-                val composerDragBackground = page.theme.brandSoft
                 View {
                     attr {
                         // Floating capsule composer on a solid page-coloured base:
@@ -987,11 +996,12 @@ internal class ChatPage : BasePager() {
                             // 悬浮感：与顶部灵动岛胶囊同款阴影（AppChrome 灵动岛
                             // 0/8/22/0.16），让输入栏像浮在列表上方而不是贴底。
                             boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
-                            // 对比试验：输入栏使用纯白背景，不叠加玻璃表皮或 Blur。
-                            // entityDragActive 仍是本 attr 的唯一动画驱动。
+                            // 表皮跟随主题：浅色 = 纯白，深色 = surface 深灰。attr 内
+                            // 读 page.theme 注册依赖，换肤时本块随 observable 重放
+                            // （animate 的键取自实参里的 entityDrag 读，不受影响）。
                             backgroundColor(
-                                if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) composerDragBackground
-                                else Color(0xFFFFFFFF)
+                                if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) page.theme.brandSoft
+                                else page.theme.surface
                             )
                             transform(
                                 scale = if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) {
@@ -1053,7 +1063,13 @@ internal class ChatPage : BasePager() {
                                                 transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
                                                 animate(Animation.easeOut(0.2f), !page.composerChromePresented)
                                             }
-                                            LineIconPlus(color = Color(0xFF000000), size = 24f)
+                                            // 图标色原为硬编码纯黑（2026-09-05 设计）：
+                                            // 深色表皮下改读 textPrimary 随主题反转；
+                                            // Canvas 图标的颜色在挂载帧捕获，需 vbind
+                                            // 键翻转重建才能换肤。
+                                            vbind({ page.themeRebuildKey() }) {
+                                                LineIconPlus(color = page.theme.textPrimary, size = 24f)
+                                            }
                                         }
                                         // 折叠态「+」：与展开态同款底部媒体来源弹层。
                                         event { click { page.openMediaSheet() } }
@@ -1146,10 +1162,14 @@ internal class ChatPage : BasePager() {
                                             // （Lucide keyboard 对齐），点击互相切换；按住
                                             // 说话手势已移至中段覆盖层。
                                             vif({ !page.voiceInputMode }) {
-                                                LineIconAudioLines(color = Color(0xFF000000), size = 27f)
+                                                vbind({ page.themeRebuildKey() }) {
+                                                    LineIconAudioLines(color = page.theme.textPrimary, size = 27f)
+                                                }
                                             }
                                             vif({ page.voiceInputMode }) {
-                                                LineIconKeyboard(color = Color(0xFF000000), size = 27f)
+                                                vbind({ page.themeRebuildKey() }) {
+                                                    LineIconKeyboard(color = page.theme.textPrimary, size = 27f)
+                                                }
                                             }
                                             event { click { page.toggleVoiceInputMode() } }
                                         }
@@ -1227,8 +1247,10 @@ internal class ChatPage : BasePager() {
                                                 borderRadius(23f)
                                             }
                                             // 与折叠态语音开关同款声波图标（Lucide
-                                            // audio-lines），白底输入栏下同折叠态用黑色。
-                                            LineIconAudioLines(color = Color(0xFF000000), size = 26f)
+                                            // audio-lines），颜色随主题表皮反转。
+                                            vbind({ page.themeRebuildKey() }) {
+                                                LineIconAudioLines(color = page.theme.textPrimary, size = 26f)
+                                            }
                                             // 展开态点击语音（豆包式）：直接折叠并进入语音
                                             // 模式，一步呈现折叠态"按住说话"样式；不再在
                                             // 展开态按住录音。
@@ -2173,6 +2195,7 @@ internal class ChatPage : BasePager() {
         requestedSymbols.clear()
         quoteStates.clear()
         deepContextNotes.clear()
+        routeFocusMention = null
         deepContextVersion++
         commandValidationMessage = ""
         collapseComposer()
@@ -3990,17 +4013,11 @@ internal class ChatPage : BasePager() {
     private fun requestQuote(symbol: String) {
         val firstRequest = requestedSymbols.add(symbol)
         if (!firstRequest) return
-        if (!DataSourceConfig.USE_REAL_MARKET_DATA) {
-            // 模拟模式（原状态）：行情回落 MockDataBank，行为与数据源真实化之前一致。
-            mockQuoteProvider.snapshot(symbol) { quote ->
-                val updated = ChatQuoteState(symbol, quote, DataMode.OFFLINE)
-                val index = quoteStates.indexOfFirst { it.symbol == symbol }
-                if (index >= 0) quoteStates[index] = updated else quoteStates.add(updated)
-                syncIslandCompareCard()
-            }
-            return
-        }
-        // 真实模式：腾讯行情 → 缓存 → 空态，不再有任何模拟数值。
+        // 与详情页同一条 QuoteRepository 链路（在线→缓存→离线）：不再按数据源开关
+        // 短路到 MockQuoteProvider——那会让聊天卡片永远拿 48 点演示分时（索引对齐
+        // 240 槽位后只画满左段，用户反馈"分时只能走一半"），而详情页同一时刻拿到
+        // 的却是腾讯整日分时。开关只控制离线降级终点（mock 模式=MockDataBank，
+        // 真实模式=空态），在线优先与两个页面保持一致。
         quoteRepository.load(symbol) { result ->
             val updated = ChatQuoteState(symbol, result.quote, result.mode)
             val index = quoteStates.indexOfFirst { it.symbol == symbol }
@@ -4643,8 +4660,16 @@ internal class ChatPage : BasePager() {
      */
     private fun buildSendPayload(): SendPayload {
         val rawText = viewModel.inputText
-        val verifiedMentions = SolidTokenRegistry.verify(mentionEntities, rawText)
-        val command = resolveCommandFromText(rawText, verifiedMentions)
+        val verified = SolidTokenRegistry.verify(mentionEntities, rawText)
+        // 路由焦点标的绕过文本对账并入提及（去重：与输入期提及同 symbol 时以输入侧为准）。
+        // 注意：合并列表只进 SendPayload（systemNote / 行情上下文注入消费）；
+        // 命令解析仍用 verified——SECURITY 槽按提及顺序填、不看文本里有没有 @，
+        // 焦点提及排第一会把 `/对比 五粮液 估值` 这类命令的第一个槽错填成入口标的。
+        val verifiedMentions = routeFocusMention
+            ?.takeIf { verified.none { m -> m.symbol == it.symbol } }
+            ?.let { listOf(it) + verified }
+            ?: verified
+        val command = resolveCommandFromText(rawText, verified)
         val payload = if (command != null) {
             val rendered = CommandRegistry.renderPrompt(command.commandId.let { id ->
                 CommandRegistry.all.firstOrNull { it.id == id } ?: CommandRegistry.all.first()
@@ -5157,8 +5182,26 @@ internal class ChatPage : BasePager() {
         pendingRouteQuestion = ""
         val focusNote = pendingRouteFocusNote.trim()
         pendingRouteFocusNote = ""
+        val focusSymbol = pendingRouteFocusSymbol.trim()
+        pendingRouteFocusSymbol = ""
         setTimeout(0) {
             if (focusNote.isNotEmpty()) attachContextNote(focusNote)
+            // 结构化焦点标的：问题文本不含股票名时（如"「14:32 冲高回落」帮我
+            // 深聊这段走势"），AI 原本无从得知问的是哪只。把标的固化为发送侧
+            // 提及（buildSendPayload 组包时并入，绕过文本对账），systemNote 里
+            // 即出现"请优先围绕这些标的回答"，ChatQuoteContext 也会随之注入
+            // 真实行情；另挂一条可移除的上下文标注让用户可见。
+            if (focusSymbol.isNotEmpty()) {
+                Securities.all.firstOrNull { it.symbol == focusSymbol }?.let { security ->
+                    routeFocusMention = MentionEntity(
+                        symbol = security.symbol,
+                        name = security.name,
+                        type = MentionType.STOCK,
+                        mentionText = "@${security.name}",
+                    )
+                    attachContextNote("标的：${security.name}（${security.symbol}）")
+                }
+            }
             injectQuestion(question)
         }
     }

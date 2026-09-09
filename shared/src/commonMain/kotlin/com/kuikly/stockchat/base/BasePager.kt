@@ -116,6 +116,15 @@ internal abstract class BasePager : Pager() {
     /** 设置页选中态的响应式读取口（读 observable，attr 内读取即注册依赖）。 */
     protected fun appearanceThemeModeId(): String = appearanceModeId
 
+    /**
+     * 主题重建键：最终明暗态或字号档变化时值翻转。body() 只执行一次，以
+     * 参数形式捕获 theme 的子组件（如 ChatTopNav、ChatMessageView）不会
+     * 随 observable 更新——把本键放进 vbind 的 expr 即可在换肤时整树重建。
+     * 键只需覆盖「影响最终取值」的两个输入：颜色由明暗态决定，type 由
+     * 字号档决定；mode（跟随系统/浅色/深色）只经由明暗态影响取值。
+     */
+    protected fun themeRebuildKey(): String = "${appIsDarkTheme()}-${appearanceFontScaleId()}"
+
     protected fun appearanceFontScaleId(): String = appearanceFontScaleId
 
     /** 设置页写入偏好后调用：重读落盘值并驱动本页重渲染。 */

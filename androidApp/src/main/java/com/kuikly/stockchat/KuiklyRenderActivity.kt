@@ -6,6 +6,8 @@ import android.animation.ValueAnimator
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -84,11 +86,13 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
         loadingView = findViewById(R.id.hr_loading)
         errorView = findViewById(R.id.hr_error)
         glassMode = preferredGlassMode()
+        liveActivities.add(this)
         kuiklyRenderViewDelegator.onAttach(hrContainerView, "", pageName, createPageData())
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        liveActivities.remove(this)
         drawerFlingHost = null
         composerMediaResultHost = null
         kuiklyRenderViewDelegator.onDetach()
@@ -169,6 +173,16 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
 
         private const val KEY_PAGE_NAME = "pageName"
         private const val KEY_PAGE_DATA = "pageData"
+
+        /**
+         * 存活的 KuiklyRenderActivity 注册表（主线程读写，onCreate/onDestroy
+         * 成对增删，index 0 恒为任务根的对话页——冷启动默认打开 ChatPage）。
+         */
+        private val liveActivities = mutableListOf<KuiklyRenderActivity>()
+
+        /** 问AI收敛的延迟：等新对话页入场动画（~0.3s）走完再收旧页。 */
+        private const val ASK_AI_COLLAPSE_DELAY_MS = 400L
+
         init {
             initKuiklyAdapter()
         }
@@ -178,6 +192,25 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
             starter.putExtra(KEY_PAGE_NAME, pageName)
             starter.putExtra(KEY_PAGE_DATA, pageData.toString())
             context.startActivity(starter)
+            collapseForAskAiChatIfNeeded(pageName, pageData)
+        }
+
+        /**
+         * 「问AI」打开的对话页不参与无限叠层：等新对话页入场动画走完（约
+         * 0.4s，与 iOS 宿主同参）后收掉任务里根对话页之外、当前对话页之下
+         * 的所有旧页，栈深封顶为「根对话页 + 当前对话页」。否则「详情 ⇄
+         * 问AI到对话」反复横跳会把历史页一层层压栈，系统返回要逐页退完
+         * 所有旧页才能回到最初。根对话页实例保留（不被销毁），新对话页按
+         * 返回即回到它。
+         */
+        private fun collapseForAskAiChatIfNeeded(pageName: String, pageData: JSONObject) {
+            if (pageName != "ChatPage" || pageData.optString("openedViaAskAi") != "1") return
+            // 立即 finish 会让来源页提前播退场动画、与新页入场叠成双重跳变，
+            // 延迟到入场动画结束后再收；届时新 Chat 已入注册表，所以保留首
+            // 尾两个（根对话 + 当前对话），只收中间的旧页。
+            Handler(Looper.getMainLooper()).postDelayed({
+                liveActivities.drop(1).dropLast(1).forEach { it.finish() }
+            }, ASK_AI_COLLAPSE_DELAY_MS)
         }
 
         private fun initKuiklyAdapter() {

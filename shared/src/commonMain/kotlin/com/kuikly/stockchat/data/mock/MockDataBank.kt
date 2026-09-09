@@ -50,23 +50,33 @@ object MockDataBank {
             peTtm = seed.pe,
             pb = seed.pb,
             marketCap = seed.marketCap,
-            timestamp = "2026-08-24 10:30",
+            timestamp = "2026-08-24 15:00",
             source = "离线演示数据",
             timeline = timeline,
             kLines = kLines,
         )
     }
 
+    /**
+     * 演示分时：全天 241 点（A 股 1 分钟粒度，09:30–15:00，跳过 11:30/13:00 午休）。
+     * 历史版本只有 48 点、5 分钟间隔，而分时图横轴按"列表索引 → 全天 240 槽位"
+     * 映射，48 个索引只铺满左段（用户反馈"分时只能走一半"）；且 1 分钟粒度下
+     * 索引≈槽位，与真实腾讯分时的对齐方式一致。确定性随机种子保持不变。
+     */
     private fun buildTimeline(start: Double, target: Double, random: DeterministicRandom): List<QuotePoint> {
         val points = mutableListOf<QuotePoint>()
         var current = start
-        val count = 48
+        val count = 241
         repeat(count) { index ->
             val progress = (index + 1).toDouble() / count
-            val pull = (target - current) * (0.08 + progress * 0.02)
-            val noise = (random.nextDouble() - 0.5) * start * 0.0025
+            // 241 步的收敛系数：0.98^241 ≈ 0.8%，全天缓步收敛到目标价（48 点版
+            // 的 0.08 在 241 步下约 40 分钟就贴住目标，剩余时段变成一条平线）。
+            val pull = (target - current) * (0.018 + progress * 0.012)
+            val noise = (random.nextDouble() - 0.5) * start * 0.0012
             current = max(start * 0.94, min(start * 1.06, current + pull + noise))
-            val totalMinutes = 9 * 60 + 30 + index * 5
+            // 交易分钟 → 墙钟时间：09:30–11:30 为 index 0–120，午休 90 分钟后
+            // 13:01–15:00 为 index 121–240（连续写 570+index 会把下午写成 13:30 收盘）。
+            val totalMinutes = 9 * 60 + 30 + index + if (index >= 121) 90 else 0
             points += QuotePoint(
                 time = "${(totalMinutes / 60).toString().padStart(2, '0')}:${(totalMinutes % 60).toString().padStart(2, '0')}",
                 price = if (index == count - 1) target else current,

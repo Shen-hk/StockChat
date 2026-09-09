@@ -41,23 +41,41 @@ class QuoteRepository(
             onResult(snapshot.copy(quote = current))
             if (current == null) return@snapshot
 
+            // 分时/K线刷新失败（网络断、解析空）不允许静默放弃：在线为空时回落
+            // offline（模拟模式 = MockQuoteProvider，真实模式 = NullQuoteProvider 恒空）。
+            // 否则快照先行到达时页面图表会从"有分时"塌成"只剩昨收基线横线"且永不恢复。
             online.timeline(symbol) { points ->
-                if (points.isNotEmpty()) {
-                    saveTimeline(symbol, points)
-                    current = current?.copy(timeline = points)
+                val resolved = if (points.isNotEmpty()) points else offlineTimeline(symbol)
+                if (resolved.isNotEmpty()) {
+                    if (points.isNotEmpty()) saveTimeline(symbol, points)
+                    current = current?.copy(timeline = resolved)
                     onResult(snapshot.copy(quote = current))
                 }
             }
             KLineInterval.entries.forEach { interval ->
                 online.kLines(symbol, interval.defaultCount, interval) { points ->
-                if (points.isNotEmpty()) {
-                    saveKLines(symbol, interval, points)
-                    current = current?.withKLines(interval, points)
-                    onResult(snapshot.copy(quote = current))
+                    val resolved =
+                        if (points.isNotEmpty()) points else offlineKLines(symbol, interval.defaultCount, interval)
+                    if (resolved.isNotEmpty()) {
+                        if (points.isNotEmpty()) saveKLines(symbol, interval, points)
+                        current = current?.withKLines(interval, resolved)
+                        onResult(snapshot.copy(quote = current))
+                    }
                 }
             }
-            }
         }
+    }
+
+    private fun offlineTimeline(symbol: String): List<QuotePoint> {
+        var points: List<QuotePoint> = emptyList()
+        offline.timeline(symbol) { points = it }
+        return points
+    }
+
+    private fun offlineKLines(symbol: String, count: Int, interval: KLineInterval): List<KLinePoint> {
+        var points: List<KLinePoint> = emptyList()
+        offline.kLines(symbol, count, interval) { points = it }
+        return points
     }
 
     /** Uses a fresh memory value when available, otherwise exposes clearly-labelled offline demo data. */

@@ -59,18 +59,30 @@ internal fun KuiklyTimelineChart(
     val plotW: (Float) -> Float = { w -> (w - axisSide * 2f).coerceAtLeast(1f) }
 
     // ── 入场生长动画：setTimeout 链推进 progress，900ms 安全兜底强制 1f ──
-    fun startDrawOn() {
-        if (state.progress >= 1f) return // 已走完不重播；进行中则续走
-        var i = (state.progress * DRAW_ON_STEPS).roundToInt()
-        fun tick() {
-            i++
-            state.progress = (i.toFloat() / DRAW_ON_STEPS).coerceIn(0f, 1f)
-            if (state.progress < 1f) setTimeout(DRAW_ON_STEP_MS) { tick() }
+    // 同签名防抖（与 MiniTimeline 同范式）：QuoteRepository 一次 load 会连发
+    // snapshot/timeline/klines 多个回调，每个回调都会让引用 quoteStates 的 vif
+    // 重跑本函数（state 重建、progress 归零）；分时点数与最新价都没变时视为
+    // 同一次数据，直接置 1f 不重播，避免入场动画被同一轮加载打断重放多次。
+    val signature = pts.size to (pts.lastOrNull()?.price ?: 0.0)
+    val trackerKey = "${context.cardKey}#$height"
+    if (chartDrawOnTracker[trackerKey] == signature) {
+        state.progress = 1f
+    } else {
+        chartDrawOnTracker[trackerKey] = signature
+        if (chartDrawOnTracker.size > 128) chartDrawOnTracker.clear()
+        fun startDrawOn() {
+            if (state.progress >= 1f) return // 已走完不重播；进行中则续走
+            var i = (state.progress * DRAW_ON_STEPS).roundToInt()
+            fun tick() {
+                i++
+                state.progress = (i.toFloat() / DRAW_ON_STEPS).coerceIn(0f, 1f)
+                if (state.progress < 1f) setTimeout(DRAW_ON_STEP_MS) { tick() }
+            }
+            tick()
+            setTimeout(DRAW_ON_SAFETY_MS) { state.progress = 1f }
         }
-        tick()
-        setTimeout(DRAW_ON_SAFETY_MS) { state.progress = 1f }
+        startDrawOn()
     }
-    startDrawOn()
 
     container.Canvas({
         attr {
@@ -300,6 +312,9 @@ internal fun KuiklyTimelineChart(
 private const val DRAW_ON_STEPS = 20
 private const val DRAW_ON_STEP_MS = 24
 private const val DRAW_ON_SAFETY_MS = 900
+
+/** 已播动画签名表：key = cardKey#height，value = (分时点数, 最新价)，数据变了才重播。 */
+private val chartDrawOnTracker = mutableMapOf<String, Pair<Int, Double>>()
 
 /**
  * 卡片分时图交互状态：progress 驱动入场生长重绘、selected 驱动十字光标重绘（R1）；

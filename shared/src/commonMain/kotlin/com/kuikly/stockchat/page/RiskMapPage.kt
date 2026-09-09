@@ -1721,7 +1721,7 @@ internal class RiskMapPage : BasePager() {
                         }
                         event {
                             click {
-                                page.openChatWithQuestion(question, "来自风险地图：星「${row.name}」（${layerName}层）")
+                                page.openChatWithQuestion(question, "来自风险地图：星「${row.name}」（${layerName}层）", focusSymbol = symbol)
                             }
                         }
                         Text { attr { text(question); fontSizeScaled(10f); color(page.theme.textSecondary) } }
