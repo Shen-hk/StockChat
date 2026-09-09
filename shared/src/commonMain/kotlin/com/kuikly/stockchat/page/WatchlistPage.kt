@@ -119,32 +119,32 @@ internal class WatchlistPage : BasePager() {
     /** 自定义输入的实时同步值（TextArea isSyncEdit）。选中 chip 后再打字则 chip 让位。 */
     private var reasonTyped: String by observable("")
 
-    // ── 长按拖拽排序（lift + reorder）：长按拿起 → 跟手 → 让位 → 松手落位 ──
+    // ── 长按拖拽排序（lift + 落位）：长按拿起 → 跟手 → 让位 → 松手直接落位 ──
     // 机制：长按拍把 Scroller scrollEnable 关掉（KRRecyclerView.onInterceptTouchEvent
     // 首查 scrollEnabled，false 即不拦截），后续 move 留在本行 touch 上，跟手无需 pan
     // （pan 会 disallow 父级拦截、锁死列表滚动）。拖拽期间不动数据，只对让位行施加
-    // ±槽距 translate（恒注册 spring，首个让位也有动画，R5）；松手先回弹落位、再落数据，
-    // 数据落位与 transform 清除同帧，无跳变。
+    // ±槽距 translate（恒注册 spring，首个让位也有动画，R5）；松手**同帧落数据**
+    // （applyDragOrder）：数据重排、displayList diff 与 transform 清除落在同一次
+    // 渲染批里——让位行「布局移位 + transform 归零」互相抵消，被拖行 diff 为
+    // Delete+Insert 直接重挂在新槽位。松手后没有任何收尾动画，卡片跟手到哪就
+    // 落在哪（2026-09-09 去掉 settle 回弹两拍：松手后再播一段位移动画被实测
+    // 感知为「从原位置移到落点」的闪现）。
+    // ⚠️ R5 陷阱：cancelDragSession **不复位** dragFrom/dragTo/dragDy——让位行每拍
+    // 恒注册 animate(key=dragTo)，若落数据同批把 dragTo 复位（N→0），落位帧会命中
+    // 这枚「直播 spring」，让位行的 transform 归零被动画化：布局已瞬时就位、位移又
+    // 从 ±槽距 滑向 0，肉眼可见的二次移动。这些状态在 beginDragLift 全量重播种，
+    // 留着无害（所有读取都以 dragSymbol 非空为门）。
     // （左滑动作行 2026-09-09 移除：实测不实用，置顶/移除归口长按菜单。）
-    /** 拖拽会话中的行；空 = 无会话（会话含 settle 阶段，期间滚动保持锁定）。 */
+    /** 拖拽会话中的行；空 = 无会话。 */
     private var dragSymbol: String by observable("")
-    /** 会话阶段：lift = 跟手中，settle = 松手回弹落位中。 */
-    private var dragPhase: String by observable("")
     /** 跟手位移（dp，自拿起点起算，向下为正）。每帧写、只被被拖行的 attr 读取。 */
     private var dragDy: Float by observable(0f)
-    /** 拿起时/当前目标槽位（displayList 索引，仅无过滤会话可用）。 */
+    /**
+     * 拿起时/当前目标槽位（displayList 索引，仅无过滤会话可用）。
+     * 会话结束后故意不复位（R5 陷阱见上），由 beginDragLift 重播种。
+     */
     private var dragFrom: Int by observable(0)
     private var dragTo: Int by observable(0)
-    /**
-     * settle 期的被拖行位移（布局此刻仍停在旧槽位，所以这个位移是「相对旧槽位」的）：
-     * 先直落跟手值（与 lift 末帧同值，零跳变），下一拍写到目标槽位位移
-     * (dragTo-dragFrom)*ROW_SLOT，spring 只回弹「残差 → 槽位」一小段。
-     * 千万不能写「残差→0」——那等于跳回旧槽位，落数据时再瞬移新位（放手即卡顿）。
-     */
-    private var dropDy: Float by observable(0f)
-    /** 非 observable：settle 两拍的定时器（槽位写入 + 落数据），cancel 时都要清。 */
-    private var dragSettleTimerRef: String = ""
-    private var dragSnapTimerRef: String = ""
     /** 拖拽会话期间行情到达被挂起的 displayList 重建（vfor 重建会换视图丢 touchUp）。 */
     private var dragRefreshPending: Boolean = false
 
@@ -311,7 +311,7 @@ internal class WatchlistPage : BasePager() {
                     val rowTheme = page.theme
                     val heroGlass = rowTheme.marketGlass
                     val rowIndex = page.displayList.indexOfFirst { it.symbol == row.symbol }
-                    // ── 外层：拖拽会话层。跟手位移 / 让位位移 / 松手回弹 / 层级与投影。
+                    // ── 外层：拖拽会话层。跟手位移 / 让位位移 / 层级与投影。
                     // 与内层动画分视图隔离，避免多驱动共键（R3）。──
                     View {
                         attr {
@@ -319,18 +319,9 @@ internal class WatchlistPage : BasePager() {
                             if (page.dragSymbol == row.symbol) {
                                 zIndex(30, useOutline = false)
                                 boxShadow(BoxShadow(0f, 10f, 28f, Color(0x000000, 0.20f)))
-                                if (page.dragPhase == "lift") {
-                                    // 跟手位移直接落位，不注册动画（每帧弹簧会把拖动拖住）。
-                                    transform(translate = Translate(0f, 0f, offsetY = page.dragDy))
-                                } else {
-                                    // settle：本拍 transform 直落跟手值（与 lift 末帧同值，
-                                    // 无跳变），下一拍 dropDy 写到目标槽位位移，消费本拍注册
-                                    // 的 spring（R5）——只回弹「残差 → 槽位」一小段。
-                                    transform(translate = Translate(0f, 0f, offsetY = page.dropDy))
-                                    if (!page.reduceMotion) {
-                                        animate(Animation.springEaseOut(0.24f, 0.85f, 0.20f), page.dropDy)
-                                    }
-                                }
+                                // 跟手位移直出，不注册动画（每帧写会跟动画互相拖拽）；
+                                // 松手由 applyDragOrder 同帧落数据并清 transform，无收尾动画。
+                                transform(translate = Translate(0f, 0f, offsetY = page.dragDy))
                             } else {
                                 // 让位行：补上被拖行腾出的槽位。动画恒注册（key=dragTo），
                                 // 首个让位也走 spring（R5：本拍注册、下拍同 key 变化消费）。
@@ -342,15 +333,16 @@ internal class WatchlistPage : BasePager() {
                                 }
                             }
                         }
-                        // ── 中层：拿起缩放（「松动」手感）。驱动 key 固定 dragPhase，
-                        // 与内层 hero 动画互斥不共键；拿起/放下各消费一次 spring。──
+                        // ── 中层：拿起缩放（「松动」手感）。驱动 key 固定 dragSymbol，
+                        // 与内层 hero 动画互斥不共键；拿起消费一次 spring，松手落位走
+                        // remount（Delete+Insert），新视图首帧直出 scale 1，无动画。──
                         View {
                             attr {
-                                val lifted = page.dragSymbol == row.symbol && page.dragPhase == "lift"
+                                val lifted = page.dragSymbol == row.symbol
                                 val liftScale = if (lifted) 1.045f else 1f
                                 transform(scale = Scale(liftScale, liftScale))
                                 if (!page.reduceMotion) {
-                                    animate(Animation.springEaseOut(0.20f, 0.90f, 0.20f), page.dragPhase)
+                                    animate(Animation.springEaseOut(0.20f, 0.90f, 0.20f), page.dragSymbol)
                                 }
                             }
                             View {
@@ -380,7 +372,7 @@ internal class WatchlistPage : BasePager() {
                                 RowGestureLayer(
                                     onTapContent = { page.openRowDetail(row.symbol) },
                                     onLongPressContent = { page.beginDragLift(row.symbol) },
-                                    dragActive = { page.dragSymbol == row.symbol && page.dragPhase == "lift" },
+                                    dragActive = { page.dragSymbol == row.symbol },
                                     onDragMove = { dy -> page.dragMove(dy) },
                                     onDragEnd = { dy, cancelled -> page.dragEnd(dy, cancelled) },
                                 ) {
@@ -1261,25 +1253,24 @@ internal class WatchlistPage : BasePager() {
         dragFrom = index
         dragTo = index
         dragDy = 0f
-        dropDy = 0f
         dragSymbol = symbol
-        dragPhase = "lift"
     }
 
     /** 跟手：写实时位移，并按槽距判定目标槽位（越过相邻行中点即让位）。 */
     private fun dragMove(dy: Float) {
-        if (dragSymbol.isEmpty() || dragPhase != "lift") return
+        if (dragSymbol.isEmpty()) return
         dragDy = dy
         val target = (dragFrom + (dy / ROW_SLOT).roundToInt()).coerceIn(0, displayList.lastIndex)
         if (target != dragTo) dragTo = target
     }
 
     /**
-     * 松手收尾：原地松手（未移动）= 长按操作菜单；移动过 = 回弹落位后落数据；
-     * 被系统打断（cancel）只回弹，不开菜单。
+     * 松手收尾：原地松手（未移动）= 长按操作菜单；移动过 = **同帧直接落数据**
+     * （applyDragOrder：数据重排 + displayList diff + transform 清除同一渲染批，
+     * 卡片跟手到哪就落在哪，无收尾动画）；被系统打断（cancel）只回弹，不开菜单。
      */
     private fun dragEnd(dy: Float, cancelled: Boolean) {
-        if (dragSymbol.isEmpty() || dragPhase != "lift") return
+        if (dragSymbol.isEmpty()) return
         val symbol = dragSymbol
         val moved = abs(dy) >= DRAG_MOVE_THRESHOLD
         if (cancelled || !moved) {
@@ -1287,20 +1278,7 @@ internal class WatchlistPage : BasePager() {
             if (!cancelled) menuSymbol = symbol
             return
         }
-        // settle 两拍（R5）：本拍 transform 直落当前跟手值——与 lift 末帧同值，
-        // 零跳变；上一拍 lift 分支未注册动画，key 不匹配直接生效。下一拍把
-        // dropDy 写到目标槽位位移，消费本拍注册的 spring——动画只覆盖「残差
-        // 回弹到槽位」这一小段。数据落位（applyDragOrder）与 transform 清除同帧。
-        dragPhase = "settle"
-        dropDy = dy
-        if (reduceMotion) {
-            applyDragOrder(symbol)
-        } else {
-            dragSettleTimerRef = setTimeout(0) {
-                dropDy = (dragTo - dragFrom) * ROW_SLOT
-            }
-            dragSnapTimerRef = setTimeout(240) { applyDragOrder(symbol) }
-        }
+        applyDragOrder(symbol)
     }
 
     /**
@@ -1325,18 +1303,16 @@ internal class WatchlistPage : BasePager() {
         refreshDisplay()
     }
 
-    /** 结束会话：清全部拖拽状态（滚动解锁），并补一次被挂起的 displayList 重建。 */
+    /**
+     * 结束会话：清拖拽态（滚动解锁），并补一次被挂起的 displayList 重建。
+     * ⚠️ 只清 dragSymbol / dragDy，**不复位 dragFrom / dragTo**（R5 陷阱，见字段区
+     * 注释）：让位行恒注册 animate(key=dragTo)，落数据同批复位 dragTo 会让落位帧的
+     * transform 归零被 spring 动画化（布局已就位 + 位移回放 = 松手闪现）。
+     * 残留值以 dragSymbol 非空为读取门，beginDragLift 会全量重播种。
+     */
     private fun cancelDragSession() {
-        clearTimeout(dragSettleTimerRef)
-        dragSettleTimerRef = ""
-        clearTimeout(dragSnapTimerRef)
-        dragSnapTimerRef = ""
         dragSymbol = ""
-        dragPhase = ""
         dragDy = 0f
-        dropDy = 0f
-        dragFrom = 0
-        dragTo = 0
         if (dragRefreshPending) {
             dragRefreshPending = false
             refreshDisplay()
@@ -1436,8 +1412,8 @@ internal class WatchlistPage : BasePager() {
 
         /**
          * 拖拽排序的槽距估算（行内容 ≈115 + 行距 10）。MINI 行情卡行高非严格相等
-         * （异动/★ 标注行多 ~17），让位与落位按此对齐，误差最多半行内，松手后由
-         * 真实布局收敛。改行内布局（时间线高度/标注）时同步本值。
+         * （异动/★ 标注行多 ~17），让位与落位按此对齐，误差最多半行内，松手落数据
+         * 时由真实布局一次对齐（同帧瞬时，无动画）。改行内布局（时间线高度/标注）时同步本值。
          */
         const val ROW_SLOT = 125f
 

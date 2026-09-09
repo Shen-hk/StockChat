@@ -31,6 +31,7 @@ Consequences:
 - Register, in every cycle (including the pre-state/mount cycle), the animation you want the **next** driver change to play. `CardSheet` and the welcome starter cards register the entrance `easeOut` unconditionally — the flip cycle then consumes exactly that.
 - Never register a zero-duration "reset" animation (e.g. `Animation.linear(0f)`) in the pre-state cycle: the presentation cycle will consume it and the entrance degrades to an instant jump. Same-value observable writes do not notify (`ObservableProperties.setValue` early-returns), so an unwanted stale registration cannot be flushed by re-writing the same value.
 - Keep a version-guarded fallback timer for entrance sequences: if the `ref` → `setTimeout` chain loses a link, the view must not stay stuck at `opacity 0` (see `ChatPage.scheduleWelcomeEntranceSafety`).
+- Never reset an animation-driver observable in the same batch as a layout/data change that also clears the corresponding transforms. Views holding a live registration keyed on that observable will consume the reset (N→0) and animate the transform clear — layout snaps instantly while the offset replays as a visible second move (2026-09-09 watchlist drag-drop flash; fix: leave `dragFrom`/`dragTo` stale in `WatchlistPage.cancelDragSession`, all reads gate on `dragSymbol`, `beginDragLift` re-seeds).
 
 ## Review checklist
 
