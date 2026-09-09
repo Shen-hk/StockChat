@@ -15,7 +15,7 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.kuikly.stockchat.glass.GlassRenderingMode
-import com.kuikly.stockchat.page.SheetLevel
+import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Scale
@@ -29,7 +29,7 @@ import com.tencent.kuikly.core.views.View
 /** Reusable glass sheet host for full-size card presentation. */
 internal fun ViewContainer<*, *>.CardSheetHost(
     model: CardModel,
-    level: SheetLevel,
+    level: ChatSheetLevel,
     theme: StockChatTheme,
     renderer: GlassRenderer = GlassRenderer.Default,
     presented: Boolean = true,
@@ -47,7 +47,7 @@ internal fun ViewContainer<*, *>.CardSheetHost(
 ) {
     val availableHeight = (viewportHeight - bottomInset).coerceAtLeast(520f)
     val sheetHeight = (availableHeight * level.ratio).coerceAtLeast(180f)
-    val footerHeight = if (level == SheetLevel.FULL) 0f else 52f
+    val footerHeight = if (level == ChatSheetLevel.FULL) 0f else 52f
     val overlayHeight = (viewportHeight - sheetHeight - bottomInset).coerceAtLeast(0f)
     View {
         attr {
@@ -131,7 +131,7 @@ internal fun ViewContainer<*, *>.CardSheetHost(
                 ),
             )
         }
-        if (level != SheetLevel.FULL) {
+        if (level != ChatSheetLevel.FULL) {
             View {
                 attr {
                     alignSelfStretch()

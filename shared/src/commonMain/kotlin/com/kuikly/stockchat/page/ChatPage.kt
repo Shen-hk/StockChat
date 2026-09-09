@@ -35,6 +35,10 @@ import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollCoordinator
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollState
 import com.kuikly.stockchat.chat.scroll.state.KuiklyChatScrollScheduler
+import com.kuikly.stockchat.chat.sheet.state.CardSheetCoordinator
+import com.kuikly.stockchat.chat.sheet.state.CardSheetState
+import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
+import com.kuikly.stockchat.chat.sheet.state.KuiklyCardSheetScheduler
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.openGlossary
@@ -174,6 +178,9 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
+/** Compatibility alias for non-chat gallery previews; Chat state owns the implementation. */
+internal typealias SheetLevel = ChatSheetLevel
+
 @Page(Routes.CHAT, supportInLocal = true)
 internal class ChatPage : BasePager() {
     // 输入栏诊断日志统一 tag。logcat 过滤：adb logcat -s KLog 或搜 "Composer"。
@@ -249,8 +256,10 @@ internal class ChatPage : BasePager() {
     private var entityDropTarget: EntityDropTarget by observable(EntityDropTarget.NONE)
     // Sheet interaction is gated independently so its fading layer cannot
     // accept late taps while it is being dismissed.
-    private var sheetInteractive: Boolean by observable(false)
-    private var sheetPresentationVersion = 0
+    private val cardSheetState = CardSheetState()
+    private val cardSheetCoordinator by lazy {
+        CardSheetCoordinator(cardSheetState, KuiklyCardSheetScheduler())
+    }
     private var ambiguousSymbols: ObservableList<String> by observableList()
     private var ambiguousEntityText: String by observable("")
     private var ambiguousAction: EntityAction by observable(EntityAction.PREVIEW)
@@ -428,11 +437,6 @@ internal class ChatPage : BasePager() {
     private var compareInsightError: String by observable("")
     private var compareInsightPairKey = ""
     private var compareInsightVersion = 0
-    private var sheetCard: CardModel? by observable(null)
-    private var sheetMounted: Boolean by observable(false)
-    private var sheetPresented: Boolean by observable(false)
-    private var sheetLevel: SheetLevel by observable(SheetLevel.HALF)
-    private var sheetPanStartY = 0f
     // Do not mount a modal during the native long-press gesture itself: its
     // full-screen scrim would swallow that gesture's terminal touch event.
     private var drilledKeys: ObservableList<String> by observableList()
@@ -485,7 +489,7 @@ internal class ChatPage : BasePager() {
         }
 
     private fun activeRealtimeGlassSurfaces(): Int = 2 + if (
-        peekSymbol.isNotEmpty() || drawerOpen || sheetCard != null
+        peekSymbol.isNotEmpty() || drawerOpen || cardSheetState.model != null
     ) 1 else 0
 
     override fun hostGlassModeDidChange(renderer: GlassRenderer) {
@@ -1433,22 +1437,22 @@ internal class ChatPage : BasePager() {
             vif({ page.entityDragActive }) {
                 page.renderEntityDragOverlay(this)
             }
-            vif({ page.sheetMounted }) {
-                page.sheetCard?.let { model ->
+            vif({ page.cardSheetState.mounted }) {
+                page.cardSheetState.model?.let { model ->
                     CardSheetHost(
                         model = model,
-                        level = page.sheetLevel,
+                        level = page.cardSheetState.level,
                         theme = page.theme,
                         renderer = page.glassRenderer,
-                        presented = page.sheetPresented,
-                        interactive = page.sheetInteractive,
+                        presented = page.cardSheetState.presented,
+                        interactive = page.cardSheetState.interactive,
                         viewportHeight = page.pagerData.pageViewHeight,
                         bottomInset = page.pagerData.safeAreaInsets.bottom,
                         onDismiss = { page.dismissCardSheet() },
                         onLower = { page.lowerCardSheet() },
                         onRaise = { page.raiseCardSheet() },
                         onPan = { state, y -> page.handleSheetPan(state, y) },
-                        onOpenStock = { if (page.sheetInteractive) page.openStockDetail(it) },
+                        onOpenStock = { if (page.cardSheetState.interactive) page.openStockDetail(it) },
                         onTerm = {
                             // 卡片底部「问术语」同样记一次「遇到」。
                             Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
@@ -1482,7 +1486,7 @@ internal class ChatPage : BasePager() {
                     capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
                     touchEnable(
                         !page.drawerOpen && !page.drawerMounted &&
-                            !page.sheetMounted && !page.islandExpanded && !page.entityDragActive
+                            !page.cardSheetState.mounted && !page.islandExpanded && !page.entityDragActive
                     )
                 }
                 event {
@@ -1751,7 +1755,7 @@ internal class ChatPage : BasePager() {
      */
     private fun handleNativeDrawerFling() {
         if (!pageVisible) return
-        if (drawerOpen || drawerMounted || sheetMounted || entityDragActive || islandExpanded) return
+        if (drawerOpen || drawerMounted || cardSheetState.mounted || entityDragActive || islandExpanded) return
         updateDrawerOpen(true)
     }
 
@@ -1984,12 +1988,7 @@ internal class ChatPage : BasePager() {
         islandCompareLeftSymbol = ""
         islandCompareRightSymbol = ""
         islandCompareVisible = false
-        sheetCard = null
-        sheetMounted = false
-        sheetPresented = false
-        sheetLevel = SheetLevel.HALF
-        sheetInteractive = false
-        sheetPresentationVersion++
+        cardSheetCoordinator.reset()
         expandedCardKey = ""
         focusedCardKey = ""
         repairingCardKey = ""
@@ -4942,56 +4941,18 @@ internal class ChatPage : BasePager() {
     }
 
     private fun openCardSheet(model: CardModel, deferInteraction: Boolean = false) {
-        val version = ++sheetPresentationVersion
-        sheetMounted = false
-        sheetCard = model
-        sheetLevel = if (model.cardType == "stock-chart") SheetLevel.FULL else SheetLevel.HALF
-        sheetPresented = !deferInteraction
-        sheetInteractive = !deferInteraction
-        if (!deferInteraction) {
-            setTimeout(0) {
-                if (sheetPresentationVersion == version) sheetMounted = true
-            }
-        }
+        cardSheetCoordinator.open(model, deferInteraction)
     }
 
     private fun dismissCardSheet() {
-        val version = ++sheetPresentationVersion
-        sheetInteractive = false
-        sheetPresented = false
-        setTimeout(420) {
-            if (sheetPresentationVersion == version && !sheetPresented) {
-                sheetMounted = false
-                sheetCard = null
-            }
-        }
+        cardSheetCoordinator.dismiss()
     }
 
-    private fun raiseCardSheet() {
-        sheetLevel = when (sheetLevel) {
-            SheetLevel.PEEK -> SheetLevel.HALF
-            SheetLevel.HALF -> SheetLevel.FULL
-            SheetLevel.FULL -> SheetLevel.FULL
-        }
-    }
+    private fun raiseCardSheet() = cardSheetCoordinator.raise()
 
-    private fun lowerCardSheet() {
-        when (sheetLevel) {
-            SheetLevel.FULL -> sheetLevel = SheetLevel.HALF
-            SheetLevel.HALF -> sheetLevel = SheetLevel.PEEK
-            SheetLevel.PEEK -> dismissCardSheet()
-        }
-    }
+    private fun lowerCardSheet() = cardSheetCoordinator.lower()
 
-    private fun handleSheetPan(state: String, y: Float) {
-        when (state) {
-            "start" -> sheetPanStartY = y
-            "end" -> when {
-                y - sheetPanStartY <= -28f -> raiseCardSheet()
-                y - sheetPanStartY >= 28f -> lowerCardSheet()
-            }
-        }
-    }
+    private fun handleSheetPan(state: String, y: Float) = cardSheetCoordinator.onPan(state, y)
 
     private fun toggleDrill(drillKey: String) {
         val index = drilledKeys.indexOf(drillKey)
@@ -5215,12 +5176,6 @@ internal class ChatPage : BasePager() {
 private enum class EntityAction { DETAIL, PREVIEW, ISLAND, MENTION, COMPARE }
 
 private enum class CompareInsightState { IDLE, LOADING, READY, ERROR }
-
-internal enum class SheetLevel(val ratio: Float, val density: CardDensity) {
-    PEEK(0.25f, CardDensity.MINI),
-    HALF(0.50f, CardDensity.COMPACT),
-    FULL(0.90f, CardDensity.FULL),
-}
 
 private data class ChatQuoteState(
     val symbol: String,
