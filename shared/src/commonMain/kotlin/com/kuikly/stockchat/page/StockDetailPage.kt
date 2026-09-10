@@ -78,7 +78,9 @@ import com.kuikly.stockchat.page.components.truncateByWidth
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser
 import com.kuikly.stockchat.page.components.DetailTimelineChart
-import com.kuikly.stockchat.page.components.NewsTape
+import com.kuikly.stockchat.page.components.NewsMarquee
+import com.kuikly.stockchat.page.components.NewsSummaryBar
+import com.kuikly.stockchat.page.components.estimateNewsMarqueeLoopWidth
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.DataModeBadge
 import com.tencent.kuikly.core.annotations.Page
@@ -167,6 +169,11 @@ internal class StockDetailPage : BasePager() {
     private var chartScrubLock: Boolean by observable(false)
     private var newsList: List<NewsItem> by observable(emptyList())
     private var newsSummary: NewsItem? by observable(null)
+    // ---- 弹幕 v2（对齐市场页）：页侧持有节拍——setTimeout 链 33ms 步进 offset
+    // （≈30dp/s）。点按即停：摘要条展开（newsSummary）或长按先览（tapePreview）
+    // 期间暂停步进，收起/松手后恢复；reduceMotion 不流动。交互口径不变。
+    private var tapeOffset: Float by observable(0f)
+    private var tapeTimerStarted = false
     private var insight: StockInsightBundle by observable(OfflineMarketInsightProvider().stock("600519.SH"))
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
     private val theme: StockChatTheme get() = appTheme()
@@ -252,6 +259,7 @@ internal class StockDetailPage : BasePager() {
                 newsList = items.take(12)
             }
         }
+        startTapeTimer()
     }
 
     override fun pageDidAppear() {
@@ -438,26 +446,48 @@ internal class StockDetailPage : BasePager() {
                             )
                     }
 
-                    // ---- 新闻弹幕带（原型 .tape 对齐）：卡容器 + 横滚胶囊流 + 卡内摘要条 ----
-                    NewsTape(
+                    // ---- 新闻弹幕 v2（对齐市场页）：无背板持续流动、屏幕边缘流出。
+                    // 交互口径不变：点按 = 落旗 + 展开摘要条（摘要展开即暂停流动，
+                    // 收起恢复）；长按 = 先览气泡（先览期间同样暂停）。
+                    NewsMarquee(
                         theme = page.theme,
                         items = { page.newsList },
-                        selected = { page.newsSummary },
                         // B1 情绪点 + 摘要头「利好/利空」：端侧词典打分，涨红跌绿（U2）
                         sentimentOf = { item -> scoreNewsSentiment(item.title).isPositive },
+                        offset = { page.tapeOffset },
+                        loopWidth = { page.tapeLoopWidth() },
                         onTapItem = { page.onNewsTapped(it) },
+                        selected = { page.newsSummary },
                         // B1 长按先览（U5 400ms）：TAPE_PREVIEW 层，松手 700ms 后消失（5s 兜底）；
-                        // pageX/pageY = 触摸点在根 Page 坐标系，气泡锚定所按胶囊正下方
+                        // pageX/pageY = 触摸点在根 Page 坐标系，气泡锚定所按条目正下方
                         onLongPressItem = { item, pressX, pressY -> page.showTapePreview(item, pressX, pressY) },
                         onLongPressRelease = { page.scheduleTapePreviewDismiss() },
-                        onAskAi = { page.askAboutNews(it) },
-                        onOpenUrl = { news ->
-                            page.newsSummary = null
-                            page.overlayArbiter.close()
-                            page.openUrl(news.url)
-                        },
-                        flagged = { page.isNewsFlagged(it) },
                     )
+
+                    // B2 摘要条（原卡内展开改为弹幕下独立圆角块；交互不变）
+                    vif({ page.newsSummary != null }) {
+                        vbind({ page.newsSummary?.id ?: "" }) {
+                            val news = page.newsSummary
+                            if (news != null) {
+                                View {
+                                    attr { marginTop(8f); borderRadius(12f) }
+                                    NewsSummaryBar(
+                                        theme = page.theme,
+                                        news = news,
+                                        sentiment = scoreNewsSentiment(news.title).isPositive,
+                                        flagged = page.isNewsFlagged(news),
+                                        onToggle = { page.onNewsTapped(news) },
+                                        onAskAi = { page.askAboutNews(it) },
+                                        onOpenUrl = { target ->
+                                            page.newsSummary = null
+                                            page.overlayArbiter.close()
+                                            page.openUrl(target.url)
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // ---- 走势主卡（2026-09-08：去掉白色大框，图表直接浮在氛围底上）----
                     // 入场动效：欢迎引导卡同款上滑淡入（RevealBlock，index 0 起阶梯）
@@ -1323,7 +1353,7 @@ internal class StockDetailPage : BasePager() {
         1, 2 -> "AI 生成中（$circleAiModel）"
         3 -> "AI 生成（$circleAiModel）· 仅供参考"
         4 -> "端侧统计 · AI 调用失败"
-        else -> "AI · 端侧规则"
+        else -> "端侧统计"   // 未请求 AI（声呐气泡/未配置）：不得挂「AI」名头
     }
 
     /**
@@ -1333,7 +1363,14 @@ internal class StockDetailPage : BasePager() {
      */
     private fun requestCircleAi(lo: Int, hi: Int) {
         val config = aiChatDependencies.configStore.load()
-        if (config.validationError() != null) return
+        val configError = config.validationError()
+        if (configError != null) {
+            // 未配置/配置不完整：不发起请求，但如实落失败态（此前静默 return，
+            // 气泡顶着「AI」名头永远只有端侧统计，用户无从知晓 AI 根本没跑）。
+            circleAiError = "未配置 AI API（$configError）"
+            circleAiState = 4
+            return
+        }
         val generation = ++circleAiGeneration
         circleAiText = ""
         circleAiError = ""
@@ -1350,6 +1387,16 @@ internal class StockDetailPage : BasePager() {
             if (circleAiState == 1 && revealed.isNotEmpty()) circleAiState = 2
         }
         circleAiTypewriter = smoother
+        // ① 兜底（2026-09-10）：provider 无请求超时，连接挂死/代理黑洞会让气泡
+        // 永停「正在生成区间解读…」＝这一圈没有解读。12s 仍无首个增量则如实落错
+        // 并释放 provider；已进流式（state 2）则不干预，交给 onDone/onError 收尾。
+        setTimeout(12000) {
+            if (generation == circleAiGeneration && circleAiState == 1) {
+                provider.stop()
+                circleAiError = "请求超时（12 秒无响应），请重试"
+                circleAiState = 4
+            }
+        }
         provider.ask(
             messages = listOf(AiChatMessage("user", buildCircleAiPrompt(lo, hi))),
             onDelta = { delta ->
@@ -1516,6 +1563,35 @@ internal class StockDetailPage : BasePager() {
 
     /** 摘要条事实行用：该条是否已落旗。 */
     fun isNewsFlagged(item: NewsItem): Boolean = item.id in droppedNewsIds
+
+    // ------------------------------------------------------------------
+    // 弹幕 v2 节拍（对齐市场页）：33ms 步进 1dp；暂停/空数据只跳过步进，不拆链条。
+    // 点按即停 = 摘要条展开或长按先览期间不步进，收起/松手后自动恢复。
+    // ------------------------------------------------------------------
+
+    private fun startTapeTimer() {
+        if (tapeTimerStarted) return
+        tapeTimerStarted = true
+        scheduleTapeTick()
+    }
+
+    private fun scheduleTapeTick() {
+        setTimeout(33) {
+            if (!tapeTimerStarted) return@setTimeout
+            if (!reduceMotion && newsSummary == null && tapePreview == null) {
+                val loop = tapeLoopWidth()
+                if (loop > 0f) {
+                    val next = tapeOffset + 1f
+                    tapeOffset = if (next >= loop) next - loop else next
+                }
+            }
+            scheduleTapeTick()
+        }
+    }
+
+    /** 一圈估算宽度：委托共享估算器（详情页恒带情绪点位）。 */
+    private fun tapeLoopWidth(): Float =
+        estimateNewsMarqueeLoopWidth(newsList, withSentimentDot = true)
 
     /**
      * B1/B2 弹幕条目点按（doc §4.3「点按条目或旗落旗，重复点按收起」）：
@@ -1928,6 +2004,15 @@ internal class StockDetailPage : BasePager() {
             if (aiRemoteState == 1 && revealed.isNotEmpty()) aiRemoteState = 2
         }
         activeAiTypewriter = smoother
+        // 兜底（同 requestCircleAi）：12s 无首个增量则如实落错，避免 AI 块
+        // 永停骨架/思考态、本次访问「没有解读」；已进流式则交给 onDone/onError。
+        setTimeout(12000) {
+            if (generation == aiRemoteGeneration && aiRemoteState == 1) {
+                provider.stop()
+                aiRemoteError = "请求超时（12 秒无响应），请重试"
+                aiRemoteState = 4
+            }
+        }
         provider.ask(
             messages = listOf(AiChatMessage("user", buildAiInsightPrompt())),
             onDelta = { delta ->

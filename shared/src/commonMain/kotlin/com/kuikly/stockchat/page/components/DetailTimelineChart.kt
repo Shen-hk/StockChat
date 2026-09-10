@@ -588,6 +588,16 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     val dy = e.y - downY
                     val d2 = dx * dx + dy * dy
                     if (d2 > movedDist) movedDist = d2
+                    // ① 圈选可靠性（2026-09-10）：横向主导的位移一旦出现（哪怕未到
+                    // 12dp slop）立即作废 280ms 短长按计时——否则慢启动的圈选拖动会在
+                    // 280ms 被定时器收编成十字线 scrub（此后横向跟随手指 x），
+                    // 圈选永远进不去，表现为「不是每次都能圈出解读」。
+                    // 互斥语义不变：纵向滚动意图仍由下方分支最高优先处理。
+                    if (!scrubbing && !selectingCircle &&
+                        abs(dx) > CIRCLE_INTENT_DX && abs(dx) > abs(dy) * 1.5f
+                    ) {
+                        lpGen++
+                    }
                     if (scrubbing) {
                         // scrub 态：十字线跟随手指 x（页面滚动已由 onScrubActive 锁定）
                         val slot = slotAt(e.x)
@@ -777,6 +787,7 @@ private const val CROSSHAIR_HOLD_MS = 280
 private const val SCROLL_INTENT_DY = 6f
 private const val CROSSHAIR_HOLD_SLOP_SQ = 144f // 12dp × 12dp
 private const val CIRCLE_ENTER_DX = 14f         // ① 圈选进入阈值：横向位移须超过此值且明显占优于纵向
+private const val CIRCLE_INTENT_DX = 4f         // ① 横向意图早判：未到圈选阈值但横向主导即作废短长按（防 scrub 收编圈选）
 private const val PRICE_TOP = 0f
 private const val PRICE_HEIGHT = 290f
 private const val VOL_TOP = 296f
