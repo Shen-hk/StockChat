@@ -6,10 +6,6 @@ import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.timer.setTimeout
-import io.ktor.client.request.get
-import io.ktor.client.request.header
-import io.ktor.client.statement.bodyAsText
-import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,16 +23,53 @@ object EastMoneyInsightParser {
             .orEmpty()
             .mapNotNull { row ->
                 val code = row.optString("Code")
-                val market = when (row.optString("MktNum")) {
-                    "1" -> "SH"
-                    "0" -> "SZ"
+                val name = row.optString("Name")
+                if (code.isBlank() || name.isBlank()) return@mapNotNull null
+                val marketNum = row.optString("MktNum")
+                val typeName = row.optString("SecurityTypeName")
+                // 判定顺序：板块/指数在前（它们的 MktNum 与个股前缀重叠，如板块 90、
+                // 港股指数 116），再落个股；基金/债券等直接不进候选，避免面板出现噪音。
+                val kind: String
+                val market: String
+                val symbol: String
+                val stockMarkets = setOf("沪A", "深A", "京A", "B股", "港股", "美股")
+                when {
+                    typeName == "板块" || marketNum == "90" -> {
+                        kind = "board"; market = "板块"; symbol = code  // Code 即 BKxxxx
+                    }
+                    typeName.contains("指数") -> {
+                        kind = "index"; market = "指数"
+                        symbol = when (marketNum) {
+                            "1" -> "$code.SH"
+                            "0" -> "$code.SZ"
+                            "116" -> "$code.HK"
+                            else -> return@mapNotNull null
+                        }
+                    }
+                    typeName in stockMarkets ||
+                        (typeName.isEmpty() && marketNum in setOf("1", "0", "116", "105", "106", "107")) -> {
+                        kind = "stock"
+                        market = typeName.ifEmpty {
+                            when (marketNum) {
+                                "1" -> "沪A"; "0" -> "深A"; "116" -> "港股"; else -> "美股"
+                            }
+                        }
+                        symbol = when (marketNum) {
+                            "1" -> "$code.SH"
+                            "0" -> "$code.SZ"
+                            "116" -> "$code.HK"
+                            "105", "106", "107" -> "$code.US"
+                            else -> return@mapNotNull null
+                        }
+                    }
                     else -> return@mapNotNull null
                 }
-                if (code.isBlank()) return@mapNotNull null
                 Security(
-                    symbol = "$code.$market",
-                    name = row.optString("Name"),
+                    symbol = symbol,
+                    name = name,
                     aliases = listOf(row.optString("PinYin"), code).filter(String::isNotBlank),
+                    market = market,
+                    kind = kind,
                 )
             }
             .distinctBy(Security::symbol)
@@ -367,7 +400,7 @@ class EastMoneyInsightProvider(
                 deliver { onResult(emptyList()) }
                 return@launch
             }
-            val encoded = query.trim().encodeURLParameter()
+            val encoded = encodeUrlQueryComponent(query.trim())
             val url = "https://searchapi.eastmoney.com/api/suggest/get?input=$encoded&type=14&token=D43BF722C8E33D1E3C1E4A8C9DFD2A52&count=20"
             val result = request(url)?.let(EastMoneyInsightParser::parseSecurities).orEmpty()
             deliver { onResult(result) }
@@ -514,12 +547,8 @@ class EastMoneyInsightProvider(
             if (wait > 0) delay(wait)
             lastRequestAt = platformCurrentTimeMillis()
         }
-        val response = client.get(url) {
-            header("User-Agent", "Mozilla/5.0 StockChat/1.0")
-            header("Referer", "https://quote.eastmoney.com/")
-            header("Accept", "application/json,text/plain,*/*")
-        }
-        if (response.status.value !in 200..299) null else runCatching { JSONObject(response.bodyAsText()) }.getOrNull()
+        val response = client.get(url, eastMoneyHeaders)
+        if (response.status !in 200..299) null else runCatching { JSONObject(response.body) }.getOrNull()
     } catch (_: Throwable) {
         null
     }
@@ -560,5 +589,25 @@ class EastMoneyInsightProvider(
         val topic = if (down) "DTPool" else "ZTPool"
         val dpt = if (down) "wz.ztzt" else "wz.ztzt"
         return "https://push2ex.eastmoney.com/getTopic$topic?ut=7eea3edcaed734bea9cbfc24409ed989&dpt=$dpt&Pageindex=0&pagesize=$size&sort=fbt:asc&date=$date"
+    }
+
+    private val eastMoneyHeaders = mapOf(
+        "User-Agent" to "Mozilla/5.0 StockChat/1.0",
+        "Referer" to "https://quote.eastmoney.com/",
+        "Accept" to "application/json,text/plain,*/*",
+    )
+}
+
+private fun encodeUrlQueryComponent(value: String): String = buildString {
+    val hex = "0123456789ABCDEF"
+    value.encodeToByteArray().forEach { byte ->
+        val code = byte.toInt() and 0xFF
+        if ((code in 'a'.code..'z'.code) || (code in 'A'.code..'Z'.code) ||
+            (code in '0'.code..'9'.code) || code == '-'.code || code == '_'.code ||
+            code == '.'.code || code == '~'.code) {
+            append(code.toChar())
+        } else {
+            append('%').append(hex[code shr 4]).append(hex[code and 0x0F])
+        }
     }
 }

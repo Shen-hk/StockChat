@@ -72,7 +72,7 @@ import com.kuikly.stockchat.page.components.ChatMessageActions
 import com.kuikly.stockchat.page.components.ChatMessageRenderState
 import com.kuikly.stockchat.page.components.ChatMessageView
 import com.kuikly.stockchat.page.components.DateDivider
-import com.kuikly.stockchat.page.components.RecentSymbolRow
+import com.kuikly.stockchat.page.components.ComposerGuideRow
 import com.kuikly.stockchat.page.components.RegressionQuestionRow
 import com.kuikly.stockchat.page.components.SubThreadState
 import com.kuikly.stockchat.chat.welcome.component.WelcomeMode
@@ -121,10 +121,12 @@ import com.kuikly.stockchat.richtext.EntityDropResolver
 import com.kuikly.stockchat.richtext.EntityDropTarget
 import com.kuikly.stockchat.composer.AtCandidate
 import com.kuikly.stockchat.composer.AtCandidateProvider
+import com.kuikly.stockchat.composer.CatalogEntry
 import com.kuikly.stockchat.composer.ComposerCatalog
 import com.kuikly.stockchat.composer.CommandExecution
 import com.kuikly.stockchat.composer.CommandInvocationParser
 import com.kuikly.stockchat.composer.CommandInvocation
+import com.kuikly.stockchat.composer.CommandParam
 import com.kuikly.stockchat.composer.CommandRegistry
 import com.kuikly.stockchat.composer.ComposerEditingReducer
 import com.kuikly.stockchat.composer.ComposerTextOperations
@@ -386,6 +388,18 @@ internal class ChatPage : BasePager() {
     private var paramCommand: SlashCommand? by observable(null)
     // 最近提及（S1 数据源，最多 5 条，新的在前）。
     private val recentMentions = mutableListOf<String>()
+    // ===== @ 候选实时化（规范 10 §4.2 S5 / P5）=====
+    // 远端搜索建议池：会话内累积，rank 时并入打分；Observable 以驱动候选行重渲染。
+    private var remoteEntries: ObservableList<CatalogEntry> by observableList()
+    private var remoteSearchGeneration = 0
+    // 候选涨跌回填：面板活跃代数 + 已请求 symbol 去重（行情快照走 QuoteRepository 缓存）。
+    private var atQuoteGeneration = 0
+    private val atQuoteRequested = mutableSetOf<String>()
+    // 参数面板重渲染 key（R1）：ConditionView 的 creator 只在条件翻转时构建一次内容，
+    // 参数态下打字/点选导致的 args 变化必须靠 vfor 的 collection 操作整帧重建面板
+    // （2026-09-10 真机复现：参数面板在打字期间完全冻结）。bump = clear+add 产生
+    // REMOVE/ADD 操作对，vfor 逐项重建。
+    private var paramPanelRenderKey: ObservableList<Int> by observableList()
     // Composer state machine (规范见 docs/09-输入栏默认态与输入态转换规范_v1.0.md).
     // 默认态 → 输入态由点击/聚焦/开面板触发；输入态是"粘"的：收起键盘不再回退，
     // 只有"键盘已收起时点击非输入栏区域"这一次点击才回到默认态。
@@ -1009,6 +1023,20 @@ internal class ChatPage : BasePager() {
                             touchEnable(false)
                         }
                     }
+                    // 输入框上方引导语气泡（2026-09-10 用户反馈二轮）：仅收起态
+                    // 显示，展开态整体隐藏（自然不可点）；容器背景透明不挡列表。
+                    // 点按 chip = injectQuestion：展开输入栏带入问题，与欢迎引导
+                    // 同款行为，用户确认后才发送。
+                    vif({ !page.isComposerVisuallyExpanded() }) {
+                        View {
+                            attr {
+                                marginBottom(6f)
+                                paddingTop(6f)
+                                paddingBottom(8f)
+                            }
+                            ComposerGuideRow(page.theme) { text -> page.injectQuestion(text) }
+                        }
+                    }
                     // Two states: a short collapsed bar (＋ / input / 语音 / 拍照, no
                     // send) and the expanded composing bar from the HTML prototype.
                     // The glass remains transparent. Its gradient rim is painted
@@ -1042,11 +1070,8 @@ internal class ChatPage : BasePager() {
                                 page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER,
                             )
                         }
-                            // 联想面板打开时收起"最近标的"横条：面板本身已含"最近"数据源候选，
-                            // 两条叠着显示既重复又顶高输入栏。
-                            vif({ page.isComposerVisuallyExpanded() && page.assistantPanel == AssistantPanel.NONE }) {
-                                RecentSymbolRow(page.theme) { text -> page.injectQuestion(text) }
-                            }
+                            // 上下文备注条（@提及/命令带出的深上下文）：保持在胶囊内、
+                            // 与输入语义强绑定，不随「最近标的」气泡外移。
                             vif({ page.isComposerVisuallyExpanded() && page.deepContextVersion >= 0 && page.deepContextNotes.isNotEmpty() }) {
                                 page.renderContextNoteBar(this)
                             }
@@ -1475,7 +1500,10 @@ internal class ChatPage : BasePager() {
             vif({ page.composerAttachmentState.mediaSheetMounted }) {
                 MediaActionSheetHost(
                     theme = page.theme,
-                    presented = page.composerAttachmentState.mediaSheetPresented,
+                    // presented 必须传取值闭包：vif 体只执行一次，直接读
+                    // observable 只会拿到挂载帧快照（false），两帧入场的
+                    // presented 翻转永远到不了 attr（R1）。同 ChatDrawer。
+                    presented = { page.composerAttachmentState.mediaSheetPresented },
                     bottomInset = page.pagerData.safeAreaInsets.bottom,
                     onDismiss = { page.dismissMediaSheet() },
                     onAction = { page.handleMediaAction(it) },
@@ -1949,11 +1977,16 @@ internal class ChatPage : BasePager() {
     }
 
     private fun handleMediaAction(action: ComposerMediaAction) {
+        KLog.i(COMPOSER_LOG_TAG, "mediaAction ${action.source}")
         // 选完入口即收弹层，再交原生拉起图库/相机/文档选择器。
         dismissMediaSheet()
         val bridge = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
         bridge.hapticImpact()
-        bridge.openComposerMediaSource(action.source)
+        bridge.openComposerMediaSource(action.source) { data ->
+            if (data != null && data.optString("code") == "-1") {
+                KLog.i(COMPOSER_LOG_TAG, "mediaAction failed ${data.optString("message")}")
+            }
+        }
         trackComposerEvent("composer_media_open", "source" to action.source)
     }
 
@@ -4041,6 +4074,14 @@ internal class ChatPage : BasePager() {
         viewModel.inputText = text
         composerEditingState = state
         inputRef?.view?.setTextInputState(state)
+        // 程序化改文本不经过 handleComposerTextChanged，参数态下也要重建面板。
+        if (paramCommand != null) bumpParamPanelRenderKey()
+    }
+
+    /** 重建参数面板内容（见 paramPanelRenderKey 注释）。 */
+    private fun bumpParamPanelRenderKey() {
+        paramPanelRenderKey.clear()
+        paramPanelRenderKey.add(0)
     }
 
     private fun updateComposerEditingState(state: TextInputState) {
@@ -4139,6 +4180,17 @@ internal class ChatPage : BasePager() {
         val cmd = paramCommand
         if (cmd != null && text.trimStart().startsWith("/${cmd.name}")) {
             assistantPanel = AssistantPanel.COMMAND_PARAMS
+            // 参数态 SECURITY 槽复用 @ 的候选管线（规范 §5.4）：远端搜索与行情回填同样生效。
+            val query = currentParamQuery(cmd)
+            if (query.length >= 2) {
+                val candidates = rankAtCandidates(query)
+                scheduleRemoteSearch(query)
+                fetchQuotesForPanel(
+                    query,
+                    candidates = candidates,
+                    isPanelActive = { triggerSession == null && paramCommand === cmd },
+                )
+            }
             return
         }
         if (cmd != null) clearActiveCommand()
@@ -4146,17 +4198,143 @@ internal class ChatPage : BasePager() {
     }
 
     private fun loadAtCandidates(session: TriggerSession) {
-        val list = AtCandidateProvider.rank(session.query, recentMentions, watchlistStore.symbols())
-        atCandidates.clear()
-        atCandidates.addAll(list)
-        atHighlight = 0
         assistantPanel = AssistantPanel.AT_MENTION
+        refreshAtCandidates(session.query)
+        scheduleRemoteSearch(session.query)
+        fetchQuotesForPanel(session.query)
         trackComposerEvent(
             "at_panel_show_src",
             "src" to "local",
             "query_len" to session.query.length,
-            "count" to list.size,
+            "count" to atCandidates.size,
         )
+    }
+
+    /** 本地目录 + 远端池统一打分并刷新 @ 候选列表。 */
+    private fun refreshAtCandidates(query: String) {
+        val list = rankAtCandidates(query)
+        atCandidates.clear()
+        atCandidates.addAll(list)
+        atHighlight = 0
+    }
+
+    private fun rankAtCandidates(query: String): List<AtCandidate> =
+        AtCandidateProvider.rank(query, recentMentions, watchlistStore.symbols(), remoteEntries.toList())
+
+    /**
+     * 远端搜索建议（规范 10 §4.2 S5 / P5）：query ≥ 2 字符时防抖请求东财 suggest，
+     * 结果并入 remoteEntries 池后重排候选。到达时会话已终结（query 变化/面板关闭）则丢弃。
+     * @ / 命令参数态共用：参数态下 triggerSession == null 且 paramCommand != null 视为活跃。
+     */
+    private fun scheduleRemoteSearch(query: String) {
+        if (query.length < 2) return
+        val generation = ++remoteSearchGeneration
+        val panelActive = {
+            val session = triggerSession
+            (session != null && session.type == '@' && session.query == query) ||
+                (session == null && paramCommand != null)
+        }
+        setTimeout(REMOTE_SEARCH_DEBOUNCE_MS) {
+            if (generation != remoteSearchGeneration) return@setTimeout
+            if (!panelActive()) return@setTimeout
+            dependencies.securitySearchProvider.searchSecurities(query) { securities ->
+                // Provider 回调在后台线程：setTimeout(0) 跳回主线程再碰 observable（线程铁律）。
+                setTimeout(0) {
+                    if (generation != remoteSearchGeneration) return@setTimeout
+                    if (!panelActive()) return@setTimeout
+                    var added = false
+                    securities.forEach { security ->
+                        val symbol = security.symbol
+                        if (symbol.isBlank() || ComposerCatalog.find(symbol) != null) return@forEach
+                        if (remoteEntries.any { it.symbol == symbol }) return@forEach
+                        if (remoteEntries.size >= REMOTE_ENTRY_POOL_LIMIT) remoteEntries.clear()
+                        remoteEntries.add(security.toCatalogEntry())
+                        added = true
+                    }
+                    if (!added) return@setTimeout
+                    if (triggerSession != null && triggerSession?.type == '@' && triggerSession?.query == query) {
+                        refreshAtCandidates(query)
+                        fetchQuotesForPanel(query)
+                    }
+                    // 参数态：面板内容按 paramPanelRenderKey 整帧重建，远端候选到达后
+                    // 需要 bump 才会在下一次重建中可见（否则要等用户再敲一个字符）。
+                    if (triggerSession == null && paramCommand != null) bumpParamPanelRenderKey()
+                    trackComposerEvent(
+                        "at_panel_show_src",
+                        "src" to "remote",
+                        "query_len" to query.length,
+                        "count" to atCandidates.size,
+                    )
+                }
+            }
+        }
+    }
+
+    /** 远端建议 Security → 候选目录条目（PinYin 字段是首字母串，作 pinyinAbbr）。 */
+    private fun com.kuikly.stockchat.data.entity.Security.toCatalogEntry(): CatalogEntry =
+        CatalogEntry(
+            symbol = symbol,
+            name = name,
+            market = market,
+            pinyinFull = "",
+            pinyinAbbr = aliases.firstOrNull { it.isNotEmpty() && !it[0].isDigit() }?.lowercase().orEmpty(),
+            kind = when (kind) {
+                "index" -> MentionType.INDEX
+                "board" -> MentionType.BOARD
+                else -> MentionType.STOCK
+            },
+            hot = 0.5f,
+        )
+
+    /**
+     * 候选涨跌回填：对当前候选前几只发轻量快照请求（QuoteRepository 快照缓存去重），
+     * 到达后原地更新涨跌幅。板块无涨跌跳过；面板已切换 query 则丢弃迟到结果。
+     */
+    private fun fetchQuotesForPanel(
+        query: String,
+        candidates: List<AtCandidate> = atCandidates.toList(),
+        isPanelActive: () -> Boolean = { triggerSession?.query == query },
+    ) {
+        val generation = ++atQuoteGeneration
+        candidates.take(PANEL_QUOTE_FETCH_LIMIT).forEach { candidate ->
+            val entry = candidate.entry
+            if (entry.kind == MentionType.BOARD || entry.chgPct != null) return@forEach
+            if (!atQuoteRequested.add(entry.symbol)) return@forEach
+            quoteRepository.snapshotForContext(entry.symbol) { result ->
+                val quote = result.quote ?: return@snapshotForContext
+                val pct = if (quote.price > 0.0 && quote.previousClose > 0.0) {
+                    ((quote.price - quote.previousClose) / quote.previousClose * 100.0).toFloat()
+                } else {
+                    null
+                }
+                setTimeout(0) {
+                    if (generation != atQuoteGeneration) return@setTimeout
+                    if (!isPanelActive()) return@setTimeout
+                    applyChgPct(entry.symbol, pct)
+                }
+            }
+        }
+    }
+
+    /** 把涨跌写回候选列表与远端池（列表整体重建以触发 Observable 重渲染）。 */
+    private fun applyChgPct(symbol: String, pct: Float?) {
+        if (pct == null) return
+        if (atCandidates.any { it.entry.symbol == symbol && it.entry.chgPct == null }) {
+            val updated = atCandidates.map { c ->
+                if (c.entry.symbol == symbol) c.copy(entry = c.entry.copy(chgPct = pct)) else c
+            }
+            atCandidates.clear()
+            atCandidates.addAll(updated)
+        }
+        val poolIndex = remoteEntries.indexOfFirst { it.symbol == symbol }
+        if (poolIndex >= 0) {
+            val pool = remoteEntries.toMutableList()
+            pool[poolIndex] = pool[poolIndex].copy(chgPct = pct)
+            remoteEntries.clear()
+            remoteEntries.addAll(pool)
+        }
+        // 参数态候选行由面板整帧重建渲染，行情到达后 bump 一次让涨跌立即可见。
+        if (triggerSession == null && paramCommand != null) bumpParamPanelRenderKey()
     }
 
     private fun loadSlashCandidates(session: TriggerSession) {
@@ -4229,6 +4407,53 @@ internal class ChatPage : BasePager() {
     /** 结束 / 命令参数态。 */
     private fun clearActiveCommand() {
         paramCommand = null
+    }
+
+    /**
+     * 参数面板右上角「取消」：摘掉命令 token 退出命令态，正文与 @ 提及保留
+     * （提及仍在文本里，发送对账照常生效）。
+     */
+    private fun cancelActiveCommand() {
+        val command = paramCommand ?: return
+        val text = viewModel.inputText
+        val prefix = "/${command.name}"
+        val remaining = if (text.trimStart().startsWith(prefix)) {
+            text.trimStart().removePrefix(prefix).trimStart()
+        } else {
+            text
+        }
+        clearActiveCommand()
+        closeAssistantPanel()
+        setComposerText(remaining)
+        inputRef?.view?.focus()
+        trackComposerEvent("at_token_edit", "type" to "command_cancel", "command" to command.id)
+    }
+
+    /**
+     * 点已填槽位 → 清空该槽重新填写（规范 §5.4 闭环编辑）。
+     * SECURITY 槽移除 @token 及其固化提及；ENUM 槽移除选项词。
+     */
+    private fun clearFilledParamSlot(command: SlashCommand, param: CommandParam) {
+        val args = resolveCommandFromText(
+            viewModel.inputText,
+            SolidTokenRegistry.verify(mentionEntities, viewModel.inputText),
+        )?.args.orEmpty()
+        val value = args[param.key].orEmpty().trim()
+        if (value.isEmpty()) return
+        val token = if (param.type == ParamType.SECURITY) "@$value" else value
+        val text = viewModel.inputText
+        val idx = text.indexOf(token)
+        if (idx < 0) return
+        val newText = (text.substring(0, idx) + " " + text.substring(idx + token.length))
+            .replace(Regex(" {2,}"), " ")
+            .trimEnd() + " "
+        if (param.type == ParamType.SECURITY) {
+            mentionEntities.removeAll { it.mentionText == token }
+        }
+        setComposerText(newText, idx)
+        commandValidationMessage = ""
+        trackComposerEvent("at_token_edit", "type" to "slot_clear", "param" to param.key)
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
     }
 
     /** 选中一个 @ 候选 → 固化 token（规范 §4.6）。 */
@@ -4371,7 +4596,14 @@ internal class ChatPage : BasePager() {
      * 命令调用从输入文本解析：命中的命令名 + @ 固化提及填 SECURITY 槽 + 文本片段填 TEXT/ENUM 槽。
      */
     private fun buildSendPayload(): SendPayload {
-        val rawText = viewModel.inputText
+        // 附件快照：随 payload 进用户气泡回显；发送后由 submitInput 清输入栏。
+        val attachments = composerAttachmentState.attachments.map {
+            com.kuikly.stockchat.chat.MessageAttachment(it.id, it.path, it.name, it.isImage)
+        }
+        // 纯附件无文字：用附件兜底引导语保证发送管线有正文。
+        val rawText = viewModel.inputText.ifBlank {
+            if (attachments.isNotEmpty()) defaultAttachmentPrompt() else ""
+        }
         val verified = SolidTokenRegistry.verify(mentionEntities, rawText)
         // 路由焦点标的绕过文本对账并入提及（去重：与输入期提及同 symbol 时以输入侧为准）。
         // 注意：合并列表只进 SendPayload（systemNote / 行情上下文注入消费）；
@@ -4386,9 +4618,9 @@ internal class ChatPage : BasePager() {
             val rendered = CommandRegistry.renderPrompt(command.commandId.let { id ->
                 CommandRegistry.all.firstOrNull { it.id == id } ?: CommandRegistry.all.first()
             }, command.args)
-            SendPayload(rawText, verifiedMentions, command, rendered, deepContextNotes.toList())
+            SendPayload(rawText, verifiedMentions, command, rendered, deepContextNotes.toList(), attachments)
         } else {
-            SendPayload(rawText, verifiedMentions, null, null, deepContextNotes.toList())
+            SendPayload(rawText, verifiedMentions, null, null, deepContextNotes.toList(), attachments)
         }
         return payload
     }
@@ -4404,7 +4636,7 @@ internal class ChatPage : BasePager() {
 
     private fun exactSecurityFragment(fragment: String): Boolean {
         val q = fragment.removePrefix("@")
-        return AtCandidateProvider.rank(q, recentMentions, watchlistStore.symbols()).any { candidate ->
+        return AtCandidateProvider.rank(q, recentMentions, watchlistStore.symbols(), remoteEntries.toList()).any { candidate ->
             candidate.entry.name == q || candidate.entry.symbol.equals(q, ignoreCase = true)
         }
     }
@@ -4428,45 +4660,50 @@ internal class ChatPage : BasePager() {
 
     private fun renderAtCandidateRows(container: ViewContainer<*, *>) {
         val page = this
-        val query = triggerSession?.query.orEmpty()
-        // 面板高度按候选条数算：少了贴合内容（不留空白框），多了截断到上限在框内滚动。
-        val panelHeight = if (page.triggerComposing) {
-            ASSISTANT_PANEL_EMPTY_HEIGHT
-        } else {
-            assistantPanelHeight(page.atCandidates.size, CANDIDATE_ROW_HEIGHT)
-        }
         container.View {
             attr {
-                height(panelHeight)
                 marginTop(8f)
                 backgroundColor(page.theme.surface)
                 borderRadius(12f)
                 overflow(true)
             }
-            if (page.triggerComposing) {
+            // R1：面板内容依赖 triggerComposing / atCandidates 两个 observable，
+            // 分支判定必须放进 vif、行列表必须走 vfor——普通 builder 闭包只取首帧
+            // 快照，面板挂载后的列表更新不会重渲染（2026-09-10 真机复现：
+            // @ 面板永远停在「没有可推荐的标的」空态）。
+            vif({ page.triggerComposing }) {
                 View {
-                    attr { height(44f); alignItemsCenter(); justifyContentCenter() }
+                    attr {
+                        height(ASSISTANT_PANEL_EMPTY_HEIGHT)
+                        alignItemsCenter()
+                        justifyContentCenter()
+                    }
                     Text { attr { text("输入中…"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
                 }
-            } else if (page.atCandidates.isEmpty()) {
+            }
+            vif({ !page.triggerComposing && page.atCandidates.isEmpty() }) {
                 View {
                     attr { height(56f); alignItemsCenter(); justifyContentCenter() }
                     Text {
                         attr {
-                            text(if (query.isEmpty()) "没有可推荐的标的" else "没有匹配“$query”的标的")
+                            // query 在面板打开期间持续变化，文案放 attr 响应式读取。
+                            val q = page.triggerSession?.query.orEmpty()
+                            text(if (q.isEmpty()) "没有可推荐的标的" else "没有匹配“$q”的标的")
                             fontSizeScaled(12f)
                             color(page.theme.textTertiary)
                         }
                     }
                 }
-            } else {
+            }
+            vif({ !page.triggerComposing && page.atCandidates.isNotEmpty() }) {
                 Scroller {
                     attr {
-                        height(panelHeight)
+                        height(assistantPanelHeight(page.atCandidates.size, CANDIDATE_ROW_HEIGHT))
                         flexDirectionColumn()
                         padding(4f)
                     }
-                    page.atCandidates.forEachIndexed { index, candidate ->
+                    vfor({ page.atCandidates }) { candidate ->
+                        val q = page.triggerSession?.query.orEmpty()
                         View {
                             attr {
                                 height(CANDIDATE_ROW_HEIGHT)
@@ -4474,13 +4711,16 @@ internal class ChatPage : BasePager() {
                                 alignItemsCenter()
                                 paddingLeft(12f)
                                 paddingRight(12f)
-                                backgroundColor(if (index == page.atHighlight) page.theme.brandSoft else Color(0x00000000L, 0f))
+                                backgroundColor(
+                                    if (page.atCandidates.indexOf(candidate) == page.atHighlight) page.theme.brandSoft
+                                    else Color(0x00000000L, 0f)
+                                )
                             }
                             event { click { page.selectAtCandidate(candidate) } }
                             if (candidate.entry.kind == MentionType.BOARD) {
-                                page.renderBoardCandidateRow(this, candidate, query)
+                                page.renderBoardCandidateRow(this, candidate, q)
                             } else {
-                                page.renderSecurityCandidateRow(this, candidate, query)
+                                page.renderSecurityCandidateRow(this, candidate, q)
                             }
                         }
                     }
@@ -4623,21 +4863,16 @@ internal class ChatPage : BasePager() {
 
     private fun renderSlashCommandRows(container: ViewContainer<*, *>) {
         val page = this
-        // 与 @ 面板同理：按条数算高度，命令只有 8 条但全展开太长，截断到上限在框内滚动。
-        val panelHeight = if (page.slashUnknown.isNotEmpty()) {
-            UNKNOWN_COMMAND_PANEL_HEIGHT
-        } else {
-            assistantPanelHeight(page.slashCandidates.size, COMMAND_ROW_HEIGHT)
-        }
         container.View {
             attr {
-                height(panelHeight)
                 marginTop(8f)
                 backgroundColor(page.theme.surface)
                 borderRadius(12f)
                 overflow(true)
             }
-            if (page.slashUnknown.isNotEmpty()) {
+            // R1：与 @ 面板同理——分支判定进 vif、命令行走 vfor；普通 builder 闭包
+            // 只取首帧快照，输入 / 命令名过程中的候选更新不会重渲染。
+            vif({ page.slashUnknown.isNotEmpty() }) {
                 View {
                     attr { padding(10f); flexDirectionColumn() }
                     Text { attr { text("未识别命令：/${page.slashUnknown}"); fontSizeScaled(12f); color(page.theme.textSecondary) } }
@@ -4665,26 +4900,31 @@ internal class ChatPage : BasePager() {
                         }
                     }
                 }
-            } else if (page.slashCandidates.isEmpty()) {
+            }
+            vif({ page.slashUnknown.isEmpty() && page.slashCandidates.isEmpty() }) {
                 View {
                     attr { height(36f); alignItemsCenter(); justifyContentCenter() }
                     Text { attr { text("输入 / 唤起指令"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
                 }
-            } else {
+            }
+            vif({ page.slashUnknown.isEmpty() && page.slashCandidates.isNotEmpty() }) {
                 Scroller {
                     attr {
-                        height(panelHeight)
+                        height(assistantPanelHeight(page.slashCandidates.size, COMMAND_ROW_HEIGHT))
                         flexDirectionColumn()
                         padding(4f)
                     }
-                    page.slashCandidates.forEachIndexed { index, command ->
+                    vfor({ page.slashCandidates }) { command ->
                         View {
                             attr {
                                 height(COMMAND_ROW_HEIGHT)
                                 flexDirectionRow()
                                 alignItemsCenter()
                                 padding(10f)
-                                backgroundColor(if (index == page.slashHighlight) page.theme.brandSoft else Color(0x00000000L, 0f))
+                                backgroundColor(
+                                    if (page.slashCandidates.indexOf(command) == page.slashHighlight) page.theme.brandSoft
+                                    else Color(0x00000000L, 0f)
+                                )
                             }
                             event { click { page.selectSlashCommand(command) } }
                             View {
@@ -4704,16 +4944,28 @@ internal class ChatPage : BasePager() {
     }
 
     private fun renderCommandParams(container: ViewContainer<*, *>) {
-        val command = paramCommand ?: return
         val page = this
+        // R1：vif creator 的内容只构建一次（ConditionView.didCreated 守卫），参数态下
+        // 打字/点选/远端到达都要靠 paramPanelRenderKey 的 collection 操作触发本 vfor
+        // 整帧重建，下面的 args/missing/currentKey 才能读到最新值（所见即所发）。
+        vfor({ page.paramPanelRenderKey }) { _ ->
+        val command = page.paramCommand ?: return@vfor
         // 参数值实时解析：与发送时同一套 resolveCommandFromText，面板所见即所发。
-        val args = resolveCommandFromText(
-            viewModel.inputText,
-            SolidTokenRegistry.verify(mentionEntities, viewModel.inputText),
+        val args = page.resolveCommandFromText(
+            page.viewModel.inputText,
+            SolidTokenRegistry.verify(page.mentionEntities, page.viewModel.inputText),
         )?.args.orEmpty()
-        val missing = missingRequiredParams(command, args)
-        val currentKey = missing.firstOrNull()?.key ?: command.params.firstOrNull { args[it.key].isNullOrBlank() }?.key
+        val missing = page.missingRequiredParams(command, args)
+        // 当前槽位判定：必填缺口优先；否则若末尾输入恰好命中某可选 ENUM 的选项
+        //（如 /复盘 直接打"周"），跳到该 ENUM 槽，不被前面的可选 SECURITY 槽拦住。
+        val trailing = page.currentParamQuery(command)
+        val currentKey = missing.firstOrNull()?.key
+            ?: command.params.firstOrNull { p ->
+                args[p.key].isNullOrBlank() && p.type == ParamType.ENUM && trailing in p.enumOptions
+            }?.key
+            ?: command.params.firstOrNull { args[it.key].isNullOrBlank() }?.key
         val currentParam = command.params.firstOrNull { it.key == currentKey }
+        val requiredTotal = command.params.count { it.required }
         // 槽位数量由命令 schema 决定、不会跳动，高度按条数算：
         // 标题 32f + 每槽 40f + 底部提示 36f，超出上限则在框内滚动。
         val wanted = 32f + command.params.size * 40f + 36f +
@@ -4722,7 +4974,7 @@ internal class ChatPage : BasePager() {
             } else {
                 0f
             }
-        container.Scroller {
+        Scroller {
             attr {
                 height(minOf(wanted, ASSISTANT_PANEL_MAX_ROWS * COMMAND_ROW_HEIGHT + ASSISTANT_PANEL_PADDING))
                 marginTop(8f)
@@ -4738,6 +4990,26 @@ internal class ChatPage : BasePager() {
                     Text { attr { text(command.icon); fontSizeScaled(12f); color(page.theme.brand) } }
                 }
                 Text { attr { text("/${command.name} · 参数"); fontSizeScaled(13f); color(page.theme.textPrimary) } }
+                View { attr { flex(1f) } }
+                if (requiredTotal > 0) {
+                    Text {
+                        attr {
+                            text("必填 ${requiredTotal - missing.size}/$requiredTotal")
+                            fontSizeScaled(10f)
+                            color(if (missing.isEmpty()) page.theme.brand else page.theme.textSecondary)
+                            marginRight(8f)
+                        }
+                    }
+                }
+                View {
+                    attr {
+                        height(22f); paddingLeft(8f); paddingRight(8f)
+                        alignItemsCenter(); justifyContentCenter()
+                        backgroundColor(page.theme.surfaceMuted); borderRadius(7f)
+                    }
+                    event { click { page.cancelActiveCommand() } }
+                    Text { attr { text("✕ 取消"); fontSizeScaled(10f); color(page.theme.textSecondary) } }
+                }
             }
             command.params.forEach { param ->
                 val filled = args[param.key].orEmpty()
@@ -4756,19 +5028,35 @@ internal class ChatPage : BasePager() {
                         )
                         borderRadius(8f)
                     }
+                    // 已填槽位可点击重填（闭环编辑）：SECURITY 槽移除 @token，ENUM 槽移除选项词。
+                    if (filled.isNotEmpty()) {
+                        event { click { page.clearFilledParamSlot(command, param) } }
+                    }
                     View { attr { flex(1f); flexDirectionColumn() }
                         Text { attr { text(param.label + if (param.required) " *" else "（可选）"); fontSizeScaled(11f); color(if (param.key == currentKey) page.theme.brand else page.theme.textSecondary) } }
                         Text { attr { text(if (filled.isNotEmpty()) filled else param.placeholder); fontSizeScaled(12f); color(if (filled.isNotEmpty()) page.theme.textPrimary else page.theme.textTertiary) } }
                     }
-                    Text { attr { text(when (param.type) { ParamType.SECURITY -> "@" ; ParamType.ENUM -> "选" ; else -> "文" }); fontSizeScaled(9f); color(page.theme.textTertiary) } }
+                    Text {
+                        attr {
+                            text(if (filled.isNotEmpty()) "重填" else when (param.type) { ParamType.SECURITY -> "@" ; ParamType.ENUM -> "选" ; else -> "文" })
+                            fontSizeScaled(9f)
+                            color(page.theme.textTertiary)
+                        }
+                    }
                 }
             }
             if (currentParam?.type == ParamType.SECURITY) {
                 val query = page.currentParamQuery(command)
-                val candidates = AtCandidateProvider.rank(query, page.recentMentions, page.watchlistStore.symbols()).take(ASSISTANT_PANEL_MAX_ROWS)
+                val candidates = page.rankAtCandidates(query).take(ASSISTANT_PANEL_MAX_ROWS)
                 Text {
                     attr {
-                        text(if (query.isEmpty()) "选择${currentParam.label}" else "匹配「$query」")
+                        text(
+                            when {
+                                query.isEmpty() -> "选择${currentParam.label}"
+                                candidates.isEmpty() -> "没有匹配「$query」的标的 · 可输入完整名称或代码后发送"
+                                else -> "匹配「$query」"
+                            }
+                        )
                         marginTop(10f)
                         fontSizeScaled(10f)
                         color(page.theme.textTertiary)
@@ -4826,13 +5114,20 @@ internal class ChatPage : BasePager() {
                 attr { marginTop(8f); alignItemsCenter(); justifyContentCenter(); height(28f) }
                 Text {
                     attr {
-                        text(if (missing.isEmpty()) "必填已完成，可继续补可选参数或发送" else "继续输入 @标的 或文字填充必填参数")
+                        text(
+                            when {
+                                missing.isNotEmpty() -> "还差必填：${missing.joinToString("、") { it.label }} · 点下方候选或直接输入"
+                                command.params.any { args[it.key].isNullOrBlank() } -> "必填已齐 · 可点选可选参数或直接发送"
+                                else -> "参数已齐 · 点击发送键发送"
+                            }
+                        )
                         fontSizeScaled(10f)
                         color(page.theme.textTertiary)
                     }
                 }
             }
         }
+        } // vfor paramPanelRenderKey
     }
 
     private fun cycleGlassMode() {
@@ -5182,6 +5477,15 @@ private data class ChatQuoteState(
  */
 private const val ASSISTANT_PANEL_MAX_ROWS = 3
 
+/** 远端搜索建议防抖：停止输入 250ms 后才发请求（规范 §6.2 防抖 80ms 的宽松版，省配额）。 */
+private const val REMOTE_SEARCH_DEBOUNCE_MS = 250
+
+/** 远端建议池上限：超限整体清空（历史命中已随 query 演进自然退场）。 */
+private const val REMOTE_ENTRY_POOL_LIMIT = 200
+
+/** 每轮面板刷新最多回填涨跌的候选数（快照请求逐只发，控量）。 */
+private const val PANEL_QUOTE_FETCH_LIMIT = 6
+
 /** 候选行高：单行横排 5 项信息（名称/代码/市场/涨跌/来源）。 */
 private const val CANDIDATE_ROW_HEIGHT = 42f
 
@@ -5224,7 +5528,7 @@ private enum class ComposerMediaAction(val source: String, val label: String, va
  */
 private fun ViewContainer<*, *>.MediaActionSheetHost(
     theme: StockChatTheme,
-    presented: Boolean,
+    presented: () -> Boolean,
     bottomInset: Float,
     onDismiss: () -> Unit,
     onAction: (ComposerMediaAction) -> Unit,
@@ -5233,8 +5537,8 @@ private fun ViewContainer<*, *>.MediaActionSheetHost(
         attr {
             absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
             backgroundColor(Color(0x59000000))
-            opacity(if (presented) 1f else 0f)
-            animate(Animation.easeOut(0.20f), presented)
+            opacity(if (presented()) 1f else 0f)
+            animate(Animation.easeOut(0.20f), presented())
         }
         event { click { onDismiss() } }
     }
@@ -5244,9 +5548,10 @@ private fun ViewContainer<*, *>.MediaActionSheetHost(
             paddingLeft(12f)
             paddingRight(12f)
             paddingBottom(bottomInset + 12f)
-            opacity(if (presented) 1f else 0f)
-            transform(Translate(0f, if (presented) 0f else 48f))
-            animate(Animation.easeOut(0.26f), presented)
+            touchEnable(true)
+            opacity(if (presented()) 1f else 0f)
+            transform(Translate(0f, if (presented()) 0f else 48f))
+            animate(Animation.easeOut(0.26f), presented())
         }
         View {
             attr {
@@ -5285,6 +5590,7 @@ private fun ViewContainer<*, *>.MediaActionSheetHost(
                         paddingRight(12f)
                         backgroundColor(theme.brandSoft)
                         borderRadius(16f)
+                        touchEnable(true)
                     }
                     View {
                         attr {
@@ -5320,7 +5626,7 @@ private fun ViewContainer<*, *>.MediaActionSheetHost(
                         }
                     }
                     LineIconChevronRight(theme.textTertiary, 16f)
-                    event { click { onAction(action) } }
+                    event { click { KLog.i("Composer", "mediaSheetRowTap ${action.source}"); onAction(action) } }
                 }
             }
         }

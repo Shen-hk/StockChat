@@ -85,12 +85,29 @@ class EastMoneyInsightParserTest {
     }
 
     @Test
-    fun parsesOnlySupportedMainlandSymbolsFromGlobalSearch() {
-        val root = JSONObject("""{"QuotationCodeTable":{"Data":[{"Code":"600519","Name":"贵州茅台","PinYin":"GZMT","MktNum":"1"},{"Code":"000858","Name":"五粮液","PinYin":"WLY","MktNum":"0"},{"Code":"AAPL","Name":"苹果","MktNum":"105"}]}}""")
+    fun parsesGlobalSymbolsBoardsAndIndexesFromSuggest() {
+        val root = JSONObject(
+            """{"QuotationCodeTable":{"Data":[""" +
+                """{"Code":"600519","Name":"贵州茅台","PinYin":"GZMT","MktNum":"1","SecurityTypeName":"沪A"},""" +
+                """{"Code":"000858","Name":"五粮液","PinYin":"WLY","MktNum":"0","SecurityTypeName":"深A"},""" +
+                """{"Code":"00700","Name":"腾讯控股","PinYin":"TXKG","MktNum":"116","SecurityTypeName":"港股"},""" +
+                """{"Code":"AAPL","Name":"苹果","PinYin":"PG","MktNum":"105","SecurityTypeName":"美股"},""" +
+                """{"Code":"BK0477","Name":"白酒","PinYin":"BJ","MktNum":"90","SecurityTypeName":"板块"},""" +
+                """{"Code":"000001","Name":"上证指数","PinYin":"SZZS","MktNum":"1","SecurityTypeName":"指数"},""" +
+                """{"Code":"161725","Name":"白酒基金LOF","PinYin":"BJJJLOF","MktNum":"0","SecurityTypeName":"基金"}""" +
+            """]}}"""
+        )
 
         val values = EastMoneyInsightParser.parseSecurities(root)
 
-        assertEquals(listOf("600519.SH", "000858.SZ"), values.map { it.symbol })
+        assertEquals(
+            listOf("600519.SH", "000858.SZ", "00700.HK", "AAPL.US", "BK0477", "000001.SH"),
+            values.map { it.symbol },
+        )
+        assertEquals("板块", values.first { it.symbol == "BK0477" }.market)
+        assertEquals("board", values.first { it.symbol == "BK0477" }.kind)
+        assertEquals("index", values.first { it.symbol == "000001.SH" }.kind)
+        assertEquals("港股", values.first { it.symbol == "00700.HK" }.market)
         assertEquals("GZMT", values.first().aliases.first())
     }
 

@@ -4,6 +4,10 @@ data class Security(
     val symbol: String,
     val name: String,
     val aliases: List<String> = emptyList(),
+    /** 市场标签（沪A/深A/港股/美股/指数/板块），仅远端搜索建议场景填充 */
+    val market: String = "",
+    /** 标的种类（stock/index/board），仅远端搜索建议场景填充 */
+    val kind: String = "",
 )
 
 object Securities {

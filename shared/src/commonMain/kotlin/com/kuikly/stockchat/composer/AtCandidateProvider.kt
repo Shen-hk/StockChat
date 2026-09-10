@@ -27,18 +27,25 @@ object AtCandidateProvider {
      * @param query 触发词（上屏文本；组合态期间由调用方冻结）
      * @param recentMentions 最近提及过的标的 symbol（S1，最多 5 条，新的在前）
      * @param watchlistSymbols 本地自选 symbol（S2，动态持久化数据）
+     * @param extraEntries 远端搜索建议池（S5，会话内累积；与内置目录按 symbol 去重后参与打分）
      */
     fun rank(
         query: String,
         recentMentions: List<String> = emptyList(),
         watchlistSymbols: List<String> = emptyList(),
+        extraEntries: List<CatalogEntry> = emptyList(),
     ): List<AtCandidate> {
         if (query.isEmpty()) return recommend(recentMentions, watchlistSymbols)
         val ql = query.lowercase()
         val hits = mutableListOf<AtCandidate>()
         val watchlist = watchlistSymbols.toSet()
+        val seen = mutableSetOf<String>()
 
-        for (entry in ComposerCatalog.all) {
+        val pool = sequence {
+            yieldAll(ComposerCatalog.all)
+            yieldAll(extraEntries.filter { seen.add(it.symbol) })
+        }
+        for (entry in pool) {
             val level = matchLevel(ql, entry)
             if (level <= 0f) continue
             val isRecent = entry.symbol in recentMentions
@@ -65,7 +72,7 @@ object AtCandidateProvider {
         ).take(MAX_ROWS)
     }
 
-    /** 空 query 推荐序列：S1 最近提及 + S2 自选 + S3 指数，去重截断。 */
+    /** 空 query 推荐序列：S1 最近提及 + S2 自选 + 热门 + S3 指数，去重截断。 */
     private fun recommend(recentMentions: List<String>, watchlistSymbols: List<String>): List<AtCandidate> {
         val seen = mutableSetOf<String>()
         val out = mutableListOf<AtCandidate>()
@@ -79,8 +86,10 @@ object AtCandidateProvider {
                 if (seen.add(entry.symbol)) out += AtCandidate(entry, 0f, 0f, "自选")
             }
         }
-        ComposerCatalog.stocks.filter { it.watchlist }.forEach { entry ->
-            if (seen.add(entry.symbol)) out += AtCandidate(entry, 0f, 0f, "自选")
+        // 热门填充：热度排序的内置标的（真实自选不足时保证首屏价值）
+        ComposerCatalog.stocks.sortedByDescending { it.hot }.forEach { entry ->
+            if (out.size >= MAX_ROWS) return out
+            if (seen.add(entry.symbol)) out += AtCandidate(entry, 0f, 0f, "热门")
         }
         ComposerCatalog.indices.forEach { entry ->
             if (seen.add(entry.symbol)) out += AtCandidate(entry, 0f, 0f, "指数")
@@ -92,6 +101,7 @@ object AtCandidateProvider {
         isRecent -> "最近"
         isWatchlist -> "自选"
         entry.kind == MentionType.INDEX -> "指数"
+        entry.kind == MentionType.BOARD -> "板块"
         else -> "搜索"
     }
 

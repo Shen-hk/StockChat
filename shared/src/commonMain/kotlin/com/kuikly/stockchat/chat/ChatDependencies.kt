@@ -9,6 +9,7 @@ import com.kuikly.stockchat.data.config.AiConfigStore
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
 import com.kuikly.stockchat.data.provider.QuoteRepository
+import com.kuikly.stockchat.data.provider.SecuritySearchProvider
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 
 /** Page-scoped dependency graph for the chat feature. */
@@ -19,6 +20,7 @@ class ChatDependencies(
     val alertStore: AlertStore,
     val glossaryStore: GlossaryStore,
     val quoteRepository: QuoteRepository,
+    val securitySearchProvider: SecuritySearchProvider,
     val aiProviderFactory: (AiConfig) -> AiProvider,
 ) {
     companion object {
@@ -32,6 +34,7 @@ class ChatDependencies(
                 alertStore = market.alertStore,
                 glossaryStore = market.glossaryStore,
                 quoteRepository = market.quoteRepository,
+                securitySearchProvider = market.securitySearchProvider,
                 aiProviderFactory = { config -> DeepSeekAiProvider(pagerId, config) },
             )
         }

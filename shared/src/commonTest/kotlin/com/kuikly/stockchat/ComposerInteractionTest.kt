@@ -1,6 +1,7 @@
 package com.kuikly.stockchat
 
 import com.kuikly.stockchat.composer.AtCandidateProvider
+import com.kuikly.stockchat.composer.CatalogEntry
 import com.kuikly.stockchat.composer.CommandExecution
 import com.kuikly.stockchat.composer.CommandInvocationParser
 import com.kuikly.stockchat.composer.CommandInvocation
@@ -42,6 +43,19 @@ class ComposerInteractionTest {
         val board = AtCandidateProvider.rank("白酒").first()
         assertEquals(MentionType.BOARD, board.entry.kind)
         assertEquals("BK0477", board.symbol)
+    }
+
+    @Test
+    fun atCandidatesMergeRemoteSearchPoolEntries() {
+        val remote = CatalogEntry("601127.SH", "赛力斯", "沪A", "", "sls")
+
+        val merged = AtCandidateProvider.rank("赛力斯", extraEntries = listOf(remote))
+        assertEquals("601127.SH", merged.first().symbol)
+        assertEquals("搜索", merged.first().source)
+
+        // 内置目录优先：远端池里与内置同 symbol 的条目不产生双份
+        val deduped = AtCandidateProvider.rank("gzmt", extraEntries = listOf(remote.copy(symbol = "600519.SH")))
+        assertEquals(1, deduped.count { it.symbol == "600519.SH" })
     }
 
     @Test

@@ -28,15 +28,51 @@ internal fun ViewContainer<*, *>.DateDivider(theme: StockChatTheme) {
     }
 }
 
-internal fun ViewContainer<*, *>.RecentSymbolRow(theme: StockChatTheme, onSelect: (String) -> Unit) {
+/**
+ * 输入框上方引导语气泡（2026-09-10 用户反馈三轮）：仅收起态显示、展开态隐藏；
+ * chip 透明填充只留细描边，方角矩形（8f 圆弧）+ 文字前 icon 提升阅读性。
+ * 点按 = injectQuestion（展开输入栏带入问题，与欢迎引导同款行为）。
+ * 引导语为可陈述事实的问法（合规文案铁律：不含推荐/怎么选类措辞）。
+ */
+internal fun ViewContainer<*, *>.ComposerGuideRow(
+    theme: StockChatTheme,
+    onSelect: (String) -> Unit,
+) {
     Scroller {
         attr { height(28f); flexDirectionRow() }
-        listOf("📍 贵州茅台", "五粮液", "上证指数", "+ 添加关注").forEach { label ->
+        listOf(
+            "看下当前大盘行情" to "chart",
+            "分析下昨天日报" to "report",
+            "我自选的票今天怎么样" to "star",
+        ).forEach { (prompt, icon) ->
             View {
-                // 白色背景胶囊（2026-09-05），细描边保证落在玻璃胶囊上仍可辨。
-                attr { height(26f); marginRight(7f); paddingLeft(10f); paddingRight(10f); justifyContentCenter(); backgroundColor(theme.surface); borderRadius(13f); border(Border(0.5f, BorderStyle.SOLID, theme.divider)) }
-                Text { attr { text(label); fontSizeScaled(11f); color(if (label.startsWith("+")) theme.brand else theme.textSecondary) } }
-                event { click { if (!label.startsWith("+")) onSelect(label.removePrefix("📍 ")) } }
+                attr {
+                    height(26f)
+                    marginRight(7f)
+                    paddingLeft(9f)
+                    paddingRight(10f)
+                    justifyContentCenter()
+                    // 透明填充 + 细描边 + 方角矩形（8f 圆弧，替代 13f 胶囊）。
+                    borderRadius(8f)
+                    border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                    flexDirectionRow()
+                    alignItemsCenter()
+                }
+                // 文字前的语义 icon：brand 色提升引导感与扫读锚点。
+                when (icon) {
+                    "chart" -> LineIconBarChart(theme.brand, 12f)
+                    "report" -> LineIconFileText(theme.brand, 12f)
+                    else -> LineIconStar(theme.brand, 12f)
+                }
+                Text {
+                    attr {
+                        text(prompt)
+                        marginLeft(4f)
+                        fontSizeScaled(11f)
+                        color(theme.textSecondary)
+                    }
+                }
+                event { click { onSelect(prompt) } }
             }
         }
     }
