@@ -21,5 +21,10 @@ set_target_properties(kuikly_shared
         PROPERTIES
         IMPORTED_LOCATION ${NATIVERENDER_ROOT_PATH}/../../../libs/${OHOS_ARCH}/libshared.so)
 
+add_library(pbcurlwrapper SHARED IMPORTED)
+set_target_properties(pbcurlwrapper
+        PROPERTIES
+        IMPORTED_LOCATION ${NATIVERENDER_ROOT_PATH}/../../../libs/${OHOS_ARCH}/libpbcurlwrapper.so)
+
 add_library(entry SHARED napi_init.cpp)
-target_link_libraries(entry PUBLIC libace_napi.z.so libhilog_ndk.z.so kuikly_shared kuikly_render)
+target_link_libraries(entry PUBLIC libace_napi.z.so libhilog_ndk.z.so kuikly_shared kuikly_render pbcurlwrapper)

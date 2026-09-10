@@ -39,6 +39,8 @@ kotlin {
 
     ohosArm64 {
         binaries.sharedLib {
+            // NetworkKMM's OHOS transport calls the bundled curl wrapper.
+            linkerOpts("-L${rootDir}/ohosApp/entry/libs/arm64-v8a", "-lpbcurlwrapper")
         }
     }
 
@@ -48,8 +50,11 @@ kotlin {
                 implementation("com.tencent.kuikly-open:core:${Version.getKuiklyOhosVersion()}")
                 implementation("com.tencent.kuikly-open:core-annotations:${Version.getKuiklyOhosVersion()}")
                 implementation("com.tencent.kuiklybase:KuiklyMarkdown:1.0.6-2.0.21-ohos")
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.1")
-                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+                // The OHOS compiler uses KuiklyBase's KBA-native variants. The
+                // upstream Kotlin artifacts do not publish an ohos_arm64 variant.
+                implementation("com.tencent.kuiklyx-open:coroutines:1.1.0-2.0.21-ohos")
+                implementation("com.tencent.kuiklybase:network:0.0.3")
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1-KBA-003")
 
             }
         }
