@@ -79,6 +79,17 @@ import kotlin.math.sqrt
  * EXPOSURE 消息写入 alertInboxStore，是否「已转/已生成」的显示态由构建期读一次的
  * extraMessages() id 集合驱动（convertedEventIds / generatedExposureIds）。
  */
+/**
+ * 星图主卡顶部的两种视图（2026-09-10 用户反馈：图层 tab 太散、缺信息充实感）：
+ * - CHART：既有五投影星图（图层 chips + Canvas + 抽屉）。
+ * - MINDMAP：决策链路导图——按用户视角「我在关心什么 → 押了什么共同变量 →
+ *   接下来盯什么」三段组织事实，每个事实节点可点跳回星图对应图层。
+ */
+private enum class SkyViewMode(val label: String) {
+    CHART("星图"),
+    MINDMAP("导图"),
+}
+
 @Page(Routes.RISK, supportInLocal = true)
 internal class RiskMapPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
@@ -110,6 +121,9 @@ internal class RiskMapPage : BasePager() {
      * JVM setter 签名冲突，Platform declaration clash，doc 32 §6.1 实测坑）。
      */
     private var skyLayer: SkyLayer by observable(SkyLayer.CLUSTER)
+
+    /** 主卡视图模式（星图/导图）；持久化 key [SKY_VIEW_KEY]（返回态保持）。 */
+    private var skyViewMode: SkyViewMode by observable(SkyViewMode.CHART)
 
     /** 选中星（symbol）；空 = 未选中。点同星 = 取消。 */
     private var skySelectedSymbol: String by observable("")
@@ -170,8 +184,10 @@ internal class RiskMapPage : BasePager() {
 
     override fun created() {
         super.created()
-        // 返回态保持：恢复上次图层（doc 32 §3.1 P0 增强）。
+        // 返回态保持：恢复上次图层（doc 32 §3.1 P0 增强）与视图模式。
         SkyLayer.fromName(skyStorage.getString(SKY_LAYER_KEY))?.let { skyLayer = it }
+        SkyViewMode.entries.firstOrNull { it.name == skyStorage.getString(SKY_VIEW_KEY) }
+            ?.let { skyViewMode = it }
         reload()
         // 离线/缓存行情先行可算一次（在线加载回调里会再刷）。
         refreshSkyData()
@@ -422,9 +438,48 @@ internal class RiskMapPage : BasePager() {
                 boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.10f)))
             }
 
+            // 主卡视图分段切换器（星图/导图）。条件背景/文字色 if-else 两分支全量赋值
+            // （attr 条件属性不设不清，2026-09-10 坑）。
+            View {
+                attr {
+                    flexDirectionRow()
+                    padding(2f)
+                    borderRadius(10f)
+                    backgroundColor(page.theme.surfaceMuted)
+                }
+                SkyViewMode.entries.forEach { mode ->
+                    View {
+                        attr {
+                            flex(1f)
+                            height(26f)
+                            allCenter()
+                            borderRadius(8f)
+                            backgroundColor(
+                                if (page.skyViewMode == mode) page.theme.surface else page.theme.surfaceMuted,
+                            )
+                        }
+                        event { click { page.applySkyViewMode(mode) } }
+                        Text {
+                            attr {
+                                text(mode.label)
+                                fontSizeScaled(11.5f)
+                                color(
+                                    if (page.skyViewMode == mode) page.theme.textPrimary else page.theme.textTertiary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── 星图视图：图层 chips → Canvas → 日程/注释/抽屉/Context Bar ──
+            vif({ page.skyViewMode == SkyViewMode.CHART }) {
+
             // 图层 chips（拇指区）：单 observable driver（skyLayer）。
             View {
-                attr { flexDirectionRow(); flexWrapWrap() }
+                attr {
+                    marginTop(12f)
+                    flexDirectionRow(); flexWrapWrap() }
                 SkyLayer.entries.forEach { layer ->
                     View {
                         attr {
@@ -553,7 +608,225 @@ internal class RiskMapPage : BasePager() {
             vif({ page.skyBeaconDrawer }) {
                 page.renderSkyBeaconDrawer(this, chain)
             }
+            } // vif CHART
+
+            // ── 导图视图：决策链路三段 + 事实节点（点节点跳星图对应图层）──
+            vif({ page.skyViewMode == SkyViewMode.MINDMAP }) {
+                page.renderMindMap(this, industry, chain)
+            }
         }
+    }
+
+    // ── 导图视图（决策链路）：三段思维链 + 事实节点，节点即星图图层入口 ──
+
+    /**
+     * 决策链路导图（2026-09-10 用户反馈：图层 tab 太散、缺信息充实感）。
+     * 按用户视角组织：「我在关心什么 → 押了什么共同变量 → 接下来盯什么」，
+     * 每个分支挂一条真实事实（端侧规则模板，数字来自 Provider，零 LLM）；
+     * 可点分支跳回星图对应图层——导图是星图的目录，两种视图互通。
+     */
+    private fun renderMindMap(
+        container: ViewContainer<*, *>,
+        industry: List<IndustryStat>,
+        chain: ChainConcentration,
+    ) {
+        val page = this
+        val stages = page.buildMindMapStages(industry, chain)
+        container.View {
+            attr { marginTop(12f) }
+            Text {
+                attr {
+                    text("从「我在关心什么」到「接下来盯什么」· 点亮色节点跳进星图对应图层")
+                    fontSizeScaled(10.5f)
+                    color(page.theme.textTertiary)
+                }
+            }
+            stages.forEachIndexed { index, stage ->
+                page.renderMindStage(this, stage)
+                if (index < stages.lastIndex) {
+                    // 阶段间连接线：对齐左侧阶段节点列中心（列宽 92f）。
+                    View {
+                        attr { flexDirectionRow() }
+                        View {
+                            attr { width(92f); alignItemsCenter() }
+                            View {
+                                attr {
+                                    width(1.5f)
+                                    height(14f)
+                                    borderRadius(1f)
+                                    backgroundColor(page.theme.divider)
+                                }
+                            }
+                        }
+                        View { attr { flex(1f) } }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 单个思维阶段：左侧阶段节点 pill + 右侧事实分支卡流。 */
+    private fun renderMindStage(container: ViewContainer<*, *>, stage: MindStage) {
+        val page = this
+        container.View {
+            attr { flexDirectionRow() }
+            View {
+                attr { width(92f); alignItemsCenter() }
+                View {
+                    attr {
+                        paddingLeft(10f)
+                        paddingRight(10f)
+                        paddingTop(6f)
+                        paddingBottom(6f)
+                        borderRadius(10f)
+                        allCenter()
+                        backgroundColor(page.theme.brandSoft)
+                    }
+                    Text {
+                        attr {
+                            text(stage.title)
+                            fontSizeScaled(11f)
+                            fontWeightSemiBold()
+                            color(page.theme.brand)
+                        }
+                    }
+                }
+            }
+            View {
+                attr { flex(1f); marginLeft(8f) }
+                stage.branches.forEachIndexed { index, branch ->
+                    View {
+                        attr {
+                            marginBottom(if (index < stage.branches.lastIndex) 6f else 0f)
+                            paddingLeft(10f)
+                            paddingRight(10f)
+                            paddingTop(7f)
+                            paddingBottom(7f)
+                            borderRadius(9f)
+                            backgroundColor(page.theme.surface)
+                        }
+                        // 可点分支（layer 非空）整卡可点；信息分支仅陈述。
+                        branch.layer?.let { layer ->
+                            event { click { page.onMindBranchTap(layer) } }
+                        }
+                        View {
+                            attr { flexDirectionRow(); alignItemsCenter() }
+                            View {
+                                attr {
+                                    width(5f)
+                                    height(5f)
+                                    borderRadius(2.5f)
+                                    marginRight(6f)
+                                    backgroundColor(
+                                        if (branch.layer != null) page.theme.brand else page.theme.divider,
+                                    )
+                                }
+                            }
+                            Text {
+                                attr {
+                                    flex(1f)
+                                    text(branch.text)
+                                    fontSizeScaled(11f)
+                                    lineHeightScaled(16f)
+                                    color(
+                                        if (branch.layer != null) page.theme.textPrimary else page.theme.textTertiary,
+                                    )
+                                }
+                            }
+                            if (branch.layer != null) {
+                                Text {
+                                    attr {
+                                        text("›")
+                                        marginLeft(6f)
+                                        fontSizeScaled(11f)
+                                        color(page.theme.brand)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 导图分支点按：跳回星图对应图层（applySkyLayer 已是目标层时 no-op，不清选中）。 */
+    private fun onMindBranchTap(layer: SkyLayer) {
+        applySkyLayer(layer)
+        applySkyViewMode(SkyViewMode.CHART)
+    }
+
+    private fun buildMindMapStages(
+        industry: List<IndustryStat>,
+        chain: ChainConcentration,
+    ): List<MindStage> {
+        val total = rows.size
+
+        // 段 1「我在关心什么」：组合底数 + 最挤的团。
+        val stage1 = mutableListOf(MindBranch("我的 $total 只自选 · 等权估算 · 非真实仓位"))
+        if (industry.isNotEmpty()) {
+            stage1 += MindBranch("最挤的团：${chain.topName} ${chain.topCount} 只", SkyLayer.CLUSTER)
+        }
+
+        // 段 2「押了什么共同变量」：同链集中 / 最相关配对 / 组合波动倍率。
+        val stage2 = mutableListOf<MindBranch>()
+        if (industry.isNotEmpty()) {
+            stage2 += MindBranch(
+                "同一条链：${chain.topName} · 前三大合计 ${weightLabel(chain.cr3Count, total)}",
+                SkyLayer.CLUSTER,
+            )
+        } else {
+            stage2 += MindBranch("行业归属暂不可用（离线或接口失败），其余维度不受影响")
+        }
+        bestCorrelationPair()?.let { (names, r) ->
+            stage2 += MindBranch(
+                "最相关的一对：${names.first} ↔ ${names.second}（${coefficientLabel(r)}）",
+                SkyLayer.LINK,
+            )
+        }
+        portfolioVolRatio()?.let { ratio ->
+            stage2 += MindBranch("组合日波动约为大盘 ${Format.price(ratio)} 倍（等权）", SkyLayer.VOLATILITY)
+        }
+
+        // 段 3「接下来盯什么」：下一事件 / 最热连板 / 最颠一颗。
+        val stage3 = mutableListOf<MindBranch>()
+        events.firstOrNull()?.let { event ->
+            stage3 += MindBranch(
+                "下一件已预约的事：${event.date.substring(5)} ${event.name} ${event.kind.label}",
+                SkyLayer.SCHEDULE,
+            )
+        }
+        limitUps.maxByOrNull { it.first.consecutiveBoards }?.let { (limitUp, row) ->
+            stage3 += MindBranch("风头最盛：${row.name} ${limitUp.consecutiveBoards} 连板", SkyLayer.HEAT)
+        }
+        volRatios.maxByOrNull { it.value }?.let { (symbol, ratio) ->
+            rows.firstOrNull { it.symbol == symbol }?.let { row ->
+                stage3 += MindBranch("最颠的一颗：${row.name} 波动 ${Format.decimal(ratio, 1)}×大盘（等权）", SkyLayer.VOLATILITY)
+            }
+        }
+        if (stage3.size == 1) stage3 += MindBranch("暂无已预约事件与连板标的，正常走")
+
+        return listOf(
+            MindStage("我在关心什么", stage1),
+            MindStage("押了什么共同变量", stage2),
+            MindStage("接下来盯什么", stage3),
+        )
+    }
+
+    /** 相关性里 |r| 最大的一对（key "A|B" → 名字对 + r）；无数据返回 null。 */
+    private fun bestCorrelationPair(): Pair<Pair<String, String>, Double>? {
+        val best = correlations.entries.maxByOrNull { abs(it.value) } ?: return null
+        val (a, b) = best.key.split("|")
+        val nameA = rows.firstOrNull { it.symbol == a }?.name ?: a
+        val nameB = rows.firstOrNull { it.symbol == b }?.name ?: b
+        return (nameA to nameB) to best.value
+    }
+
+    /** 组合日波动 ÷ 大盘日波动（与 renderVolatility / headline 同口径）。 */
+    private fun portfolioVolRatio(): Double? {
+        val std = portfolioStd() ?: return null
+        val indexStd = dailyReturns(indexQuote)?.let { stdOf(it.values.toList()) } ?: return null
+        return if (indexStd > 0.0) std / indexStd else null
     }
 
     /** 日程层时间刷 + 命中日事实句（无事件日显示「正常走」）。 */
@@ -1548,6 +1821,13 @@ internal class RiskMapPage : BasePager() {
         ensureBeaconPulse()
     }
 
+    /** 主卡视图切换单点入口：持久化即可，两侧内容各自 vif 挂载（R7），无需清状态。 */
+    private fun applySkyViewMode(mode: SkyViewMode) {
+        if (skyViewMode == mode) return
+        skyViewMode = mode
+        skyStorage.setString(SKY_VIEW_KEY, mode.name)
+    }
+
     private fun skyContainerWidth(): Float = pagerData.pageViewWidth - 28f - 32f
 
     /** 星→团→星布局（确定性纯函数，输入来自 rows + industries 两个 observable）。 */
@@ -1647,9 +1927,12 @@ internal class RiskMapPage : BasePager() {
         skyContextSymbol = ""
     }
 
-    /** LINK 层牵引：直连星按相关系数比例跟随，负相关反向；全部收口在画布内。 */
+    /** LINK 层牵引：直连星按相关系数比例跟随，负相关反向；全部收口在画布内。
+     *  前置是长按确认（RiskSkyChart 内 500ms 武装）——长按会先弹 Context Bar，
+     *  手指继续移动即切换为牵引意图，此时收掉提问条，避免拖着星还挂着提问。 */
     private fun onSkyStarDrag(symbol: String, dx: Float, dy: Float) {
         if (skyLayer != SkyLayer.LINK) return
+        skyContextSymbol = ""
         skyDragReturnGeneration++
         val g = skyGeometry()
         val width = skyContainerWidth()
@@ -2061,6 +2344,18 @@ internal class RiskMapPage : BasePager() {
         val cr3Count: Int,
     )
 
+    /** 导图事实分支：[layer] 非空 = 可点，跳星图对应图层；空 = 纯信息陈述。 */
+    private data class MindBranch(
+        val text: String,
+        val layer: SkyLayer? = null,
+    )
+
+    /** 导图思维阶段：阶段节点标题 + 分支列表。 */
+    private data class MindStage(
+        val title: String,
+        val branches: List<MindBranch>,
+    )
+
     /** 行业分组（等权 = 只数占比）；行业未知的归「未分类」。 */
     private fun industryStats(): List<IndustryStat> {
         if (rows.isEmpty()) return emptyList()
@@ -2207,6 +2502,7 @@ internal class RiskMapPage : BasePager() {
 
         // 星图（doc 32）：图层持久化 key 与引路星脉冲步进参数。
         const val SKY_LAYER_KEY = "stockchat_risk_sky_layer_v1"
+        const val SKY_VIEW_KEY = "stockchat_risk_sky_view_v1"
         const val BEACON_STEPS = 12
         const val BEACON_STEP_MS = 55L
     }

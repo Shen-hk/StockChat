@@ -34,7 +34,9 @@ import kotlin.math.sqrt
  * ContextApi 无 globalAlpha：淡出统一用 Color.opacity 乘算（DetailTimelineChart 同口径）。
  *
  * 命中顺序（doc 32 §6.1）：星体 20dp → 引路星光环 → 团域 → 空白。
- * LINK 层还支持拖星牵引：移动超过 12dp 才起拖（8–12dp 死区抬起不算点按也不算拖）；
+ * LINK 层拖星牵引以「长按 500ms 确认」为前置（与原型一致）：长按未触发前，
+ * 点住即移只会取消长按、永不起拖——单击选中与拖拽互不干扰；
+ * 长按确认后移动 >8dp（死区）起拖，其他层长按后移动不牵引。
  * 长按 500ms（移动超过 8dp 取消）通过页侧 Context Bar 发问。
  *
  * 手势必须用 touch 而非 pan：Android 渲染层只要 view 挂 pan 事件，DOWN 时就会
@@ -75,6 +77,10 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
     var dragging = false
     var longPressShown = false
     var gestureGeneration = 0
+    // 拖星牵引必须以「长按确认」为前置（doc 32 §2 / 原型视图③：长按任意星拖动）——
+    // 点住即拖会让「单击选中」与「牵引」互相打架（2026-09-10 用户反馈修复）。
+    var dragArmed = false
+    var dragSymbol = ""
 
     // 手势收尾（touchUp / touchCancel 共用，幂等——两路都可能触发，只生效一次）。
     // 取消（被外层 Scroller 拦截等）：拖拽中则弹回，不派发点按；
@@ -139,6 +145,8 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                 movedDist = 0f
                 dragging = false
                 longPressShown = false
+                dragArmed = false
+                dragSymbol = ""
                 armedSymbol = g.stars.firstOrNull { s ->
                     val dx = params.x - s.x
                     val dy = params.y - s.y
@@ -149,23 +157,32 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                     setTimeout(500) {
                         if (generation == gestureGeneration && !dragging && armedSymbol.isNotEmpty()) {
                             onLongPressStar(armedSymbol)
+                            // 长按确认 = 同时武装拖星牵引（仅 LINK 层生效）；此刻起
+                            // 手指仍按住，后续移动从「点按手势」切换为「牵引手势」。
+                            dragSymbol = armedSymbol
                             armedSymbol = ""
                             longPressShown = true
+                            dragArmed = true
                         }
                     }
                 }
             }
             touchMove { params ->
-                if (armedSymbol.isEmpty()) return@touchMove
+                if (armedSymbol.isEmpty() && !dragArmed) return@touchMove
                 val dx = params.x - downX
                 val dy = params.y - downY
                 val d2 = dx * dx + dy * dy
                 if (d2 > movedDist) movedDist = d2
-                if (movedDist > 64f) gestureGeneration++ // 8dp：取消长按
-                if (layer() == SkyLayer.LINK && movedDist > 144f) {
-                    dragging = true
-                    onDragStar(armedSymbol, dx, dy)
+                if (dragArmed) {
+                    // 长按已确认：8dp 死区后直接起拖，仅 LINK 层开放（原型 flag：
+                    // 只在牵连层开放避免误触；其他层长按后移动不牵引）。
+                    if (layer() == SkyLayer.LINK && movedDist > 64f) {
+                        if (!dragging) dragging = true
+                        onDragStar(dragSymbol, dx, dy)
+                    }
+                    return@touchMove
                 }
+                if (movedDist > 64f) gestureGeneration++ // 8dp：取消长按（也取消拖动武装）
             }
             touchUp { params -> handleGestureEnd(params.action == "cancel") }
             touchCancel { _ -> handleGestureEnd(cancelled = true) }
