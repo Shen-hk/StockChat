@@ -49,6 +49,8 @@ data class SendPayload(
     val renderedPrompt: String?,
     /** 深水区等上下文标记 */
     val contextNotes: List<String> = emptyList(),
+    /** 输入栏附件快照，随用户消息回显气泡（本轮不进 AI 请求与持久化） */
+    val attachments: List<com.kuikly.stockchat.chat.MessageAttachment> = emptyList(),
 ) {
     /** 用户气泡显示文本 */
     val displayText: String

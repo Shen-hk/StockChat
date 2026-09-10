@@ -38,6 +38,7 @@ import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.base.event.LongPressParams
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.DivView
+import com.tencent.kuikly.core.views.Image
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.SelectableOption
@@ -155,7 +156,57 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                 selectCancel { actions.onTextSelectCancel(message.id) }
             }
             if (user) {
-                Text { attr { text(message.content); fontSizeScaled(16f); lineHeightScaled(24f); fontWeightMedium(); color(theme.onBrand) } }
+                // 附件回显：发送时快照进 ChatMessage，创建后不再变化（直接读即可）。
+                // 图片缩略图行（最多 4 张，超宽横向滚动）+ 文档胶囊，位于文字上方；
+                // 样式压在品牌色气泡上：半透明白底 + onBrand 文字。
+                vif({ message.attachments.any { it.isImage } }) {
+                        Scroller {
+                            attr {
+                                flexDirectionRow()
+                                height(104f)
+                                marginBottom(
+                                    if (message.content.isNotEmpty() || message.attachments.any { !it.isImage }) 8f else 0f
+                                )
+                            }
+                            message.attachments.filter { it.isImage }.forEach { att ->
+                                Image {
+                                    attr {
+                                        src("file://" + att.path)
+                                        size(104f, 104f)
+                                        borderRadius(12f)
+                                        marginRight(8f)
+                                        backgroundColor(Color(0x33FFFFFF))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    message.attachments.filter { !it.isImage }.forEach { att ->
+                        View {
+                            attr {
+                                flexDirectionRow()
+                                alignItemsCenter()
+                                height(36f)
+                                marginBottom(6f)
+                                paddingLeft(12f)
+                                paddingRight(12f)
+                                backgroundColor(Color(0x33FFFFFF))
+                                borderRadius(10f)
+                            }
+                            LineIconFileText(theme.onBrand, 16f)
+                            Text {
+                                attr {
+                                    text(att.displayName)
+                                    fontSizeScaled(12f)
+                                    color(theme.onBrand)
+                                    marginLeft(6f)
+                                }
+                            }
+                        }
+                    }
+                vif({ message.content.isNotEmpty() }) {
+                    Text { attr { text(message.content); fontSizeScaled(16f); lineHeightScaled(24f); fontWeightMedium(); color(theme.onBrand) } }
+                }
             } else {
                 vif({ message.streaming }) {
                     View {

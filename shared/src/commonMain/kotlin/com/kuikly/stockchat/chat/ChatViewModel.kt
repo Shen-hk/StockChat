@@ -63,7 +63,7 @@ class ChatViewModel(
     fun send(payload: SendPayload) {
         val value = payload.displayText
         if (value.isEmpty() || streamState == StreamState.STREAMING) return
-        messages.add(ChatMessage(pagerId, newId(), MessageRole.USER, value))
+        messages.add(ChatMessage(pagerId, newId(), MessageRole.USER, value, attachments = payload.attachments))
         persist()
         respondTo(value, payload)
     }

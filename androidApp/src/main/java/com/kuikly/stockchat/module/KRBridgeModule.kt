@@ -258,8 +258,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         mapOf("type" to "error", "error" to error, "message" to message)
 
     private fun openComposerMediaSource(params: String?, callback: KuiklyRenderCallback?) {
+        Log.i("StockChatBridge", "openComposerMediaSource source=$params")
         val currentActivity = activity as? KuiklyRenderActivity
-        if (currentActivity == null || callback == null) {
+        // callback 只用于错误上报，可为空；不能因它缺失而放弃拉起选择器。
+        if (currentActivity == null) {
             callback?.invoke(mapOf("code" to -1, "message" to "页面不可用"))
             return
         }
@@ -273,7 +275,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         } catch (error: Exception) {
             Log.w("StockChatBridge", "openComposerMediaSource failed: $source", error)
             Toast.makeText(KRApplication.application, "打开失败，请稍后重试", Toast.LENGTH_SHORT).show()
-            callback.invoke(mapOf("code" to -1, "message" to error.message.orEmpty()))
+            callback?.invoke(mapOf("code" to -1, "message" to error.message.orEmpty()))
         }
     }
 
