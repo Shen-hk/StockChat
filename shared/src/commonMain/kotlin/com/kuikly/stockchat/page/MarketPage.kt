@@ -14,6 +14,7 @@ import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openChatWithQuestion
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
+import com.kuikly.stockchat.common.openUrl
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.provider.HotspotSnapshot
@@ -36,8 +37,9 @@ import com.kuikly.stockchat.data.provider.timeLabelOf
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.AppTopBarMetric
 import com.kuikly.stockchat.page.components.MarketNarrativeAxis
-import com.kuikly.stockchat.page.components.NewsTape
+import com.kuikly.stockchat.page.components.NewsMarquee
 import com.kuikly.stockchat.page.components.SourceStampLine
+import com.kuikly.stockchat.page.components.formatTapeTime
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Anchor
 import com.tencent.kuikly.core.base.Animation
@@ -152,6 +154,26 @@ internal class MarketPage : BasePager() {
     private var activeAiTypewriter: TypewriterSmoother? = null
     private val aiDependencies by lazy { ChatDependencies.forPager(pagerId) }
 
+    // ------------------------------------------------------------------
+    // 新闻弹幕（J1 v2）：页侧持有节拍——setTimeout 链 33ms 步进 offset（≈30dp/s），
+    // 暂停 = 停止步进（点条目开弹窗时暂停，弹窗关闭恢复），reduceMotion 不流动。
+    // 弹窗详情 + AI 解读流式与 AI 复盘卡同一条程纪律（observable 只在主线程写）。
+    // ------------------------------------------------------------------
+    private var tapeOffset: Float by observable(0f)
+    private var tapePaused: Boolean by observable(false)
+    private var tapeTimerStarted = false
+
+    private var newsPeek: NewsItem? by observable(null)
+    private var newsPeekVisible: Boolean by observable(false)
+    /** 弹窗卸载代数：快速关→开时使旧的延迟卸载回调失效。 */
+    private var newsPeekGeneration = 0
+    /** 0 idle / 1 thinking / 2 streaming / 3 done / 4 error / 5 未配置 AI。 */
+    private var newsAiState: Int by observable(0)
+    private var newsAiText: String by observable("")
+    private var newsAiProvider: AiProvider? = null
+    private var newsAiGeneration = 0
+    private var newsAiTypewriter: TypewriterSmoother? = null
+
     /**
      * The page's single motion switch. Every transform/opacity timeline on this
      * page is gated on it, so there is exactly one place to disable motion.
@@ -162,6 +184,7 @@ internal class MarketPage : BasePager() {
     override fun created() {
         super.created()
         marketNews = OfflineMarketInsightProvider().marketNewsValue()
+        startTapeTimer()
         // Entry motion is one-shot and decorative-free; it never repeats while prices update.
         if (motionEnabled()) {
             setTimeout(1) {
@@ -360,6 +383,129 @@ internal class MarketPage : BasePager() {
         if (scrubMinute < 0) return marketNews
         val limit = timeLabelOf(scrubMinute)
         return marketNews.filter { it.time.length >= 16 && it.time.substring(11, 16) <= limit }
+    }
+
+    // ------------------------------------------------------------------
+    // 新闻弹幕 v2 页侧节拍与弹窗（J1 v2）：状态字段声明见类头部注释块。
+    // ------------------------------------------------------------------
+
+    /** setTimeout 链 33ms 步进 1f（≈30dp/s）；暂停 = 停止步进，reduceMotion 不流动。 */
+    private fun startTapeTimer() {
+        if (tapeTimerStarted) return
+        tapeTimerStarted = true
+        fun tick() {
+            if (!tapePaused && motionEnabled()) tapeOffset += 1f
+            setTimeout(33) { tick() }
+        }
+        tick()
+    }
+
+    /**
+     * 一圈估算宽度（NewsMarquee 循环缝口径）：CJK 字符 ≈1×字号、拉丁 ≈0.5×字号，
+     * 字号 11f（未含字体缩放），加每条 marginRight(26f)。与弹幕行渲染同源（filteredNews），
+     * 回放 scrub 换内容时缝宽随之更新。
+     */
+    private fun tapeLoopWidth(): Float {
+        val items = filteredNews()
+        if (items.isEmpty()) return 0f
+        var width = 0f
+        items.forEach { item ->
+            val text = "${formatTapeTime(item.time)}  ${item.title}"
+            text.forEach { c -> width += if (c.code > 0x2E7F) 11f else 5.5f }
+            width += 26f
+        }
+        return width
+    }
+
+    /** 点弹幕条目：暂停流动 + 两拍入场弹窗（R4：vif 挂载首帧不播动画）+ 启动 AI 解读。 */
+    private fun openNewsPeek(item: NewsItem) {
+        newsPeek = item
+        newsPeekGeneration++
+        newsPeekVisible = false
+        tapePaused = true
+        if (motionEnabled()) {
+            setTimeout(0) { newsPeekVisible = true }
+        } else {
+            newsPeekVisible = true
+        }
+        startNewsAi(item)
+    }
+
+    /** 关闭弹窗：恢复流动，销毁流式会话（AI 触点条件触发不常驻），退场后卸载。 */
+    private fun dismissNewsPeek() {
+        if (newsPeek == null) return
+        newsPeekVisible = false
+        tapePaused = false
+        newsAiProvider?.stop()
+        newsAiGeneration++
+        newsAiTypewriter?.flushNow()
+        newsAiTypewriter?.cancel()
+        newsAiTypewriter = null
+        newsAiState = 0
+        newsAiText = ""
+        val generation = newsPeekGeneration
+        setTimeout(240) {
+            if (generation == newsPeekGeneration && !newsPeekVisible) newsPeek = null
+        }
+    }
+
+    /** 弹窗内 AI 解读：与 AI 复盘卡同一条程纪律（observable 只在主线程写）。 */
+    private fun startNewsAi(news: NewsItem) {
+        val config = aiDependencies.configStore.load()
+        if (config.validationError() != null) {
+            newsAiState = 5
+            return
+        }
+        newsAiProvider?.stop()
+        newsAiTypewriter?.cancel()
+        newsAiText = ""
+        newsAiState = 1
+        val provider = aiDependencies.aiProviderFactory(config)
+        newsAiProvider = provider
+        val generation = ++newsAiGeneration
+        var content = ""
+        val smoother = TypewriterSmoother(pagerId) { revealed ->
+            if (generation != newsAiGeneration) return@TypewriterSmoother
+            newsAiText = revealed
+            if (newsAiState == 1 && revealed.isNotEmpty()) newsAiState = 2
+        }
+        newsAiTypewriter = smoother
+        provider.ask(
+            messages = listOf(AiChatMessage("user", buildNewsAiPrompt(news))),
+            onDelta = { delta ->
+                content += delta
+                if (generation == newsAiGeneration) smoother.append(delta)
+            },
+            onDone = {
+                if (generation != newsAiGeneration) return@ask
+                smoother.complete {
+                    setTimeout(0) {
+                        if (generation != newsAiGeneration) return@setTimeout
+                        if (newsAiState <= 2) newsAiState = 3
+                    }
+                }
+            },
+            onError = { message ->
+                if (generation != newsAiGeneration) return@ask
+                setTimeout(0) {
+                    if (generation != newsAiGeneration) return@setTimeout
+                    smoother.flushNow()
+                    smoother.cancel()
+                    if (newsAiState == 1 || newsAiState == 2) {
+                        newsAiText = message
+                        newsAiState = 4
+                    }
+                }
+            },
+        )
+    }
+
+    /** 弹幕新闻解读 prompt：只做事实与逻辑解读，项目铁律——不荐股、不给目标价。 */
+    private fun buildNewsAiPrompt(news: NewsItem): String = buildString {
+        append("请用 3 句话以内解读这条新闻的事实与影响逻辑：")
+        append("「${news.title}」")
+        if (news.summary.isNotBlank()) append("。摘要：${news.summary}")
+        append("。说明与哪个板块/方向相关即可，不做买卖建议，不给出目标价。")
     }
 
     /**
@@ -642,20 +788,16 @@ internal class MarketPage : BasePager() {
                 val theme = page.theme
                 val phase = page.marketPhase()
 
-                // J1 · 新闻弹幕带（随帧过滤）：点条目 = 以该新闻为上下文追问 AI。
-                NewsTape(
+                // J1 · 新闻弹幕（v2 全屏流动）：无背板、持续左移循环、屏幕边缘自然
+                // 流出。点条目 = 暂停流动 + 底部小弹窗（详情 + AI 解读流式）；
+                // 回放 scrub 时随帧换内容（vbind 条目签名 key）。
+                NewsMarquee(
                     theme = theme,
                     items = { page.filteredNews() },
-                    selected = { null },
                     sentimentOf = { null },
-                    headerTitle = "今日要闻 · 弹幕带",
-                    headerHint = "点按追问 AI · 回放时只显示当时的新闻",
-                    onTapItem = { item ->
-                        page.openChatWithQuestion("「${item.title}」这条新闻是什么情况？对今天的市场有什么影响？")
-                    },
-                    onAskAi = { item ->
-                        page.openChatWithQuestion("「${item.title}」是什么情况？", "来自市场页新闻弹幕带")
-                    },
+                    offset = { page.tapeOffset },
+                    loopWidth = { page.tapeLoopWidth() },
+                    onTapItem = { item -> page.openNewsPeek(item) },
                 )
 
                 // A · market session state：回放态由「历史回放 · HH:MM」接棒。
@@ -1288,6 +1430,107 @@ internal class MarketPage : BasePager() {
                     }
                     Text { attr { text(page.peek?.primary ?: ""); marginTop(8f); fontSizeScaled(23f); fontWeightBold(); color(page.theme.textPrimary) } }
                     Text { attr { text(page.peek?.detail ?: ""); marginTop(6f); fontSizeScaled(11f); lineHeightScaled(16f); color(page.theme.textSecondary) } }
+                }
+            }
+
+            // 新闻小弹窗（J1 v2）：点弹幕条目 → 暂停流动 + 详情 + AI 解读流式。
+            // 与 peek 同款玻璃卡 + 两拍入场；关闭即销毁流式会话（AI 触点条件触发不常驻）。
+            vif({ page.newsPeek != null }) {
+                View {
+                    attr {
+                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
+                        zIndex(22, useOutline = false)
+                        backgroundColor(page.theme.textPrimary.opacity(0.26f))
+                        val shown = page.newsPeekVisible
+                        opacity(if (shown) 1f else 0f)
+                        touchEnable(shown)
+                        if (page.motionEnabled()) animate(Animation.easeOut(0.20f), page.newsPeekVisible)
+                    }
+                    event { click { page.dismissNewsPeek() } }
+                }
+                View {
+                    attr {
+                        absolutePosition(left = 14f, right = 14f, bottom = 18f + page.pagerData.safeAreaInsets.bottom)
+                        zIndex(23, useOutline = false)
+                        padding(16f)
+                        borderRadius(18f)
+                        backgroundColor(page.theme.marketGlass)
+                        border(Border(1f, BorderStyle.SOLID, page.theme.marketGlassEdge))
+                        boxShadow(BoxShadow(0f, 14f, 30f, page.theme.textPrimary.opacity(0.18f)))
+                        val shown = page.newsPeekVisible
+                        opacity(if (shown) 1f else 0f)
+                        touchEnable(shown)
+                        if (page.motionEnabled()) {
+                            transform(scale = Scale(if (shown) 1f else 0.96f, if (shown) 1f else 0.96f))
+                            animate(Animation.easeOut(0.20f), page.newsPeekVisible)
+                        }
+                    }
+                    View { attr { flexDirectionRow(); alignItemsCenter() }
+                        Text { attr { text("要闻 · ${formatTapeTime(page.newsPeek?.time ?: "")}"); flex(1f); fontSizeScaled(11f); fontWeightSemiBold(); color(page.theme.textTertiary) } }
+                        Text { attr { text("关闭 ×"); fontSizeScaled(11f); color(page.theme.brand) }; event { click { page.dismissNewsPeek() } } }
+                    }
+                    Text { attr { text(page.newsPeek?.title ?: ""); marginTop(8f); fontSizeScaled(14f); fontWeightBold(); lineHeightScaled(20f); color(page.theme.textPrimary) } }
+                    vif({ page.newsPeek?.summary?.isNotEmpty() == true }) {
+                        Text { attr { text(page.newsPeek?.summary ?: ""); marginTop(6f); fontSizeScaled(11.5f); lineHeightScaled(17f); color(page.theme.textSecondary) } }
+                    }
+                    View { attr { marginTop(12f); height(0.5f); backgroundColor(page.theme.divider) } }
+                    // AI 解读位（R1：状态在 vif/attr 内读，流式文本随 typewriter 刷新）
+                    View { attr { marginTop(10f) }
+                        Text { attr { text("AI 解读"); fontSizeScaled(10.5f); fontWeightSemiBold(); color(page.theme.textTertiary) } }
+                        vif({ page.newsAiState == 5 }) {
+                            Text { attr { text("未配置 AI 服务，可到对话页继续追问这条新闻。"); marginTop(6f); fontSizeScaled(11.5f); lineHeightScaled(17f); color(page.theme.textSecondary) } }
+                        }
+                        vif({ page.newsAiState == 1 }) {
+                            Text { attr { text("正在解读…"); marginTop(6f); fontSizeScaled(11.5f); color(page.theme.textTertiary) } }
+                        }
+                        vif({ page.newsAiState == 2 || page.newsAiState == 3 || page.newsAiState == 4 }) {
+                            Text {
+                                attr {
+                                    text(
+                                        page.newsAiText.ifBlank {
+                                            if (page.newsAiState == 4) "解读失败。" else "…"
+                                        }
+                                    )
+                                    marginTop(6f)
+                                    fontSizeScaled(11.5f)
+                                    lineHeightScaled(17f)
+                                    color(if (page.newsAiState == 4) page.theme.fall else page.theme.textSecondary)
+                                }
+                            }
+                        }
+                        vif({ page.newsAiState == 4 }) {
+                            View { attr { touchEnable(true); marginTop(6f) }
+                                Text { attr { text("重试 ›"); fontSizeScaled(11.5f); fontWeightSemiBold(); color(page.theme.brand) } }
+                                event {
+                                    click {
+                                        val news = page.newsPeek
+                                        if (news != null) page.startNewsAi(news)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    View { attr { marginTop(12f); flexDirectionRow(); alignItemsCenter() }
+                        View { attr { touchEnable(true) }
+                            Text { attr { text("就这条问问 AI ›"); fontSizeScaled(11.5f); fontWeightSemiBold(); color(page.theme.brand) } }
+                            event {
+                                click {
+                                    val news = page.newsPeek ?: return@click
+                                    page.openChatWithQuestion(
+                                        "「${news.title}」这条新闻是什么情况？对今天的市场有什么影响？",
+                                        "来自市场页新闻弹幕",
+                                    )
+                                    page.dismissNewsPeek()
+                                }
+                            }
+                        }
+                        vif({ page.newsPeek?.url?.isNotEmpty() == true }) {
+                            View { attr { touchEnable(true); marginLeft(16f) }
+                                Text { attr { text("阅读原文 ↗"); fontSizeScaled(11.5f); fontWeightMedium(); color(page.theme.textSecondary) } }
+                                event { click { page.newsPeek?.url?.let { page.openUrl(it) } } }
+                            }
+                        }
+                    }
                 }
             }
             AppTopBar(

@@ -105,105 +105,129 @@ internal fun ViewContainer<*, *>.NewsTape(
                 vbind({ selected()?.id ?: "" }) {
                     val news = selected()
                     if (news != null) {
-                        val sentiment = sentimentOf(news)
-                        View {
-                            attr {
-                                backgroundColor(theme.brandSoft)
-                                paddingLeft(12f); paddingRight(12f); paddingTop(9f); paddingBottom(10f)
-                            }
-                            Text {
-                                attr {
-                                    text("${formatTapeTime(news.time)} · ${sentimentLabel(sentiment)}")
-                                    fontSize(theme.type.meta)
-                                    fontWeightSemiBold()
-                                    color(sentimentColor(theme, sentiment))
-                                }
-                            }
-                            Text {
-                                attr {
-                                    text(news.title)
-                                    marginTop(3f)
-                                    fontSize(theme.type.label)
-                                    fontWeightSemiBold()
-                                    color(theme.textPrimary)
-                                    lineHeightScaled(16f)
-                                }
-                            }
-                            vif({ news.summary.isNotEmpty() }) {
-                                Text {
-                                    attr {
-                                        text(news.summary)
-                                        marginTop(4f)
-                                        fontSize(theme.type.meta)
-                                        lineHeightScaled(15f)
-                                        color(theme.textSecondary)
-                                    }
-                                }
-                            }
-                            // 事实行 + 问 AI 出口（U1 预算内：摘要条本身不占 brand 常驻位）
-                            View {
-                                attr { marginTop(7f); flexDirectionRow(); alignItemsCenter() }
-                                Text {
-                                    attr {
-                                        text(
-                                            if (flagged(news)) "旗标已落在走势图对应位置 · 端侧规则"
-                                            else "该条资讯无当日时间锚点，未落旗 · 端侧规则"
-                                        )
-                                        fontSize(theme.type.meta)
-                                        color(theme.textTertiary)
-                                        flex(1f)
-                                    }
-                                }
-                                View {
-                                    attr { touchEnable(true) }
-                                    Text {
-                                        attr {
-                                            text("就这条新闻问问 AI ›")
-                                            fontSize(theme.type.meta)
-                                            fontWeightSemiBold()
-                                            color(theme.brand)
-                                        }
-                                    }
-                                    event { click { onAskAi?.invoke(news) } }
-                                }
-                            }
-                            // 阅读原文 + 收起（收起 = 重复点按同义，走页侧 toggle）
-                            View {
-                                attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
-                                vif({ news.url.isNotEmpty() }) {
-                                    View {
-                                        attr {
-                                            height(26f)
-                                            paddingLeft(10f); paddingRight(10f)
-                                            allCenter()
-                                            borderRadius(13f)
-                                            backgroundColor(theme.surface)
-                                            border(Border(0.5f, BorderStyle.SOLID, theme.divider))
-                                        }
-                                        Text {
-                                            attr {
-                                                text("阅读原文 ↗")
-                                                fontSize(theme.type.meta)
-                                                fontWeightMedium()
-                                                color(theme.textSecondary)
-                                            }
-                                        }
-                                        event { click { onOpenUrl?.invoke(news) } }
-                                    }
-                                }
-                                Text {
-                                    attr {
-                                        text("收起 ×")
-                                        marginLeft(12f)
-                                        fontSize(theme.type.meta)
-                                        color(theme.textTertiary)
-                                    }
-                                    event { click { onTapItem(news) } }
-                                }
-                            }
-                        }
+                        NewsSummaryBar(
+                            theme = theme,
+                            news = news,
+                            sentiment = sentimentOf(news),
+                            flagged = flagged(news),
+                            onToggle = { onTapItem(news) },
+                            onAskAi = onAskAi,
+                            onOpenUrl = onOpenUrl,
+                        )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * B2 摘要条（原型 .news-summary）：事实行 + 标题 + 摘要 + 落旗口径行 +
+ * 问 AI / 阅读原文 / 收起。NewsTape 卡内展开与详情页弹幕态（无背板、独立块）
+ * 共用；交互语义由回调决定，组件不自持状态。
+ */
+internal fun ViewContainer<*, *>.NewsSummaryBar(
+    theme: StockChatTheme,
+    news: NewsItem,
+    sentiment: Boolean?,
+    flagged: Boolean,
+    onToggle: () -> Unit,
+    onAskAi: ((NewsItem) -> Unit)? = null,
+    onOpenUrl: ((NewsItem) -> Unit)? = null,
+) {
+    View {
+        attr {
+            backgroundColor(theme.brandSoft)
+            paddingLeft(12f); paddingRight(12f); paddingTop(9f); paddingBottom(10f)
+        }
+        Text {
+            attr {
+                text("${formatTapeTime(news.time)} · ${sentimentLabel(sentiment)}")
+                fontSize(theme.type.meta)
+                fontWeightSemiBold()
+                color(sentimentColor(theme, sentiment))
+            }
+        }
+        Text {
+            attr {
+                text(news.title)
+                marginTop(3f)
+                fontSize(theme.type.label)
+                fontWeightSemiBold()
+                color(theme.textPrimary)
+                lineHeightScaled(16f)
+            }
+        }
+        vif({ news.summary.isNotEmpty() }) {
+            Text {
+                attr {
+                    text(news.summary)
+                    marginTop(4f)
+                    fontSize(theme.type.meta)
+                    lineHeightScaled(15f)
+                    color(theme.textSecondary)
+                }
+            }
+        }
+        // 事实行 + 问 AI 出口（U1 预算内：摘要条本身不占 brand 常驻位）
+        View {
+            attr { marginTop(7f); flexDirectionRow(); alignItemsCenter() }
+            Text {
+                attr {
+                    text(
+                        if (flagged) "旗标已落在走势图对应位置 · 端侧规则"
+                        else "该条资讯无当日时间锚点，未落旗 · 端侧规则"
+                    )
+                    fontSize(theme.type.meta)
+                    color(theme.textTertiary)
+                    flex(1f)
+                }
+            }
+            View {
+                attr { touchEnable(true) }
+                Text {
+                    attr {
+                        text("就这条新闻问问 AI ›")
+                        fontSize(theme.type.meta)
+                        fontWeightSemiBold()
+                        color(theme.brand)
+                    }
+                }
+                event { click { onAskAi?.invoke(news) } }
+            }
+        }
+        // 阅读原文 + 收起（收起 = 重复点按同义，走页侧 toggle）
+        View {
+            attr { marginTop(8f); flexDirectionRow(); alignItemsCenter() }
+            vif({ news.url.isNotEmpty() }) {
+                View {
+                    attr {
+                        height(26f)
+                        paddingLeft(10f); paddingRight(10f)
+                        allCenter()
+                        borderRadius(13f)
+                        backgroundColor(theme.surface)
+                        border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                    }
+                    Text {
+                        attr {
+                            text("阅读原文 ↗")
+                            fontSize(theme.type.meta)
+                            fontWeightMedium()
+                            color(theme.textSecondary)
+                        }
+                    }
+                    event { click { onOpenUrl?.invoke(news) } }
+                }
+            }
+            Text {
+                attr {
+                    text("收起 ×")
+                    marginLeft(12f)
+                    fontSize(theme.type.meta)
+                    color(theme.textTertiary)
+                }
+                event { click { onToggle() } }
             }
         }
     }
