@@ -50,6 +50,13 @@ When debugging a silent Kuikly animation, inspect reactive dependency registrati
 - **Early pager lifecycle: native bridge may not be attached.** `created()`-time `toNative` calls can be silently dropped. Gate first bridge syncs on `viewDidLoad`, and dedupe retries with a "last synced value" guard so dropped early calls can't suppress the first real one.
 - **Edits can be silently swallowed (EBUSY/IDE lock).** After editing files also open in the IDE, grep the expected marker; on EBUSY retry the same edit. Same for Gradle `fileHashes.lock` access-denied — `gradlew --stop` then retry.
 
+## R7 — panel/list re-render (consolidated 2026-09-10, composer @// panels)
+
+- **`vif` creator builds ONCE per activation.** `ConditionView.createSubViewIfNeed` guards with `didCreated`: content is created when the condition flips false→true and destroyed on true→false — it does NOT re-run while the condition stays true. A `version >= 0`-style condition therefore never refreshes content. Any state read in a plain builder closure inside `vif` is frozen at activation (2026-09-10: @ panel stuck at "没有可推荐的标的"; param panel frozen while typing).
+- **Reactive reads must sit in `attr`/`vif` conditions/`vfor`**, never in the enclosing builder closure (R1, but note the Scroller-child case too). Branch switching → `vif` conditions that actually flip; per-row data → `vfor` over the `ObservableList` (it processes collection operations incrementally and re-runs item creators); dynamic text → read the observable inside the `Text` `attr` closure.
+- **Full-panel rebuild trick:** for content derived from non-observable composites (e.g. `args = f(viewModel.inputText, mentionEntities)`), keep a single-element `ObservableList<Int>` render key and bump it (`clear()+add()`) at every mutation site; wrap the panel content in `vfor({ key }) { … }` so each bump rebuilds the frame. All bump sites must be guarded by the same condition as the panel's mount, and the vfor item must create exactly one child (`Scroller` on the LoopDirectivesView receiver, not the outer container). Missing the closing brace of that vfor lambda silently demotes later `private fun`s into local functions → cascade of "Unresolved reference" at call sites above.
+- **Gradle may compile a torn mid-write file.** With parallel sessions editing the same file, a compile can report dozens of bogus "Unresolved reference" for methods that grep shows exist. Check file mtime, wait for stability, recompile before diagnosing.
+
 ---
 
 # Vibe coding workflow conventions
