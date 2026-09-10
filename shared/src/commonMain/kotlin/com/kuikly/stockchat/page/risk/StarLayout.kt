@@ -15,22 +15,18 @@ import kotlin.math.sin
  * 数据口径全部来自 Provider 纯函数（pearson / stdOf 等，G-R2 零幻觉），本文件不做任何计算口径。
  */
 
-/** 五投影图层（doc 32 §1，口语命名、全事实语态，无等级/评分词）。 */
+/**
+ * 投影图层（doc 32 §1 口语命名、全事实语态，无等级/评分词）。
+ * 2026-09-10 收敛：五个图层只剩两个最实用的（用户评审「颠簸/日程/热度有啥用」）；
+ * 光晕/环纹/事件徽标仍作为星图常驻装饰在两图层中低透明度绘制。
+ * 旧持久化值（VOLATILITY/SCHEDULE/HEAT）经 fromName 返回 null → 自动回落 CLUSTER。
+ */
 enum class SkyLayer(val label: String, val termKey: String) {
     /** 行业重叠 + 集中度 → 位置 + 团域。 */
     CLUSTER("抱团", "SECTOR"),
 
     /** 相关性 → 连线（|r|≥0.5 才画，粗细/亮度=强度）。 */
     LINK("牵连", "CORRELATION"),
-
-    /** 波动暴露 → 光晕（N×大盘，等权）。 */
-    VOLATILITY("颠簸", "VOLATILITY"),
-
-    /** 事件时间轴 → 徽标 + 时间刷。 */
-    SCHEDULE("日程", "UNLOCK"),
-
-    /** 情绪暴露 → 连板环纹。 */
-    HEAT("热度", "SENTIMENT"),
     ;
 
     companion object {

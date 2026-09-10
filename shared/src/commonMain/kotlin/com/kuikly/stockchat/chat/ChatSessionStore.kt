@@ -53,6 +53,15 @@ class ChatSessionStore(
         return readSessions().isNotEmpty()
     }
 
+    /**
+     * 只读聚合全部会话消息（不切换 activeSession——[load] 会写 ACTIVE_SESSION_KEY，
+     * 跨页分析（如风险地图思维画像）不能用，否则会悄悄换掉聊天页的当前会话）。
+     */
+    fun peekAllMessages(): List<StoredChatMessage> {
+        ensureMigrated()
+        return readSessions().flatMap { it.messages }
+    }
+
     fun save(sessionId: String, messages: List<ChatMessage>) {
         ensureMigrated()
         val resolvedSessionId = sessionId.ifBlank { newSessionId() }
