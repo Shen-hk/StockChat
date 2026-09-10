@@ -19,6 +19,7 @@ import com.kuikly.stockchat.page.components.InsightSectionTitle
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observableList
@@ -99,6 +100,8 @@ internal class GlobalSearchPage : BasePager() {
                     }
                 }
             }
+            // AppTopBar 以参数捕获 theme（首帧快照）：挂重建键，换肤返回后随键翻转重建。
+            vbind({ page.themeRebuildKey() }) {
             AppTopBar(
                 title = "全局搜索",
                 subtitle = "股票、指数和术语，一个入口",
@@ -108,6 +111,7 @@ internal class GlobalSearchPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
             )
+            }
         }
     }
 

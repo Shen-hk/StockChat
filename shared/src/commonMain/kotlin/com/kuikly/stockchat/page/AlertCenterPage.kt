@@ -30,6 +30,7 @@ import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
@@ -244,6 +245,8 @@ internal class AlertCenterPage : BasePager() {
                 }
             }
 
+            // AppTopBar 以参数捕获 theme（首帧快照）：挂重建键，换肤返回后随键翻转重建。
+            vbind({ page.themeRebuildKey() }) {
             AppTopBar(
                 title = "预警收件箱",
                 subtitle = "行情异动 · 事件临近 · 暴露变化 · 只解释已发生的事",
@@ -256,6 +259,7 @@ internal class AlertCenterPage : BasePager() {
                     "全部已读" to { page.markAllReadNow() },
                 ),
             )
+            }
         }
     }
 

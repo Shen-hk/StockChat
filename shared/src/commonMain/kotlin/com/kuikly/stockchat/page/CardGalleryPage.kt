@@ -83,7 +83,8 @@ internal class CardGalleryPage : BasePager() {
             Scroller {
                 // 竖向 Scroller 水平 padding 会被双倍扣除，padding(14f) 后右 padding 清 0 对齐（同 ChatPage）。
                 attr { flex(1f); padding(14f); paddingRight(0f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(32f) }
-                vbind({ page.liveQuote to page.liveCompare }) {
+                // 键拼 themeRebuildKey：卡片以参数捕获 theme，换肤返回后随键整树重建。
+                vbind({ page.themeRebuildKey() to page.liveQuote to page.liveCompare }) {
                     val quote = page.liveQuote ?: Quote.placeholder("600519.SH", "贵州茅台")
                     val compare = page.liveCompare ?: Quote.placeholder("000858.SZ", "五粮液")
                     val attribution = CardPayloadParser.parse("attribution", "{\"symbol\":\"600519.SH\"}") as AttributionIntent
@@ -148,6 +149,8 @@ internal class CardGalleryPage : BasePager() {
                     }
                 }
             }
+            // AppTopBar 以参数捕获 theme（首帧快照）：挂重建键，换肤返回后随键翻转重建。
+            vbind({ page.themeRebuildKey() }) {
             AppTopBar(
                 title = "卡片画廊",
                 subtitle = "独立预览与组件回归",
@@ -157,8 +160,11 @@ internal class CardGalleryPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
             )
+            }
             vif({ page.sheetCard != null }) {
                 page.sheetCard?.let { model ->
+                    // 键拼 themeRebuildKey：卡片弹层以参数捕获 theme，换肤后重建。
+                    vbind({ page.themeRebuildKey() }) {
                     CardSheetHost(
                         model = model,
                         level = page.sheetLevel,
@@ -174,6 +180,7 @@ internal class CardGalleryPage : BasePager() {
                         onOpenStock = {},
                         onTerm = {},
                     )
+                    }
                 }
             }
         }

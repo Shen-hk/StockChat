@@ -41,6 +41,7 @@ import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
@@ -203,6 +204,13 @@ internal class WatchlistPage : BasePager() {
                     // 首查 scrollEnabled，false 即不拦截），后续 move 留在被拿起的行上。
                     scrollEnable(page.dragSymbol.isEmpty())
                 }
+
+                // 换肤重建键（同 ChatPage/SettingsPage 约定）：自选页子树以
+                // 参数捕获 theme（body 只跑一次，R1），从通用设置改主题/字号
+                // 返回后 pageDidAppear 只重读 observable，参数捕获的旧快照
+                // 不会刷新——靠 vbind 键翻转整树重建；Scroller 不重建，滚动
+                // 位置与拖拽状态不受影响。
+                vbind({ page.themeRebuildKey() }) {
 
                 // ── z0 聚合头：回答「我的自选今天整体怎么样」 ──
                 vif({ page.rows.isNotEmpty() }) {
@@ -826,16 +834,20 @@ internal class WatchlistPage : BasePager() {
                         }
                     }
                 }
+                }
             }
 
             // 撤销条压在最上层：移除从长按菜单触发，撤销入口落在拇指可达的底部，
             // 沿用顶部 hint 等于没有撤销。
+            // UndoBar 以参数捕获 theme：同样挂重建键，换肤时随整树刷新。
+            vbind({ page.themeRebuildKey() }) {
             UndoBar(
                 theme = page.theme,
                 text = { page.undoText },
                 actionLabel = "撤销",
                 onAction = { page.undoRemove() },
             )
+            }
         }
     }
 

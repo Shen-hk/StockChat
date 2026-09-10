@@ -17,6 +17,7 @@ import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
@@ -26,7 +27,11 @@ import com.tencent.kuikly.core.views.View
  * 通用设置页（2026-09-09）：主题换肤（跟随系统/浅色/深色）+ 字号档位。
  *
  * 写入路径：click → SharedPreferencesModule 落盘 → reloadAppearance() 重读
- * 到本页 observable → attr 经 appTheme()/选中态读取重算，实时换肤。
+ * 到本页 observable → AppTopBar 与 Scroller 子树包在 vbind(themeRebuildKey)
+ * 里，键翻转整树重建拿到新 theme（参数捕获的 theme 是首帧快照，builder
+ * 闭包读 observable 不注册依赖）；选中态经 isSelected 在 attr 内直读
+ * observable，无需重建即响应。字号演示栏的 theme.type.* 已含档位缩放，
+ * 随同一重建键刷新。
  * 其他页面在 pageDidAppear 时同步重读（BasePager），跨页无响应式通道，
  * 与系统夜间模式 themeDidChanged 同一生命周期约定。
  */
@@ -44,6 +49,13 @@ internal class SettingsPage : BasePager() {
         val page = this
         return {
             attr { backgroundColor(page.theme.page) }
+            // AppTopBar 及 Scroller 子树都以参数捕获 theme（body 只跑一次的
+            // 首帧快照，R1：builder 闭包读 observable 不注册依赖），仅靠
+            // reloadAppearance 写 observable 只能让根节点背景色重算。与
+            // ChatTopNav 同一约定：vbind 键（themeRebuildKey）翻转时整树
+            // 重建，换主题/字号档立即生效，无需退出重进。字号档在键里，
+            // FontPreviewCard 的 theme.type.*（已含缩放）随重建拿到新值。
+            vbind({ page.themeRebuildKey() }) {
             AppTopBar(
                 title = "通用设置",
                 subtitle = "",
@@ -52,6 +64,7 @@ internal class SettingsPage : BasePager() {
                 backLabel = "‹",
                 onBack = { page.closePage() },
             )
+            }
             Scroller {
                 attr {
                     flex(1f)
@@ -61,6 +74,11 @@ internal class SettingsPage : BasePager() {
                     paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(28f + page.pagerData.safeAreaInsets.bottom)
                 }
+                // Scroller 子块是普通 builder 闭包（R1）：这里读 observable
+                // 不注册依赖，fontSizeScaled 查的 FontScaleRuntime 表也无
+                // 响应式通道——字号/主题变更必须靠 vbind 键翻转重建全部
+                // 子项（含字号演示栏），滚动位置保留在 Scroller 上不重置。
+                vbind({ page.themeRebuildKey() }) {
                 SettingsSectionTitle("外观", "主题切换立即生效；跟随系统时随端侧昼夜模式自动切换。", page.theme)
                 View {
                     attr { flexDirectionRow(); marginTop(12f) }
@@ -101,6 +119,7 @@ internal class SettingsPage : BasePager() {
                         fontSizeScaled(11f)
                         color(page.theme.textTertiary)
                     }
+                }
                 }
             }
         }

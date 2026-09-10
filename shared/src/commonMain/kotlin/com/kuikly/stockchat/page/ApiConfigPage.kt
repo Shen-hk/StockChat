@@ -61,6 +61,11 @@ internal class ApiConfigPage : BasePager() {
                     paddingTop(page.pagerData.statusBarHeight + 73f)
                     paddingBottom(28f + page.pagerData.safeAreaInsets.bottom)
                 }
+                // 换肤重建键（同 ChatPage/SettingsPage 约定）：子树以参数捕获
+                // theme / appIsDarkTheme（body 只跑一次，R1），从通用设置返回后
+                // 靠键翻转整树重建；Scroller 不重建，输入框值由 observable
+                // 承载，重建不丢。
+                vbind({ page.themeRebuildKey() }) {
                 ConfigSectionTitle("选择模型服务", "选中服务商后自动填好接口地址和模型名，再填 API Key 即可使用。", page.theme)
                 Scroller {
                     // 横向 Scroller 必须写显式 height，否则内容层塌 0 被外层裁掉
@@ -237,7 +242,9 @@ internal class ApiConfigPage : BasePager() {
                     Text { attr { text("清除本机配置"); fontSizeScaled(12f); color(page.theme.fall) } }
                     event { click { page.clearConfig() } }
                 }
+                }
             }
+            vbind({ page.themeRebuildKey() }) {
             AppTopBar(
                 title = "API 设置",
                 subtitle = "配置仅保存在当前设备",
@@ -247,6 +254,7 @@ internal class ApiConfigPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
             )
+            }
         }
     }
 

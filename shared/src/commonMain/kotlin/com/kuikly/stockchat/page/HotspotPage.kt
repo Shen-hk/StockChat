@@ -18,6 +18,7 @@ import com.kuikly.stockchat.page.components.ExplanationCard
 import com.kuikly.stockchat.page.components.InsightSectionTitle
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observableList
@@ -90,6 +91,8 @@ internal class HotspotPage : BasePager() {
                     }
                 }
             }
+            // AppTopBar 以参数捕获 theme（首帧快照）：挂重建键，换肤返回后随键翻转重建。
+            vbind({ page.themeRebuildKey() }) {
             AppTopBar(
                 title = "板块热点",
                 subtitle = "热度归因，不做选股排序",
@@ -99,6 +102,7 @@ internal class HotspotPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
             )
+            }
         }
     }
 }

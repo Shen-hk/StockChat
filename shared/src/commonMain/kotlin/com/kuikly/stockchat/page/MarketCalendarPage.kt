@@ -15,6 +15,7 @@ import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.SourceStampLine
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
+import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observableList
@@ -66,6 +67,8 @@ internal class MarketCalendarPage : BasePager() {
                     }
                 }
             }
+            // AppTopBar 以参数捕获 theme（首帧快照）：挂重建键，换肤返回后随键翻转重建。
+            vbind({ page.themeRebuildKey() }) {
             AppTopBar(
                 title = "市场日历",
                 subtitle = "先知道什么时候要重新核对事实",
@@ -75,6 +78,7 @@ internal class MarketCalendarPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
             )
+            }
         }
     }
 }
