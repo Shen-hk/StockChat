@@ -6,14 +6,6 @@ import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.timer.setTimeout
-import io.ktor.client.request.header
-import io.ktor.client.request.preparePost
-import io.ktor.client.request.setBody
-import io.ktor.client.statement.bodyAsChannel
-import io.ktor.http.ContentType
-import io.ktor.http.HttpHeaders
-import io.ktor.http.contentType
-import io.ktor.utils.io.readUTF8Line
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -85,34 +77,29 @@ class DeepSeekAiProvider(
         val current = ++generation
         activeRequest = scope.launch {
             try {
-                client.preparePost(value.endpoint) {
-                    contentType(ContentType.Application.Json)
-                    header(HttpHeaders.Authorization, "Bearer ${value.apiKey}")
-                    header(HttpHeaders.Accept, "text/event-stream")
-                    setBody(body.toString())
-                }.execute { response ->
-                    if (response.status.value !in 200..299) {
-                        val detail = response.bodyAsChannel().readUTF8Line().orEmpty()
-                        if (current == generation) onError(classifyError(response.status.value, detail))
-                        return@execute
+                var received = false
+                val response = client.postStream(
+                    value.endpoint,
+                    mapOf(
+                        "Authorization" to "Bearer ${value.apiKey}",
+                        "Accept" to "text/event-stream",
+                    ),
+                    body.toString(),
+                ) { line ->
+                    val event = line.trim()
+                    if (!event.startsWith("data:")) return@postStream
+                    val payload = event.removePrefix("data:").trim()
+                    if (payload == "[DONE]") return@postStream
+                    val delta = SseEventParser.delta("data: $payload").orEmpty()
+                    if (delta.isNotEmpty() && current == generation) {
+                        received = true
+                        onDelta(delta)
                     }
-                    var received = false
-                    val channel = response.bodyAsChannel()
-                    while (true) {
-                        val line = channel.readUTF8Line() ?: break
-                        val event = line.trim()
-                        if (!event.startsWith("data:")) continue
-                        val payload = event.removePrefix("data:").trim()
-                        if (payload == "[DONE]") break
-                        val delta = SseEventParser.delta("data: $payload").orEmpty()
-                        if (delta.isNotEmpty() && current == generation) {
-                            received = true
-                            onDelta(delta)
-                        }
-                    }
-                    if (current == generation) {
-                        if (received) onDone() else onError("接口未返回有效内容")
-                    }
+                }
+                if (response.status !in 200..299) {
+                    if (current == generation) onError(classifyError(response.status, response.body))
+                } else if (current == generation) {
+                    if (received) onDone() else onError("接口未返回有效内容")
                 }
             } catch (_: CancellationException) {
                 // stop() owns the visible state; cancelled requests must not append or report an error.
