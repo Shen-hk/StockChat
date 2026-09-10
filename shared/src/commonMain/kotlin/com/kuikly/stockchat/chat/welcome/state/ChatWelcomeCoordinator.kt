@@ -76,6 +76,11 @@ internal class ChatWelcomeCoordinator(
         stopKeywordLoop(lock = false)
         cancelEntranceTasks()
         cancelMarketTasks()
+        // 「看行情」的自动复位定时器（420ms）活不过跳转：openPage 市场页会让
+        // 本页先走 onDisappear，复位任务被 cancelMarketTasks 取消后
+        // marketTabSelected 停在 true，返回时滑块就卡在「看行情」半格。
+        // 消失即复位：跳转动画期滑块会先滑回「问AI」，回程必然落在默认态。
+        setMarketSelected(false)
     }
 
     fun onDestroy() {

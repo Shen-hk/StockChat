@@ -98,6 +98,42 @@ class ChatWelcomeCoordinatorTest {
         assertFalse(state.marketTabSelected)
     }
 
+    /**
+     * 回归（2026-09-10）：跳市场页会先走 onDisappear，把 420ms 的自动复位
+     * 定时器取消掉，marketTabSelected 停在 true——返回聊天页后滑块卡在
+     * 「看行情」。消失即必须复位，且返回后可以再次发起跳转。
+     */
+    @Test
+    fun disappearingAfterMarketTapResetsTheTabSlider() {
+        val scheduler = FakeWelcomeScheduler()
+        val state = PlainChatWelcomeState()
+        val effects = mutableListOf<ChatWelcomeEffect>()
+        val coordinator = coordinator(state, scheduler, effects::add)
+        coordinator.onAppear(sessionEmpty = true, fullMode = true)
+
+        coordinator.onOpenMarketRequested()
+        assertTrue(state.marketTabSelected)
+        scheduler.runNext(240) // 跳转市场页，本页随之 onDisappear
+        coordinator.onDisappear()
+        assertFalse(state.marketTabSelected)
+        scheduler.runAll() // 复位定时器不得在消失后再改状态
+        assertFalse(state.marketTabSelected)
+
+        coordinator.onAppear(sessionEmpty = true, fullMode = true)
+        coordinator.onOpenMarketRequested()
+        assertTrue(state.marketTabSelected)
+        scheduler.runNext(240)
+        assertEquals(
+            listOf(
+                ChatWelcomeEffect.HAPTIC_IMPACT,
+                ChatWelcomeEffect.OPEN_MARKET,
+                ChatWelcomeEffect.HAPTIC_IMPACT,
+                ChatWelcomeEffect.OPEN_MARKET,
+            ),
+            effects,
+        )
+    }
+
     private fun coordinator(
         state: ChatWelcomeStatePort,
         scheduler: FakeWelcomeScheduler,
