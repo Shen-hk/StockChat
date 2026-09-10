@@ -134,24 +134,24 @@ internal fun ViewContainer<*, *>.WelcomeSection(
     }
 }
 
-/** 主题句上方的品牌图标（58dp brand 圆角方块 + 趋势线）。装饰元素，读屏跳过。 */
+/** 主题句上方的品牌图标（82dp brand 圆角方块 + 趋势线，2026-09-10 放大 20%）。装饰元素，读屏跳过。 */
 private fun ViewContainer<*, *>.WelcomeBadge(theme: StockChatTheme) {
     View {
         attr {
-            size(68f, 68f)
+            size(82f, 82f)
             marginBottom(16f)
             allCenter()
-            borderRadius(17f)
+            borderRadius(20f)
             backgroundColor(theme.brand)
             accessibilityRole(AccessibilityRole.NONE)
         }
-        LineIconTrendUp(color = theme.onBrand, size = 37f)
+        LineIconTrendUp(color = theme.onBrand, size = 44f)
     }
 }
 
 /**
- * 问AI / 看市场 切换（圆角长方形 190×45 / 字号 15，用户决策 2026-09-05；
- * 不再是全圆胶囊）。
+ * 问AI / 看行情 切换（圆角长方形 228×54 / 字号 18，2026-09-05 定型、
+ * 2026-09-10 整体放大 20%；不再是全圆胶囊）。
  * 问AI 常选中；看市场是跳转入口：点击后滑块滑到右半格，滑动结束由调用方
  * 震动并跳转市场页（时序在 ChatPage.handleWelcomeMarketTap）。
  */
@@ -163,23 +163,23 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
     View {
         attr {
             marginTop(24f)
-            size(190f, 45f)
+            size(228f, 54f)
             flexDirectionRow()
             alignItemsCenter()
             backgroundColor(theme.surfaceMuted)
-            borderRadius(12f)
+            borderRadius(14f)
         }
-        // 滑块：默认停在「问AI」半格（(190-6)/2 = 92），选中看市场时滑到右半格。
+        // 滑块：默认停在「问AI」半格（(228-6)/2 = 111），选中看市场时滑到右半格。
         View {
             attr {
                 absolutePosition(left = 3f, top = 3f)
-                size(92f, 39f)
-                borderRadius(10f)
+                size(111f, 48f)
+                borderRadius(12f)
                 backgroundColor(theme.surface)
                 touchEnable(false)
                 // 取值闭包必须在 attr 内现场调用才建立依赖；translate 用 offsetX=px。
                 val marketSelected = marketTabSelected()
-                transform(translate = Translate(0f, 0f, offsetX = if (marketSelected) 92f else 0f))
+                transform(translate = Translate(0f, 0f, offsetX = if (marketSelected) 111f else 0f))
                 // 无条件注册（R2/R5）：animate 绑定最后读到的 marketTabSelected()，
                 // 翻转周期消费上轮注册的 easeOut，滑动先快后慢。
                 animate(Animation.easeOut(0.22f), marketTabSelected())
@@ -187,10 +187,10 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
         }
         View {
             attr {
-                height(34f)
+                height(41f)
                 flex(1f)
                 allCenter()
-                borderRadius(17f)
+                borderRadius(20f)
                 // 读屏：按钮语义 + 朗读。
                 accessibility("问AI，当前选中")
                 accessibilityRole(AccessibilityRole.BUTTON)
@@ -199,7 +199,7 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
             Text {
                 attr {
                     text("问AI")
-                    fontSizeScaled(15f)
+                    fontSizeScaled(18f)
                     fontWeightSemiBold()
                     color(theme.textPrimary)
                 }
@@ -207,10 +207,10 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
         }
         View {
             attr {
-                height(34f)
+                height(41f)
                 flex(1f)
                 allCenter()
-                borderRadius(17f)
+                borderRadius(20f)
                 accessibility("看市场，打开市场总览")
                 accessibilityRole(AccessibilityRole.BUTTON)
                 accessibilityInfo(clickable = true, longClickable = false)
@@ -218,7 +218,7 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
             Text {
                 attr {
                     text("看行情")
-                    fontSizeScaled(15f)
+                    fontSizeScaled(18f)
                     fontWeightSemiBold()
                     // 滑块滑到右半格时同步高亮，与滑块动画共用同一驱动。
                     color(if (marketTabSelected()) theme.textPrimary else theme.textSecondary)
@@ -309,10 +309,10 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
             // 宽度随文案自适应，四张卡左缘对齐、长短错落成阶梯感。
             alignSelfFlexStart()
             marginTop(theme.spacing.sm)
-            paddingLeft(14f)
-            paddingRight(14f)
-            paddingTop(8f)
-            paddingBottom(8f)
+            paddingLeft(15f)
+            paddingRight(15f)
+            paddingTop(9f)
+            paddingBottom(9f)
             backgroundColor(theme.surface.opacity(0.72f))
             borderRadius(12f)
             border(Border(1f, BorderStyle.SOLID, theme.divider))
@@ -355,7 +355,8 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
         Text {
             attr {
                 text(starter.question)
-                fontSizeScaled(14f)
+                // 2026-09-10 放大 10%：14 → 15.4。
+                fontSizeScaled(15.4f)
                 fontWeightMedium()
                 color(theme.textPrimary)
             }

@@ -262,13 +262,14 @@ private fun stockMarkdownConfig(
             codeBackgroundCornerSize = 8f,
             blockQuoteThickness = 3f,
             blockQuoteCornerSize = 8f,
-            tableCellWidth = 120f,
-            tableCellPadding = 10f,
-            tableCornerSize = 8f,
+            // 窄屏里表格更像一个信息卡，而不是铺满屏的电子表格。
+            tableCellWidth = 108f,
+            tableCellPadding = 9f,
+            tableCornerSize = 10f,
         ),
         padding = MarkdownPadding(
-            block = 3f,
-            list = 2f,
+            block = 5f,
+            list = 3f,
             listItemTop = 2f,
             listItemBottom = 2f,
             listIndent = 14f,
@@ -303,16 +304,15 @@ private fun stockMarkdownConfig(
 private fun stockMarkdownTypography(dark: Boolean): MarkdownTypography {
     val textColor = if (dark) 0xFFF5F5F7 else 0xFF1D1D1F
     val secondary = if (dark) 0xFFC7C7CC else 0xFF6E6E73
-    // WorkBuddy 式阅读层级：正文也有足够的笔画密度，标题保持明显的粗体断点。
-    // 字号不盲目变大，以较紧凑的行距保留聊天阅读的节奏。
-    val body = TextStyleConfig(fontSize = 16f, lineHeight = 25f, fontWeight = FontWeight.SemiBold, color = textColor)
-    val compact = TextStyleConfig(fontSize = 15f, lineHeight = 23f, fontWeight = FontWeight.SemiBold, color = textColor)
+    // 正文保持轻盈，重点交给 Markdown 的粗体与标题；长文档不会显得拥挤。
+    val body = TextStyleConfig(fontSize = 16f, lineHeight = 25f, fontWeight = FontWeight.Medium, color = textColor)
+    val compact = TextStyleConfig(fontSize = 15f, lineHeight = 23f, fontWeight = FontWeight.Medium, color = textColor)
     return MarkdownTypography(
         text = body,
         code = TextStyleConfig(fontSize = 14f, lineHeight = 21f, fontWeight = FontWeight.Medium, color = textColor),
         inlineCode = TextStyleConfig(fontSize = 15f, fontWeight = FontWeight.SemiBold, color = textColor),
-        h1 = TextStyleConfig(fontSize = 20f, lineHeight = 28f, fontWeight = FontWeight.Bold, color = textColor),
-        h2 = TextStyleConfig(fontSize = 18f, lineHeight = 26f, fontWeight = FontWeight.Bold, color = textColor),
+        h1 = TextStyleConfig(fontSize = 21f, lineHeight = 30f, fontWeight = FontWeight.Bold, color = textColor),
+        h2 = TextStyleConfig(fontSize = 18.5f, lineHeight = 27f, fontWeight = FontWeight.Bold, color = textColor),
         h3 = TextStyleConfig(fontSize = 17f, lineHeight = 24f, fontWeight = FontWeight.Bold, color = textColor),
         h4 = TextStyleConfig(fontSize = 16f, lineHeight = 25f, fontWeight = FontWeight.Bold, color = textColor),
         h5 = body,

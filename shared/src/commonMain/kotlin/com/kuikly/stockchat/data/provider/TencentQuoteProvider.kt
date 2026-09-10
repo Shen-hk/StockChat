@@ -5,6 +5,44 @@ import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
+/**
+ * Exchange-level intraday layout.  This is deliberately keyed by market, never
+ * by an individual security: every symbol returned by remote search follows the
+ * same parser and chart geometry.
+ */
+data class MarketTimelineSpec(
+    val slotCount: Int,
+    val labels: List<Pair<Int, String>>,
+    private val includesTime: (String) -> Boolean,
+) {
+    fun contains(time: String): Boolean = includesTime(time)
+
+    companion object {
+        fun forSymbol(symbol: String): MarketTimelineSpec = when (symbol.substringAfterLast('.', "").uppercase()) {
+            "HK" -> HONG_KONG
+            "US" -> UNITED_STATES
+            else -> MAINLAND_CHINA
+        }
+
+        private val MAINLAND_CHINA = MarketTimelineSpec(
+            slotCount = 241,
+            labels = listOf(0 to "09:30", 60 to "10:30", 120 to "11:30/13:00", 180 to "14:00", 240 to "15:00"),
+        ) { time ->
+            (time >= "09:30" && time <= "11:30") || (time >= "13:00" && time <= "15:00")
+        }
+        private val HONG_KONG = MarketTimelineSpec(
+            slotCount = 332,
+            labels = listOf(0 to "09:30", 90 to "11:00", 150 to "12:00/13:00", 240 to "14:30", 331 to "16:00"),
+        ) { time ->
+            (time >= "09:30" && time <= "12:00") || (time >= "13:00" && time <= "16:00")
+        }
+        private val UNITED_STATES = MarketTimelineSpec(
+            slotCount = 391,
+            labels = listOf(0 to "09:30", 90 to "11:00", 195 to "12:45", 300 to "14:30", 390 to "16:00"),
+        ) { time -> time >= "09:30" && time <= "16:00" }
+    }
+}
+
 object TencentQuoteParser {
     fun parseSnapshot(root: JSONObject, symbol: String): Quote? {
         val code = remoteCode(symbol)
@@ -47,6 +85,7 @@ object TencentQuoteParser {
             ?.optJSONArray("data") ?: return emptyList()
         var prevVolume = 0.0
         var prevAmount = 0.0
+        val timelineSpec = MarketTimelineSpec.forSymbol(symbol)
         return buildList {
             repeat(rows.length()) { index ->
                 val fields = rows.text(index).trim().split(Regex("\\s+"))
@@ -54,12 +93,8 @@ object TencentQuoteParser {
                     val time = fields[0].let { raw ->
                         if (raw.length == 4) "${raw.take(2)}:${raw.takeLast(2)}" else raw
                     }
-                    // 只保留交易时段（09:30–11:30 / 13:00–15:00）。实测收盘后接口
-                    // 会按分钟追加"冻结填充点"（价格/累计量停在收盘值，如 15:01–15:30），
-                    // 不过滤会把 now 点拖到 15:30、末槽量恒为 0。
-                    val inSession = (time >= "09:30" && time <= "11:30") ||
-                        (time >= "13:00" && time <= "15:00")
-                    if (!inSession) return@repeat
+                    // 收盘后接口会追加冻结填充点；按市场的统一交易时段过滤。
+                    if (!timelineSpec.contains(time)) return@repeat
                     val price = fields[1].toDoubleOrNull() ?: return@repeat
                     val cumVolume = fields[2].toDoubleOrNull() ?: 0.0
                     val cumAmount = fields.getOrNull(3)?.toDoubleOrNull() ?: 0.0
@@ -90,6 +125,7 @@ object TencentQuoteParser {
             "SH" -> "sh$digits"
             "SZ" -> "sz$digits"
             "HK" -> "hk$digits"
+            "US" -> "us$digits"
             else -> digits.lowercase()
         }
     }
@@ -152,6 +188,61 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
 
     private fun kLineUrl(code: String, interval: KLineInterval, count: Int): String =
         "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$code,${interval.requestPeriod},,,$count,qfq"
+}
+
+/**
+ * Real index-only market fallback. EastMoney remains the primary source for
+ * breadth and sectors; when it is unavailable this provider prevents the
+ * market page from degrading into a completely empty screen.
+ */
+class TencentIndexOverviewProvider(pagerId: String) : MarketOverviewProvider {
+    private val quotes = TencentQuoteProvider(pagerId)
+
+    override fun overview(onResult: (MarketOverview?) -> Unit) {
+        val symbols = listOf(
+            "000001.SH", "399001.SZ", "399006.SZ", "000688.SH", "899050.SZ",
+            "000300.SH", "000016.SH", "000905.SH", "HSI.HK",
+        )
+        var pending = symbols.size
+        val values = mutableListOf<MarketIndex>()
+        symbols.forEach { symbol ->
+            quotes.snapshot(symbol) { quote ->
+                quote?.takeIf { it.price > 0.0 && it.previousClose > 0.0 }?.let {
+                    values += MarketIndex(
+                        code = symbol.substringBefore('.'),
+                        name = it.name.ifBlank { symbol },
+                        price = it.price,
+                        changePercent = it.changePercent,
+                        high = it.high.takeIf { value -> value > 0.0 },
+                        low = it.low.takeIf { value -> value > 0.0 },
+                    )
+                }
+                pending--
+                if (pending == 0) {
+                    onResult(
+                        values.takeIf { it.isNotEmpty() }?.let { indices ->
+                            MarketOverview(
+                                indices = indices,
+                                risingCount = 0,
+                                fallingCount = 0,
+                                flatCount = 0,
+                                limitUpCount = 0,
+                                limitDownCount = 0,
+                                sectors = emptyList(),
+                                stamp = SourceStamp(
+                                    source = "腾讯证券公开行情（指数快照）",
+                                    asOf = indices.firstOrNull()?.let { "实时" } ?: "",
+                                    tier = SourceTier.MARKET_DATA,
+                                ),
+                            )
+                        },
+                    )
+                }
+            }
+        }
+    }
+
+    override fun hotspots(onResult: (HotspotSnapshot?) -> Unit) = onResult(null)
 }
 
 /**

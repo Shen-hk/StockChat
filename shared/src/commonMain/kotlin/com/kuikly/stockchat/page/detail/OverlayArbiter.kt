@@ -15,7 +15,8 @@ enum class DetailOverlay {
     NEWS_SUMMARY,   // 新闻摘要（B2 摘要条 / B1 先览）
     TAPE_PREVIEW,   // 弹幕带先览气泡（B1）
     REVISIT,        // 当初理由回访卡（A1）
-    REASON_CHIPS    // 加自选快捷理由 chips（H1）
+    REASON_CHIPS,   // 加自选快捷理由 chips（H1；2026-09-10 起从 ⋯ 菜单进入）
+    MORE_MENU       // 顶栏 ⋯ 更多操作菜单（2026-09-10：记当初理由 / AI 解读 / 复制代码）
 }
 
 class OverlayArbiter {

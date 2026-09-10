@@ -54,6 +54,8 @@ import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.LocalAlertProvider
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
+import com.kuikly.stockchat.data.provider.QuotePrefetchStore
+import com.kuikly.stockchat.data.provider.TencentQuoteProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.kuikly.stockchat.chat.welcome.data.WelcomeStarterStore
@@ -66,6 +68,7 @@ import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.page.components.ChatDrawer
 import com.kuikly.stockchat.page.components.CardSheetHost
+import com.kuikly.stockchat.page.components.FeatureTile
 import com.kuikly.stockchat.page.components.ActiveComparePanel
 import com.kuikly.stockchat.page.components.TermComparePanel
 import com.kuikly.stockchat.page.components.ChatMessageActions
@@ -553,6 +556,10 @@ internal class ChatPage : BasePager() {
         islandWatchlisted = watchlistStore.contains(islandSymbol)
         // Preload the island quote so the morph opens with data in place.
         requestQuote(islandSymbol)
+        // 详情页预取（2026-09-10 空白期治理）：进应用后把自选标的行情预热进全局
+        // 预取缓存，点进详情页时 created() 直接命中整页秒开（60s 新鲜窗口内不重复
+        // 请求；点按瞬间 openStockDetail 还有一次单标的兜底预热）。
+        QuotePrefetchStore.warm(watchlistStore.symbols(), TencentQuoteProvider(pagerId))
         startAlertPolling()
         chatScrollCoordinator.onAppear()
         welcomeCoordinator.onAppear(
@@ -786,6 +793,7 @@ internal class ChatPage : BasePager() {
                     onClearIslandCompare = { page.clearIslandCompare() },
                     onMenu = { page.updateDrawerOpen(!page.drawerOpen) },
                     onNewChat = { page.startNewChat() },
+                    onSearch = { page.openPage(Routes.SEARCH) },
                 )
                 }
                 vif({ page.ambiguousSymbols.isNotEmpty() }) {
@@ -874,10 +882,17 @@ internal class ChatPage : BasePager() {
                         attr {
                             absolutePosition(
                                 right = 14f,
-                                bottom = 86f + page.pagerData.safeAreaInsets.bottom,
+                                // 130f = 输入栏(10+66) + 引导语胶囊块(≈48) 再留 6dp
+                                // 间隙：按钮底边须完全让开输入栏上方的引导语胶囊
+                                // （2026-09-10 用户反馈：二者重叠）。
+                                bottom = 130f + page.pagerData.safeAreaInsets.bottom,
                             )
                             size(40f, 40f)
                             allCenter()
+                            // 圆形轮廓：玻璃 peek 圆角 20f 只作用在 GlassBackdrop 的
+                            // Blur 内层，容器自身不设 borderRadius 时描边与 boxShadow
+                            // 都按方角渲染——阴影呈正方形雏形（2026-09-10 用户反馈）。
+                            borderRadius(20f)
                             // 玻璃高光描边：GlassBackdrop 不带描边，细 rim 由容器补
                             // （与 peek 胶囊 resolved.stroke 对齐）。
                             border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
@@ -1740,19 +1755,43 @@ internal class ChatPage : BasePager() {
     private fun handleComposerMediaResult(data: JSONObject?) {
         if (isWillDestroy()) return
         if (data == null || data.optString("type") != "ok") return
-        val path = data.optString("path")
-        if (path.isBlank()) return
-        val attachment = composerAttachmentCoordinator.add(
-            path = path,
-            name = data.optString("name"),
-            isImage = data.optString("kind") == "image",
-        )
-        if (attachment == null) {
-            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("最多添加${MAX_COMPOSER_ATTACHMENTS}个附件")
-            return
+        // 多选图库走 items 批量回传；兼容旧版单条 {kind, path, name} 字段。
+        val items = mutableListOf<Triple<String, String, Boolean>>() // (path, name, isImage)
+        val batch = data.optJSONArray("items")
+        if (batch != null) {
+            for (i in 0 until batch.length()) {
+                val item = batch.optJSONObject(i) ?: continue
+                val path = item.optString("path")
+                if (path.isNotBlank()) {
+                    items.add(Triple(path, item.optString("name"), item.optString("kind") == "image"))
+                }
+            }
+        } else {
+            val path = data.optString("path")
+            if (path.isNotBlank()) {
+                items.add(Triple(path, data.optString("name"), data.optString("kind") == "image"))
+            }
         }
-        KLog.i(COMPOSER_LOG_TAG, "mediaResult kind=${attachment.kind} name=${attachment.displayName}")
-        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+        if (items.isEmpty()) return
+        var addedCount = 0
+        for ((path, name, isImage) in items) {
+            val attachment = composerAttachmentCoordinator.add(
+                path = path,
+                name = name,
+                isImage = isImage,
+            )
+            if (attachment == null) {
+                continue
+            }
+            addedCount++
+            KLog.i(COMPOSER_LOG_TAG, "mediaResult kind=${attachment.kind} name=${attachment.displayName}")
+        }
+        if (addedCount < items.size) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("最多添加${MAX_COMPOSER_ATTACHMENTS}个附件")
+        }
+        if (addedCount > 0) {
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+        }
     }
 
     /** 输入框附件预览的删除叉（显式点击，无需撤销条）。 */
@@ -1842,6 +1881,50 @@ internal class ChatPage : BasePager() {
         payload.command?.let {
             trackComposerEvent("slash_cmd_send", "commandId" to it.commandId, "argCount" to it.args.count { entry -> entry.value.isNotBlank() })
         }
+        sendWithPreparedMedia(payload)
+    }
+
+    /** Prepare local files on the native side before handing this turn to the provider. */
+    private fun sendWithPreparedMedia(payload: SendPayload) {
+        if (payload.attachments.isEmpty()) {
+            finishSubmittedPayload(payload)
+            return
+        }
+        val items = com.tencent.kuikly.core.nvi.serialization.json.JSONArray().apply {
+            payload.attachments.forEach { attachment ->
+                put(com.tencent.kuikly.core.nvi.serialization.json.JSONObject().apply {
+                    put("path", attachment.path)
+                    put("name", attachment.name)
+                    put("kind", attachment.kind)
+                })
+            }
+        }
+        // iOS/H5 hosts that have not implemented this optional bridge must not leave
+        // the composer stuck. Android normally answers well before this fallback.
+        var delivered = false
+        fun deliver(media: List<com.kuikly.stockchat.chat.AiMediaPart>) {
+            if (delivered || isWillDestroy()) return
+            delivered = true
+            finishSubmittedPayload(payload.copy(media = media))
+        }
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).prepareAiMedia(items) { result ->
+            val prepared = result?.optJSONArray("items")
+            val media = buildList {
+                if (prepared != null) for (i in 0 until prepared.length()) {
+                    val item = prepared.optJSONObject(i) ?: continue
+                    add(com.kuikly.stockchat.chat.AiMediaPart(
+                        name = item.optString("name").ifBlank { "附件" },
+                        imageDataUrl = item.optString("imageDataUrl").takeIf { it.isNotBlank() },
+                        documentText = item.optString("documentText").takeIf { it.isNotBlank() },
+                    ))
+                }
+            }
+            deliver(media)
+        }
+        setTimeout(5_000) { deliver(emptyList()) }
+    }
+
+    private fun finishSubmittedPayload(payload: SendPayload) {
         viewModel.send(payload)
         // 发送后清理输入期固化状态：mentions / 命令注册 / 附件；最近提及列表保留供下次推荐。
         mentionEntities.clear()
@@ -1964,9 +2047,18 @@ internal class ChatPage : BasePager() {
      */
     private fun openMediaSheet() {
         KLog.i(COMPOSER_LOG_TAG, "openMediaSheet")
+        // The expanded composer and the media sheet both change the bottom
+        // layout.  Mounting them in the same commit makes keyboard avoidance,
+        // composer re-measurement and the sheet entrance compete for one frame
+        // (most visible as a hitch on the first tap).  Let the composer settle
+        // for one frame after blur/collapse, then mount the sheet.
         if (isComposerVisuallyExpanded()) {
             blurComposer()
             collapseComposer()
+            setTimeout(32) {
+                if (!isWillDestroy()) mediaSheetCoordinator.open()
+            }
+            return
         }
         mediaSheetCoordinator.open()
     }
@@ -2657,6 +2749,17 @@ internal class ChatPage : BasePager() {
                         !this@ChatPage.isComposerExpanded() -> 21f
                         this@ChatPage.assistantPanel != AssistantPanel.NONE -> 0f
                         else -> 40f
+                    }
+                )
+                // 展开常规态文字整体下移 ~10dp（用户反馈 2026-09-10：文字偏上，
+                // 下移后与下方 @/语音/＋/发送 按钮行视觉居中）。与 minHeight 同款
+                // 门控，其余态恒 0（条件性 attr 必须无条件全量赋值，勿用 if）。
+                marginTop(
+                    when {
+                        this@ChatPage.voiceInputMode -> 0f
+                        !this@ChatPage.isComposerExpanded() -> 0f
+                        this@ChatPage.assistantPanel != AssistantPanel.NONE -> 0f
+                        else -> 10f
                     }
                 )
                 maxHeight(
@@ -5514,17 +5617,19 @@ private fun assistantPanelHeight(rowCount: Int, rowHeight: Float): Float {
  */
 private enum class AssistantPanel { NONE, AT_MENTION, SLASH, COMMAND_PARAMS }
 
-/** 输入栏「+」可选的媒体来源（底部弹层三入口）。 */
-private enum class ComposerMediaAction(val source: String, val label: String, val caption: String) {
-    PHOTO_LIBRARY("library", "上传图库", "从手机相册选择图片"),
-    CAMERA("camera", "拍照", "拍摄一张照片"),
-    DOCUMENT("document", "手机文档", "选择文件交给 AI 解读"),
+/** 输入栏「+」可选的媒体来源（底部弹层磁贴入口，样式对齐抽屉 DrawerTile）。 */
+private enum class ComposerMediaAction(val source: String, val label: String) {
+    PHOTO_LIBRARY("library", "上传图库"),
+    CAMERA("camera", "拍照"),
+    DOCUMENT("document", "手机文档"),
 }
 
 /**
- * 底部媒体来源弹层：全屏蒙层 + 底部圆角卡片。蒙层或「取消」关闭；三个入口行
- * 均为「图标圆盘 + 标题/说明 + 右箭头」。R4 两帧入场由页侧 openMediaSheet /
- * dismissMediaSheet 驱动（mounted 隐藏挂载 → presented 翻转播动画）。
+ * 底部媒体来源弹层：全屏蒙层 + 底部圆角卡片。蒙层或「取消」关闭；三个入口为
+ * 抽屉同款磁贴（2026-09-10 重设计：去掉原「图标圆盘+标题/说明+箭头」行式布局，
+ * 改为白卡 + 发丝描边 + 浅投影的 3 列磁贴，图标 22 / 标签 10，与 DrawerTile 一致）。
+ * R4 两帧入场由页侧 openMediaSheet / dismissMediaSheet 驱动（mounted 隐藏挂载 →
+ * presented 翻转播动画）。
  */
 private fun ViewContainer<*, *>.MediaActionSheetHost(
     theme: StockChatTheme,
@@ -5545,8 +5650,8 @@ private fun ViewContainer<*, *>.MediaActionSheetHost(
     View {
         attr {
             absolutePosition(left = 0f, right = 0f, bottom = 0f)
-            paddingLeft(12f)
-            paddingRight(12f)
+            paddingLeft(16f)
+            paddingRight(16f)
             paddingBottom(bottomInset + 12f)
             touchEnable(true)
             opacity(if (presented()) 1f else 0f)
@@ -5555,16 +5660,16 @@ private fun ViewContainer<*, *>.MediaActionSheetHost(
         }
         View {
             attr {
-                borderRadius(22f)
+                borderRadius(20f)
                 backgroundColor(theme.surface)
-                paddingTop(10f)
-                paddingLeft(10f)
-                paddingRight(10f)
-                paddingBottom(12f)
+                paddingTop(14f)
+                paddingLeft(14f)
+                paddingRight(14f)
+                paddingBottom(14f)
                 boxShadow(BoxShadow(0f, 10f, 30f, Color(0x000000, 0.18f)))
             }
             View {
-                attr { flexDirectionRow(); alignItemsCenter(); height(36f); paddingLeft(6f); paddingRight(6f) }
+                attr { flexDirectionRow(); alignItemsCenter(); paddingLeft(4f); paddingRight(4f) }
                 Text {
                     attr {
                         text("添加内容")
@@ -5579,54 +5684,26 @@ private fun ViewContainer<*, *>.MediaActionSheetHost(
                     event { click { onDismiss() } }
                 }
             }
-            ComposerMediaAction.values().forEachIndexed { index, action ->
-                View {
-                    attr {
-                        flexDirectionRow()
-                        alignItemsCenter()
-                        height(60f)
-                        marginTop(if (index == 0) 6f else 8f)
-                        paddingLeft(12f)
-                        paddingRight(12f)
-                        backgroundColor(theme.brandSoft)
-                        borderRadius(16f)
-                        touchEnable(true)
+            // 入口磁贴行：公共 FeatureTile（抽屉 DrawerTile 同款磁贴，2026-09-10 统一）。
+            View {
+                attr { flexDirectionRow(); marginTop(12f) }
+                ComposerMediaAction.values().forEachIndexed { index, action ->
+                    if (index > 0) {
+                        View { attr { width(8f) } }
                     }
-                    View {
-                        attr {
-                            size(38f, 38f)
-                            allCenter()
-                            backgroundColor(theme.surface)
-                            borderRadius(19f)
-                            marginRight(12f)
-                        }
-                        when (action) {
-                            ComposerMediaAction.PHOTO_LIBRARY -> LineIconPhoto(theme.brand, 20f)
-                            ComposerMediaAction.CAMERA -> LineIconCamera(theme.brand, 20f)
-                            ComposerMediaAction.DOCUMENT -> LineIconFileText(theme.brand, 20f)
-                        }
-                    }
-                    View {
-                        attr { flex(1f) }
-                        Text {
-                            attr {
-                                text(action.label)
-                                fontSizeScaled(15f)
-                                fontWeightMedium()
-                                color(theme.textPrimary)
+                    FeatureTile(
+                        label = action.label,
+                        theme = theme,
+                        height = 68f,
+                        icon = {
+                            when (action) {
+                                ComposerMediaAction.PHOTO_LIBRARY -> LineIconPhoto(theme.textPrimary, 22f)
+                                ComposerMediaAction.CAMERA -> LineIconCamera(theme.textPrimary, 22f)
+                                ComposerMediaAction.DOCUMENT -> LineIconFileText(theme.textPrimary, 22f)
                             }
-                        }
-                        Text {
-                            attr {
-                                text(action.caption)
-                                fontSizeScaled(11f)
-                                color(theme.textTertiary)
-                                marginTop(2f)
-                            }
-                        }
-                    }
-                    LineIconChevronRight(theme.textTertiary, 16f)
-                    event { click { KLog.i("Composer", "mediaSheetRowTap ${action.source}"); onAction(action) } }
+                        },
+                        onClick = { KLog.i("Composer", "mediaSheetTileTap ${action.source}"); onAction(action) },
+                    )
                 }
             }
         }

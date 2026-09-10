@@ -4,7 +4,9 @@ import com.kuikly.stockchat.data.provider.QuoteRepository
 import com.kuikly.stockchat.data.provider.SharedPreferencesQuoteCacheStore
 import com.kuikly.stockchat.data.provider.StockNewsProvider
 import com.kuikly.stockchat.data.provider.TencentQuoteProvider
+import com.kuikly.stockchat.data.provider.TencentIndexOverviewProvider
 import com.kuikly.stockchat.data.provider.EastMoneyInsightProvider
+import com.kuikly.stockchat.data.provider.FallbackMarketOverviewProvider
 import com.kuikly.stockchat.data.provider.MarketInsightRepository
 import com.kuikly.stockchat.data.provider.SecuritySearchProvider
 import com.kuikly.stockchat.data.storage.KeyValueStorage
@@ -42,7 +44,10 @@ class MarketDependencies(
                     onlineFundFlow = eastMoney,
                     onlineFundamentals = eastMoney,
                     onlineDisclosures = eastMoney,
-                    onlineMarket = eastMoney,
+                    onlineMarket = FallbackMarketOverviewProvider(
+                        primary = eastMoney,
+                        fallback = TencentIndexOverviewProvider(pagerId),
+                    ),
                     onlineIndustry = eastMoney,
                     onlineRatingSpectrum = eastMoney,
                 ),

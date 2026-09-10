@@ -253,7 +253,11 @@ private fun ViewContainer<*, *>.TapePill(
             // 选中态在 attr 内读 selected()（R1）：换选条目时所有胶囊重绘
             val sel = selected()?.id == item.id
             backgroundColor(if (sel) theme.brandSoft else theme.surfaceMuted)
-            if (sel) border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.6f)))
+            // 无条件全量赋值：取消选中要显式清边框，否则残留蓝框（同 ApiConfigPage）
+            border(
+                if (sel) Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.6f))
+                else Border(0f, BorderStyle.SOLID, Color(0L))
+            )
         }
         event {
             click { onTapItem(item) }

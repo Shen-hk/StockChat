@@ -147,7 +147,7 @@ class ChatViewModel(
             }
             activeTypewriter = typewriter
             provider.ask(
-                messages = ChatContext.build(messages, payload.systemNote(), note),
+                messages = ChatContext.build(messages, payload.systemNote(), note, payload.media),
                 onDelta = { delta ->
                     content += delta
                     typewriter.append(delta)

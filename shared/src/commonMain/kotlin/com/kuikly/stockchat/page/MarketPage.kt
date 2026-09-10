@@ -36,6 +36,7 @@ import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.data.provider.timeLabelOf
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.AppTopBarMetric
+import com.kuikly.stockchat.page.components.AtmosphereBackdrop
 import com.kuikly.stockchat.page.components.MarketNarrativeAxis
 import com.kuikly.stockchat.page.components.NewsMarquee
 import com.kuikly.stockchat.page.components.SourceStampLine
@@ -105,8 +106,6 @@ internal class MarketPage : BasePager() {
     private var tickPhase: Int by observable(0)
     private var tickDirection: Double by observable(0.0)
     private var tickRevision = 0
-    private var emotionPulse: Boolean by observable(false)
-    private var emotionPulseRevision = 0
     private var hotspots: HotspotSnapshot by observable(OfflineMarketInsightProvider().hotspotValue())
     private var expandedBoardLevel: Int by observable(-1)
     private var peek: MarketPeek? by observable(null)
@@ -529,9 +528,6 @@ internal class MarketPage : BasePager() {
             if (before != null && after != null && before != after) {
                 triggerTickFlash(after - before)
             }
-            if (shouldPulseShortTermAlert(previous, updated)) {
-                triggerEmotionPulse()
-            }
         }
     }
 
@@ -553,23 +549,6 @@ internal class MarketPage : BasePager() {
         setTimeout(80) { if (tickRevision == revision) tickPhase = 2 }
         setTimeout(300) { if (tickRevision == revision) tickPhase = 3 }
         setTimeout(600) { if (tickRevision == revision) tickPhase = 0 }
-    }
-
-    /** Two finite pulses only when a real short-term warning newly appears or deepens. */
-    private fun shouldPulseShortTermAlert(before: MarketOverview, after: MarketOverview): Boolean {
-        val sealWorsened = (after.sealRate ?: 1.0) < 0.80 && (before.sealRate ?: 1.0) >= 0.80
-        val boardDropped = before.highestBoard != null && after.highestBoard != null && after.highestBoard <= before.highestBoard - 2
-        return sealWorsened || boardDropped
-    }
-
-    private fun triggerEmotionPulse() {
-        if (!motionEnabled()) return
-        emotionPulseRevision += 1
-        val revision = emotionPulseRevision
-        emotionPulse = true
-        setTimeout(300) { if (emotionPulseRevision == revision) emotionPulse = false }
-        setTimeout(600) { if (emotionPulseRevision == revision) emotionPulse = true }
-        setTimeout(900) { if (emotionPulseRevision == revision) emotionPulse = false }
     }
 
     private fun toggleBoardLevel(level: Int) {
@@ -777,6 +756,13 @@ internal class MarketPage : BasePager() {
         val page = this
         return {
             attr { backgroundColor(page.theme.page) }
+            // 氛围底（同详情页 AtmosphereBackdrop）：市场火热→红、冷淡→绿、均衡中性，
+            // moodScore（含历史回放帧）在 Canvas draw 闭包内驱动换色；垫层声明在
+            // Scroller 之前，垫在全部滚动内容之下。
+            AtmosphereBackdrop(
+                toneSoft = { page.marketToneSoft() },
+                pageColor = { page.theme.page },
+            )
             Scroller {
                 // 竖向 Scroller 水平 padding 会被双倍扣除，14/14 时右侧多出 28dp 留白；
                 // 右 padding 留 0，左右各 14dp 对齐（同 ChatPage）。
@@ -1006,7 +992,9 @@ internal class MarketPage : BasePager() {
                     MarketSectionTitle("关键时刻", "端侧事件检测 · 点卡跳帧", theme)
                         Scroller {
                         attr { flexDirectionRow(); height(96f); showScrollerIndicator(false) }
-                        vbind({ page.snapshotFrames.size to page.scrubMinute }) {
+                        // key 只挂帧数：scrub 变化由卡片 border 的 attr 响应式读就地更新，
+                        // 拖动中不再整排销毁重建（拖动流畅性）。
+                        vbind({ page.snapshotFrames.size }) {
                             page.cachedEvents.forEach { event ->
                                 View {
                                     attr {
@@ -1052,11 +1040,18 @@ internal class MarketPage : BasePager() {
                     vif({ page.cachedEvents.isNotEmpty() }) {
                         View { attr { marginTop(8f); padding(9f); borderRadius(10f); backgroundColor(theme.surface) }
                             Text { attr { text("每句话都是一个时间锚点，点了就走过去"); fontSizeScaled(9.5f); color(theme.textTertiary) } }
-                            vbind({ page.snapshotFrames.size to page.scrubMinute }) {
+                            // key 只挂帧数：点亮态由各 attr 内读 scrubMinute 就地切换，
+                            // 拖动中不重建行（lit 不能留在 builder 闭包——那是首帧快照）。
+                            vbind({ page.snapshotFrames.size }) {
                                 page.cachedEvents.take(3).forEach { event ->
-                                    val lit = page.scrubMinute >= event.segStart && page.scrubMinute <= event.segEnd
-                                    View { attr { marginTop(6f); paddingLeft(7f); borderLeft(Border(2f, BorderStyle.SOLID, if (lit) theme.brand else theme.divider)); backgroundColor(if (lit) theme.brandSoft else theme.brandSoft.opacity(0f)) }
-                                        Text { attr { text("${event.timeLabel} ${event.title}：${event.fact} ›"); fontSizeScaled(10.5f); lineHeightScaled(16f); color(if (lit) theme.textPrimary else theme.textSecondary) } }
+                                    View { attr {
+                                        val lit = page.scrubMinute >= event.segStart && page.scrubMinute <= event.segEnd
+                                        marginTop(6f); paddingLeft(7f); borderLeft(Border(2f, BorderStyle.SOLID, if (lit) theme.brand else theme.divider)); backgroundColor(if (lit) theme.brandSoft else theme.brandSoft.opacity(0f))
+                                    }
+                                        Text { attr {
+                                            val lit = page.scrubMinute >= event.segStart && page.scrubMinute <= event.segEnd
+                                            text("${event.timeLabel} ${event.title}：${event.fact} ›"); fontSizeScaled(10.5f); lineHeightScaled(16f); color(if (lit) theme.textPrimary else theme.textSecondary)
+                                        } }
                                         event { click { page.scrubTo(event.segStart) } }
                                     }
                                 }
@@ -1177,24 +1172,17 @@ internal class MarketPage : BasePager() {
                         }
                         // 短线情绪四维：单块玻璃面板 + 发丝竖线（不是四张卡）
                         View { attr { marginTop(13f); paddingTop(12f); borderTop(Border(1f, BorderStyle.SOLID, theme.divider)); flexDirectionRow() }
+                            // 四维统一素色（发丝线分格）：右侧两格不再填充警示底色——
+                            // 填充态与相邻格视觉粘连（用户反馈 2026-09-10）。
                             (0..3).forEach { index ->
                                 View {
                                     attr {
                                         flex(1f); paddingLeft(if (index == 0) 0f else 7f); paddingRight(7f)
                                         if (index < 3) borderRight(Border(0.5f, BorderStyle.SOLID, theme.divider))
-                                        if (page.shortTermAlert() && index >= 2) {
-                                            borderRadius(8f)
-                                            backgroundColor(theme.fall)
-                                            if (page.motionEnabled()) {
-                                                val pulsing = page.emotionPulse
-                                                transform(scale = Scale(if (pulsing) 1.03f else 1f, if (pulsing) 1.03f else 1f))
-                                                animate(Animation.easeOut(0.60f), page.emotionPulse)
-                                            }
-                                        }
                                     }
-                                    Text { attr { text(page.shortTermMetric(index).first); fontSizeScaled(10f); color(if (page.shortTermAlert() && index >= 2) theme.onBrand.opacity(0.78f) else theme.textTertiary) } }
-                                    Text { attr { text(page.shortTermMetric(index).second); marginTop(7f); fontSizeScaled(17f); fontWeightBold(); color(if (page.shortTermAlert() && index >= 2) theme.onBrand else if (index == 0) theme.rise else if (index == 1) theme.fall else theme.textPrimary) } }
-                                    Text { attr { text(page.shortTermMetric(index).third); marginTop(4f); fontSizeScaled(8.5f); lineHeightScaled(12f); color(if (page.shortTermAlert() && index >= 2) theme.onBrand.opacity(0.76f) else theme.textTertiary) } }
+                                    Text { attr { text(page.shortTermMetric(index).first); fontSizeScaled(10f); color(theme.textTertiary) } }
+                                    Text { attr { text(page.shortTermMetric(index).second); marginTop(7f); fontSizeScaled(17f); fontWeightBold(); color(if (index == 0) theme.rise else if (index == 1) theme.fall else theme.textPrimary) } }
+                                    Text { attr { text(page.shortTermMetric(index).third); marginTop(4f); fontSizeScaled(8.5f); lineHeightScaled(12f); color(theme.textTertiary) } }
                                     event {
                                         click {
                                             val value = page.shortTermMetric(index).second
@@ -1321,22 +1309,26 @@ internal class MarketPage : BasePager() {
                                     }
                                 }
                                 Text { attr { text(if (level == 1) "首板" else "${level}板"); width(34f); fontSizeScaled(10f); color(theme.textSecondary) } }
-                                View {
-                                    attr {
-                                        val count = page.ladderCount(level)
-                                        width(if (count > 0) (180f * count / page.ladderMax()).coerceAtLeast(15f) else 15f)
-                                        height(20f)
-                                        borderRadius(5f)
-                                        backgroundColor(if (count > 0) theme.rise.opacity(0.25f + index * 0.12f) else theme.surfaceMuted)
-                                        if (page.motionEnabled()) {
-                                            val expanded = page.expandedBoardLevel == level
-                                            transform(scale = Scale(if (expanded) 1.03f else 1f, if (expanded) 1.03f else 1f))
-                                            animate(Animation.easeOut(0.18f), page.expandedBoardLevel)
+                                // 条上不写字：家数标注在条右侧（窄条时柱内数字会被裁切、
+                                // 视觉贴字，用户反馈 2026-09-10）。轨道固定 180f，条宽仍编码家数。
+                                View { attr { width(180f); height(20f) }
+                                    View {
+                                        attr {
+                                            val count = page.ladderCount(level)
+                                            width(if (count > 0) (180f * count / page.ladderMax()).coerceAtLeast(15f) else 15f)
+                                            height(20f)
+                                            borderRadius(5f)
+                                            backgroundColor(if (count > 0) theme.rise.opacity(0.25f + index * 0.12f) else theme.surfaceMuted)
+                                            if (page.motionEnabled()) {
+                                                val expanded = page.expandedBoardLevel == level
+                                                transform(scale = Scale(if (expanded) 1.03f else 1f, if (expanded) 1.03f else 1f))
+                                                animate(Animation.easeOut(0.18f), page.expandedBoardLevel)
+                                            }
                                         }
+                                        event { click { page.toggleBoardLevel(level) }; longPress { params -> if (params.state == "start") page.showBoardPeek(level) } }
                                     }
-                                    Text { attr { text(page.ladderCount(level).let { if (it > 0) " $it" else " —" }); fontSizeScaled(10f); fontWeightSemiBold(); color(if (page.ladderCount(level) > 0) theme.rise else theme.textTertiary) } }
-                                    event { click { page.toggleBoardLevel(level) }; longPress { params -> if (params.state == "start") page.showBoardPeek(level) } }
                                 }
+                                Text { attr { text(page.ladderCount(level).let { if (it > 0) "$it 家" else "—" }); marginLeft(8f); fontSizeScaled(10f); fontWeightSemiBold(); color(if (page.ladderCount(level) > 0) theme.rise else theme.textTertiary) } }
                             }
                             vif({ page.expandedBoardLevel == level }) {
                                 View { attr { marginLeft(34f); marginTop(5f); padding(8f); borderRadius(8f); backgroundColor(theme.riseSoft); opacity(0.96f) }
@@ -1344,7 +1336,7 @@ internal class MarketPage : BasePager() {
                                 }
                             }
                         }
-                        Text { attr { text("条宽表示涨停池样本家数 · 点按展开样本 · 长按快速预览"); marginTop(10f); fontSizeScaled(10f); color(theme.textTertiary) } }
+                        Text { attr { text("条宽表示涨停池样本家数 · 家数标注在条右侧 · 点按展开样本 · 长按快速预览"); marginTop(10f); fontSizeScaled(10f); color(theme.textTertiary) } }
                     }
                 }
 
@@ -1555,7 +1547,10 @@ internal class MarketPage : BasePager() {
                         )
                     }
                 },
-                actions = listOf("刷新" to { page.refreshOverview() }, "日历" to { page.openPage(Routes.CALENDAR) }),
+                actions = listOf(
+                    { "刷新" } to { page.refreshOverview() },
+                    { "日历" } to { page.openPage(Routes.CALENDAR) },
+                ),
             )
         }
     }
@@ -1587,9 +1582,6 @@ internal class MarketPage : BasePager() {
         return (volume / average - 1) * 100
     }
 
-    /** L2 significance gate: the seal rate falling under 80% is a real warning. */
-    private fun shortTermAlert(): Boolean = (displayOverview().sealRate ?: 1.0) < 0.80
-
     private fun shortTermMetric(index: Int): Triple<String, String, String> {
         val data = displayOverview()
         return when (index) {
@@ -1619,6 +1611,17 @@ internal class MarketPage : BasePager() {
         else -> "市场热度较高，分化仍在"
     }
     private fun moodColor(score: Int): Color = if (score >= 50) theme.rise else theme.fall
+
+    /**
+     * 氛围底软色：火热（偏暖/较热）→ riseSoft 红、冷淡（偏弱/偏冷）→ fallSoft 绿、
+     * 均衡 → surfaceMuted 中性（渐变自然退化为极浅灰）。阈值对齐 moodLabel 分档。
+     * 读 displayOverview()（scrub 中跟随历史回放帧换色），供 Canvas draw 闭包调用。
+     */
+    private fun marketToneSoft(): Color = when (displayOverview().moodScore) {
+        in 61..100 -> theme.riseSoft
+        in 0..45 -> theme.fallSoft
+        else -> theme.surfaceMuted
+    }
     private fun threshold(change: Double?): String = when { change == null -> "关口待接入"; change <= -2 -> "关键关口承压"; change >= 2 -> "关键关口走强"; else -> "关口附近震荡" }
     private fun marketPhase(): MarketPhase = when (platformCurrentHour().coerceIn(0, 23)) { in 0..8 -> MarketPhase("盘前准备", false, "开盘前数据不代表成交结果"); 9 -> MarketPhase("集合竞价", true, "竞价阶段可能出现虚假大单，需以连续交易为准"); in 10..11 -> MarketPhase("早盘连续交易", true, null); 12 -> MarketPhase("午间休市", false, "休市期间行情静止，并非数据故障"); in 13..14 -> MarketPhase("午后连续交易", true, null); 15 -> MarketPhase("收盘集合 / 复盘", false, "收盘数据正在汇总"); in 16..18 -> MarketPhase("盘后静默期", false, "盘后数据可能陆续修订"); else -> MarketPhase("非交易时段", false, "显示最近一个交易日数据") }
     private data class MarketPhase(val label: String, val live: Boolean, val notice: String?)

@@ -66,15 +66,24 @@ fun ViewContainer<*, *>.CardShell(model: CardModel, context: CardContext, pinned
             opacity(if (dimmed) 0.35f else 1f)
             transform(scale = if (focused) Scale(1.04f, 1.04f) else Scale.DEFAULT)
             animate(Animation.easeOut(0.2f), focused)
-            if (focused || compareSelected) border(Border(2f, BorderStyle.SOLID, theme.brand))
-            else if (pinnedRing && context.density != CardDensity.MINI) {
-                // doc 29 E1 置顶卡描边：直接画在卡自身边框上。v1.0 画在外层 wrapper，
-                // 与卡片之间隔着标签与边距，光圈外一圈留白、视觉上不贴合。
-                border(Border(1.2f, BorderStyle.SOLID, theme.brand.opacity(0.5f)))
-            } else if (context.density != CardDensity.MINI) {
-                val edge = context.glass.resolve(theme.glass.cardEdge)
-                border(Border(edge.strokeWidth, BorderStyle.SOLID, Color(0xFFFFFF, edge.strokeAlpha)))
-            }
+            // 边框无条件全量赋值（when 保证每个分支都有 border 调用）：取消
+            // focused/选中时必须显式覆盖，否则上次的 brand 描边会残留
+            // （MINI 密度又没有默认玻璃描边分支，残留最明显）。
+            border(
+                when {
+                    focused || compareSelected -> Border(2f, BorderStyle.SOLID, theme.brand)
+                    pinnedRing && context.density != CardDensity.MINI -> {
+                        // doc 29 E1 置顶卡描边：直接画在卡自身边框上。v1.0 画在外层 wrapper，
+                        // 与卡片之间隔着标签与边距，光圈外一圈留白、视觉上不贴合。
+                        Border(1.2f, BorderStyle.SOLID, theme.brand.opacity(0.5f))
+                    }
+                    context.density != CardDensity.MINI -> {
+                        val edge = context.glass.resolve(theme.glass.cardEdge)
+                        Border(edge.strokeWidth, BorderStyle.SOLID, Color(0xFFFFFF, edge.strokeAlpha))
+                    }
+                    else -> Border(0f, BorderStyle.SOLID, Color(0L))
+                }
+            )
             if (focusEnabled) capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
         }
         if (focusEnabled) {

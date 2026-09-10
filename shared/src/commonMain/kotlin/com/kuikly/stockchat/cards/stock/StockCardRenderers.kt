@@ -27,6 +27,7 @@ import com.kuikly.stockchat.common.Format
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.event.TouchParams
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.timer.setTimeout
 import com.tencent.kuikly.core.views.Canvas
@@ -35,7 +36,9 @@ import com.tencent.kuikly.core.views.TextAlign
 import com.tencent.kuikly.core.views.View
 import kotlin.math.PI
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 object StockCardRenderers {
     private var registered = false
@@ -213,22 +216,26 @@ object StockChartCardRenderer : CardRenderer {
 }
 
 /**
- * 日/周/月 K 线图 —— Canvas 自绘（2026-09-09 对齐分时图 DetailTimelineChart 的视觉与交互语言）：
- *  - 真蜡烛身（涨红/跌绿实心 + 影线），弃旧「粗线当实体」画法；
- *  - 红绿量能副图（收≥开红，否则绿）；
- *  - 高/低价位角标、轻网格；
- *  - 十字线：过选中蜡烛的竖虚线（贯穿价量两区）+ 收价水平虚线 + 收价空心点 +
- *    端边读数（右侧贴边显示 收价 与 对前收涨跌幅）；
- *  - 图下随值数据行：定位日期 + 涨跌幅 + 收价，开/高/低/量四格，MA5/10/20 彩色数值，
- *    全部跟随十字线所在蜡烛（默认最新一根）。
+ * 日/周/月 K 线图 —— Canvas 自绘（2026-09-09 对齐分时图视觉语言）+ 可视窗口缩放拖动
+ * （2026-09-10 对齐主流行情 App 交互，用户要求）：
  *
- * 交互：详情页传入 selectedIndex/onSelectIndex 时由页侧持有选中态（pan 跟随 + 点按定位）；
- * selectedIndex 是 lambda（`{ page.selectedKLineIndex }`），在 draw / attr 反应式闭包内经
- * [effectiveSel] 调用读取——旧版按值传参只拿到初始快照，pan 后图内不重绘（R1 教训，2026-09-09）。
- * 聊天卡片态（onSelectIndex == null）组件内部自持选中态，点按选中/再点同根回到最新
- * （click 而非 pan——pan 挂在聊天 Scroller 子视图上会锁死纵向滚动，见 KuiklyTimelineChart 注）。
- * 状态存 [KLineChartState.selected]（observable），draw 闭包与随值行 attr 闭包内读取建立
- * 响应式依赖（R1）；无 attr animate，不涉及 R5。
+ * 数据模型：全量 K 线进内存（腾讯日K 240 根 / 周K 120 / 月K 60），图表只画
+ * [KLineChartState.windowStart, windowStart + windowCount) 窗口内的蜡烛。
+ * 默认窗口 = 最近 60/52/48 根（与旧版 takeLast 截断观感一致），缩小（捏开）可见
+ * 全量历史，放大（捏合）最少 K_MIN_VISIBLE 根；价量纵轴按窗口内极值自适应重定标。
+ *
+ * 手势（仅详情页交互态 onSelectIndex != null；聊天卡片态只保留点按选中）：
+ *  - 双指捏合：两指间距驱动窗口根数，锚定捏合中点所在蜡烛不随缩放漂移；
+ *    捏合期间回调 onZoomActive(true) 锁外层 Scroller（两指会被原生滚动接管，
+ *    分时图 onScrubActive 同款机制），松一指/松手恢复；
+ *  - 单指拖动：十字线立即跟随手指；拖出窗口边缘时窗口整体跟随平移（带图滚动）。
+ *    单指不锁 Scroller——竖向 Scroller 不拦截横向位移，纵向拖动仍滚动页面；
+ *  - touch 流挂同尺寸手势覆盖层 View（Canvas 本体 touchEnable(false)，
+ *    DetailTimelineChart 同款范式；多指按 TouchParams.touches/pointerId 同步）。
+ *
+ * 绘制：真蜡烛身（涨红/跌绿实心 + 影线）、红绿量能副图、MA5/10/20、轻网格、
+ * 高/低价位角标（窗口极值）、十字线（竖虚线贯穿价量两区 + 收价水平虚线 +
+ * 收价空心点 + 端边读数）与三行随值数据行，全部随十字线/窗口反应式刷新（R1）。
  */
 internal fun KLineChart(
     container: ViewContainer<*, *>,
@@ -237,20 +244,23 @@ internal fun KLineChart(
     selectedIndex: () -> Int = { -1 },
     onSelectIndex: ((Int) -> Unit)? = null,
     chartHeight: Float = K_COMPACT_CHART_HEIGHT,
+    onZoomActive: ((Boolean) -> Unit)? = null,
 ) {
     val sourceLines = when (model.period) {
         StockChartPeriod.DAY -> model.quote.kLines
         StockChartPeriod.WEEK -> model.quote.weekKLines.ifEmpty { KLineCalculator.aggregate(model.quote.kLines, model.period.grouping) }
         StockChartPeriod.MONTH -> model.quote.monthKLines.ifEmpty { KLineCalculator.aggregate(model.quote.kLines, model.period.grouping) }
     }
-    val maxVisible = when (model.period) {
+    // 默认可视根数（旧版 takeLast 截断档位，初始观感不变）
+    val defaultVisible = when (model.period) {
         StockChartPeriod.DAY -> 60
         StockChartPeriod.WEEK -> 52
         StockChartPeriod.MONTH -> 48
     }
-    val lines = sourceLines.takeLast(maxVisible)
+    val lines = sourceLines
     val allMovingAverages = listOf(5, 10, 20).associateWith { period ->
-        KLineCalculator.movingAverage(sourceLines, period).takeLast(lines.size)
+        // 全长 MA（与 lines 同下标对齐），窗口只裁绘不裁数据
+        KLineCalculator.movingAverage(sourceLines, period)
     }
     val theme = context.theme
     if (lines.isEmpty()) {
@@ -276,6 +286,9 @@ internal fun KLineChart(
 
     // 选中态：外部传入（详情页，lambda 在反应式闭包内调用）优先；卡片态读内部 observable（R1）。
     val state = KLineChartState()
+    state.windowCount = min(defaultVisible, lines.size)
+    state.windowStart = (lines.size - state.windowCount).coerceAtLeast(0)
+
     fun effectiveSel(): Int =
         (if (onSelectIndex != null) selectedIndex() else state.selected)
             .takeIf { it in lines.indices } ?: lines.lastIndex
@@ -289,153 +302,300 @@ internal fun KLineChart(
     fun toneOf(i: Int) = if (lines[i].close >= lines[i].open) theme.rise else theme.fall
 
     var measuredWidth = 0f
-    fun resolveIndex(x: Float): Int {
-        val safeWidth = measuredWidth.coerceAtLeast(1f)
-        val step = safeWidth / lines.size
-        return (x / step).toInt().coerceIn(0, lines.lastIndex)
+
+    // ── 手势几何（仅详情页交互态；覆盖层 event 闭包内调用）──
+    val pointers = HashMap<Long, Pair<Float, Float>>()
+    var pinchBaseDist = 0f
+    var pinchBaseCount = 0
+    var pinchAnchorX = 0f
+    var pinchAnchorIdx = 0
+    var crosshairDragging = false
+    var zooming = false
+
+    fun dist(a: Pair<Float, Float>, b: Pair<Float, Float>): Float {
+        val dx = a.first - b.first
+        val dy = a.second - b.second
+        return sqrt(dx * dx + dy * dy)
     }
-    container.Canvas({
-        attr { height(chartHeight); marginTop(10f); alignSelfStretch(); touchEnable(true) }
-        event {
-            if (onSelectIndex != null) {
-                click { params -> onSelectIndex(resolveIndex(params.x)) }
-                pan { params ->
-                    if (!params.isEnd) onSelectIndex(resolveIndex(params.x))
+
+    /** 多指同步：touches（全量当前触点）合并进表，再加本次回调主触点。 */
+    fun mergePointers(e: TouchParams) {
+        e.touches.forEach { t -> pointers[t.pointerId] = t.x to t.y }
+        pointers[e.pointerId.toLong()] = e.x to e.y
+    }
+
+    /** 抬指同步：先移除主触点，再以剩余 touches 重建（防幽灵指针卡住捏合态）。 */
+    fun dropPointer(e: TouchParams) {
+        pointers.remove(e.pointerId.toLong())
+        e.touches.forEach { t ->
+            if (t.pointerId != e.pointerId.toLong()) pointers[t.pointerId] = t.x to t.y
+        }
+    }
+
+    fun beginPinch() {
+        val pts = pointers.values.toList()
+        if (pts.size < 2) return
+        val w = measuredWidth.coerceAtLeast(1f)
+        pinchBaseDist = dist(pts[0], pts[1]).coerceAtLeast(1f)
+        pinchBaseCount = state.windowCount
+        pinchAnchorX = (pts[0].first + pts[1].first) / 2f
+        pinchAnchorIdx = state.windowStart +
+            (pinchAnchorX / w * pinchBaseCount).roundToInt().coerceIn(0, state.windowCount - 1)
+        zooming = true
+        onZoomActive?.invoke(true)
+    }
+
+    /** 间距比 → 窗口根数；锚定蜡烛保持原 x 位置（newStart = anchorIdx - frac·newCount）。 */
+    fun applyPinch() {
+        if (!zooming || pinchBaseDist <= 0f) return
+        val pts = pointers.values.toList()
+        if (pts.size < 2) return
+        val ratio = dist(pts[0], pts[1]) / pinchBaseDist
+        val newCount = (pinchBaseCount / ratio).roundToInt()
+            .coerceIn(min(K_MIN_VISIBLE, lines.size), lines.size)
+        if (newCount == state.windowCount) return
+        val w = measuredWidth.coerceAtLeast(1f)
+        state.windowStart = (pinchAnchorIdx - pinchAnchorX / w * newCount)
+            .roundToInt().coerceIn(0, lines.size - newCount)
+        state.windowCount = newCount
+    }
+
+    fun endZoom() {
+        if (zooming) {
+            zooming = false
+            onZoomActive?.invoke(false)
+        }
+        pinchBaseDist = 0f
+    }
+
+    /** 十字线跟随手指；拖出窗口边缘则窗口整体平移（带图滚动，主流 App 手感）。 */
+    fun followCrosshair(x: Float) {
+        val raw = (state.windowStart +
+            (x / measuredWidth.coerceAtLeast(1f) * state.windowCount).toInt())
+            .coerceIn(0, lines.lastIndex)
+        val end = state.windowStart + state.windowCount - 1
+        when {
+            raw < state.windowStart -> state.windowStart = raw
+            raw > end -> state.windowStart = (raw - state.windowCount + 1).coerceAtLeast(0)
+        }
+        onSelectIndex?.invoke(raw)
+    }
+
+    container.View {
+        attr {
+            height(chartHeight)
+            marginTop(10f)
+            alignSelfStretch()
+        }
+        // Canvas 只负责绘制：touch 事件在 GroupEvent 上，Canvas 本体不吃触摸，
+        // 手势统一由上方同尺寸覆盖层承担（DetailTimelineChart 同款范式）。
+        Canvas({
+            attr {
+                absolutePositionAllZero()
+                height(chartHeight)
+                touchEnable(false)
+            }
+        }) { canvas, width, height ->
+            measuredWidth = width
+            if (lines.isEmpty() || width <= 0f) return@Canvas
+            // 图表可在详情页扩展至与分时图同高；所有价量坐标按当前 Canvas 高度同比放大。
+            val heightScale = height / K_COMPACT_CHART_HEIGHT
+            val priceHeight = K_COMPACT_PRICE_H * heightScale
+            val volumeTop = K_COMPACT_VOL_TOP * heightScale
+            val volumeHeight = K_COMPACT_VOL_H * heightScale
+            // 可视窗口（R1：windowStart/windowCount 是 observable，捏合/拖动改写即重绘）
+            val count = state.windowCount.coerceIn(1, lines.size)
+            val start = state.windowStart.coerceIn(0, lines.size - count)
+            val endIdx = start + count - 1
+            val step = width / count
+            fun xOf(i: Int) = (i - start) * step + step / 2f
+            val bodyW = (step * 0.66f).coerceIn(1.2f, 9f)
+            // 价量纵轴按可视窗口内极值自适应（主流 App 口径：缩放后重定标）
+            val window = lines.subList(start, endIdx + 1)
+            val low = window.minOf { it.low }
+            val high = window.maxOf { it.high }
+            val range = (high - low).coerceAtLeast(0.0001)
+            fun y(value: Double) = ((high - value) / range * (priceHeight - 8f * heightScale) + 4f * heightScale).toFloat()
+
+            // ── 轻网格：价格区 25/50/75% 三条横线（0.5f，与分时图同款）──
+            canvas.lineWidth(0.5f)
+            canvas.strokeStyle(theme.divider)
+            listOf(0.25f, 0.5f, 0.75f).forEach { ratio ->
+                val gy = priceHeight * ratio
+                canvas.beginPath()
+                canvas.moveTo(0f, gy)
+                canvas.lineTo(width, gy)
+                canvas.stroke()
+            }
+
+            // ── 蜡烛：影线 1f + 实心蜡烛身（涨红/跌绿；十字星以 1.2f 最小高度呈现）──
+            for (index in start..endIdx) {
+                val line = lines[index]
+                val cx = xOf(index)
+                val color = if (line.close >= line.open) theme.rise else theme.fall
+                canvas.beginPath()
+                canvas.moveTo(cx, y(line.high))
+                canvas.lineTo(cx, y(line.low))
+                canvas.strokeStyle(color)
+                canvas.lineWidth(1f)
+                canvas.stroke()
+                val top = minOf(y(line.open), y(line.close))
+                val bodyH = (maxOf(y(line.open), y(line.close)) - top).coerceAtLeast(1.2f)
+                canvas.beginPath()
+                canvas.moveTo(cx - bodyW / 2f, top)
+                canvas.lineTo(cx + bodyW / 2f, top)
+                canvas.lineTo(cx + bodyW / 2f, top + bodyH)
+                canvas.lineTo(cx - bodyW / 2f, top + bodyH)
+                canvas.closePath()
+                canvas.fillStyle(color)
+                canvas.fill()
+            }
+
+            // ── 量能副图：红绿量能条（收≥开红，否则绿）──
+            val maxVol = window.maxOf { it.volume }.coerceAtLeast(1.0)
+            for (index in start..endIdx) {
+                val line = lines[index]
+                val h = (line.volume / maxVol * volumeHeight).toFloat().coerceIn(1f, volumeHeight)
+                val bx = xOf(index) - bodyW / 2f
+                val by = volumeTop + volumeHeight - h
+                canvas.beginPath()
+                canvas.moveTo(bx, by)
+                canvas.lineTo(bx + bodyW, by)
+                canvas.lineTo(bx + bodyW, by + h)
+                canvas.lineTo(bx, by + h)
+                canvas.closePath()
+                canvas.fillStyle(if (line.close >= line.open) theme.rise.opacity(0.62f) else theme.fall.opacity(0.62f))
+                canvas.fill()
+            }
+
+            // ── MA5 / MA10 / MA20（全长序列，只绘窗口段）──
+            listOf(5 to theme.brand, 10 to theme.textSecondary, 20 to theme.textTertiary).forEach { (period, color) ->
+                val values = allMovingAverages.getValue(period)
+                canvas.beginPath()
+                var started = false
+                for (index in start..endIdx) {
+                    val value = values.getOrNull(index)
+                    if (value != null) {
+                        val mx = xOf(index)
+                        if (!started) { canvas.moveTo(mx, y(value)); started = true } else canvas.lineTo(mx, y(value))
+                    }
                 }
-            } else {
-                // 卡片态：点按选中，再点同根回到最新（-1 → effectiveSel 回落到 lastIndex）
-                click { params ->
-                    val idx = resolveIndex(params.x)
-                    state.selected = if (state.selected == idx) -1 else idx
+                if (started) { canvas.strokeStyle(color); canvas.lineWidth(1.3f); canvas.stroke() }
+            }
+
+            // ── 高/低价位角标（可视窗口极值，看数据不点也能读）──
+            canvas.font(9f)
+            canvas.fillStyle(theme.textTertiary)
+            canvas.fillText("高 ${Format.price(high)}", 2f, 11f * heightScale)
+            canvas.fillText("低 ${Format.price(low)}", 2f, priceHeight - 5f * heightScale)
+
+            // ── 十字线：竖虚线贯穿价量两区 + 收价水平虚线 + 收价空心点 + 右端读数 ──
+            // 选中蜡烛被缩放移出窗口时不绘（随值行仍显示其数值）。
+            val sel = effectiveSel()
+            if (sel in start..endIdx) {
+                val selLine = lines[sel]
+                val cx = xOf(sel)
+                val closeY = y(selLine.close)
+                val tone = toneOf(sel)
+                canvas.setLineDash(listOf(4f, 5f))
+                canvas.beginPath()
+                canvas.moveTo(cx, 0f)
+                canvas.lineTo(cx, volumeTop + volumeHeight)
+                canvas.strokeStyle(theme.textTertiary.opacity(0.5f))
+                canvas.lineWidth(0.8f)
+                canvas.stroke()
+                canvas.beginPath()
+                canvas.moveTo(0f, closeY)
+                canvas.lineTo(width, closeY)
+                canvas.strokeStyle(theme.textTertiary.opacity(0.35f))
+                canvas.lineWidth(1f)
+                canvas.stroke()
+                canvas.setLineDash(emptyList())
+                canvas.beginPath()
+                canvas.arc(cx, closeY, 3f, 0f, (2 * PI).toFloat(), false)
+                canvas.fillStyle(theme.marketGlass)
+                canvas.fill()
+                canvas.lineWidth(1.4f)
+                canvas.strokeStyle(tone)
+                canvas.stroke()
+                // 端边读数：收价 + 对前收涨跌幅，贴右缘；贴近顶部时改放线下方防裁切
+                canvas.font(9f)
+                canvas.fillStyle(tone)
+                canvas.textAlign(TextAlign.RIGHT)
+                val readY = if (closeY < 20f) closeY + 13f else closeY - 5f
+                canvas.fillText("${Format.price(selLine.close)} ${Format.percent(pctOf(sel))}", width - 3f, readY)
+                canvas.textAlign(TextAlign.LEFT)
+            }
+        }
+        // ── 手势覆盖层（详情页：捏合缩放 + 拖动十字线；卡片态：点按选中）──
+        View {
+            attr {
+                absolutePositionAllZero()
+                height(chartHeight)
+                touchEnable(true)
+            }
+            event {
+                if (onSelectIndex != null) {
+                    touchDown { e ->
+                        mergePointers(e)
+                        if (pointers.size >= 2 && lines.size > K_MIN_VISIBLE) {
+                            crosshairDragging = false
+                            beginPinch()
+                        } else {
+                            crosshairDragging = true
+                            followCrosshair(e.x)
+                        }
+                    }
+                    touchMove { e ->
+                        mergePointers(e)
+                        if (zooming) {
+                            applyPinch()
+                        } else if (crosshairDragging && pointers.size == 1) {
+                            followCrosshair(pointers.values.first().first)
+                        }
+                    }
+                    touchUp { e ->
+                        dropPointer(e)
+                        if (pointers.size < 2) endZoom()
+                        // 捏合收一指 → 余指转为十字线拖动
+                        crosshairDragging = pointers.isNotEmpty()
+                    }
+                    touchCancel { _ ->
+                        pointers.clear()
+                        crosshairDragging = false
+                        endZoom()
+                    }
+                } else {
+                    // 卡片态：点按选中，再点同根回到最新（-1 → effectiveSel 回落到 lastIndex）
+                    click { params ->
+                        val idx = (state.windowStart +
+                            (params.x / measuredWidth.coerceAtLeast(1f) * state.windowCount).toInt())
+                            .coerceIn(0, lines.lastIndex)
+                        state.selected = if (state.selected == idx) -1 else idx
+                    }
                 }
             }
         }
-    }) { canvas, width, height ->
-        measuredWidth = width
-        if (lines.isEmpty() || width <= 0f) return@Canvas
-        // 图表可在详情页扩展至与分时图同高；所有价量坐标按当前 Canvas 高度同比放大，
-        // 不会出现只放大容器、蜡烛仍挤在顶部的空白区域。
-        val heightScale = height / K_COMPACT_CHART_HEIGHT
-        val priceHeight = K_COMPACT_PRICE_H * heightScale
-        val volumeTop = K_COMPACT_VOL_TOP * heightScale
-        val volumeHeight = K_COMPACT_VOL_H * heightScale
-        val low = lines.minOf { it.low }
-        val high = lines.maxOf { it.high }
-        val range = (high - low).coerceAtLeast(0.0001)
-        fun y(value: Double) = ((high - value) / range * (priceHeight - 8f * heightScale) + 4f * heightScale).toFloat()
-        val step = width / lines.size
-        fun xOf(i: Int) = step * i + step / 2f
-        val bodyW = (step * 0.66f).coerceIn(1.2f, 9f)
-
-        // ── 轻网格：价格区 25/50/75% 三条横线（0.5f，与分时图同款）──
-        canvas.lineWidth(0.5f)
-        canvas.strokeStyle(theme.divider)
-        listOf(0.25f, 0.5f, 0.75f).forEach { ratio ->
-            val gy = priceHeight * ratio
-            canvas.beginPath()
-            canvas.moveTo(0f, gy)
-            canvas.lineTo(width, gy)
-            canvas.stroke()
-        }
-
-        // ── 蜡烛：影线 1f + 实心蜡烛身（涨红/跌绿；十字星以 1.2f 最小高度呈现）──
-        lines.forEachIndexed { index, line ->
-            val cx = xOf(index)
-            val color = if (line.close >= line.open) theme.rise else theme.fall
-            canvas.beginPath()
-            canvas.moveTo(cx, y(line.high))
-            canvas.lineTo(cx, y(line.low))
-            canvas.strokeStyle(color)
-            canvas.lineWidth(1f)
-            canvas.stroke()
-            val top = minOf(y(line.open), y(line.close))
-            val bodyH = (maxOf(y(line.open), y(line.close)) - top).coerceAtLeast(1.2f)
-            canvas.beginPath()
-            canvas.moveTo(cx - bodyW / 2f, top)
-            canvas.lineTo(cx + bodyW / 2f, top)
-            canvas.lineTo(cx + bodyW / 2f, top + bodyH)
-            canvas.lineTo(cx - bodyW / 2f, top + bodyH)
-            canvas.closePath()
-            canvas.fillStyle(color)
-            canvas.fill()
-        }
-
-        // ── 量能副图：红绿量能条（收≥开红，否则绿）──
-        val maxVol = lines.maxOf { it.volume }.coerceAtLeast(1.0)
-        lines.forEachIndexed { index, line ->
-            val h = (line.volume / maxVol * volumeHeight).toFloat().coerceIn(1f, volumeHeight)
-            val bx = xOf(index) - bodyW / 2f
-            val by = volumeTop + volumeHeight - h
-            canvas.beginPath()
-            canvas.moveTo(bx, by)
-            canvas.lineTo(bx + bodyW, by)
-            canvas.lineTo(bx + bodyW, by + h)
-            canvas.lineTo(bx, by + h)
-            canvas.closePath()
-            canvas.fillStyle(if (line.close >= line.open) theme.rise.opacity(0.62f) else theme.fall.opacity(0.62f))
-            canvas.fill()
-        }
-
-        // ── MA5 / MA10 / MA20 ──
-        listOf(5 to theme.brand, 10 to theme.textSecondary, 20 to theme.textTertiary).forEach { (period, color) ->
-            val values = allMovingAverages.getValue(period)
-            canvas.beginPath()
-            var started = false
-            values.forEachIndexed { index, value ->
-                if (value != null) {
-                    val mx = xOf(index)
-                    if (!started) { canvas.moveTo(mx, y(value)); started = true } else canvas.lineTo(mx, y(value))
-                }
-            }
-            if (started) { canvas.strokeStyle(color); canvas.lineWidth(1.3f); canvas.stroke() }
-        }
-
-        // ── 高/低价位角标（区间极值，看数据不点也能读）──
-        canvas.font(9f)
-        canvas.fillStyle(theme.textTertiary)
-        canvas.fillText("高 ${Format.price(high)}", 2f, 11f * heightScale)
-        canvas.fillText("低 ${Format.price(low)}", 2f, priceHeight - 5f * heightScale)
-
-        // ── 十字线：竖虚线贯穿价量两区 + 收价水平虚线 + 收价空心点 + 右端读数 ──
-        val sel = effectiveSel()
-        val selLine = lines[sel]
-        val cx = xOf(sel)
-        val closeY = y(selLine.close)
-        val tone = toneOf(sel)
-        canvas.setLineDash(listOf(4f, 5f))
-        canvas.beginPath()
-        canvas.moveTo(cx, 0f)
-        canvas.lineTo(cx, volumeTop + volumeHeight)
-        canvas.strokeStyle(theme.textTertiary.opacity(0.5f))
-        canvas.lineWidth(0.8f)
-        canvas.stroke()
-        canvas.beginPath()
-        canvas.moveTo(0f, closeY)
-        canvas.lineTo(width, closeY)
-        canvas.strokeStyle(theme.textTertiary.opacity(0.35f))
-        canvas.lineWidth(1f)
-        canvas.stroke()
-        canvas.setLineDash(emptyList())
-        canvas.beginPath()
-        canvas.arc(cx, closeY, 3f, 0f, (2 * PI).toFloat(), false)
-        canvas.fillStyle(theme.marketGlass)
-        canvas.fill()
-        canvas.lineWidth(1.4f)
-        canvas.strokeStyle(tone)
-        canvas.stroke()
-        // 端边读数：收价 + 对前收涨跌幅，贴右缘；贴近顶部时改放线下方防裁切
-        canvas.font(9f)
-        canvas.fillStyle(tone)
-        canvas.textAlign(TextAlign.RIGHT)
-        val readY = if (closeY < 20f) closeY + 13f else closeY - 5f
-        canvas.fillText("${Format.price(selLine.close)} ${Format.percent(pctOf(sel))}", width - 3f, readY)
-        canvas.textAlign(TextAlign.LEFT)
     }
-    // ── 首尾日期行 ──
+    // ── 首尾日期行（随可视窗口，attr 内读窗口 observable，R1）──
     container.View {
         attr { marginTop(5f); flexDirectionRow() }
-        Text { attr { text(lines.first().date); fontSizeScaled(9f); color(theme.textTertiary); flex(1f) } }
-        Text { attr { text(lines.last().date); fontSizeScaled(9f); color(theme.textTertiary); textAlignRight() } }
+        Text {
+            attr {
+                text(lines[state.windowStart.coerceIn(0, lines.lastIndex)].date)
+                fontSizeScaled(9f)
+                color(theme.textTertiary)
+                flex(1f)
+            }
+        }
+        Text {
+            attr {
+                text(lines[(state.windowStart + state.windowCount - 1).coerceIn(0, lines.lastIndex)].date)
+                fontSizeScaled(9f)
+                color(theme.textTertiary)
+                textAlignRight()
+            }
+        }
     }
     // ── 随值数据行 1：定位日期 + 涨跌幅 + 收价（attr 内读 effectiveSel 建立依赖，R1）──
     container.View {
@@ -519,10 +679,19 @@ internal fun KLineChart(
     }
 }
 
-/** K 线卡片态内部选中态（-1 = 未选中，跟随最新一根）；R1 响应式字段。 */
+/**
+ * K 线图交互状态（R1 响应式字段）：
+ *  - selected：卡片态选中（-1 = 未选中，跟随最新一根）；
+ *  - windowCount/windowStart：可视窗口（捏合/拖动改写 → draw 与随值行 attr 重跑）。
+ */
 private class KLineChartState {
     var selected by observable(-1)
+    var windowCount by observable(0)
+    var windowStart by observable(0)
 }
+
+/** 捏合放大后最少可见蜡烛根数（再少单根过宽，失真）。 */
+private const val K_MIN_VISIBLE = 20
 
 private const val K_COMPACT_CHART_HEIGHT = 168f
 private const val K_COMPACT_PRICE_H = 112f

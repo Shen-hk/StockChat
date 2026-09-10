@@ -63,7 +63,32 @@ class DeepSeekAiProvider(
         val payloadMessages = JSONArray().apply {
             put(JSONObject().apply { put("role", "system"); put("content", systemPrompt) })
             messages.forEach { message ->
-                put(JSONObject().apply { put("role", message.role); put("content", message.content) })
+                put(JSONObject().apply {
+                    put("role", message.role)
+                    if (message.media.isEmpty()) {
+                        put("content", message.content)
+                    } else {
+                        // OpenAI-compatible multimodal schema. MiMo V2.5 consumes image_url
+                        // natively; users should select a vision-capable model for other APIs.
+                        put("content", JSONArray().apply {
+                            put(JSONObject().apply { put("type", "text"); put("text", message.content) })
+                            message.media.forEach { part ->
+                                part.imageDataUrl?.let { dataUrl ->
+                                    put(JSONObject().apply {
+                                        put("type", "image_url")
+                                        put("image_url", JSONObject().apply { put("url", dataUrl) })
+                                    })
+                                }
+                                part.documentText?.takeIf { it.isNotBlank() }?.let { text ->
+                                    put(JSONObject().apply {
+                                        put("type", "text")
+                                        put("text", "【附件：${part.name}】\n$text")
+                                    })
+                                }
+                            }
+                        })
+                    }
+                })
             }
         }
         val body = JSONObject().apply {
@@ -136,6 +161,8 @@ class DeepSeekAiProvider(
             3. 只约束格式，不限制篇幅：不整句加粗，不使用分隔线（---、——）和多余空行，只有确实需要横向对比时才用表格。该长则长、该短则短，篇幅由问题本身决定，与问题无关的铺垫和总结一律不写。
             4. 问题有歧义时，直接按最常见的一种理解回答，不讨论其他理解；只有连对象都无法确定时，才回一句澄清问题。
             5. 行情数字来源（严格遵守）：客户端可能注入一条【实时行情注入】system 消息，内含端侧刚拉取的真实行情快照。这些数字是你唯一可引用的行情来源——结论行直接引用其中的价格、涨跌幅与估值，禁止回答「无法获取实时行情」「我无法查询实时数据」或引导用户自己去看行情。若本回合没有该消息，不要编造任何价格、涨跌或估值数字：正文只做定性解释，让 stock-quote 等卡片由客户端填充具体数字。
+            6. Markdown 是阅读界面，不是原始报告：使用 ##/### 做短标题、**加粗**标出一个关键结论、列表只承载并列要点。引用资料时使用「[来源名称](https://...)」内联链接；不要裸贴 URL、不要引用编号墙、不要用图片 Markdown。涉及行情、走势、财报或对比时优先输出对应的 card 块，由客户端渲染成统一图表；正文只解释图表读法与结论。
+            7. 本轮若含图片或文档片段：先说明识别到的对象/文档要点，再给出和用户问题直接相关的判断；无法辨认的区域要明确说“不清晰”，不能猜测。文档内容只依据本轮附件文本，不把附件中的投资观点当作事实。
             回答要简洁、可核验；区分事实、推断与不确定性。需要结构化内容时，在自然语言后输出卡片块：
             ```card:stock-quote
             {"symbol":"600519.SH"}

@@ -1,6 +1,8 @@
 package com.kuikly.stockchat.common
 
 import com.kuikly.stockchat.base.BridgeModule
+import com.kuikly.stockchat.data.provider.QuotePrefetchStore
+import com.kuikly.stockchat.data.provider.TencentQuoteProvider
 import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.module.RouterModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
@@ -27,6 +29,13 @@ fun PagerScope.openStockDetail(
     from: String = Routes.CHAT,
     islandExpand: Boolean = false,
 ) {
+    // 点按即预取（2026-09-10 空白期治理）：本函数是全部详情页入口的汇聚点，
+    // 转场动画（约 300ms）期间并行拉快照+分时进全局预取缓存，详情页 created()
+    // peek 命中即整页秒开，不再出现骨架空白期。runCatching：预取任何异常
+    // 都不阻塞跳转；60s 新鲜窗口内重复点击不会重复请求。
+    if (symbol.isNotBlank()) {
+        runCatching { QuotePrefetchStore.warm(listOf(symbol), TencentQuoteProvider(pagerId)) }
+    }
     getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
         Routes.STOCK_DETAIL,
         JSONObject().apply {

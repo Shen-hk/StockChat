@@ -98,8 +98,8 @@ internal class BridgeModule : Module() {
 
     /**
      * 注册原生媒体选择结果回调（Android 宿主实现，keepCallback 多次触发）。
-     * 图库/拍照/文档选完后宿主把内容复制到缓存，再回传
-     * {type:"ok", kind:"image"|"file", path, name, source}；取消回传 {type:"cancel"}。
+     * 图库（支持多选）/拍照/文档选完后宿主把内容复制到缓存，再回传
+     * {type:"ok", source, items:[{kind:"image"|"file", path, name}...]}；取消回传 {type:"cancel"}。
      * 其他宿主走 call 的 else 分支回错误码，页侧静默忽略。
      */
     fun registerComposerMediaResult(callbackFn: CallbackFn) {
@@ -110,6 +110,16 @@ internal class BridgeModule : Module() {
             callbackFn,
             false,
         )
+    }
+
+    /**
+     * Converts private cached attachments into one-turn AI input. The host owns file
+     * access, so common code never reads arbitrary paths. Returned data is consumed
+     * immediately and is never persisted with the chat session.
+     */
+    fun prepareAiMedia(items: JSONArray, callbackFn: CallbackFn) {
+        val args = JSONObject().apply { put("items", items) }
+        callNativeMethod("prepareAiMedia", args, callbackFn)
     }
 
     fun startVoiceRecording(callbackFn: CallbackFn) {

@@ -99,6 +99,16 @@ object ModelPresets {
             keyHint = "在 platform.openai.com 创建 API Key。",
         ),
         ModelPreset(
+            id = "mimo",
+            name = "小米 MiMo",
+            logo = "stockchat",
+            badge = "MiMo",
+            badgeColor = 0xFF1E5EFF,
+            endpoint = "https://api.xiaomimimo.com/v1/chat/completions",
+            models = listOf("mimo-v2.5", "mimo-v2.5-pro"),
+            keyHint = "在 platform.xiaomimimo.com 创建 API Key；mimo-v2.5 支持原生图像、音频、视频与长上下文理解。",
+        ),
+        ModelPreset(
             id = "custom",
             name = "自定义",
             logo = "",

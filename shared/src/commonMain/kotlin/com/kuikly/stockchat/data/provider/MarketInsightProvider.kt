@@ -271,6 +271,34 @@ interface MarketOverviewProvider {
     fun hotspots(onResult: (HotspotSnapshot?) -> Unit)
 }
 
+/** Prefer the complete primary overview, while publishing a real fallback as soon as it arrives. */
+class FallbackMarketOverviewProvider(
+    private val primary: MarketOverviewProvider,
+    private val fallback: MarketOverviewProvider,
+) : MarketOverviewProvider {
+    override fun overview(onResult: (MarketOverview?) -> Unit) {
+        var primaryDelivered = false
+        var fallbackValue: MarketOverview? = null
+        fallback.overview { value ->
+            fallbackValue = value
+            if (!primaryDelivered && value != null) onResult(value)
+        }
+        primary.overview { value ->
+            if (value != null && (value.indices.isNotEmpty() || value.sectors.isNotEmpty())) {
+                primaryDelivered = true
+                onResult(value)
+            } else if (fallbackValue == null) {
+                // The fallback request is still in flight; it will deliver its result directly.
+            }
+        }
+    }
+
+    override fun hotspots(onResult: (HotspotSnapshot?) -> Unit) {
+        // 指数快照源不包含板块热点，保留主源的真实热点结果。
+        primary.hotspots(onResult)
+    }
+}
+
 /** Batched per-security industry lookup (EastMoney f100). Keys are watchlist symbols. */
 interface IndustryProvider {
     fun industries(symbols: List<String>, onResult: (Map<String, String>) -> Unit)

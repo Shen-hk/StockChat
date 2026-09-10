@@ -56,15 +56,6 @@ internal class SettingsPage : BasePager() {
             // 重建，换主题/字号档立即生效，无需退出重进。字号档在键里，
             // FontPreviewCard 的 theme.type.*（已含缩放）随重建拿到新值。
             vbind({ page.themeRebuildKey() }) {
-            AppTopBar(
-                title = "通用设置",
-                subtitle = "",
-                statusBarHeight = page.pagerData.statusBarHeight,
-                theme = page.theme,
-                backLabel = "‹",
-                onBack = { page.closePage() },
-            )
-            }
             Scroller {
                 attr {
                     flex(1f)
@@ -121,6 +112,20 @@ internal class SettingsPage : BasePager() {
                     }
                 }
                 }
+            }
+            }
+            // AppTopBar 必须声明在 Scroller 之后：顶栏是 absolutePosition 浮层，
+            // 后声明的全屏 Scroller z 序更高，原生 ScrollView 会吃掉顶栏区域的
+            // 触摸——放在前面时返回键永远收不到 click（其他页面均为此后置顺序）。
+            vbind({ page.themeRebuildKey() }) {
+            AppTopBar(
+                title = "通用设置",
+                subtitle = "",
+                statusBarHeight = page.pagerData.statusBarHeight,
+                theme = page.theme,
+                backLabel = "‹",
+                onBack = { page.closePage() },
+            )
             }
         }
     }

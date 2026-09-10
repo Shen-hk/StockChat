@@ -32,7 +32,9 @@ data class StockChatTheme(
 ) {
     companion object {
         val Light = StockChatTheme(
-            page = Color(0xFFF5F6F8),
+            // 2026-09-11 用户反馈：#F5F6F8 灰得发闷，调轻一档到 #F8F9FB——
+            // 仍保留极浅冷灰以衬白卡浮起（纯白画布需给所有白卡加描边/阴影，否决）。
+            page = Color(0xFFF8F9FB),
             surface = Color(0xFFFFFFFF),
             surfaceMuted = Color(0xFFEEF1F5),
             textPrimary = Color(0xFF1A1D23),

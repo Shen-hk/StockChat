@@ -51,6 +51,8 @@ data class SendPayload(
     val contextNotes: List<String> = emptyList(),
     /** 输入栏附件快照，随用户消息回显气泡（本轮不进 AI 请求与持久化） */
     val attachments: List<com.kuikly.stockchat.chat.MessageAttachment> = emptyList(),
+    /** 宿主在发送前安全提取的临时多模态输入，不写入会话或磁盘。 */
+    val media: List<com.kuikly.stockchat.chat.AiMediaPart> = emptyList(),
 ) {
     /** 用户气泡显示文本 */
     val displayText: String

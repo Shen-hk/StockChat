@@ -29,8 +29,9 @@ internal fun ViewContainer<*, *>.DateDivider(theme: StockChatTheme) {
 }
 
 /**
- * 输入框上方引导语气泡（2026-09-10 用户反馈三轮）：仅收起态显示、展开态隐藏；
- * chip 透明填充只留细描边，方角矩形（8f 圆弧）+ 文字前 icon 提升阅读性。
+ * 输入框上方引导语气泡（2026-09-10 用户反馈三轮；2026-09-11 四轮改白色填充）：
+ * 仅收起态显示、展开态隐藏；chip 白色填充（读 surface，深色模式自动落深灰）
+ * + 细描边，方角矩形（8f 圆弧）+ 文字前 icon 提升阅读性。
  * 点按 = injectQuestion（展开输入栏带入问题，与欢迎引导同款行为）。
  * 引导语为可陈述事实的问法（合规文案铁律：不含推荐/怎么选类措辞）。
  */
@@ -52,7 +53,10 @@ internal fun ViewContainer<*, *>.ComposerGuideRow(
                     paddingLeft(9f)
                     paddingRight(10f)
                     justifyContentCenter()
-                    // 透明填充 + 细描边 + 方角矩形（8f 圆弧，替代 13f 胶囊）。
+                    // 白色填充（2026-09-11 用户反馈：透明填充存在感太弱）+ 细描边
+                    // + 方角矩形（8f 圆弧，替代 13f 胶囊）。读 surface 而非硬编码白，
+                    // 深色模式自动落深灰卡色。
+                    backgroundColor(theme.surface)
                     borderRadius(8f)
                     border(Border(0.5f, BorderStyle.SOLID, theme.divider))
                     flexDirectionRow()

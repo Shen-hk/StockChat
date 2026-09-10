@@ -1,6 +1,18 @@
 package com.kuikly.stockchat.chat
 
-data class AiChatMessage(val role: String, val content: String)
+/** A single image or extracted document fragment supplied with the current turn. */
+data class AiMediaPart(
+    val name: String,
+    val imageDataUrl: String? = null,
+    val documentText: String? = null,
+)
+
+data class AiChatMessage(
+    val role: String,
+    val content: String,
+    /** Only the active user turn carries media. History intentionally stays text-only. */
+    val media: List<AiMediaPart> = emptyList(),
+)
 
 object ChatContext {
     const val MAX_MESSAGES = 12
@@ -14,7 +26,12 @@ object ChatContext {
      * @param quoteNote 行情上下文注入（ChatQuoteContext 产出）：端侧拉取的真实快照，
      *        让模型正文与卡片同源。null 时不追加消息。
      */
-    fun build(messages: List<ChatMessage>, systemNote: String?, quoteNote: String? = null): List<AiChatMessage> {
+    fun build(
+        messages: List<ChatMessage>,
+        systemNote: String?,
+        quoteNote: String? = null,
+        media: List<AiMediaPart> = emptyList(),
+    ): List<AiChatMessage> {
         val selected = select(messages)
         val out = mutableListOf<AiChatMessage>()
         if (!systemNote.isNullOrBlank()) {
@@ -23,7 +40,12 @@ object ChatContext {
         if (!quoteNote.isNullOrBlank()) {
             out += AiChatMessage("system", quoteNote)
         }
-        out += selected
+        // Attachments are ephemeral and are sent only once, with the latest user message.
+        // Persisting base64 in the session would both leak private content and bloat storage.
+        val latestUser = selected.indexOfLast { it.role == "user" }
+        selected.forEachIndexed { index, message ->
+            out += if (index == latestUser && media.isNotEmpty()) message.copy(media = media) else message
+        }
         return out
     }
 

@@ -38,9 +38,10 @@ internal object NarrativeAxisLayout {
  * 今日叙事轴（doc 36 ①②，原型 v3 同构）：多空发散面积 + 事件钉 + 分钟成交密度 +
  * 时间机器游标。这是页面唯一的 Canvas 主视觉，scrub 是页面级手势。
  *
- * 绘制纪律（R1）：draw 闭包只读各 lambda 参数——series/density/events/scrubMinute
- * 均经页侧 lambda 读取 observable，帧变化直接驱动重绘（N1：scrub 中零补间、
- * 数字与游标同步直切，与原型一致）。
+ * 绘制纪律（R1）：draw 闭包只读各 lambda 参数——均经页侧 lambda 读取 observable。
+ * Canvas 拆两层：静态层（轨道/密度/面积/主线/钉子/刻度）只读 series/density/
+ * baseValue/events，scrub 拖动期间零重绘；游标层只读 scrubMinute，拖动每帧
+ * 仅重画游标（N1：scrub 中零补间、数字与游标同步直切，与原型一致）。
  *
  * 手势同 RiskSkyChart / RiskSkyTimeBrush 范式：touch 系列挂外层 View（Canvas 的
  * Event 基类只有 click/pan；pan 会在 Android DOWN 即锁死外层纵向 Scroller），
@@ -131,6 +132,9 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
                 }
             }
         }
+        // 静态层：午休线、密度条、发散面积、主线、事件钉、刻度。只读
+        // series/density/baseValue/events——scrub 拖动期间这些都不变，本层零重绘
+        //（拆层前拖动每帧要重画 240 根密度条 + 全部钉子，是跟手性瓶颈）。
         Canvas({
             attr {
                 absolutePositionAllZero()
@@ -253,8 +257,19 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
                 canvas.fillText(timeLabel(t), layout.xFor(t, containerWidth), layout.LBL_Y)
             }
             canvas.textAlign(TextAlign.LEFT)
+        }
 
-            // 时间机器游标（scrub >= 0 时显示；-1 = 现在）
+        // 游标层：唯一读 scrubMinute 的绘制面。拖动每帧只重画这条竖线 + 圆点 +
+        // 时间胶囊（依赖的 series 拖动期间不变，不触发额外重绘），跟手性来源。
+        Canvas({
+            attr {
+                absolutePositionAllZero()
+                height(height)
+            }
+        }) { canvas, _, _ ->
+            val layout = NarrativeAxisLayout
+            val s = series()
+            val (d0, d1) = domain()
             val scrub = scrubMinute()
             if (scrub in 0..layout.MINUTES && s.size > scrub) {
                 val cx = layout.xFor(scrub, containerWidth)

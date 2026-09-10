@@ -27,10 +27,15 @@ import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.entity.Security
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.QuotePrefetchStore
+import com.kuikly.stockchat.data.provider.TencentQuoteProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.DivergingBar
+import com.kuikly.stockchat.page.components.FeatureTile
+import com.kuikly.stockchat.page.components.LineIconBarChart
+import com.kuikly.stockchat.page.components.LineIconSearch
 import com.kuikly.stockchat.page.components.RowGestureLayer
 import com.kuikly.stockchat.page.components.UndoBar
 import com.tencent.kuikly.core.annotations.Page
@@ -183,6 +188,10 @@ internal class WatchlistPage : BasePager() {
             setTimeout(0) { inboxPreviewPresented = true }
         }
         reload()
+        // 详情页预取（2026-09-10 空白期治理）：自选标的行情预热进全局预取缓存，
+        // 点进详情页 created() 直接命中整页秒开（60s 新鲜窗口内不重复请求；
+        // warm 内部自带去重与单次 8 标的上限，防请求风暴）。
+        QuotePrefetchStore.warm(watchlistStore.list().map { it.symbol }, TencentQuoteProvider(pagerId))
     }
 
     override fun body(): ViewBuilder {
@@ -309,7 +318,12 @@ internal class WatchlistPage : BasePager() {
                 }
 
                 vif({ page.rows.isEmpty() }) {
-                    WatchlistEmptyState(theme = page.theme, container = this)
+                    WatchlistEmptyState(
+                        theme = page.theme,
+                        container = this,
+                        onSearch = { page.searchOpen = true },
+                        onOpenMarket = { page.openPage(Routes.MARKET) },
+                    )
                 }
 
                 vfor({ page.displayList }) { row ->
@@ -507,9 +521,9 @@ internal class WatchlistPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
                 actions = listOf(
-                    "预警" to { page.openPage(Routes.ALERTS) },
-                    "风险" to { page.openPage(Routes.RISK) },
-                    "搜索" to { page.searchOpen = true },
+                    { "预警" } to { page.openPage(Routes.ALERTS) },
+                    { "风险" } to { page.openPage(Routes.RISK) },
+                    { "搜索" } to { page.searchOpen = true },
                 ),
             )
 
@@ -1672,6 +1686,8 @@ private fun WatchlistPendingRow(
 private fun WatchlistEmptyState(
     theme: StockChatTheme,
     container: ViewContainer<*, *>,
+    onSearch: () -> Unit,
+    onOpenMarket: () -> Unit,
 ) {
     container.View {
         attr { marginTop(28f); padding(18f); borderRadius(14f); backgroundColor(theme.surface) }
@@ -1684,6 +1700,25 @@ private fun WatchlistEmptyState(
                 lineHeightScaled(19f)
                 color(theme.textSecondary)
             }
+        }
+        // 磁贴引导（2026-09-10 统一磁贴语言）：直达搜索 / 行情页，替代纯文字提示。
+        View {
+            attr { flexDirectionRow(); marginTop(14f) }
+            FeatureTile(
+                label = "搜索添加",
+                theme = theme,
+                height = 64f,
+                icon = { LineIconSearch(theme.textPrimary, 22f) },
+                onClick = onSearch,
+            )
+            View { attr { width(8f) } }
+            FeatureTile(
+                label = "去行情页逛逛",
+                theme = theme,
+                height = 64f,
+                icon = { LineIconBarChart(theme.textPrimary, 22f) },
+                onClick = onOpenMarket,
+            )
         }
     }
 }

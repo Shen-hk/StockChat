@@ -26,7 +26,7 @@ import com.tencent.kuikly.core.views.View
  */
 internal fun ViewContainer<*, *>.AtmosphereBackdrop(
     toneSoft: () -> Color,
-    pageColor: Color,
+    pageColor: () -> Color,
 ) {
     View {
         attr {
@@ -40,14 +40,15 @@ internal fun ViewContainer<*, *>.AtmosphereBackdrop(
             }
         }) { canvas, width, height ->
             val soft = toneSoft()
+            val page = pageColor()
             if (height <= 0f || width <= 0f) return@Canvas
 
             // 对齐原型 .atmo：linear-gradient(180deg, soft 0%, soft@0.45 18%, page 58%)
             val gradient = canvas.createLinearGradient(0f, 0f, 0f, height)
             gradient.addColorStop(0f, soft)
             gradient.addColorStop(0.18f, soft.opacity(0.45f))
-            gradient.addColorStop(0.58f, pageColor)
-            gradient.addColorStop(1f, pageColor)
+            gradient.addColorStop(0.58f, page)
+            gradient.addColorStop(1f, page)
             canvas.fillStyle(gradient)
             canvas.beginPath()
             canvas.moveTo(0f, 0f)

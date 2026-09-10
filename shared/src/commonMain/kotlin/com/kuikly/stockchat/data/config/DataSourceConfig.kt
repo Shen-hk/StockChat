@@ -14,5 +14,5 @@ package com.kuikly.stockchat.data.config
  * 真实数据链路验证通过后，把这里的常量翻为 true 即可全量切换，页面层无感。
  */
 object DataSourceConfig {
-    const val USE_REAL_MARKET_DATA = false
+    const val USE_REAL_MARKET_DATA = true
 }

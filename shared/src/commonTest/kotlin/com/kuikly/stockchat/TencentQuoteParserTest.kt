@@ -82,6 +82,33 @@ class TencentQuoteParserTest {
     }
 
     @Test
+    fun usesMarketSessionsRatherThanSecuritySpecificRules() {
+        val hongKong = JSONObject(
+            """{"data":{"hk00700":{"data":{"data":["0930 430.0 10","1200 431.0 20","1300 432.0 30","1600 433.0 40","1601 433.0 40"]}}}}""",
+        )
+        val unitedStates = JSONObject(
+            """{"data":{"usAAPL":{"data":{"data":["0930 200.0 10","1200 201.0 20","1600 202.0 30","1601 202.0 30"]}}}}""",
+        )
+
+        assertEquals(listOf("09:30", "12:00", "13:00", "16:00"), TencentQuoteParser.parseTimeline(hongKong, "00700.HK").map { it.time })
+        assertEquals(listOf("09:30", "12:00", "16:00"), TencentQuoteParser.parseTimeline(unitedStates, "AAPL.US").map { it.time })
+        assertEquals("usAAPL", TencentQuoteParser.remoteCode("AAPL.US"))
+    }
+
+    @Test
+    fun parsesUnitedStatesSnapshotUsingProviderNativeDayField() {
+        val payload = JSONObject(
+            """{"data":{"usAAPL":{"day":[["2026-09-10","316.67","318.94","323.13","316.57","16373317"]],"qt":{"usAAPL":["real","苹果","AAPL.OQ","318.94","315.34","316.67","16373317","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","0","2026-09-10 10:37:12","3.60","1.14","323.13","316.57"]}}}}""",
+        )
+
+        val quote = assertNotNull(TencentQuoteParser.parseSnapshot(payload, "AAPL.US"))
+        assertEquals("苹果", quote.name)
+        assertEquals(318.94, quote.price)
+        assertEquals(1, quote.kLines.size)
+        assertEquals(323.13, quote.kLines.single().high)
+    }
+
+    @Test
     fun parsesProviderNativeWeeklyAndMonthlyKLines() {
         val payload = JSONObject(
             """{"data":{"sh600519":{"qfqweek":[["2026-08-21","1271.01","1304.66","1313.80","1270.33","48440"]],"qfqmonth":[["2026-08-31","1200.00","1304.66","1313.80","1190.00","484400"]]}}}""",

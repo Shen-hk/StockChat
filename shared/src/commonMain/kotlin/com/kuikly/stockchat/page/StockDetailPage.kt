@@ -38,6 +38,7 @@ import com.kuikly.stockchat.common.openUrl
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.data.provider.QuotePrefetchStore
 import com.kuikly.stockchat.data.provider.DisclosureItem
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.NewsItem
@@ -68,6 +69,7 @@ import com.kuikly.stockchat.page.components.BalanceSpectrumBlock
 import com.kuikly.stockchat.page.components.BlockState
 import com.kuikly.stockchat.page.components.ChartFlag
 import com.kuikly.stockchat.page.components.FactorReplayBlock
+import com.kuikly.stockchat.page.components.FeatureTile
 import com.kuikly.stockchat.page.components.IndustryCompareOverlay
 import com.kuikly.stockchat.page.components.MaterialityBadge
 import com.kuikly.stockchat.page.components.QuickReasonChips
@@ -82,7 +84,12 @@ import com.kuikly.stockchat.page.components.NewsMarquee
 import com.kuikly.stockchat.page.components.NewsSummaryBar
 import com.kuikly.stockchat.page.components.estimateNewsMarqueeLoopWidth
 import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.AtmosphereBackdrop
 import com.kuikly.stockchat.page.components.DataModeBadge
+import com.kuikly.stockchat.page.components.LineIconBarChart
+import com.kuikly.stockchat.page.components.LineIconCopy
+import com.kuikly.stockchat.page.components.LineIconPin
+import com.kuikly.stockchat.base.BridgeModule
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
@@ -224,9 +231,23 @@ internal class StockDetailPage : BasePager() {
         StockCardRenderers.ensureRegistered()
         MarketCardRenderers.ensureRegistered()
         symbol = pagerData.params.optString("symbol").ifEmpty { "600519.SH" }
+        // 页面对象的默认占位是茅台，但路由参数在 created() 才可读取。必须立刻
+        // 用当前代码覆盖，网络尚未回调或请求失败时也不能把所有详情页标题显示成茅台。
+        quote = Quote.placeholder(symbol, symbol)
         handoffFadeActive = pagerData.params.optString("krTransition") == "islandExpand"
         handoffPresented = !handoffFadeActive || reduceMotion
-        quoteRepository.cachedOrOffline(symbol)?.let {
+        // 预取命中（openStockDetail 转场期 warm / 进应用预热，2026-09-10）：
+        // 整页数据（价格+分时+日K）直接到位，跳过骨架空白期。不用 applyQuote
+        // 是为了避免挂载前播放 ticker lift（previousText 会以占位价「—」入画）；
+        // 声呐/AI 的启动由下方 insight 回调与 pageDidAppear 正常承接。随后的
+        // load() 照常刷新（observable 同值写不通知，命中帧不会闪动）。
+        val prefetched = QuotePrefetchStore.peek(symbol)
+        if (prefetched != null) {
+            quote = prefetched
+            quoteLoading = false
+            dataModeLabel = "预加载行情（可能延迟）"
+            sonarPoints = detectAnomalies(detailTimelineSeries(prefetched), null).take(3)
+        } else quoteRepository.cachedOrOffline(symbol)?.let {
             quote = it
             quoteLoading = false
         }
@@ -326,6 +347,12 @@ internal class StockDetailPage : BasePager() {
                         animate(Animation.easeOut(0.22f), "stock-detail-handoff")
                     }
                 }
+                // 氛围底（doc 26 §3）：整屏渐变垫层，必须声明在 Scroller 之前
+                // （垫在滚动内容之下）；涨红/跌绿随行情 tick 在 draw 闭包内换色。
+                AtmosphereBackdrop(
+                    toneSoft = { page.toneSoftColor() },
+                    pageColor = { page.theme.page },
+                )
                 Scroller {
                     attr {
                         flex(1f)
@@ -401,6 +428,49 @@ internal class StockDetailPage : BasePager() {
                                     fontSize(page.theme.type.sm)
                                     fontWeightMedium()
                                     color(page.toneColor().opacity(0.85f))
+                                }
+                            }
+                        }
+                        // 当日关键数据（今开/最高/最低/换手）：从图表下方玻璃条上移并入
+                        // Hero，无背板轻量数据行，随 quote 刷新（vbind 键控重建）
+                        vbind({ page.quote }) {
+                            View {
+                                attr {
+                                    marginTop(8f)
+                                    flexDirectionRow()
+                                    alignItemsCenter()
+                                    touchEnable(false)
+                                }
+                                listOf(
+                                    "今开" to Format.price(page.quote.open) to page.marketColor(page.quote.open),
+                                    "最高" to Format.price(page.quote.high) to page.marketColor(page.quote.high),
+                                    "最低" to Format.price(page.quote.low) to page.marketColor(page.quote.low),
+                                    "换手" to "${Format.decimal(page.quote.turnoverRate, 2)}%" to page.theme.textSecondary,
+                                ).forEachIndexed { i, (pair, color) ->
+                                    val (label, value) = pair
+                                    View {
+                                        attr {
+                                            flexDirectionRow()
+                                            alignItemsCenter()
+                                            marginRight(if (i < 3) 12f else 0f)
+                                        }
+                                        Text {
+                                            attr {
+                                                text(label)
+                                                fontSizeScaled(10f)
+                                                color(page.theme.textTertiary)
+                                            }
+                                        }
+                                        Text {
+                                            attr {
+                                                text(value)
+                                                marginLeft(3f)
+                                                fontSizeScaled(10f)
+                                                fontWeightMedium()
+                                                color(color)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -496,14 +566,19 @@ internal class StockDetailPage : BasePager() {
                         attr {
                             marginTop(page.theme.spacing.lg)
                         }
+                        // 图表区加载骨架（quoteLoading=无任何可用行情时的骨架空白期治理，
+                        // 2026-09-10）：波形占位随 livePulse 呼吸，替代 396dp 空白图表。
+                        vif({ page.quoteLoading }) {
+                            ChartLoadingSkeleton(page.theme, { page.livePulse }, page.reduceMotion)
+                        }
                         // 分时主体（自绘）与 K 线互斥切换；分段控件缩小后悬浮图左上（见下方 overlay）
-                            vif({ page.chartMode == StockChartMode.TIMELINE }) {
+                            vif({ page.chartMode == StockChartMode.TIMELINE && !page.quoteLoading }) {
                                 DetailTimelineChart(
                                     theme = page.theme,
                                     quote = { page.quote },
                                     crosshairIndex = { page.crosshairIndex },
                                     drawProgress = { page.drawProgress },
-                                    pulse = { page.livePulse },
+                                    motionPhase = { page.sonarDrift },
                                     reduceMotion = page.reduceMotion,
                                     // 图表不再被卡片内边距二次挤压：横向直接吃满详情页
                                     // 可用宽度，十字线信息也在绘图区内浮现。
@@ -538,11 +613,9 @@ internal class StockDetailPage : BasePager() {
                                     onScrubActive = { page.chartScrubLock = it },
                                     // U1 点空白（非声呐轻点）：关闭图表气泡并清其区间带
                                     onBlankTap = { page.closeChartBubble() },
-                                    // ④ 声呐气泡横向漂移相位（页面步进驱动）
-                                    sonarDrift = { page.sonarDrift },
                                 )
                             }
-                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY }) {
+                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY && !page.quoteLoading }) {
                                 KLineChart(
                                     container = this,
                                     model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY),
@@ -550,9 +623,12 @@ internal class StockDetailPage : BasePager() {
                                     selectedIndex = { page.selectedKLineIndex },
                                     onSelectIndex = { page.selectedKLineIndex = it },
                                     chartHeight = 396f,
+                                    // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
+                                    // 与分时图 scrub 锁共用同一开关
+                                    onZoomActive = { page.chartScrubLock = it },
                                 )
                             }
-                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK }) {
+                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK && !page.quoteLoading }) {
                                 KLineChart(
                                     container = this,
                                     model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK),
@@ -560,9 +636,12 @@ internal class StockDetailPage : BasePager() {
                                     selectedIndex = { page.selectedKLineIndex },
                                     onSelectIndex = { page.selectedKLineIndex = it },
                                     chartHeight = 396f,
+                                    // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
+                                    // 与分时图 scrub 锁共用同一开关
+                                    onZoomActive = { page.chartScrubLock = it },
                                 )
                             }
-                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH }) {
+                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH && !page.quoteLoading }) {
                                 KLineChart(
                                     container = this,
                                     model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH),
@@ -570,69 +649,15 @@ internal class StockDetailPage : BasePager() {
                                     selectedIndex = { page.selectedKLineIndex },
                                     onSelectIndex = { page.selectedKLineIndex = it },
                                     chartHeight = 396f,
+                                    // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
+                                    // 与分时图 scrub 锁共用同一开关
+                                    onZoomActive = { page.chartScrubLock = it },
                                 )
                             }
-                        // 玻璃数据条（今开/最高/最低/换手）：从蒙层改为图表下方独立一行，
-                        // 不再悬浮遮挡量能带（用户 2026-09-08 反馈）
-                        vif({ page.chartMode == StockChartMode.TIMELINE }) {
-                            vbind({ page.quote }) {
-                                View {
-                                    attr {
-                                        marginTop(6f)
-                                        marginLeft(12f); marginRight(12f)
-                                        height(30f)
-                                        borderRadius(15f)
-                                        backgroundColor(page.theme.marketGlass)
-                                        border(Border(1f, BorderStyle.SOLID, page.theme.marketGlassEdge))
-                                        flexDirectionRow()
-                                        alignItemsCenter()
-                                        touchEnable(false)
-                                    }
-                                    listOf(
-                                        "今开" to Format.price(page.quote.open) to page.marketColor(page.quote.open),
-                                        "最高" to Format.price(page.quote.high) to page.marketColor(page.quote.high),
-                                        "最低" to Format.price(page.quote.low) to page.marketColor(page.quote.low),
-                                        "换手" to "${Format.decimal(page.quote.turnoverRate, 2)}%" to page.theme.textSecondary,
-                                    ).forEachIndexed { i, (pair, color) ->
-                                        val (label, value) = pair
-                                        View {
-                                            attr {
-                                                flex(1f)
-                                                flexDirectionRow()
-                                                allCenter()
-                                            }
-                                            Text {
-                                                attr {
-                                                    text(label)
-                                                    fontSizeScaled(9f)
-                                                    color(page.theme.textTertiary)
-                                                }
-                                            }
-                                            Text {
-                                                attr {
-                                                    text(value)
-                                                    marginLeft(3f)
-                                                    fontSizeScaled(10f)
-                                                    fontWeightMedium()
-                                                    color(color)
-                                                }
-                                            }
-                                        }
-                                        if (i < 3) {
-                                            View {
-                                                attr {
-                                                    width(0.5f)
-                                                    height(14f)
-                                                    backgroundColor(page.theme.divider)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        // 当日数据条（今开/最高/最低/换手）已上移至 Hero 价格行下方
+                        // 改为无背板轻量数据行（2026-09-10 用户反馈原位置突兀）
                         // 分段控件：缩小后悬浮图左上（不再独占一整行，高度折给绘图区）
-                        ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion, compact = true) { m, p ->
+                        ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
                             page.chartMode = m
                             page.chartPeriod = p
                             page.selectedKLineIndex = -1
@@ -984,31 +1009,30 @@ internal class StockDetailPage : BasePager() {
 
                 }
 
-                AppTopBar(
-                    title = page.quote.name,
-                    subtitle = page.quote.symbol,
-                    statusBarHeight = page.pagerData.statusBarHeight,
-                    theme = page.theme,
-                    renderer = page.hostGlassRenderer,
-                    backLabel = "‹",
-                    onBack = { page.closePage() },
-                    compactLine = { "${Format.price(page.quote.price)}  ${Format.percent(page.quote.changePercent)}" },
-                    compactLineColor = { page.toneColor() },
-                    compactVisible = { page.topCompactVisible },
-                    progress = { page.topProgress },
-                    reduceMotion = page.reduceMotion,
-                    actions = listOf(
-                        // H1：未自选「＋」→ 快捷理由 chips（不直接 add）；已自选「✓」行为不变（移除）
-                        (if (page.watchlisted) "✓" else "+") to {
-                            if (page.watchlisted) {
-                                page.toggleWatchlist()
-                            } else {
-                                page.overlayArbiter.request(DetailOverlay.REASON_CHIPS)
-                            }
-                        },
-                        "⋯" to { page.toastHint("更多操作稍后接入") },
-                    ),
-                )
+                // title/subtitle 是 AppTopBar 的普通构建参数，必须由 vbind 在
+                // 行情快照到达后重建；否则会永久停在页面初始占位的“贵州茅台”。
+                vbind({ page.quote.name to page.quote.symbol }) {
+                    AppTopBar(
+                        title = page.quote.name,
+                        subtitle = page.quote.symbol,
+                        statusBarHeight = page.pagerData.statusBarHeight,
+                        theme = page.theme,
+                        renderer = page.hostGlassRenderer,
+                        backLabel = "‹",
+                        onBack = { page.closePage() },
+                        compactLine = { "${Format.price(page.quote.price)}  ${Format.percent(page.quote.changePercent)}" },
+                        compactLineColor = { page.toneColor() },
+                        compactVisible = { page.topCompactVisible },
+                        progress = { page.topProgress },
+                        reduceMotion = page.reduceMotion,
+                        actions = listOf(
+                            // 2026-09-10 用户决策：＋改五角星，自选直达（未自选☆加入/已自选★移除）。
+                            // 原先挂在＋上的「当初理由」快捷 chips 挪进右侧 ⋯ 菜单，不再常驻动作位。
+                            { if (page.watchlisted) "★" else "☆" } to { page.toggleWatchlist() },
+                            { "⋯" } to { page.overlayArbiter.request(DetailOverlay.MORE_MENU) },
+                        ),
+                    )
+                }
                 // U1 点空白全关：REASON_CHIPS 层的透明遮罩（开新层自动被仲裁器切换）
                 vif({ page.overlayArbiter.active == DetailOverlay.REASON_CHIPS }) {
                     View {
@@ -1033,6 +1057,63 @@ internal class StockDetailPage : BasePager() {
                             onPick = { page.pickQuickReason(it) },
                             reduceMotion = page.reduceMotion,
                         )
+                    }
+                }
+                // U1 点空白全关：MORE_MENU 层的透明遮罩（开新层自动被仲裁器切换）
+                vif({ page.overlayArbiter.active == DetailOverlay.MORE_MENU }) {
+                    View {
+                        attr { absolutePositionAllZero(); touchEnable(true) }
+                        event { click { page.overlayArbiter.close() } }
+                    }
+                }
+                // ⋯ 更多操作菜单（2026-09-10）：锚在顶栏 ⋯（右缘 12f + 57f 高的顶栏）
+                // 下方的小卡片，U1 仲裁层互斥。条目改为公共 FeatureTile 磁贴横排
+                // （与抽屉/输入栏媒体弹层同一视觉语言），只挂真实可用的动作。
+                vif({ page.overlayArbiter.active == DetailOverlay.MORE_MENU }) {
+                    View {
+                        attr {
+                            absolutePosition(
+                                top = page.pagerData.statusBarHeight + 62f,
+                                // left 自算（右缘 12f 对齐 ⋯ 按钮触控区），不依赖 right 单边锚定
+                                left = (page.pagerData.pageViewWidth - 250f - 12f).coerceAtLeast(12f),
+                            )
+                            width(250f)
+                            paddingTop(12f)
+                            paddingBottom(12f)
+                            paddingLeft(12f)
+                            paddingRight(12f)
+                            borderRadius(16f)
+                            backgroundColor(page.theme.surface)
+                            border(Border(0.5f, BorderStyle.SOLID, page.theme.divider))
+                            boxShadow(BoxShadow(0f, 10f, 26f, page.theme.textPrimary.opacity(0.20f)))
+                            touchEnable(true)
+                        }
+                        View {
+                            attr { flexDirectionRow() }
+                            FeatureTile(
+                                label = "记当初理由",
+                                theme = page.theme,
+                                height = 66f,
+                                icon = { LineIconPin(page.theme.textPrimary, 22f) },
+                            ) {
+                                // 仲裁器语义：请求 REASON_CHIPS 即自动关闭 MORE_MENU
+                                page.overlayArbiter.request(DetailOverlay.REASON_CHIPS)
+                            }
+                            View { attr { width(8f) } }
+                            FeatureTile(
+                                label = "AI 解读",
+                                theme = page.theme,
+                                height = 66f,
+                                icon = { LineIconBarChart(page.theme.textPrimary, 22f) },
+                            ) { page.toggleAiInsight() }
+                            View { attr { width(8f) } }
+                            FeatureTile(
+                                label = "复制代码",
+                                theme = page.theme,
+                                height = 66f,
+                                icon = { LineIconCopy(page.theme.textPrimary, 22f) },
+                            ) { page.copySymbolToPasteboard() }
+                        }
                     }
                 }
                 // B1 长按先览小气泡（doc 29 原型 .preview：fixed 浮层、left=胶囊左缘钳右、
@@ -1223,6 +1304,13 @@ internal class StockDetailPage : BasePager() {
         setTimeout(2800) {
             if (version == hintVersion) watchlistHint = ""
         }
+    }
+
+    /** ⋯ 菜单「复制代码」：走 Bridge 剪贴板通道（与聊天页分享文案同源）。 */
+    private fun copySymbolToPasteboard() {
+        overlayArbiter.close()
+        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).copyToPasteboard(symbol)
+        toastHint("代码 $symbol 已复制")
     }
 
     // ───────────── F1 公告/研报长按预览（MarketPage peek 同构） ─────────────
@@ -1853,7 +1941,7 @@ internal class StockDetailPage : BasePager() {
         setTimeout(0) { tick() }
     }
 
-    /** ④ 声呐气泡漂移相位步进（0→1 循环）；reduceMotion 不启动，恒 0。 */
+    /** 图表连续运动相位（实时点呼吸 + 声呐漂移）；reduceMotion 下恒 0。 */
     private fun startSonarDrift() {
         if (reduceMotion) {
             sonarDrift = 0f
@@ -1862,8 +1950,9 @@ internal class StockDetailPage : BasePager() {
         val version = ++sonarDriftVersion
         fun tick() {
             if (version != sonarDriftVersion) return
-            sonarDrift = (sonarDrift + 0.02f) % 1f
-            setTimeout(60) { tick() }
+            // 3 秒一圈，16ms 一帧。图表侧缓存静态几何，帧级只重绘视觉相位。
+            sonarDrift = (sonarDrift + 0.00534f) % 1f
+            setTimeout(16) { tick() }
         }
         setTimeout(0) { tick() }
     }
@@ -1878,8 +1967,9 @@ internal class StockDetailPage : BasePager() {
         drawProgress = 0f
         fun tick() {
             if (version != drawVersion) return
-            drawProgress = (drawProgress + 0.08f).coerceAtMost(1f)
-            if (drawProgress < 1f) setTimeout(28) { tick() }
+            // 与手势/原生刷新对齐到帧级，维持约 360ms 的原入场节奏。
+            drawProgress = (drawProgress + 0.045f).coerceAtMost(1f)
+            if (drawProgress < 1f) setTimeout(16) { tick() }
         }
         setTimeout(0) { tick() }
         setTimeout(1200) { if (version == drawVersion) drawProgress = 1f }
@@ -2594,14 +2684,14 @@ private fun ViewContainer<*, *>.RevealBlock(
     }
 }
 
+// 图表磁贴 tab（2026-09-10 改版）：四枚独立小磁贴悬浮图左上——选中磁贴
+// brandSoft 底 + brand 描边 + 轻投影「点亮」，未选中玻璃底弱化；
+// 取代原整条悬浮分段控件（用户反馈原样式显挤）。
 private fun ViewContainer<*, *>.ChartSegment(
     theme: StockChatTheme,
     chartMode: () -> StockChartMode,
     chartPeriod: () -> StockChartPeriod,
     reduceMotion: Boolean,
-    // compact：缩小版，absolutePosition 悬浮在图左上（2026-09-08 版式调整；
-    // 2026-09-09 再贴左上角：left 10→2、top 10→2，收窄到 140，减少对绘图区的遮挡）
-    compact: Boolean = false,
     onSelect: (StockChartMode, StockChartPeriod) -> Unit,
 ) {
     val tabs = listOf(
@@ -2610,93 +2700,47 @@ private fun ViewContainer<*, *>.ChartSegment(
         StockChartMode.K_LINE to "周K",
         StockChartMode.K_LINE to "月K",
     )
-    // activeIndex 在闭包内实时派生（R1）：捕获计算结果会让 tab 高亮/滑块全部冻结。
+    // activeIndex 在闭包内实时派生（R1）：捕获计算结果会让点亮态全部冻结。
     fun activeIdx(): Int = when {
         chartMode() == StockChartMode.TIMELINE -> 0
         chartPeriod() == StockChartPeriod.WEEK -> 2
         chartPeriod() == StockChartPeriod.MONTH -> 3
         else -> 1
     }
-    val segHeight = if (compact) 28f else 38f
-    val segPad = if (compact) 2f else 3f
-    val tabHeight = segHeight - segPad * 2f
     View {
         attr {
-            if (compact) {
-                absolutePosition(left = 2f, top = 2f)
-                width(140f)
-            } else {
-                marginTop(theme.spacing.lg)
-            }
+            absolutePosition(left = 2f, top = 2f)
+            flexDirectionRow()
         }
-        View {
-            attr {
-                height(segHeight)
-                padding(segPad)
-                backgroundColor(theme.surfaceMuted)
-                borderRadius(theme.inputRadius)
-                border(Border(1f, BorderStyle.SOLID, theme.divider))
-                overflow(true)
+        tabs.forEachIndexed { index, (mode, label) ->
+            val period = when (index) {
+                2 -> StockChartPeriod.WEEK
+                3 -> StockChartPeriod.MONTH
+                else -> StockChartPeriod.DAY
             }
-            // 滑块位置由占位 view 数量决定（数量型变化）：vbind 随 activeIndex 重建，
-            // 重建即瞬移到位（R4：新挂载首帧不播动画）。原 spring 滑动动画绑定的
-            // 是捕获的 Int、从未生效，属死代码，已随本次修正移除；若要滑动过渡
-            // 需改为 transform 驱动的单滑块方案（独立任务）。
-            vbind({ activeIdx() }) {
-                View {
-                    attr {
-                        absolutePositionAllZero()
-                        padding(segPad)
-                        flexDirectionRow()
-                        touchEnable(false)
-                    }
-                    repeat(activeIdx()) { View { attr { flex(1f) } } }
-                    View {
-                        attr {
-                            flex(1f)
-                            height(tabHeight)
-                            borderRadius(theme.inputRadius)
-                            backgroundColor(theme.brandSoft)
-                            border(Border(1f, BorderStyle.SOLID, theme.brand.opacity(0.24f)))
-                            boxShadow(BoxShadow(0f, 2f, 8f, theme.brand.opacity(0.08f)))
-                        }
-                    }
-                    repeat(3 - activeIdx()) { View { attr { flex(1f) } } }
-                }
-            }
+            fun active(): Boolean = index == activeIdx()
             View {
                 attr {
-                    flexDirectionRow()
-                    height(tabHeight)
+                    width(32f)
+                    height(26f)
+                    marginRight(if (index < 3) 4f else 0f)
+                    allCenter()
+                    borderRadius(9f)
+                    // 条件属性全量赋值（attr 不设不清）：点亮/熄灭两态都显式给全
+                    backgroundColor(if (active()) theme.brandSoft else theme.marketGlass)
+                    border(Border(1f, BorderStyle.SOLID, if (active()) theme.brand.opacity(0.34f) else theme.marketGlassEdge))
+                    boxShadow(BoxShadow(0f, 2f, 6f, if (active()) theme.brand.opacity(0.12f) else Color(0L)))
+                    if (!reduceMotion) animate(Animation.easeOut(0.16f), active())
                 }
-                tabs.forEachIndexed { index, (mode, label) ->
-                    val period = when (index) {
-                        2 -> StockChartPeriod.WEEK
-                        3 -> StockChartPeriod.MONTH
-                        else -> StockChartPeriod.DAY
-                    }
-                    fun active(): Boolean = index == activeIdx()
-                    View {
-                        attr {
-                            flex(1f)
-                            height(tabHeight)
-                            allCenter()
-                            borderRadius(theme.inputRadius)
-                            if (!reduceMotion) animate(Animation.easeOut(0.16f), active())
-                        }
-                        Text {
-                            attr {
-                                text(label)
-                                // 混合分支：literal 走 fontSizeScaled，token 分支已含档位缩放，
-                                // 直接包裹会双重放大，故改为双 literal（label token 当前基线 11f）。
-                                fontSizeScaled(if (compact) 10f else 11f)
-                                fontWeightSemiBold()
-                                color(if (active()) theme.brand else theme.textSecondary)
-                            }
-                        }
-                        event { click { onSelect(mode, period) } }
+                Text {
+                    attr {
+                        text(label)
+                        fontSizeScaled(10f)
+                        fontWeightSemiBold()
+                        color(if (active()) theme.brand else theme.textSecondary)
                     }
                 }
+                event { click { onSelect(mode, period) } }
             }
         }
     }
@@ -2850,7 +2894,8 @@ private fun ViewContainer<*, *>.DetailBottomBar(
                 alignItemsCenter()
                 backgroundColor(theme.surface)
                 border(Border(0.5f, BorderStyle.SOLID, theme.divider))
-                boxShadow(BoxShadow(0f, 10f, 30f, theme.textPrimary.opacity(0.16f)))
+                // 2026-09-10 用户反馈：底栏输入框阴影太浅，加深（0.16→0.32，位移/模糊同步加大）。
+                boxShadow(BoxShadow(0f, 12f, 32f, theme.textPrimary.opacity(0.32f)))
             }
             View {
                 attr {
@@ -2884,6 +2929,7 @@ private fun ViewContainer<*, *>.DetailBottomBar(
     }
 }
 
+/** ⋯ 更多操作菜单条目（2026-09-10）：纯文字行，整行 44dp 触控。 */
 private fun ViewContainer<*, *>.DetailBottomAction(
     label: () -> String,
     primary: Boolean,
@@ -3131,6 +3177,51 @@ private fun ViewContainer<*, *>.AiInsightPlaceholder(
         View { attr { width(180f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.10f)); marginTop(9f) } }
         View { attr { width(200f); height(11f); borderRadius(5f); backgroundColor(theme.brand.opacity(0.08f)); marginTop(9f) } }
         Text { attr { text(message); marginTop(10f); fontSizeScaled(10f); color(theme.brand) } }
+    }
+}
+
+/**
+ * 图表区加载骨架（quoteLoading 期间替代空白图表，2026-09-10）：396dp 圆角玻璃
+ * 基座 + 三条占位条（上两行拟价格行位、底部一行拟量能带），整体随 breath 相位
+ * 明暗呼吸（复用 AI 占位骨架范式：R2/R5 每次 attr 重跑重注册，下一拍消费）。
+ * reduceMotion 恒全亮静态。
+ */
+private fun ViewContainer<*, *>.ChartLoadingSkeleton(
+    theme: StockChatTheme,
+    breath: () -> Boolean = { false },
+    reduceMotion: Boolean = false,
+) {
+    View {
+        attr {
+            marginTop(theme.spacing.lg)
+            height(396f)
+            borderRadius(16f)
+            backgroundColor(theme.marketGlass.opacity(0.6f))
+            border(Border(1f, BorderStyle.SOLID, theme.marketGlassEdge))
+            opacity(if (reduceMotion || breath()) 1f else 0.55f)
+            if (!reduceMotion) animate(Animation.easeOut(0.68f), breath())
+        }
+        View {
+            attr {
+                absolutePosition(left = 16f, top = 56f)
+                width(196f); height(11f); borderRadius(5f)
+                backgroundColor(theme.textTertiary.opacity(0.32f))
+            }
+        }
+        View {
+            attr {
+                absolutePosition(left = 16f, top = 80f)
+                width(132f); height(11f); borderRadius(5f)
+                backgroundColor(theme.textTertiary.opacity(0.20f))
+            }
+        }
+        View {
+            attr {
+                absolutePosition(left = 16f, top = 344f)
+                width(176f); height(8f); borderRadius(4f)
+                backgroundColor(theme.textTertiary.opacity(0.16f))
+            }
+        }
     }
 }
 

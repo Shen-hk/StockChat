@@ -20,6 +20,8 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
+import android.os.ParcelFileDescriptor
+import android.graphics.pdf.PdfRenderer
 import android.os.SystemClock
 import android.text.Layout
 import android.text.StaticLayout
@@ -28,6 +30,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import android.util.Base64
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.widget.Toast
@@ -93,6 +96,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
             // 页面注册「媒体选择结果」回调；host 挂在 Activity 上，onDestroy 清空。
             "registerComposerMediaResult" -> {
                 (activity as? KuiklyRenderActivity)?.composerMediaResultHost = callback
+            }
+
+            "prepareAiMedia" -> {
+                prepareAiMedia(params, callback)
             }
 
             "startVoiceRecording" -> {
@@ -279,10 +286,112 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         }
     }
 
-    /** 图库：系统相册选择器，单张图片。 */
+    /**
+     * Build a bounded, one-request-only multimodal payload from the app-private
+     * composer cache. Images become data URLs; text-like documents become text.
+     * Binary office/PDF files are deliberately not uploaded blindly: users get a
+     * clear model-side note instead of corrupted text or an oversized request.
+     */
+    private fun prepareAiMedia(params: String?, callback: KuiklyRenderCallback?) {
+        Thread {
+            val output = mutableListOf<Map<String, String>>()
+            try {
+                val items = JSONObject(params ?: "{}").optJSONArray("items") ?: JSONArray()
+                for (index in 0 until items.length()) {
+                    val item = items.optJSONObject(index) ?: continue
+                    val file = File(item.optString("path"))
+                    if (!file.isFile) continue
+                    val name = item.optString("name").ifBlank { file.name }
+                    val image = item.optString("kind") == "image"
+                    if (image) {
+                        // Keep a multi-image prompt under a practical mobile request budget.
+                        if (file.length() > MAX_AI_IMAGE_BYTES) {
+                            output += mapOf("name" to name, "documentText" to "图片过大，未随请求上传（请控制在 6 MB 内）。")
+                        } else {
+                            val mime = mimeFor(file.name, "image/jpeg")
+                            val encoded = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                            output += mapOf("name" to name, "imageDataUrl" to "data:$mime;base64,$encoded")
+                        }
+                    } else {
+                        if (file.extension.equals("pdf", ignoreCase = true)) {
+                            pdfPreviewDataUrl(file)?.let { dataUrl ->
+                                output += mapOf("name" to "$name（第 1 页）", "imageDataUrl" to dataUrl)
+                            } ?: run {
+                                output += mapOf("name" to name, "documentText" to "PDF 预览生成失败，请上传页面截图或复制关键段落。")
+                            }
+                        } else {
+                            output += mapOf("name" to name, "documentText" to readTextDocument(file))
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                Log.w("StockChatBridge", "prepareAiMedia failed", error)
+            }
+            activity?.runOnUiThread { callback?.invoke(mapOf("items" to output)) }
+        }.start()
+    }
+
+    private fun readTextDocument(file: File): String {
+        val extension = file.extension.lowercase(Locale.ROOT)
+        if (extension !in TEXT_DOCUMENT_EXTENSIONS) {
+            return "该文件为 .$extension 格式，当前会话无法安全提取正文。请上传 PDF 页面截图或复制关键段落，我可以继续解读。"
+        }
+        if (file.length() > MAX_AI_DOCUMENT_BYTES) {
+            return "文档超过 256 KB，仅支持上传更小的文本文件或复制关键段落。"
+        }
+        return try {
+            file.readText(Charsets.UTF_8).take(MAX_AI_DOCUMENT_CHARS)
+        } catch (_: Throwable) {
+            "文档无法按 UTF-8 文本读取，请复制关键段落后重试。"
+        }
+    }
+
+    /** Render the first PDF page to a compact PNG so a vision model can read charts/tables. */
+    private fun pdfPreviewDataUrl(file: File): String? = try {
+        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                if (renderer.pageCount == 0) return null
+                renderer.openPage(0).use { page ->
+                    val scale = (1440f / page.width.coerceAtLeast(1)).coerceIn(1f, 2f)
+                    val bitmap = Bitmap.createBitmap(
+                        (page.width * scale).toInt(),
+                        (page.height * scale).toInt(),
+                        Bitmap.Config.ARGB_8888,
+                    )
+                    page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                    val bytes = java.io.ByteArrayOutputStream().use { stream ->
+                        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, stream)
+                        stream.toByteArray()
+                    }
+                    bitmap.recycle()
+                    if (bytes.size > MAX_AI_IMAGE_BYTES) null
+                    else "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+                }
+            }
+        }
+    } catch (error: Throwable) {
+        Log.w("StockChatBridge", "pdfPreviewDataUrl failed", error)
+        null
+    }
+
+    private fun mimeFor(name: String, fallback: String): String = when (name.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
+        "png" -> "image/png"
+        "webp" -> "image/webp"
+        "gif" -> "image/gif"
+        else -> fallback
+    }
+
+    /**
+     * 图库：系统选择器，支持多选图片（EXTRA_ALLOW_MULTIPLE）。用
+     * ACTION_GET_CONTENT 而非 ACTION_PICK——前者的多选约定由系统统一保证，
+     * 后者是否支持多选取决于各厂商相册实现。结果经 clipData（多张）或
+     * data（单张）回传。
+     */
     private fun launchLibrarySource(currentActivity: KuiklyRenderActivity) {
-        val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI).apply {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
             type = "image/*"
+            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
         }
         currentActivity.startActivityForResult(intent, RC_COMPOSER_LIBRARY)
     }
@@ -320,7 +429,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     /**
      * onActivityResult 统一入口（Activity 转发）：把选中内容复制到
      * cache/composer_media 下的宿主私有文件，再经 composerMediaResultHost
-     * 回传 {type:"ok", kind, path, name, source}；取消回传 {type:"cancel"}。
+     * 回传 {type:"ok", source, items:[{kind, path, name}...]}；取消回传 {type:"cancel"}。
      * 复制在后台线程执行，结果统一 post 回主线程（与 Kuikly 桥接约定一致）。
      */
     private fun copyToPasteboard(params: String?) {
@@ -493,6 +602,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         const val RC_COMPOSER_CAMERA = 8312
         const val RC_COMPOSER_DOCUMENT = 8313
         const val COMPOSER_MEDIA_DIR = "composer_media"
+        private const val MAX_AI_IMAGE_BYTES = 6L * 1024L * 1024L
+        private const val MAX_AI_DOCUMENT_BYTES = 256L * 1024L
+        private const val MAX_AI_DOCUMENT_CHARS = 24_000
+        private val TEXT_DOCUMENT_EXTENSIONS = setOf("txt", "md", "markdown", "csv", "tsv", "json", "xml", "html", "htm", "log")
 
         /** 拍照输出文件（EXTRA_OUTPUT 指定的缓存路径，onActivityResult 时取走）。 */
         @Volatile
@@ -501,7 +614,8 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
         /**
          * onActivityResult 统一入口（Activity 转发）：把选中内容复制到
          * cache/composer_media 下的宿主私有文件，再经 composerMediaResultHost
-         * 回传 {type:"ok", kind, path, name, source}；取消回传 {type:"cancel"}。
+         * 回传 {type:"ok", source, items:[{kind, path, name}...]}（图库多选时
+         * items 为多条，拍照/文档恒为单条）；取消回传 {type:"cancel"}。
          * 复制在后台线程执行，结果统一 post 回主线程（与 Kuikly 桥接约定一致）。
          */
         fun handleComposerMediaResult(activity: KuiklyRenderActivity, requestCode: Int, resultCode: Int, data: Intent?) {
@@ -529,87 +643,110 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                         host.invoke(mapOf("type" to "cancel", "source" to source))
                         return
                     }
-                    deliverMediaResult(activity, host, source, file, "image", file.name)
+                    deliverMediaItems(activity, host, source, listOf(PickedMedia(file, "image", file.name)))
                 }
                 RC_COMPOSER_LIBRARY, RC_COMPOSER_DOCUMENT -> {
-                    val uri = data?.data
-                    if (uri == null) {
+                    // 多选经 clipData 回传（每项一个 Uri）；旧实现/单选只有 data。
+                    val uris = mutableListOf<Uri>()
+                    data?.clipData?.let { clip ->
+                        for (i in 0 until clip.itemCount) {
+                            clip.getItemAt(i).uri?.let { uris.add(it) }
+                        }
+                    }
+                    if (uris.isEmpty()) {
+                        data?.data?.let { uris.add(it) }
+                    }
+                    if (uris.isEmpty()) {
                         host.invoke(mapOf("type" to "cancel", "source" to source))
                         return
                     }
-                    copyPickedContent(activity, uri, source) { kind, file, name ->
-                        if (kind == null || file == null) {
+                    copyPickedContents(activity, uris, source) { picked ->
+                        if (picked.isEmpty()) {
                             activity.runOnUiThread { host.invoke(mapOf("type" to "cancel", "source" to source)) }
                         } else {
-                            deliverMediaResult(activity, host, source, file, kind, name)
+                            deliverMediaItems(activity, host, source, picked)
                         }
                     }
                 }
             }
         }
 
-        /** 结果回传（统一 post 回主线程）。 */
-        private fun deliverMediaResult(
+        /** 单个已复制到宿主缓存的选中内容。 */
+        private class PickedMedia(val file: File, val kind: String, val name: String)
+
+        /**
+         * 批量结果回传（统一 post 回主线程）。注意 items 必须用 List<Map> 而
+         * 不是 org.json.JSONArray：渲染桥 toJSONObject 只递归处理 List/Map/基本
+         * 类型，JSONArray 不在支持列表里会被静默丢弃（2026-09-10 踩坑）。
+         */
+        private fun deliverMediaItems(
             activity: KuiklyRenderActivity,
             host: KuiklyRenderCallback,
             source: String,
-            file: File,
-            kind: String,
-            name: String,
+            picked: List<PickedMedia>,
         ) {
+            val items = picked.map { media ->
+                mapOf(
+                    "kind" to media.kind,
+                    "path" to media.file.absolutePath,
+                    "name" to media.name,
+                )
+            }
             activity.runOnUiThread {
                 host.invoke(
                     mapOf(
                         "type" to "ok",
-                        "kind" to kind,
-                        "path" to file.absolutePath,
-                        "name" to name,
                         "source" to source,
+                        "items" to items,
                     )
                 )
             }
         }
 
         /**
-         * 把 content:// 选中内容复制到宿主缓存。kind 按真实 MIME 判定：
-         * image/ 通配类型回传图片（可缩略图预览），其余按文档回传。复制在后台线程。
+         * 把 content:// 选中内容批量复制到宿主缓存。kind 按真实 MIME 判定：
+         * image/ 通配类型回传图片（可缩略图预览），其余按文档回传。任一失败
+         * 只跳过该项，不拖垮整批。复制在后台线程，整批完成后一次性回调。
          */
-        private fun copyPickedContent(
+        private fun copyPickedContents(
             activity: KuiklyRenderActivity,
-            uri: Uri,
+            uris: List<Uri>,
             source: String,
-            onResult: (kind: String?, file: File?, name: String) -> Unit,
+            onResult: (List<PickedMedia>) -> Unit,
         ) {
             Thread {
-                var kind: String? = null
-                var file: File? = null
-                var name = ""
+                val picked = mutableListOf<PickedMedia>()
                 try {
                     val resolver = activity.contentResolver
-                    val mime = resolver.getType(uri).orEmpty()
-                    name = queryDisplayName(resolver, uri)
-                    val isImage = mime.startsWith("image/") || name.endsWith(".jpg") ||
-                        name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp") ||
-                        name.endsWith(".gif")
-                    val extension = when {
-                        mime.contains("/") && !mime.endsWith("*") -> mime.substringAfter('/').substringBefore('+')
-                        name.contains('.') -> name.substringAfterLast('.')
-                        else -> if (isImage) "jpg" else "dat"
-                    }
-                    val dir = File(activity.cacheDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
-                    val target = File(dir, "pick_${System.currentTimeMillis()}.$extension")
-                    resolver.openInputStream(uri)?.use { input ->
-                        target.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    if (target.exists() && target.length() > 0L) {
-                        kind = if (isImage) "image" else "file"
-                        file = target
-                        if (name.isBlank()) name = target.name
+                    for (uri in uris) {
+                        try {
+                            val mime = resolver.getType(uri).orEmpty()
+                            var name = queryDisplayName(resolver, uri)
+                            val isImage = mime.startsWith("image/") || name.endsWith(".jpg") ||
+                                name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp") ||
+                                name.endsWith(".gif")
+                            val extension = when {
+                                mime.contains("/") && !mime.endsWith("*") -> mime.substringAfter('/').substringBefore('+')
+                                name.contains('.') -> name.substringAfterLast('.')
+                                else -> if (isImage) "jpg" else "dat"
+                            }
+                            val dir = File(activity.cacheDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
+                            val target = File(dir, "pick_${System.currentTimeMillis()}_${picked.size}.$extension")
+                            resolver.openInputStream(uri)?.use { input ->
+                                target.outputStream().use { output -> input.copyTo(output) }
+                            }
+                            if (target.exists() && target.length() > 0L) {
+                                if (name.isBlank()) name = target.name
+                                picked.add(PickedMedia(target, if (isImage) "image" else "file", name))
+                            }
+                        } catch (error: Throwable) {
+                            Log.w("StockChatBridge", "copyPickedContents item failed: $source", error)
+                        }
                     }
                 } catch (error: Throwable) {
-                    Log.w("StockChatBridge", "copyPickedContent failed: $source", error)
+                    Log.w("StockChatBridge", "copyPickedContents failed: $source", error)
                 }
-                onResult(kind, file, name)
+                onResult(picked)
             }.start()
         }
 

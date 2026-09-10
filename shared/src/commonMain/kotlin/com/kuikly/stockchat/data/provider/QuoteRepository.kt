@@ -32,37 +32,53 @@ class QuoteRepository(
     }
 
     /**
-     * Returns an immediately usable cached/offline quote, then refreshes all three quote resources.
-     * The callback can be invoked more than once as the snapshot, timeline and K-line data arrive.
+     * Starts snapshot, timeline and all K-line requests together.  The prior implementation
+     * waited for the snapshot callback before issuing the four series requests, which added a
+     * full network round trip to detail-page chart rendering.  Results are accumulated by
+     * resource type and published whenever the snapshot and any newer series are available.
      */
     fun load(symbol: String, onResult: (QuoteLoadResult) -> Unit) {
-        snapshot(symbol) { snapshot ->
-            var current = snapshot.quote?.withCachedSeries(symbol)
-            onResult(snapshot.copy(quote = current))
-            if (current == null) return@snapshot
+        var latestSnapshot: QuoteLoadResult? = null
+        var latestTimeline = fresh(timelines[symbol], SERIES_TTL_MILLIS)?.value.orEmpty()
+        val latestKLines = KLineInterval.entries.associateWithTo(mutableMapOf()) { interval ->
+            fresh(kLines[SeriesKey(symbol, interval)], SERIES_TTL_MILLIS)?.value.orEmpty()
+        }
 
-            // 分时/K线刷新失败（网络断、解析空）不允许静默放弃：在线为空时回落
-            // offline（模拟模式 = MockQuoteProvider，真实模式 = NullQuoteProvider 恒空）。
-            // 否则快照先行到达时页面图表会从"有分时"塌成"只剩昨收基线横线"且永不恢复。
-            online.timeline(symbol) { points ->
-                val resolved = if (points.isNotEmpty()) points else offlineTimeline(symbol)
-                if (resolved.isNotEmpty()) {
-                    if (points.isNotEmpty()) saveTimeline(symbol, points)
-                    current = current?.copy(timeline = resolved)
-                    onResult(snapshot.copy(quote = current))
-                }
-            }
+        fun publish() {
+            val snapshot = latestSnapshot ?: return
+            val base = snapshot.quote ?: return
+            var quote = base
+            if (latestTimeline.isNotEmpty()) quote = quote.copy(timeline = latestTimeline)
             KLineInterval.entries.forEach { interval ->
-                online.kLines(symbol, interval.defaultCount, interval) { points ->
-                    val resolved =
-                        if (points.isNotEmpty()) points else offlineKLines(symbol, interval.defaultCount, interval)
-                    if (resolved.isNotEmpty()) {
-                        if (points.isNotEmpty()) saveKLines(symbol, interval, points)
-                        current = current?.withKLines(interval, resolved)
-                        onResult(snapshot.copy(quote = current))
-                    }
+                val points = latestKLines[interval].orEmpty()
+                if (points.isNotEmpty()) quote = quote.withKLines(interval, points)
+            }
+            onResult(snapshot.copy(quote = quote))
+        }
+
+        // Series requests begin immediately. A fast series response is retained until the
+        // snapshot arrives, instead of being dropped because there is no Quote to copy yet.
+        online.timeline(symbol) { points ->
+            val resolved = if (points.isNotEmpty()) points else offlineTimeline(symbol)
+            if (resolved.isNotEmpty()) {
+                if (points.isNotEmpty()) saveTimeline(symbol, points)
+                latestTimeline = resolved
+                publish()
+            }
+        }
+        KLineInterval.entries.forEach { interval ->
+            online.kLines(symbol, interval.defaultCount, interval) { points ->
+                val resolved = if (points.isNotEmpty()) points else offlineKLines(symbol, interval.defaultCount, interval)
+                if (resolved.isNotEmpty()) {
+                    if (points.isNotEmpty()) saveKLines(symbol, interval, points)
+                    latestKLines[interval] = resolved
+                    publish()
                 }
             }
+        }
+        snapshot(symbol) { result ->
+            latestSnapshot = result
+            publish()
         }
     }
 

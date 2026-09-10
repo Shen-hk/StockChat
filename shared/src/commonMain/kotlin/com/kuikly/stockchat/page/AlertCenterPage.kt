@@ -256,7 +256,7 @@ internal class AlertCenterPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
                 actions = listOf(
-                    "全部已读" to { page.markAllReadNow() },
+                    { "全部已读" } to { page.markAllReadNow() },
                 ),
             )
             }

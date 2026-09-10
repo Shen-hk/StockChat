@@ -366,7 +366,12 @@ private fun ViewContainer<*, *>.PresetCard(
             allCenter()
             borderRadius(14f)
             backgroundColor(if (selected) theme.brandSoft else theme.surface)
-            if (selected) border(Border(1f, BorderStyle.SOLID, theme.brand))
+            // 边框必须无条件全量赋值：条件不成立只调不设不会清除上次的边框，
+            // 会出现「点过的卡片永久残留蓝框」。用 0 宽透明 Border 表示无边框。
+            border(
+                if (selected) Border(1f, BorderStyle.SOLID, theme.brand)
+                else Border(0f, BorderStyle.SOLID, Color(0L))
+            )
         }
         vif({ preset.logo.isNotEmpty() }) {
             Image {
@@ -434,7 +439,11 @@ private fun ViewContainer<*, *>.ModelVariantChip(
             allCenter()
             borderRadius(13f)
             backgroundColor(if (selected) theme.brandSoft else theme.surface)
-            if (selected) border(Border(1f, BorderStyle.SOLID, theme.brand))
+            // 同 PresetCard：取消选中必须显式清边框，否则残留蓝框
+            border(
+                if (selected) Border(1f, BorderStyle.SOLID, theme.brand)
+                else Border(0f, BorderStyle.SOLID, Color(0L))
+            )
         }
         Text {
             attr {

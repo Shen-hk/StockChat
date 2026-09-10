@@ -136,6 +136,7 @@ fun ViewContainer<*, *>.ChatTopNav(
     onClearIslandCompare: () -> Unit = {},
     onMenu: () -> Unit,
     onNewChat: () -> Unit,
+    onSearch: () -> Unit = {},
 ) {
     val islandPresented = { islandExpanded() || islandDropActive() || islandCompareVisible() }
     View {
@@ -220,12 +221,11 @@ fun ViewContainer<*, *>.ChatTopNav(
             // rendered as a sibling overlay so it can overflow this 44dp row
             // when it morphs into the quote card.
             View { attr { flex(1f) } }
+            // 右上角双功能气泡：全局搜索 ｜ 新对话，椭圆胶囊造型。
+            // 收拢联动 p 挂在整颗气泡上，展开时整体向右滑出。
             View {
                 attr {
-                    size(44f, 44f); allCenter(); borderRadius(22f)
-                    backgroundColor(theme.surface)
-                    border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
-                    boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
+                    height(44f)
                     // Mirror of the menu button above：同款进度联动 p，向右滑出。
                     val e = islandPresented()
                     val motion = islandGestureMotion()
@@ -240,9 +240,8 @@ fun ViewContainer<*, *>.ChatTopNav(
                     opacity(p)
                     transform(
                         scale = Scale(0.84f + 0.16f * p, 0.84f + 0.16f * p),
-                        translate = Translate(0f, 0f, offsetX = 32f * (1f - p)),
+                        translate = Translate(0f, 0f, offsetX = 88f * (1f - p)),
                     )
-                    touchEnable(!e)
                     if (motion.phase == IslandGesturePhase.CLOSING ||
                         motion.phase == IslandGesturePhase.RETURNING
                     ) {
@@ -261,8 +260,36 @@ fun ViewContainer<*, *>.ChatTopNav(
                         )
                     }
                 }
-                Text { attr { text("＋"); fontSizeScaled(23f); color(theme.brand) } }
-                event { click { onNewChat() } }
+                // 胶囊主体（44 高，与左侧菜单钮同一圆心高度）
+                View {
+                    attr {
+                        height(44f); flexDirectionRow(); alignItemsCenter()
+                        borderRadius(22f)
+                        backgroundColor(theme.surface)
+                        border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
+                        boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
+                    }
+                    // 左半：全局搜索（Lucide search 对齐：镜柄朝右下）
+                    View {
+                        attr {
+                            size(44f, 44f); allCenter()
+                            touchEnable(!islandPresented())
+                        }
+                        LineIconSearch(theme.textPrimary, 20f)
+                        event { click { onSearch() } }
+                    }
+                    // 中缝细分隔线
+                    View { attr { size(0.5f, 18f); backgroundColor(Color(0x000000, 0.10f)) } }
+                    // 右半：新对话
+                    View {
+                        attr {
+                            size(43.5f, 44f); allCenter()
+                            touchEnable(!islandPresented())
+                        }
+                        LineIconPlus(theme.brand, 20f)
+                        event { click { onNewChat() } }
+                    }
+                }
             }
         }
     }
@@ -1506,9 +1533,8 @@ private fun ViewContainer<*, *>.DrawerEmptyHistory(theme: StockChatTheme) {
 }
 
 /**
- * 抽屉功能磁贴：白卡 + 细描边 + 浅投影，线条图标（LineIcons，Lucide 对齐）
- * 大尺寸 + 小标签（2026-09-08 五轮：图标 22 / 文字 10，修正"图标小字大"
- * 的比例失调）。icon 传绘制闭包，onClick 普通闭包，无 R2-R5 涉及。
+ * 抽屉功能磁贴：2026-09-10 起委托公共 FeatureTile（白卡 + 细描边 + 浅投影，
+ * 线条图标 Lucide 对齐，图标 22 / 文字 10）。icon 传绘制闭包，onClick 普通闭包。
  */
 private fun ViewContainer<*, *>.DrawerTile(
     label: String,
@@ -1516,21 +1542,7 @@ private fun ViewContainer<*, *>.DrawerTile(
     icon: ViewContainer<*, *>.() -> Unit,
     onClick: () -> Unit,
 ) {
-    View {
-        attr {
-            flex(1f)
-            height(64f)
-            flexDirectionColumn()
-            allCenter()
-            borderRadius(13f)
-            backgroundColor(theme.surface)
-            border(Border(0.5f, BorderStyle.SOLID, theme.divider))
-            boxShadow(BoxShadow(0f, 2f, 8f, Color(0x000000, 0.06f)))
-        }
-        icon()
-        Text { attr { text(label); marginTop(5f); fontSizeScaled(10f); color(theme.textSecondary) } }
-        event { click { onClick() } }
-    }
+    FeatureTile(label = label, theme = theme, icon = icon, onClick = onClick)
 }
 
 fun ViewContainer<*, *>.AppTopBar(
@@ -1552,7 +1564,10 @@ fun ViewContainer<*, *>.AppTopBar(
     progress: () -> Float? = { null },
     reduceMotion: Boolean = false,
     compactMetrics: () -> List<AppTopBarMetric> = { emptyList() },
-    actions: List<Pair<String, () -> Unit>> = emptyList(),
+    // 2026-09-10：label 从 String 改为 () -> String——标签在 Text attr 内读取，
+    // 动态字形（详情页未自选☆/已自选★）才能随 observable 翻转（R1：builder
+    // 快照只取初值）。静态标签调用点包一层 { } 即可。
+    actions: List<Pair<() -> String, () -> Unit>> = emptyList(),
     // 2026-09-08：顶栏统一去毛玻璃，改为 theme.surface 实色 + 发丝分隔线
     // （与详情页原型一致）。renderer 参数保留以兼容既有调用点，当前不参与绘制。
 ) {
@@ -1688,11 +1703,16 @@ fun ViewContainer<*, *>.AppTopBar(
                     }
                     Text {
                         attr {
-                            text(label)
-                            // 符号字形（＋ ✓ ⋯）给图形级字号；两字以上是文字动作。
-                            fontSizeScaled(if (label.length > 1) 15f else 21f)
+                            val glyph = label()
+                            text(glyph)
+                            // 符号字形（＋ ✓ ☆ ★ ⋯）给图形级字号；两字以上是文字动作。
+                            fontSizeScaled(if (glyph.length > 1) 15f else 21f)
                             fontWeightSemiBold()
-                            color(if (label == "+" || label == "✓") theme.brand else theme.textPrimary)
+                            color(
+                                if (glyph == "+" || glyph == "✓" ||
+                                    glyph == "★" || glyph == "☆"
+                                ) theme.brand else theme.textPrimary
+                            )
                         }
                     }
                     event { click { action() } }
