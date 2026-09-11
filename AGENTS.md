@@ -57,6 +57,14 @@ When debugging a silent Kuikly animation, inspect reactive dependency registrati
 - **Full-panel rebuild trick:** for content derived from non-observable composites (e.g. `args = f(viewModel.inputText, mentionEntities)`), keep a single-element `ObservableList<Int>` render key and bump it (`clear()+add()`) at every mutation site; wrap the panel content in `vfor({ key }) { … }` so each bump rebuilds the frame. All bump sites must be guarded by the same condition as the panel's mount, and the vfor item must create exactly one child (`Scroller` on the LoopDirectivesView receiver, not the outer container). Missing the closing brace of that vfor lambda silently demotes later `private fun`s into local functions → cascade of "Unresolved reference" at call sites above.
 - **Gradle may compile a torn mid-write file.** With parallel sessions editing the same file, a compile can report dozens of bogus "Unresolved reference" for methods that grep shows exist. Check file mtime, wait for stability, recompile before diagnosing.
 
+## R8 — ohos build & verification (consolidated 2026-09-11)
+
+- **ohos Kotlin tasks need their own settings file.** `linkDebugSharedOhosArm64` (and the other ohos targets) are only registered by `settings.ohos.gradle.kts`: run `./gradlew -c settings.ohos.gradle.kts :shared:linkDebugSharedOhosArm64`. Under the default settings that task does not exist.
+- **The ohos compiler resolves the SDK from a hard-coded DevEco path.** When DevEco lives elsewhere, the link dies with `OHOS SDK is not found in 'C:\Program Files\Huawei\DevEco Studio\sdk\default\openharmony'` — that is a plugin default, not the install location. Inject it in the calling shell: `export OHOS_SDK_HOME="C:/Users/shenhk/DevEco Studio/sdk/default/openharmony"` plus `DEVECO_SDK_HOME="C:/Users/shenhk/DevEco Studio"`. `runOhosApp.ps1` sets these for the HAP build only; a plain Gradle run from your shell does not inherit them.
+- **HAP page images come from `ohosApp/entry/src/main/resources/rawfile/`**, mirrored from `shared/src/commonMain/assets/` by `runOhosApp.ps1`. `ImageUri.pageAssets` resolves against the HAP rawfile bundle on HarmonyOS, and the Android assets source-set declaration does not feed the separate HAP build (symptom: every vendor logo missing). The mirror directory is generated — gitignored, never hand-edited.
+- **`ohosApp/build-profile.json5` is machine-local.** DevEco auto-signing writes local certificate paths and encrypted passwords into it, so it is gitignored and marked `git update-index --skip-worktree` (undo with `--no-skip-worktree`; a fresh clone must reconfigure signing).
+- **Verification order that actually gates a change:** `:shared:compileDebugKotlinAndroid` + `:shared:testDebugUnitTest` cover commonMain; only the ohos link covers `ohosArm64Main`. Green Android does not imply green ohos.
+
 ---
 
 # Vibe coding workflow conventions
@@ -76,3 +84,12 @@ Conventions for AI-assisted development in this repository (multiple AI sessions
 
 - Start new AI sessions frequently; long sessions accumulate stale context and drift from the architecture.
 - During and after each session, have the AI summarize its own work — decisions, pitfalls, invariants — so the summary can be persisted and carried into the next session.
+
+## Batched commits out of one dirty tree
+
+- Group by dependency: commit the depended-on change first (appearance → insight → cards → detail → chat/market → cleanup). A file carrying several features goes to the dominant feature, and the message names the secondary change.
+- `git commit` with **no** pathspec commits the entire index. To split one file across features (e.g. `AiProvider.kt` = ohos streaming + card policy), stage hunk by hunk: `git diff -- <file> > p.patch`, keep the file header plus a single `@@` hunk, then `git apply --cached --recount p.patch`. Write temp patches inside the repo — `git.exe` does not resolve msys `/tmp`.
+- Do **not** "fix" a mixed commit by passing pathspecs: `git commit -- <paths>` takes the *worktree* content of those paths and bypasses the index, re-mixing the feature that was just split out. Check `git diff --cached --stat` (and `git show :<path> | grep` the staged blob) right before committing; if a stray file slipped in, `git reset --soft HEAD~1` + restage.
+- `git status --short --cached` is not a valid invocation (`--cached` belongs to `diff`). An invalid option there breaks the `&&` chain, so the commit silently never runs while the log still looks unchanged.
+- A file reported as modified while `git diff` is empty is usually `core.autocrlf=true` newline noise; one `git add` clears it and there is nothing to commit.
+- Stage only the batch: after each commit, re-read `git status --short` before the next one, and never stage a neighboring session's WIP files.
