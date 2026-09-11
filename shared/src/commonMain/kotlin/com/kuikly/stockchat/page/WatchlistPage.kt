@@ -321,7 +321,9 @@ internal class WatchlistPage : BasePager() {
                     WatchlistEmptyState(
                         theme = page.theme,
                         container = this,
-                        onSearch = { page.searchOpen = true },
+                        // 空态的首要任务是找到第一只股票；直接进入完整搜索页，避免
+                        // 仅唤起本页 z5 输入浮层而让用户误以为页面没有跳转。
+                        onSearch = { page.openPage(Routes.SEARCH) },
                         onOpenMarket = { page.openPage(Routes.MARKET) },
                     )
                 }
@@ -1705,7 +1707,7 @@ private fun WatchlistEmptyState(
         View {
             attr { flexDirectionRow(); marginTop(14f) }
             FeatureTile(
-                label = "搜索添加",
+                label = "去全局搜索",
                 theme = theme,
                 height = 64f,
                 icon = { LineIconSearch(theme.textPrimary, 22f) },

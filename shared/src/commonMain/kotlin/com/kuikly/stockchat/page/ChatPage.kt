@@ -45,6 +45,7 @@ import com.kuikly.stockchat.chat.sheet.state.CardSheetState
 import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
 import com.kuikly.stockchat.chat.sheet.state.KuiklyCardSheetScheduler
 import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.openGlossary
 import com.kuikly.stockchat.common.openPage
@@ -480,6 +481,14 @@ internal class ChatPage : BasePager() {
     private var quoteStates: ObservableList<ChatQuoteState> by observableList()
     private val requestedSymbols = mutableSetOf<String>()
     private var pendingRouteQuestion: String = ""
+    /** 冒烟钩子：params.autoAsk 非空时，路由问句注入后自动发送（本机无辅助功能权限，无法驱动真实点击）。 */
+    private var pendingAutoAsk: Boolean = false
+    /** 冒烟钩子：自动发送相对 pageDidAppear 的延迟（ms），默认 600。 */
+    private var pendingAutoAskDelay: Int = 600
+    /** 冒烟钩子：params.smokeMedia = library|camera|document，页面出现后自动走一次媒体入口（验证 iOS 桥）。 */
+    private var pendingSmokeMediaSource: String = ""
+    /** 冒烟钩子：params.smokeVoice = 1，页面出现后自动开一段录音并在 2.5s 后松手（验证 iOS 语音桥）。 */
+    private var pendingSmokeVoice: Boolean = false
     private var pendingRouteFocusNote: String = ""
     private var pendingRouteFocusSymbol: String = ""
     // 输入框渐变描边流动相位（0..2π）：composerRimFlowTimer 以 20fps 推进，
@@ -520,6 +529,8 @@ internal class ChatPage : BasePager() {
         super.created()
         glassMode = hostGlassRenderer.mode
         pendingRouteQuestion = pagerData.params.optString("question")
+        pendingAutoAsk = pagerData.params.optString("autoAsk").isNotEmpty()
+        pendingAutoAskDelay = pagerData.params.optString("autoAskDelay").toIntOrNull() ?: 600
         pendingRouteFocusNote = pagerData.params.optString("focusNote")
         pendingRouteFocusSymbol = pagerData.params.optString("focusSymbol")
         StockCardRenderers.ensureRegistered()
@@ -568,6 +579,38 @@ internal class ChatPage : BasePager() {
         )
         startComposerRimFlow()
         consumeRouteQuestionIfNeeded()
+        runSmokeBridgeHooksIfNeeded()
+    }
+
+    /**
+     * 冒烟钩子（simctl 专用）：只有 iOS 宿主经 env 注入 params 才会触发，
+     * Android/鸿蒙永远收不到这两个参数。媒体入口复用 handleMediaAction
+     * 真实路径；语音复用 startVoiceSession/finishVoiceSession 真实状态机。
+     */
+    private fun runSmokeBridgeHooksIfNeeded() {
+        if (pendingSmokeMediaSource.isNotEmpty()) {
+            val action = ComposerMediaAction.entries.firstOrNull { it.source == pendingSmokeMediaSource }
+                ?: ComposerMediaAction.entries.first()
+            pendingSmokeMediaSource = ""
+            KLog.i(COMPOSER_LOG_TAG, "smoke media action ${action.source}")
+            setTimeout(1200) {
+                if (!isWillDestroy()) handleMediaAction(action)
+            }
+        }
+        if (pendingSmokeVoice) {
+            pendingSmokeVoice = false
+            setTimeout(1500) {
+                if (isWillDestroy()) return@setTimeout
+                KLog.i(COMPOSER_LOG_TAG, "smoke voice start")
+                startVoiceSession()
+                setTimeout(2500) {
+                    if (!isWillDestroy() && voiceState == VoiceState.RECORDING) {
+                        KLog.i(COMPOSER_LOG_TAG, "smoke voice finish")
+                        finishVoiceSession()
+                    }
+                }
+            }
+        }
     }
 
     override fun pageWillDestroy() {
@@ -5313,6 +5356,13 @@ internal class ChatPage : BasePager() {
                 }
             }
             injectQuestion(question)
+            if (pendingAutoAsk) {
+                pendingAutoAsk = false
+                // 等输入栏展开与欢迎入场收尾后再发，避免与入场动效抢同一批状态。
+                setTimeout(pendingAutoAskDelay) {
+                    if (viewModel.streamState != StreamState.STREAMING) submitInput()
+                }
+            }
         }
     }
 

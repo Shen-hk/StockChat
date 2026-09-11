@@ -5,6 +5,7 @@ import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openStockDetail
@@ -21,6 +22,7 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
 import com.tencent.kuikly.core.reactive.collection.ObservableList
+import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
@@ -32,7 +34,10 @@ internal class HotspotPage : BasePager() {
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private var sectors: ObservableList<SectorRank> by observableList()
     private var limitUps: ObservableList<LimitUpStock> by observableList()
-    private var snapshot = OfflineMarketInsightProvider().hotspotValue()
+    // 必须 observable：created() 先给离线快照、再看远端结果覆盖。此前是普通 var，
+    // 而 ExplanationCard 在读在普通 builder 闭包里（非 attr/vbind），拿到的是首帧快照，
+    // 远端解读回来也不会刷新——表现为「首启解读卡数据迟到」（退出重进才正确）。
+    private var snapshot: HotspotSnapshot by observable(OfflineMarketInsightProvider().hotspotValue())
 
     override fun created() {
         super.created()
@@ -55,7 +60,17 @@ internal class HotspotPage : BasePager() {
                 // 竖向 Scroller 水平 padding 会被双倍扣除，14/14 时右侧多出 28dp 留白；
                 // 右 padding 留 0，左右各 14dp 对齐（同 ChatPage）。
                 attr { flex(1f); paddingLeft(14f); paddingRight(0f); paddingTop(page.pagerData.statusBarHeight + 73f); paddingBottom(70f) }
-                ExplanationCard(page.snapshot.explanation, page.snapshot.stamp, page.theme)
+                // R1：snapshot 在远端返回后变化，解读卡必须放在响应式闭包里才会刷新；
+                // 同时带上换肤重建键（ExplanationCard 以参数捕获 theme）。
+                // 2026-09-11：只在 PlatformProfile.marketFixes（当前 iOS）下走响应式重建，
+                // 其余平台保持改动前的单帧读取语义（首启解读卡不刷新的老行为）。
+                if (PlatformProfile.marketFixes) {
+                    vbind({ page.snapshot to page.themeRebuildKey() }) {
+                        ExplanationCard(page.snapshot.explanation, page.snapshot.stamp, page.theme)
+                    }
+                } else {
+                    ExplanationCard(page.snapshot.explanation, page.snapshot.stamp, page.theme)
+                }
 
                 InsightSectionTitle("板块排行", "涨幅不是推荐，结合资金与涨跌家数看", page.theme)
                 vfor({ page.sectors }) { sector ->

@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.chat
 
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.composer.SendPayload
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.provider.MockAiProvider
@@ -169,17 +170,31 @@ class ChatViewModel(
                     }
                 },
                 onError = { error ->
-                    streamState = StreamState.ERROR
-                    typewriter.cancel()
-                    assistantMessage.content = error
-                    assistantMessage.streaming = false
-                    assistantMessage.failed = true
-                    persist()
+                    onCoreThread {
+                        streamState = StreamState.ERROR
+                        typewriter.cancel()
+                        assistantMessage.content = error
+                        assistantMessage.streaming = false
+                        assistantMessage.failed = true
+                        persist()
+                    }
                 },
             )
         }
         ChatQuoteContext.resolve(payload, quoteRepository, ::launch)
         this.setTimeout(3000) { launch(null) }
+    }
+
+    /**
+     * 把代码块调度回 Kuikly 核心线程（setTimeout(0) 回调由 native 在核心线程触发）。
+     * AI provider 的 onDelta/onDone/onError 全部跑在 Dispatchers.Default 上，
+     * 其中任何 observable 写入都必须先跳回核心线程，否则等于在后台线程重建视图树。
+     *
+     * 2026-09-11：只在 iOS 生效 —— 该断言（`assertContextQueue`）是 iOS 渲染层特有的，
+     * Android / 鸿蒙没有，为不改变这两端的既有回调时序，用 `PlatformProfile` 门控。
+     */
+    private fun onCoreThread(block: () -> Unit) {
+        if (PlatformProfile.coreThreadMarshalling) setTimeout(0) { block() } else block()
     }
 
     private fun replyWithWatchlistSummary(assistantId: String) {
@@ -289,18 +304,20 @@ class ChatViewModel(
             messages = listOf(AiChatMessage("user", buildCardRetryPrompt(messageIndex, cardType, rawCard))),
             onDelta = { response += it },
             onDone = {
-                val replacement = normalizeRepairedCard(cardType, response)
-                if (replacement == null) {
-                    onError("模型未返回可用卡片")
-                    return@ask
+                onCoreThread {
+                    val replacement = normalizeRepairedCard(cardType, response)
+                    if (replacement == null) {
+                        onError("模型未返回可用卡片")
+                        return@onCoreThread
+                    }
+                    messages.getOrNull(messageIndex)?.let { message ->
+                        message.content = AiResponseLexer.replaceCardBlock(message.content, blockId, replacement)
+                        persist()
+                    }
+                    onDone()
                 }
-                messages.getOrNull(messageIndex)?.let { message ->
-                    message.content = AiResponseLexer.replaceCardBlock(message.content, blockId, replacement)
-                    persist()
-                }
-                onDone()
             },
-            onError = onError,
+            onError = { error -> onCoreThread { onError(error) } },
         )
     }
 
@@ -313,11 +330,13 @@ class ChatViewModel(
         }
         val provider = dependencies.aiProviderFactory(config)
         subThreadProvider = provider
+        // 子线程（卡片追问/术语对比/术语解释）统一在这里跳回核心线程后再回调调用方，
+        // 调用方即可照常直写 observable（否则等于后台线程重建视图树）。
         provider.ask(
             messages = listOf(AiChatMessage("user", "$prompt\n请只用简洁文字解释，不要输出卡片协议。")),
-            onDelta = onDelta,
-            onDone = onDone,
-            onError = onError,
+            onDelta = { delta -> onCoreThread { onDelta(delta) } },
+            onDone = { onCoreThread { onDone() } },
+            onError = { error -> onCoreThread { onError(error) } },
         )
     }
 

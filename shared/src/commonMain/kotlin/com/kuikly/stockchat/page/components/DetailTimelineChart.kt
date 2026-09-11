@@ -5,6 +5,7 @@ import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuotePoint
 import com.kuikly.stockchat.data.provider.MarketTimelineSpec
@@ -127,13 +128,22 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     var cachedGeometry: com.kuikly.stockchat.chart.model.SymmetricGeometry? = null
     var cachedAverageTimeline: List<QuotePoint>? = null
     var cachedAverageBaseline = Double.NaN
+    var cachedAverageSymbol = ""
     var cachedAverages = emptyList<Double>()
 
     fun averagesFor(q: Quote): List<Double> {
-        if (cachedAverageTimeline !== q.timeline || cachedAverageBaseline != q.previousClose) {
+        if (
+            cachedAverageTimeline !== q.timeline || cachedAverageBaseline != q.previousClose ||
+            cachedAverageSymbol != q.symbol
+        ) {
             cachedAverageTimeline = q.timeline
             cachedAverageBaseline = q.previousClose
-            cachedAverages = TimeLineCalculator.averagePrices(q.timeline, q.previousClose)
+            cachedAverageSymbol = q.symbol
+            cachedAverages = TimeLineCalculator.averagePrices(
+                q.timeline,
+                q.previousClose,
+                MarketTimelineSpec.forSymbol(q.symbol).lotSize,
+            )
         }
         return cachedAverages
     }
@@ -183,7 +193,14 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
         if (q.timeline.isEmpty() || q.previousClose <= 0.0) return -1
         val pw = (containerWidth - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
         val slots = MarketTimelineSpec.forSymbol(q.symbol).slotCount
-        val g = TimeLineCalculator.calculateSymmetric(q.timeline, pw, PRICE_HEIGHT, q.previousClose, slots = slots)
+        val g = TimeLineCalculator.calculateSymmetric(
+            q.timeline,
+            pw,
+            PRICE_HEIGHT,
+            q.previousClose,
+            slots = slots,
+            lotSize = MarketTimelineSpec.forSymbol(q.symbol).lotSize,
+        )
         sonarIndices().forEach { idx ->
             if (idx !in q.timeline.indices) return@forEach
             val sx = AXIS_LEFT + idx / (slots - 1).toFloat() * pw
@@ -261,7 +278,14 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                 cachedPlotWidth = plotW
                 cachedSlots = slotCount
                 cachedGeometry = if (points.isEmpty() || q.previousClose <= 0.0) null
-                else TimeLineCalculator.calculateSymmetric(points, plotW, PRICE_HEIGHT, q.previousClose, slots = slotCount)
+                else TimeLineCalculator.calculateSymmetric(
+                    points,
+                    plotW,
+                    PRICE_HEIGHT,
+                    q.previousClose,
+                    slots = slotCount,
+                    lotSize = timelineSpec.lotSize,
+                )
             }
             val geometry = cachedGeometry
             val slotX: (Int) -> Float = { AXIS_LEFT + it / slotDenominator * plotW }
@@ -280,7 +304,15 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         canvas.stroke()
                     }
                 }
-                listOf(0, 60, 120, 180, 240).forEach { slot ->
+                // 竖网格线跟随该市场的时段标签（2026-09-11 修）：此前写死 A 股
+                // 0/60/120/180/240，港股（0/90/150/240/330）网格与时间标签完全错位。
+                // 只在 PlatformProfile.marketFixes（当前 iOS）生效，其余平台保持写死 A 股槽位。
+                val gridSlots = if (PlatformProfile.marketFixes) {
+                    timelineSpec.labels.map { it.first }.ifEmpty { listOf(0, 60, 120, 180, 240) }
+                } else {
+                    listOf(0, 60, 120, 180, 240)
+                }
+                gridSlots.forEach { slot ->
                     val x = slotX(slot)
                     canvas.beginPath()
                     canvas.moveTo(x, PRICE_TOP)
@@ -435,11 +467,23 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     val y = (PRICE_TOP + geometry.points[index].y + if (isHigh) -10f else 16f)
                         .coerceIn(10f, VOL_TOP - 4f)
                     val anchorX = x.coerceIn(AXIS_LEFT + 26f, AXIS_LEFT + plotW - 26f)
+                    // 对齐方向必须让文字留在画布内（2026-09-11 修）：此前按「锚点相对 x」
+                    // 取反，导致贴左边缘的「低 xxx」用 RIGHT 对齐、半个字被裁掉
+                    // （A 股 "1264.00"、港股 "419.40" 都实测被裁）。
+                    // 只在 PlatformProfile.marketFixes（当前 iOS）生效，其余平台保留原对齐规则。
                     canvas.textAlign(
-                        when {
-                            anchorX > x -> TextAlign.RIGHT
-                            anchorX < x -> TextAlign.LEFT
-                            else -> TextAlign.CENTER
+                        if (PlatformProfile.marketFixes) {
+                            when {
+                                anchorX <= AXIS_LEFT + 26f -> TextAlign.LEFT
+                                anchorX >= AXIS_LEFT + plotW - 26f -> TextAlign.RIGHT
+                                else -> TextAlign.CENTER
+                            }
+                        } else {
+                            when {
+                                anchorX > x -> TextAlign.RIGHT
+                                anchorX < x -> TextAlign.LEFT
+                                else -> TextAlign.CENTER
+                            }
                         },
                     )
                     canvas.fillStyle(tone)
@@ -836,6 +880,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                         PRICE_HEIGHT,
                         q.previousClose,
                         slots = slots,
+                        lotSize = MarketTimelineSpec.forSymbol(q.symbol).lotSize,
                     )
                     val focusY = PRICE_TOP + plotGeometry.points[idx].y
                     // 数据卡跟随当前焦点上下移动；靠近顶部时翻到焦点下方，避免固定贴顶。

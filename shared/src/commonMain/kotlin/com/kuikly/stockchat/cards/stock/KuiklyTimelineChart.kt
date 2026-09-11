@@ -7,7 +7,7 @@ package com.kuikly.stockchat.cards.stock
  * 这一个使用点服务，已移除 ：chartkit 依赖；K线（日/周/月蜡烛）仍走自研 KLineChart。
  *
  * 与详情页同款的视觉要素（按卡片尺寸压缩）：
- *  - 对称涨跌幅几何（昨收恒居中线，TimeLineCalculator.calculateSymmetric，241 槽位对齐）；
+ *  - 对称涨跌幅几何（昨收恒居中线，TimeLineCalculator.calculateSymmetric，槽位按市场对齐）；
  *  - 昨收 1f 虚线基准；
  *  - 价格面积闭合到昨收：上方涨跌语义色渐变、下方对侧语义色淡渐变；
  *  - 价格线 1.7f 圆角 + 均价 1.1f 虚线（真实 amount 口径，缺失走近似）；
@@ -25,6 +25,8 @@ package com.kuikly.stockchat.cards.stock
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.common.PlatformProfile
+import com.kuikly.stockchat.data.provider.MarketTimelineSpec
 import com.kuikly.stockchat.data.provider.Quote
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.reactive.handler.observable
@@ -102,7 +104,14 @@ internal fun KuiklyTimelineChart(
                 if (w <= 0f) return@click
                 val n = pts.size
                 val pw = plotW(w)
-                val idx = (((params.x - axisSide) / pw * 240f).roundToInt())
+                // 命中换算的分母必须与绘制端一致（按市场槽位，不能写死 240）。
+                // 非 iOS 平台仍用 240（改动前口径）。
+                val denom = if (PlatformProfile.marketFixes) {
+                    (MarketTimelineSpec.forSymbol(quote.symbol).slotCount - 1).toFloat()
+                } else {
+                    240f
+                }
+                val idx = (((params.x - axisSide) / pw * denom).roundToInt())
                     .coerceIn(0, n - 1)
                 val next = if (state.selected == idx) -1 else idx
                 state.selected = next
@@ -117,8 +126,17 @@ internal fun KuiklyTimelineChart(
         val progress = state.progress
         val selected = state.selected
         val pw = plotW(width)
-        val slotX: (Int) -> Float = { axisSide + it / 240f * pw }
-        val geometry = TimeLineCalculator.calculateSymmetric(pts, pw, priceH, quote.previousClose)
+        // 横轴槽位随市场（2026-09-11 修）：此前写死 A 股 240，港股 331 点会按 240 摊开，
+        // 曲线与量能条整体被拉到画布右边界之外（只剩左 72% 可见、且横向比例失真）。
+        val slotDenominator = (MarketTimelineSpec.forSymbol(quote.symbol).slotCount - 1).toFloat()
+        val slotX: (Int) -> Float = { axisSide + it / slotDenominator * pw }
+        val geometry = TimeLineCalculator.calculateSymmetric(
+            pts,
+            pw,
+            priceH,
+            quote.previousClose,
+            lotSize = MarketTimelineSpec.forSymbol(quote.symbol).lotSize,
+        )
 
         // ── 昨收基准虚线（无数据时也是唯一内容）──
         val baselineY = priceTop + geometry.baselineY
@@ -189,7 +207,11 @@ internal fun KuiklyTimelineChart(
         canvas.stroke()
 
         // ── 均价虚线（真实 amount 口径，缺失走近似）──
-        val averages = TimeLineCalculator.averagePrices(pts, quote.previousClose)
+        val averages = TimeLineCalculator.averagePrices(
+            pts,
+            quote.previousClose,
+            MarketTimelineSpec.forSymbol(quote.symbol).lotSize,
+        )
         canvas.beginPath()
         for (i in 0 until visible) {
             val x = slotX(i)
@@ -205,7 +227,7 @@ internal fun KuiklyTimelineChart(
         // ── 量能副图：红绿量能条（相对前一分钟，首根对今开）──
         val flagsVol = TimeLineCalculator.volumeRisingFlags(pts, quote.open)
         val maxVolume = pts.maxOf { it.volume }.coerceAtLeast(1.0)
-        val barW = (pw / 240f * 0.62f).coerceIn(1f, 4f)
+        val barW = (pw / slotDenominator * 0.62f).coerceIn(1f, 4f)
         for (i in 0 until visible) {
             val vol = pts[i].volume
             if (vol <= 0.0) continue
@@ -251,7 +273,7 @@ internal fun KuiklyTimelineChart(
         canvas.textAlign(TextAlign.LEFT)
 
         // ── 盘中生长态 now 点（实心，不做脉冲）──
-        if (pts.size < 241) {
+        if (pts.size < slotDenominator + 1f) {
             val lastX = slotX(pts.size - 1)
             val lastY = priceTop + geometry.points.last().y
             canvas.beginPath()

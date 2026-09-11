@@ -38,8 +38,10 @@ import com.kuikly.stockchat.common.openUrl
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.data.provider.MarketTimelineSpec
 import com.kuikly.stockchat.data.provider.QuotePrefetchStore
 import com.kuikly.stockchat.data.provider.DisclosureItem
+import com.kuikly.stockchat.data.provider.DisclosureKind
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.StockInsightBundle
@@ -445,7 +447,7 @@ internal class StockDetailPage : BasePager() {
                                     "今开" to Format.price(page.quote.open) to page.marketColor(page.quote.open),
                                     "最高" to Format.price(page.quote.high) to page.marketColor(page.quote.high),
                                     "最低" to Format.price(page.quote.low) to page.marketColor(page.quote.low),
-                                    "换手" to "${Format.decimal(page.quote.turnoverRate, 2)}%" to page.theme.textSecondary,
+                                    "换手" to Format.ratioOrDash(page.quote.turnoverRate) to page.theme.textSecondary,
                                 ).forEachIndexed { i, (pair, color) ->
                                     val (label, value) = pair
                                     View {
@@ -822,7 +824,7 @@ internal class StockDetailPage : BasePager() {
                             vbind({ page.quote }) {
                                 SecondaryMetricRow(
                                     listOf(
-                                        DetailMetric("换手率", Format.decimal(page.quote.turnoverRate, 2) + "%"),
+                                        DetailMetric("换手率", Format.ratioOrDash(page.quote.turnoverRate)),
                                         DetailMetric(
                                             "主力资金",
                                             if (main == null) "--" else Format.compactAmount(main),
@@ -1230,43 +1232,57 @@ internal class StockDetailPage : BasePager() {
                         Text {
                             attr {
                                 text(
-                                    (page.disclosurePeek?.let { "${it.kind.label} · ${it.publisher} · ${it.date}" } ?: "")
+                                    // 研报先给可读摘要；券商与日期降到来源行，避免元数据
+                                    // 抢占长按预览的首屏内容。
+                                    (page.disclosurePeek?.takeIf { it.kind != DisclosureKind.RESEARCH }
+                                        ?.let { "${it.kind.label} · ${it.publisher} · ${it.date}" } ?: "")
                                 )
-                                marginTop(8f)
+                                marginTop(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 0f else 8f)
                                 fontSizeScaled(10f)
                                 color(page.theme.textTertiary)
                             }
                         }
-                        Text {
-                            attr {
-                                text(
-                                    page.disclosurePeek?.let { item ->
-                                        val verdict = when (materialityOf(item.title).level) {
-                                            Materiality.HIGH -> "高重要度"
-                                            Materiality.MID -> "中重要度"
-                                            Materiality.LOW -> "低重要度"
-                                        }
-                                        "端侧评级：$verdict · ${materialityOf(item.title).rule}"
-                                    } ?: ""
-                                )
-                                marginTop(8f)
-                                fontSizeScaled(11f)
-                                lineHeightScaled(16f)
-                                color(page.theme.textSecondary)
+                        // 重要度规则只适用于公告；研报展示机构标题提炼，不混入无关的公告评级。
+                        vif({ page.disclosurePeek?.kind != DisclosureKind.RESEARCH }) {
+                            Text {
+                                attr {
+                                    text(
+                                        page.disclosurePeek?.let { item ->
+                                            val verdict = when (materialityOf(item.title).level) {
+                                                Materiality.HIGH -> "高重要度"
+                                                Materiality.MID -> "中重要度"
+                                                Materiality.LOW -> "低重要度"
+                                            }
+                                            "端侧评级：$verdict · ${materialityOf(item.title).rule}"
+                                        } ?: ""
+                                    )
+                                    marginTop(8f)
+                                    fontSizeScaled(11f)
+                                    lineHeightScaled(16f)
+                                    color(page.theme.textSecondary)
+                                }
                             }
                         }
                         Text {
                             attr {
                                 text(page.disclosurePeek?.summary?.takeIf { it.isNotBlank() } ?: "")
-                                marginTop(6f)
-                                fontSizeScaled(11f)
-                                lineHeightScaled(16f)
+                                marginTop(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 8f else 6f)
+                                fontSizeScaled(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 12f else 11f)
+                                lineHeightScaled(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 18f else 16f)
                                 color(page.theme.textSecondary)
                             }
                         }
                         Text {
                             attr {
-                                text(page.disclosurePeek?.stamp?.source?.takeIf { it.isNotBlank() }?.let { "来源：$it · 只述事实，不构成建议" } ?: "只述事实，不构成建议")
+                                text(page.disclosurePeek?.let { item ->
+                                    if (item.kind == DisclosureKind.RESEARCH) {
+                                        "来源：${item.publisher} · ${item.date} · 机构观点仅供参考"
+                                    } else {
+                                        item.stamp.source.takeIf { it.isNotBlank() }
+                                            ?.let { "来源：$it · 只述事实，不构成建议" }
+                                            ?: "只述事实，不构成建议"
+                                    }
+                                } ?: "只述事实，不构成建议")
                                 marginTop(8f)
                                 fontSizeScaled(9f)
                                 color(page.theme.textTertiary)
@@ -1531,7 +1547,11 @@ internal class StockDetailPage : BasePager() {
         val highPt = seg.maxByOrNull { it.price }
         val lowPt = seg.minByOrNull { it.price }
         // 区间终点与均价线关系（均价 = 真实 amount 口径，与图上虚线一致）
-        val averages = TimeLineCalculator.averagePrices(timeline, q.previousClose)
+        val averages = TimeLineCalculator.averagePrices(
+            timeline,
+            q.previousClose,
+            MarketTimelineSpec.forSymbol(q.symbol).lotSize,
+        )
         val avgEnd = averages.getOrNull(hi)
         val vsAvg = if (avgEnd != null && avgEnd > 0.0) {
             "区间终点${if (p1 >= avgEnd) "高于" else "低于"}均价线（${Format.price(avgEnd)}）"

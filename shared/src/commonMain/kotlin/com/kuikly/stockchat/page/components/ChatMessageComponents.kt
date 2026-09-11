@@ -124,62 +124,58 @@ internal fun ViewContainer<*, *>.ChatMessageView(
             marginTop(20f)
             if (user) alignItemsFlexEnd()
         }
-        View {
-            attr {
-                if (user) {
-                    marginLeft(58f)
-                    marginRight(2f)
-                    paddingTop(10f)
-                    paddingBottom(10f)
-                    paddingLeft(16f)
-                    paddingRight(16f)
-                    backgroundColor(theme.brand)
-                    borderRadius(20f)
-                } else {
-                    // No avatar: the AI message spans the row with symmetric
-                    // margins so the left and right insets always match.
-                    marginLeft(6f)
-                    marginRight(6f)
-                }
-                // 子树内所有 Text/富文本可选（渲染层以本容器为根收集可选文本，
-                // selectEnd 事件与选区手柄均挂在此容器上）。
-                selectable(SelectableOption.ENABLE)
-                selectionColor(theme.brand)
-            }
-            ref { actions.onSelectionContainerRef(message.id, it) }
-            event {
-                longPress { params ->
-                    if (params.isCancel || params.state != "start") return@longPress
-                    actions.onTextSelectionLongPress(message.id, params.x, params.y, params.pageX, params.pageY)
-                }
-                selectEnd { actions.onTextSelectEnd(message.id) }
-                selectCancel { actions.onTextSelectCancel(message.id) }
-            }
-            if (user) {
-                // 附件回显：发送时快照进 ChatMessage，创建后不再变化（直接读即可）。
-                // 图片缩略图行（最多 4 张，超宽横向滚动）+ 文档胶囊，位于文字上方；
-                // 样式压在品牌色气泡上：半透明白底 + onBrand 文字。
-                vif({ message.attachments.any { it.isImage } }) {
-                        Scroller {
+        if (user) {
+            // 图片附件：独立于气泡单独成条发送——单排固定正方形缩略图
+            // （与输入栏预览同款 56x56 / 12 圆角），靠右与气泡右缘对齐，
+            // 图片在上、文字气泡在下。附件快照进 ChatMessage 后不再变化（直接读）。
+            vif({ message.attachments.any { it.isImage } }) {
+                View {
+                    attr {
+                        flexDirectionRow()
+                        marginRight(2f)
+                        marginBottom(
+                            if (message.content.isNotEmpty() || message.attachments.any { !it.isImage }) 8f else 0f
+                        )
+                    }
+                    val images = message.attachments.filter { it.isImage }
+                    images.forEachIndexed { index, att ->
+                        Image {
                             attr {
-                                flexDirectionRow()
-                                height(104f)
-                                marginBottom(
-                                    if (message.content.isNotEmpty() || message.attachments.any { !it.isImage }) 8f else 0f
-                                )
-                            }
-                            message.attachments.filter { it.isImage }.forEach { att ->
-                                Image {
-                                    attr {
-                                        src("file://" + att.path)
-                                        size(104f, 104f)
-                                        borderRadius(12f)
-                                        marginRight(8f)
-                                        backgroundColor(Color(0x33FFFFFF))
-                                    }
-                                }
+                                src("file://" + att.path)
+                                size(56f, 56f)
+                                borderRadius(12f)
+                                if (index < images.size - 1) marginRight(8f)
+                                backgroundColor(Color(0x11000000))
                             }
                         }
+                    }
+                }
+            }
+            // 文字/文档气泡：仅当有正文或文档附件时才出现（纯图片消息无气泡）。
+            vif({ message.content.isNotEmpty() || message.attachments.any { !it.isImage } }) {
+                View {
+                    attr {
+                        marginLeft(58f)
+                        marginRight(2f)
+                        paddingTop(10f)
+                        paddingBottom(10f)
+                        paddingLeft(16f)
+                        paddingRight(16f)
+                        backgroundColor(theme.brand)
+                        borderRadius(20f)
+                        // 子树内所有 Text/富文本可选（渲染层以本容器为根收集可选文本，
+                        // selectEnd 事件与选区手柄均挂在此容器上）。
+                        selectable(SelectableOption.ENABLE)
+                        selectionColor(theme.brand)
+                    }
+                    ref { actions.onSelectionContainerRef(message.id, it) }
+                    event {
+                        longPress { params ->
+                            if (params.isCancel || params.state != "start") return@longPress
+                            actions.onTextSelectionLongPress(message.id, params.x, params.y, params.pageX, params.pageY)
+                        }
+                        selectEnd { actions.onTextSelectEnd(message.id) }
+                        selectCancel { actions.onTextSelectCancel(message.id) }
                     }
                     message.attachments.filter { !it.isImage }.forEach { att ->
                         View {
@@ -204,10 +200,32 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                             }
                         }
                     }
-                vif({ message.content.isNotEmpty() }) {
-                    Text { attr { text(message.content); fontSizeScaled(16f); lineHeightScaled(24f); fontWeightMedium(); color(theme.onBrand) } }
+                    vif({ message.content.isNotEmpty() }) {
+                        Text { attr { text(message.content); fontSizeScaled(16f); lineHeightScaled(24f); fontWeightMedium(); color(theme.onBrand) } }
+                    }
                 }
-            } else {
+            }
+        } else {
+            View {
+                attr {
+                    // No avatar: the AI message spans the row with symmetric
+                    // margins so the left and right insets always match.
+                    marginLeft(6f)
+                    marginRight(6f)
+                    // 子树内所有 Text/富文本可选（渲染层以本容器为根收集可选文本，
+                    // selectEnd 事件与选区手柄均挂在此容器上）。
+                    selectable(SelectableOption.ENABLE)
+                    selectionColor(theme.brand)
+                }
+                ref { actions.onSelectionContainerRef(message.id, it) }
+                event {
+                    longPress { params ->
+                        if (params.isCancel || params.state != "start") return@longPress
+                        actions.onTextSelectionLongPress(message.id, params.x, params.y, params.pageX, params.pageY)
+                    }
+                    selectEnd { actions.onTextSelectEnd(message.id) }
+                    selectCancel { actions.onTextSelectCancel(message.id) }
+                }
                 vif({ message.streaming }) {
                     View {
                         // 流式正文：持久 MarkdownStreamingState + 100ms 定时 flush +

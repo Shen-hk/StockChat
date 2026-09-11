@@ -5,18 +5,25 @@ import com.kuikly.stockchat.data.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.data.config.DataSourceConfig
+import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.MarketCalendarEvent
 import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
+import com.kuikly.stockchat.data.provider.SourceStamp
+import com.kuikly.stockchat.data.provider.SourceTier
+import com.kuikly.stockchat.data.provider.platformCurrentDate
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.SourceStampLine
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vfor
+import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.Scroller
@@ -28,6 +35,13 @@ internal class MarketCalendarPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private var events: ObservableList<MarketCalendarEvent> by observableList()
+
+    /** 空态溯源戳：真实模式如实标注「未接入」，模拟模式沿用演示数据戳。 */
+    private fun calendarEmptyStamp(): SourceStamp = if (DataSourceConfig.USE_REAL_MARKET_DATA) {
+        SourceStamp("日历数据源未接入", platformCurrentDate(), SourceTier.MARKET_DATA, DataMode.OFFLINE)
+    } else {
+        SourceStamp("离线演示数据", "2026-09-02", SourceTier.DEMO, DataMode.OFFLINE)
+    }
 
     override fun created() {
         super.created()
@@ -64,6 +78,22 @@ internal class MarketCalendarPage : BasePager() {
                             SourceStampLine(item.stamp, page.theme)
                         }
                         event { click { if (item.symbol.contains('.')) page.openStockDetail(item.symbol, Routes.CALENDAR) } }
+                    }
+                }
+                // 空态（2026-09-11）：真实模式下日历数据源未接入时列表为空，此前只留一片
+                // 空白，看起来像页面坏了。这里如实说明「未接入」，并给出这一步的作用。
+                // 只在 PlatformProfile.marketFixes（当前 iOS）打开——其余平台保持改动前的纯空白。
+                vif({ PlatformProfile.marketFixes && page.events.isEmpty() }) {
+                    View {
+                        attr { marginTop(10f); padding(14f); borderRadius(13f); backgroundColor(page.theme.surface) }
+                        Text { attr { text("日历事件待接入"); fontSizeScaled(13f); fontWeightSemiBold(); color(page.theme.textPrimary) } }
+                        Text {
+                            attr {
+                                text("财报、打新、分红、解禁的真实日历数据尚未接入，这里暂不列出事件。接入后会按日期排好，只提醒你什么时候该重新核对事实，不预测事件后的涨跌。")
+                                marginTop(7f); fontSizeScaled(12f); lineHeightScaled(19f); color(page.theme.textSecondary)
+                            }
+                        }
+                        SourceStampLine(page.calendarEmptyStamp(), page.theme)
                     }
                 }
             }
