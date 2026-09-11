@@ -1,5 +1,7 @@
 package com.kuikly.stockchat.data.provider
 
+import kotlinx.coroutines.sync.Mutex
+
 /**
  * 进程级行情预取缓存（跨页面共享，2026-09-10 详情页空白期治理）。
  *
@@ -16,7 +18,7 @@ package com.kuikly.stockchat.data.provider
  * 数据口径与 QuoteRepository 一致：复用 TencentQuoteProvider（快照自带日 K，
  * 分时单独拉取后合并）。在线失败不在此兜底——详情页自身链路会回落缓存/离线。
  *
- * 线程模型：回调可能来自 NetworkModule 后台线程，全部状态读写走 synchronized。
+ * 线程模型：回调可能来自 NetworkModule 后台线程，全部状态读写走跨平台 Mutex。
  */
 object QuotePrefetchStore {
     /** 预取结果的新鲜窗口，对齐 [QuoteRepository.SNAPSHOT_TTL_MILLIS]。 */
@@ -31,8 +33,20 @@ object QuotePrefetchStore {
     private class Entry(val quote: Quote, val savedAtMillis: Long)
 
     // accessOrder=true：get/put 都把键挪到队尾，淘汰时移除队首（最久未用）。
-    private val entries = LinkedHashMap<String, Entry>(0, 0.75f, true)
+    private val entries = LinkedHashMap<String, Entry>()
     private val inFlight = mutableSetOf<String>()
+    private val lock = Mutex()
+
+    private inline fun <T> withLock(block: () -> T): T {
+        while (!lock.tryLock()) {
+            // Critical sections only update the small in-memory LRU state.
+        }
+        return try {
+            block()
+        } finally {
+            lock.unlock()
+        }
+    }
 
     /**
      * 并行预热一批标的（去重 + 跳过新鲜与在途）。provider 绑定调用方页面的
@@ -43,7 +57,7 @@ object QuotePrefetchStore {
         provider: QuoteProvider,
         nowMillis: () -> Long = ::platformCurrentTimeMillis,
     ) {
-        val targets = synchronized(this) {
+        val targets = withLock {
             symbols.asSequence()
                 .filter { it.isNotBlank() }
                 .distinct()
@@ -58,15 +72,16 @@ object QuotePrefetchStore {
 
     /** 60s 内的预取结果；过期/未预热返回 null。命中会刷新 LRU 位次。 */
     fun peek(symbol: String, nowMillis: () -> Long = ::platformCurrentTimeMillis): Quote? =
-        synchronized(this) {
-            entries[symbol]
-                ?.takeIf { nowMillis() - it.savedAtMillis <= FRESH_MILLIS }
-                ?.quote
+        withLock {
+            entries[symbol]?.takeIf { nowMillis() - it.savedAtMillis <= FRESH_MILLIS }?.also {
+                entries.remove(symbol)
+                entries[symbol] = it
+            }?.quote
         }
 
     /** 单例状态清空（进程内所有页面共享本对象，单测用例间隔离专用）。 */
     internal fun clearForTest() {
-        synchronized(this) {
+        withLock {
             entries.clear()
             inFlight.clear()
         }
@@ -79,7 +94,7 @@ object QuotePrefetchStore {
         var pending = 2
 
         fun settle() {
-            val finished = synchronized(this) {
+            val finished = withLock {
                 pending -= 1
                 if (pending == 0) inFlight.remove(symbol)
                 pending == 0
@@ -89,7 +104,7 @@ object QuotePrefetchStore {
                 if (timeline.isNotEmpty()) quote.copy(timeline = timeline) else quote
             }
             if (merged != null) {
-                synchronized(this) {
+                withLock {
                     entries[symbol] = Entry(merged, nowMillis())
                     while (entries.size > MAX_ENTRIES) {
                         entries.remove(entries.keys.first())
