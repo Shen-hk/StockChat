@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.chat
 
 import com.kuikly.stockchat.common.Format
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.composer.ComposerCatalog
 import com.kuikly.stockchat.composer.MentionType
 import com.kuikly.stockchat.composer.SendPayload
@@ -85,21 +86,50 @@ object ChatQuoteContext {
         lines.forEach { append("- ").append(it).append('\n') }
     }
 
+    /** 报价币种：行情源按标的所在市场计价（A 股人民币 / 港股港元 / 美股美元）。 */
+    private fun currencyOf(symbol: String): String = when (symbol.substringAfterLast('.', "").uppercase()) {
+        "HK" -> " 港元"
+        "US" -> " 美元"
+        else -> " 元"
+    }
+
     internal fun describe(quote: Quote): String = buildString {
+        // 币种随市场（A 股 元 / 港股 港元 / 美股 美元）：只在 marketFixes 打开时启用，
+        // 关闭时恒为 " 元" —— 与改动前的输出逐字一致（Android / 鸿蒙不受影响）。
+        val currency = if (PlatformProfile.marketFixes) currencyOf(quote.symbol) else " 元"
         append(quote.symbol).append(' ').append(quote.name)
-        append("：现价 ").append(Format.price(quote.price)).append(" 元")
+        append("：现价 ").append(Format.price(quote.price)).append(currency)
         append("，涨跌 ").append(Format.signed(quote.change))
         append("（").append(Format.percent(quote.changePercent)).append("）")
         append("，昨收 ").append(Format.price(quote.previousClose))
         append("，今开 ").append(Format.price(quote.open))
         append("，最高 ").append(Format.price(quote.high))
         append("，最低 ").append(Format.price(quote.low))
-        append("，成交额 ").append(Format.compactAmount(quote.amount))
-        append("，换手率 ").append(Format.percent(quote.turnoverRate))
-        append("，PE(TTM) ").append(Format.decimal(quote.peTtm, 2))
-        append("，PB ").append(Format.decimal(quote.pb, 2))
-        append("，总市值 ").append(Format.compactAmount(quote.marketCap)).append(" 元")
+        // 未知指标写 "--" 而不是 0（港股行情源不提供换手率/市净率）：
+        // 写成 0.00 会让模型把「没有数据」当成「事实就是 0」并据此下结论。
+        // 三个 Format.*OrDash 已按 PlatformProfile 门控，关闭时输出改动前的格式。
+        val unknown = mutableListOf<String>()
+        fun note(label: String, text: String): String {
+            if (text == "--") unknown += label
+            return text
+        }
+        append("，成交额 ").append(note("成交额", Format.amountOrDash(quote.amount)))
+        // 换手率：改动前用 Format.percent（正数带 + 号）。iOS 增加「未知 → --」，
+        // 其余平台必须逐字沿用 Format.percent，否则 AI 上下文文本会变（ChatQuoteContextTest 覆盖）。
+        val turnoverText = when {
+            !PlatformProfile.marketFixes -> Format.percent(quote.turnoverRate)
+            quote.turnoverRate > 0.0 -> Format.percent(quote.turnoverRate)
+            else -> "--"
+        }
+        append("，换手率 ").append(note("换手率", turnoverText))
+        append("，PE(TTM) ").append(note("PE", Format.multipleOrDash(quote.peTtm)))
+        append("，PB ").append(note("PB", Format.multipleOrDash(quote.pb)))
+        append("，总市值 ").append(note("总市值", Format.amountOrDash(quote.marketCap))).append(currency)
         if (quote.timestamp.isNotBlank()) append("（截至 ").append(quote.timestamp).append("）")
         if (quote.source.isNotBlank()) append("，来源：").append(quote.source)
+        if (PlatformProfile.marketFixes && unknown.isNotEmpty()) {
+            append("。注：").append(unknown.joinToString("、"))
+                .append(" 行情源未提供，不要当成 0，也不要据此推断")
+        }
     }
 }

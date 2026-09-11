@@ -23,8 +23,11 @@ enum class KLineInterval(
 }
 
 /**
- * 分时单点。[volume] 为该分钟成交量（手）、[amount] 为该分钟成交额（元），
- * 由腾讯分时接口的累计量额逐分钟差分得到；旧缓存/Mock 无 amount 时为 0，均价走近似口径。
+ * 分时单点。[volume] 为该分钟成交量、[amount] 为该分钟成交额（元），由腾讯分时接口的
+ * 累计量额逐分钟差分得到；旧缓存/Mock 无 amount 时为 0，均价走近似口径。
+ *
+ * **量单位随市场而异**（2026-09-11 实测）：沪深 A 股为「手」，港股/美股为「股」。
+ * 需要换算成股数时统一走 [MarketTimelineSpec.lotSizeOf]，不要硬编码 ×100。
  */
 data class QuotePoint(
     val time: String,

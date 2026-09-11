@@ -13,6 +13,13 @@ import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 data class MarketTimelineSpec(
     val slotCount: Int,
     val labels: List<Pair<Int, String>>,
+    /**
+     * 1 手 = 多少股（2026-09-11 修）：A 股 100、港美 1。
+     * 均价计算「cumAmount / (cumVolume × lotSize)」的唯一出处——禁止在图表层
+     * 硬编码 ×100（腾讯接口量字段：A 股为手、港美为股，硬编码会把港股均价
+     * 压成真实值的 1/100）。生效口径由 [PlatformProfile.marketFixes] 门控。
+     */
+    val lotSize: Double,
     private val includesTime: (String) -> Boolean,
 ) {
     fun contains(time: String): Boolean = includesTime(time)
@@ -27,18 +34,21 @@ data class MarketTimelineSpec(
         private val MAINLAND_CHINA = MarketTimelineSpec(
             slotCount = 241,
             labels = listOf(0 to "09:30", 60 to "10:30", 120 to "11:30/13:00", 180 to "14:00", 240 to "15:00"),
+            lotSize = 100.0,
         ) { time ->
             (time >= "09:30" && time <= "11:30") || (time >= "13:00" && time <= "15:00")
         }
         private val HONG_KONG = MarketTimelineSpec(
             slotCount = 332,
             labels = listOf(0 to "09:30", 90 to "11:00", 150 to "12:00/13:00", 240 to "14:30", 331 to "16:00"),
+            lotSize = 1.0,
         ) { time ->
             (time >= "09:30" && time <= "12:00") || (time >= "13:00" && time <= "16:00")
         }
         private val UNITED_STATES = MarketTimelineSpec(
             slotCount = 391,
             labels = listOf(0 to "09:30", 90 to "11:00", 195 to "12:45", 300 to "14:30", 390 to "16:00"),
+            lotSize = 1.0,
         ) { time -> time >= "09:30" && time <= "16:00" }
     }
 }

@@ -162,7 +162,9 @@ object EastMoneyInsightParser {
             title = title,
             publisher = publisher,
             date = date,
-            summary = "研报关注：${title.take(110)}。评级与预测属于机构观点，不代表股问立场。",
+            // 列表接口不提供研报正文。这里明确以标题提炼为摘要，避免长按预览把
+            // 券商、日期等元数据误当成主要内容，也不把标题臆造成正文结论。
+            summary = summarizeResearchTitle(title),
             riskLabel = "机构观点",
             url = "",
             stamp = SourceStamp(publisher, date, SourceTier.RESEARCH),
@@ -362,6 +364,21 @@ object EastMoneyInsightParser {
         "风险" in title -> "公告包含风险相关信息，建议直接阅读原文中的风险范围、影响期间和应对措施。"
         "股东" in title || "减持" in title || "增持" in title -> "公告涉及股东或持股变化，需区分计划、实施进展与已完成三个阶段。"
         else -> "这是公司正式披露信息。摘要只帮助定位重点，关键事实请以公告原文为准。"
+    }
+
+    /**
+     * 东财研报列表只有标题和机构元数据，不能伪造正文摘要。去除栏目/括号等噪声后，
+     * 把标题中的核心判断组织成可读的长按摘要，并保留机构观点的边界说明。
+     */
+    private fun summarizeResearchTitle(title: String): String {
+        val cleaned = title
+            .replace(Regex("[【\\[][^】\\]]*[】\\]]"), "")
+            .replace(Regex("[（(][^）)]{0,36}[）)]"), "")
+            .replace(Regex("^(首次覆盖|深度研究|公司研究|行业研究|点评)\\s*[：:]?\\s*"), "")
+            .trim()
+            .ifEmpty { "该机构发布了公司研究报告" }
+        val focus = cleaned.substringAfter('：', cleaned).substringAfter(':', cleaned).trim()
+        return "标题提炼：$focus。报告结论、评级和盈利预测仅代表该机构观点，需结合原报告的假设与风险提示判断。"
     }
 
     private fun riskLabel(text: String): String = when {
