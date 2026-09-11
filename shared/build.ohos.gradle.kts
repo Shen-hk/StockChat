@@ -50,9 +50,6 @@ kotlin {
                 implementation("com.tencent.kuikly-open:core:${Version.getKuiklyOhosVersion()}")
                 implementation("com.tencent.kuikly-open:core-annotations:${Version.getKuiklyOhosVersion()}")
                 implementation("com.tencent.kuiklybase:KuiklyMarkdown:1.0.6-2.0.21-ohos")
-                // The OHOS compiler uses KuiklyBase's KBA-native variants. The
-                // upstream Kotlin artifacts do not publish an ohos_arm64 variant.
-                implementation("com.tencent.kuiklyx-open:coroutines:1.1.0-2.0.21-ohos")
                 implementation("com.tencent.kuiklybase:network:0.0.3")
                 implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1-KBA-003")
 
@@ -66,6 +63,7 @@ kotlin {
         val androidMain by getting {
             dependencies {
                 api("com.tencent.kuikly-open:core-render-android:${Version.getKuiklyOhosVersion()}")
+                implementation("io.ktor:ktor-client-okhttp:3.0.3")
             }
         }
 

@@ -118,19 +118,41 @@ class DeepSeekAiProvider(
                     val delta = SseEventParser.delta("data: $payload").orEmpty()
                     if (delta.isNotEmpty() && current == generation) {
                         received = true
-                        onDelta(delta)
+                        // Native SSE callbacks arrive on the curl worker thread on
+                        // HarmonyOS. Kuikly observables must be touched on its UI
+                        // queue, otherwise the stream can arrive without repainting.
+                        dispatchToUi(current) { onDelta(delta) }
+                    }
+                }
+                if (!received && current == generation) {
+                    SseEventParser.deltas(response.body).forEach { delta ->
+                        received = true
+                        dispatchToUi(current) { onDelta(delta) }
                     }
                 }
                 if (response.status !in 200..299) {
-                    if (current == generation) onError(classifyError(response.status, response.body))
+                    if (current == generation) {
+                        val error = classifyError(response.status, response.body)
+                        dispatchToUi(current) { onError(error) }
+                    }
                 } else if (current == generation) {
-                    if (received) onDone() else onError("接口未返回有效内容")
+                    if (received) dispatchToUi(current, onDone)
+                    else dispatchToUi(current) { onError("接口未返回有效内容") }
                 }
             } catch (_: CancellationException) {
                 // stop() owns the visible state; cancelled requests must not append or report an error.
             } catch (error: Throwable) {
-                if (current == generation) onError(classifyThrowable(error))
+                if (current == generation) {
+                    val message = classifyThrowable(error)
+                    dispatchToUi(current) { onError(message) }
+                }
             }
+        }
+    }
+
+    private fun dispatchToUi(requestGeneration: Int, block: () -> Unit) {
+        setTimeout(0) {
+            if (requestGeneration == generation) block()
         }
     }
 
