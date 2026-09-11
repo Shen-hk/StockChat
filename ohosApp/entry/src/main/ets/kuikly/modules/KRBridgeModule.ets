@@ -6,6 +6,15 @@ import { KuiklyRenderCallback } from '@kuikly-open/render';
 import util from '@ohos.util';
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
+import picker from '@ohos.file.picker';
+import cameraPicker from '@ohos.multimedia.cameraPicker';
+import audio from '@ohos.multimedia.audio';
+
+interface MediaResult {
+  type: string;
+  source: string;
+  items: Array<Record<string, string>>;
+}
 
 export class KRBridgeModule extends KuiklyRenderBaseModule {
   static readonly MODULE_NAME = "HRBridgeModule";
@@ -25,6 +34,14 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   static readonly START_VOICE_RECORDING = "startVoiceRecording";
   static readonly STOP_VOICE_RECORDING = "stopVoiceRecording";
   static readonly CANCEL_VOICE_RECORDING = "cancelVoiceRecording";
+  static readonly OPEN_COMPOSER_MEDIA_SOURCE = "openComposerMediaSource";
+  static readonly REGISTER_COMPOSER_MEDIA_RESULT = "registerComposerMediaResult";
+  static readonly PREPARE_AI_MEDIA = "prepareAiMedia";
+
+  private composerMediaCallback?: KuiklyRenderCallback;
+  private voiceCallback?: KuiklyRenderCallback;
+  private voiceActive: boolean = false;
+  private voiceCapturer?: audio.AudioCapturer;
 
   syncMode(): boolean {
     return false;
@@ -93,6 +110,18 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
         this.cancelVoiceRecording();
         break;
       }
+      case KRBridgeModule.OPEN_COMPOSER_MEDIA_SOURCE: {
+        this.openComposerMediaSource(params, callback);
+        break;
+      }
+      case KRBridgeModule.REGISTER_COMPOSER_MEDIA_RESULT: {
+        this.composerMediaCallback = callback;
+        break;
+      }
+      case KRBridgeModule.PREPARE_AI_MEDIA: {
+        this.prepareAiMedia(params, callback);
+        break;
+      }
       default:
         break;
     }
@@ -122,18 +151,171 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   }
 
   private startVoiceRecording(callback: KuiklyRenderCallback) {
-    callback({
-      "type": "error",
-      "error": "UNAVAILABLE",
-      "message": "当前鸿蒙端暂未接入真实录音"
+    this.voiceCallback = callback;
+    this.voiceActive = true;
+    callback({ "type": "ready" });
+    let options: audio.AudioCapturerOptions = {
+      streamInfo: {
+        samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_16000,
+        channels: audio.AudioChannel.CHANNEL_1,
+        sampleFormat: audio.AudioSampleFormat.SAMPLE_FORMAT_S16LE,
+        encodingType: audio.AudioEncodingType.ENCODING_TYPE_RAW
+      },
+      capturerInfo: {
+        source: audio.SourceType.SOURCE_TYPE_VOICE_RECOGNITION,
+        capturerFlags: 0
+      }
+    };
+    audio.createAudioCapturer(options).then((capturer: audio.AudioCapturer): void => {
+      if (!this.voiceActive) {
+        capturer.release();
+        return;
+      }
+      this.voiceCapturer = capturer;
+      capturer.on('readData', (buffer: ArrayBuffer): void => {
+        if (!this.voiceActive || buffer.byteLength < 2) return;
+        let view = new DataView(buffer);
+        let sum: number = 0;
+        let samples: number = 0;
+        for (let offset = 0; offset + 1 < buffer.byteLength; offset += 2) {
+          let sample = view.getInt16(offset, true) / 32768.0;
+          sum += sample * sample;
+          samples += 1;
+        }
+        let rms = samples > 0 ? Math.sqrt(sum / samples) : 0;
+        this.voiceCallback?.({ "type": "amplitude", "rms": rms.toString() });
+      });
+      capturer.start().catch((): void => this.voiceCallback?.({
+        "type": "error", "error": "MIC_OCCUPIED", "message": "无法启动麦克风"
+      }));
+    }).catch((error: BusinessError): void => {
+      this.voiceActive = false;
+      this.voiceCallback?.({ "type": "error", "error": "PERMISSION_DENIED", "message": error.message });
     });
   }
 
   private stopVoiceRecording(): string {
+    this.voiceActive = false;
+    let capturer = this.voiceCapturer;
+    this.voiceCapturer = undefined;
+    if (capturer != undefined) {
+      capturer.stop().then((): Promise<void> => capturer!.release()).catch((): void => undefined);
+    }
+    this.voiceCallback?.({ "type": "transcript", "text": "" });
+    this.voiceCallback = undefined;
     return JSON.stringify({ "path": "" });
   }
 
   private cancelVoiceRecording() {
+    this.voiceActive = false;
+    let capturer = this.voiceCapturer;
+    this.voiceCapturer = undefined;
+    if (capturer != undefined) {
+      capturer.stop().then((): Promise<void> => capturer!.release()).catch((): void => undefined);
+    }
+    this.voiceCallback = undefined;
+  }
+
+  private openComposerMediaSource(params: KRAny, callback: KuiklyRenderCallback) {
+    let records = JSON.parse(params as string) as Record<string, string>;
+    let source = records["source"];
+    let deliver = (items: Array<Record<string, string>>): void => {
+      let result: MediaResult = { "type": "ok", "source": source, "items": items };
+      this.composerMediaCallback?.(result);
+      callback(result);
+    };
+    let cancel = (): void => callback({ "type": "cancel", "source": source });
+    try {
+      if (source == "photo") {
+        let viewPicker = new picker.PhotoViewPicker();
+        viewPicker.select({
+          MIMEType: picker.PhotoViewMIMETypes.IMAGE_TYPE,
+          maxSelectNumber: 9
+        }).then((result): void => {
+          let items: Array<Record<string, string>> = [];
+          result.photoUris.forEach((uri: string) => items.push({
+            "kind": "image", "path": uri, "name": this.fileName(uri)
+          }));
+          deliver(items);
+        }).catch((): void => cancel());
+      } else if (source == "camera") {
+        let context = getContext(this) as common.UIAbilityContext;
+        cameraPicker.pick(context, [cameraPicker.PickerMediaType.PHOTO], new cameraPicker.PickerProfile()).then((result): void => {
+          if (result.resultUri.length > 0) {
+            deliver([{ "kind": "image", "path": result.resultUri, "name": this.fileName(result.resultUri) }]);
+          } else {
+            cancel();
+          }
+        }).catch((): void => cancel());
+      } else {
+        let documentPicker = new picker.DocumentViewPicker();
+        documentPicker.select().then((uris: Array<string>): void => {
+          let items: Array<Record<string, string>> = [];
+          uris.forEach((uri: string) => items.push({
+            "kind": "file", "path": uri, "name": this.fileName(uri)
+          }));
+          deliver(items);
+        }).catch((): void => cancel());
+      }
+    } catch (error) {
+      console.error(`media picker failed: ${JSON.stringify(error)}`);
+      callback({ "type": "error", "source": source });
+    }
+  }
+
+  private prepareAiMedia(params: KRAny, callback: KuiklyRenderCallback) {
+    let records = JSON.parse(params as string) as Record<string, Array<Record<string, string>>>;
+    let input = records["items"] || [];
+    let output: Array<Record<string, string>> = [];
+    input.forEach((item: Record<string, string>) => {
+      let path = item["path"] || "";
+      if (path.length == 0) return;
+      let name = item["name"] || this.fileName(path);
+      let kind = item["kind"] || "file";
+      let prepared: Record<string, string> = { "name": name, "kind": kind };
+      let bytes = this.readFileBytes(path);
+      if (bytes != null && kind == "image") {
+        let encoded = new util.Base64Helper().encodeSync(bytes);
+        let base64 = new util.TextDecoder('utf-8').decodeToString(encoded);
+        prepared["imageDataUrl"] = `data:${this.mimeType(name)};base64,${base64}`;
+      } else if (bytes != null && this.isTextFile(name)) {
+        prepared["documentText"] = new util.TextDecoder('utf-8').decodeToString(bytes);
+      }
+      output.push(prepared);
+    });
+    callback({ "items": output });
+  }
+
+  private readFileBytes(path: string): Uint8Array | null {
+    try {
+      let file = fs.openSync(path, fs.OpenMode.READ_ONLY);
+      let stat = fs.statSync(file.fd);
+      let buffer = new ArrayBuffer(stat.size);
+      let length = fs.readSync(file.fd, buffer);
+      fs.closeSync(file);
+      return new Uint8Array(buffer, 0, length);
+    } catch (error) {
+      console.error(`media read failed: ${JSON.stringify(error)}`);
+      return null;
+    }
+  }
+
+  private isTextFile(name: string): boolean {
+    let lower = name.toLowerCase();
+    return lower.endsWith(".txt") || lower.endsWith(".md") || lower.endsWith(".csv") || lower.endsWith(".json");
+  }
+
+  private mimeType(name: string): string {
+    let lower = name.toLowerCase();
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".webp")) return "image/webp";
+    return "image/jpeg";
+  }
+
+  private fileName(uri: string): string {
+    let clean = uri.split("?")[0];
+    let slash = clean.lastIndexOf("/");
+    return slash >= 0 ? clean.substring(slash + 1) : "附件";
   }
 
   private log(params: KRAny) {

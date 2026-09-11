@@ -15,6 +15,10 @@
     {
       "name": "microphone_permission_reason",
       "value": "用于按住说话并转写成股票提问。"
+    },
+    {
+      "name": "camera_permission_reason",
+      "value": "用于拍照添加图片附件。"
     }
   ]
 }
