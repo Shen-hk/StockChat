@@ -93,3 +93,12 @@ Conventions for AI-assisted development in this repository (multiple AI sessions
 - `git status --short --cached` is not a valid invocation (`--cached` belongs to `diff`). An invalid option there breaks the `&&` chain, so the commit silently never runs while the log still looks unchanged.
 - A file reported as modified while `git diff` is empty is usually `core.autocrlf=true` newline noise; one `git add` clears it and there is nothing to commit.
 - Stage only the batch: after each commit, re-read `git status --short` before the next one, and never stage a neighboring session's WIP files.
+
+## ⚠️ Machine hazard: a git delete also takes the whole parent directory (measured 2026-09-11)
+
+- **Symptom.** Any git operation that deletes a path — `git rm`, or switching to a commit/branch that lacks some files — leaves the **entire containing directory gone, together with every other file in it**. Isolated repro: commit a fresh 3-file directory, `git rm` one file → the directory itself disappears while the other two files vanish too (verified on `D:\Project\StockQuote`, NTFS local disk, not a junction/symlink, sparse-checkout off).
+- **Mechanism.** After unlinking, git prunes the parent directory; on this machine that pruning is turned into a recursive delete by the environment layer. Rewriting is safe: an in-place checkout and a branch round-trip that only *modified* one file left all 68 files intact. Plain `rm` is safe too, and leaves siblings untouched.
+- **Real incident.** A single `git checkout` to a stale branch missing 6 files emptied `docs/` (68 files) and `outputs/` (8 files); `git status` then reported 71 entries of ` D`.
+- **Lossless recovery.** Because everything was committed, `git restore --source=HEAD --worktree -- .` brought all of it back. Run it only when `git status` shows ` D` entries and no `M`/`??` — otherwise it overwrites uncommitted work.
+- **Avoidance.** Delete with `rm` + `git add -A` instead of `git rm`; avoid hopping between branches; look at `git status` right after any delete/switch. Uncommitted edits inside a directory that gets wiped are genuinely lost — commit early.
+- **Integrity check.** Empty `git status --short` plus a per-file pass. `git ls-files` quotes and escapes non-ASCII names, so test existence via `git ls-files -z` with `while IFS= read -r -d '' f`; a plain `[ -e "$f" ]` over `git ls-files` reports every Chinese-named file as missing.
