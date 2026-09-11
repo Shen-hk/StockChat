@@ -8,3 +8,17 @@ target 'iosApp' do
 
   pod 'SDWebImage'
 end
+
+# `pod install` 会还原 Pods 里的源码，而 StockChat 需要给 Kuikly iOS 渲染层打两个补丁
+# （跨线程 toNative 兜底 + 缺失 shadow 不 abort，详见 scripts/apply_kuikly_patches.rb）。
+# 这里在 post_install 自动重放，避免补丁被静默还原后崩溃复发。
+post_install do |installer|
+  require File.join(File.dirname(__FILE__), 'scripts', 'apply_kuikly_patches.rb')
+  KuiklyPatches.apply!(File.dirname(__FILE__))
+
+  installer.pods_project.targets.each do |target|
+    target.build_configurations.each do |config|
+      config.build_settings['ENABLE_USER_SCRIPT_SANDBOXING'] = 'NO'
+    end
+  end
+end
