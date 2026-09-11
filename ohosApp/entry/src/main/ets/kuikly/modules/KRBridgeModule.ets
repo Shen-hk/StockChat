@@ -1,8 +1,9 @@
-import { common } from '@kit.AbilityKit';
+import { abilityAccessCtrl, common, Permissions } from '@kit.AbilityKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { KRAny } from '@kuikly-open/render';
 import { KuiklyRenderBaseModule } from '@kuikly-open/render';
 import { KuiklyRenderCallback } from '@kuikly-open/render';
+import { speechRecognizer } from '@kit.CoreSpeechKit';
 import util from '@ohos.util';
 import fs from '@ohos.file.fs';
 import { fileUri } from '@kit.CoreFileKit';
@@ -42,6 +43,15 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   private voiceCallback?: KuiklyRenderCallback;
   private voiceActive: boolean = false;
   private voiceCapturer?: audio.AudioCapturer;
+  // ASR 会话状态：CoreSpeechKit 引擎 + 待写引擎的 PCM 攒批。
+  // 引擎只接受 1280 字节（40ms@16kHz/16bit/mono）块且调用间隔须为 40ms，
+  // 所以采集侧只攒 buffer，由 voiceAsrTimer 定速 flush。
+  private asrEngine?: speechRecognizer.SpeechRecognitionEngine;
+  private asrSessionId: string = "";
+  private voiceStopping: boolean = false;
+  private voicePendingText: string = "";
+  private voiceAsrBuffer: Uint8Array = new Uint8Array(0);
+  private voiceAsrTimer?: number;
 
   syncMode(): boolean {
     return false;
@@ -153,7 +163,112 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   private startVoiceRecording(callback: KuiklyRenderCallback) {
     this.voiceCallback = callback;
     this.voiceActive = true;
+    this.voiceStopping = false;
+    this.voicePendingText = "";
+    this.voiceAsrBuffer = new Uint8Array(0);
+    this.asrSessionId = `voice_${Date.now()}`;
     callback({ "type": "ready" });
+    // user_grant 权限必须运行时申请，否则 createAudioCapturer 直接 201。
+    let atManager = abilityAccessCtrl.createAtManager();
+    let context = getContext(this) as common.UIAbilityContext;
+    atManager.requestPermissionsFromUser(context, ['ohos.permission.MICROPHONE'] as Array<Permissions>)
+      .then((result): void => {
+        if (!this.voiceActive) return;
+        let granted = result.authResults.indexOf(0) >= 0;
+        if (!granted) {
+          this.voiceActive = false;
+          this.voiceCallback?.({ "type": "error", "error": "PERMISSION_DENIED", "message": "需要麦克风权限" });
+          return;
+        }
+        this.createAsrEngine();
+      })
+      .catch((error: BusinessError): void => {
+        if (!this.voiceActive) return;
+        this.voiceActive = false;
+        this.voiceCallback?.({ "type": "error", "error": "PERMISSION_DENIED", "message": error.message });
+      });
+  }
+
+  private createAsrEngine(): void {
+    let extraParams: Record<string, Object> = { 'locate': 'CN', 'recognizerMode': 'short' };
+    let initParamsInfo: speechRecognizer.CreateEngineParams = {
+      language: 'zh-CN',
+      online: 1,
+      extraParams: extraParams
+    };
+    speechRecognizer.createEngine(initParamsInfo, (err: BusinessError, engine: speechRecognizer.SpeechRecognitionEngine): void => {
+      if (err) {
+        console.error(`asr createEngine failed: ${err.code}, ${err.message}`);
+        if (this.voiceActive) {
+          this.voiceActive = false;
+          this.voiceCallback?.({ "type": "error", "error": "UNAVAILABLE", "message": "当前设备暂不支持语音识别" });
+        }
+        return;
+      }
+      if (!this.voiceActive) {
+        // 期间用户已取消，不能泄漏刚创建的引擎。
+        try {
+          engine.shutdown();
+        } catch (error) {
+          console.error(`asr shutdown failed: ${JSON.stringify(error)}`);
+        }
+        return;
+      }
+      this.asrEngine = engine;
+      engine.setListener({
+        onStart: (sessionId: string, eventMessage: string): void => {
+        },
+        onEvent: (sessionId: string, eventCode: number, eventMessage: string): void => {
+        },
+        onResult: (sessionId: string, result: speechRecognizer.SpeechRecognitionResult): void => {
+          // 中间结果与最终结果都更新，松手时取最新一份。
+          this.voicePendingText = result.result;
+          this.voiceCallback?.({ "type": "partial", "text": result.result });
+        },
+        onComplete: (sessionId: string, eventMessage: string): void => {
+          if (this.voiceStopping) {
+            this.deliverVoiceTranscript();
+          }
+        },
+        onError: (sessionId: string, errorCode: number, errorMessage: string): void => {
+          if (this.voiceStopping) {
+            // finish 之后引擎报错时交付已识别文本，好过空结果。
+            this.deliverVoiceTranscript();
+            return;
+          }
+          this.voiceActive = false;
+          this.stopVoiceAsrTimer();
+          this.releaseVoiceCapturer();
+          this.shutdownAsrEngine();
+          this.voiceCallback?.({ "type": "error", "error": this.mapVoiceErrorCode(errorCode), "message": errorMessage });
+        }
+      });
+      this.startAsrListening();
+    });
+  }
+
+  private startAsrListening(): void {
+    let engine = this.asrEngine;
+    if (engine == undefined) return;
+    let recognizerParams: speechRecognizer.StartParams = {
+      sessionId: this.asrSessionId,
+      audioInfo: { audioType: 'pcm', sampleRate: 16000, soundChannel: 1, sampleBit: 16 }
+    };
+    try {
+      engine.startListening(recognizerParams);
+    } catch (error) {
+      console.error(`asr startListening failed: ${JSON.stringify(error)}`);
+      this.voiceActive = false;
+      this.shutdownAsrEngine();
+      this.voiceCallback?.({ "type": "error", "error": "MIC_OCCUPIED", "message": "无法启动语音识别" });
+      return;
+    }
+    this.createVoiceCapturer();
+    // 引擎写入节奏约束：1280B/40ms 与 16kHz 采集速率正好收支平衡。
+    this.voiceAsrTimer = setInterval((): void => this.flushAsrAudio(), 40);
+  }
+
+  private createVoiceCapturer(): void {
     let options: audio.AudioCapturerOptions = {
       streamInfo: {
         samplingRate: audio.AudioSamplingRate.SAMPLE_RATE_16000,
@@ -174,16 +289,7 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
       this.voiceCapturer = capturer;
       capturer.on('readData', (buffer: ArrayBuffer): void => {
         if (!this.voiceActive || buffer.byteLength < 2) return;
-        let view = new DataView(buffer);
-        let sum: number = 0;
-        let samples: number = 0;
-        for (let offset = 0; offset + 1 < buffer.byteLength; offset += 2) {
-          let sample = view.getInt16(offset, true) / 32768.0;
-          sum += sample * sample;
-          samples += 1;
-        }
-        let rms = samples > 0 ? Math.sqrt(sum / samples) : 0;
-        this.voiceCallback?.({ "type": "amplitude", "rms": rms.toString() });
+        this.appendVoicePcm(buffer);
       });
       capturer.start().catch((): void => this.voiceCallback?.({
         "type": "error", "error": "MIC_OCCUPIED", "message": "无法启动麦克风"
@@ -194,26 +300,131 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
     });
   }
 
+  private appendVoicePcm(buffer: ArrayBuffer): void {
+    let incoming = new Uint8Array(buffer);
+    let merged = new Uint8Array(this.voiceAsrBuffer.length + incoming.length);
+    merged.set(this.voiceAsrBuffer, 0);
+    merged.set(incoming, this.voiceAsrBuffer.length);
+    this.voiceAsrBuffer = merged;
+  }
+
+  private flushAsrAudio(): void {
+    if (!this.voiceActive) return;
+    let engine = this.asrEngine;
+    if (engine == undefined || this.voiceAsrBuffer.length < 1280) return;
+    let chunk = this.voiceAsrBuffer.slice(0, 1280);
+    this.voiceAsrBuffer = this.voiceAsrBuffer.slice(1280);
+    // 写入引擎的同一块数据顺手算 RMS，声波与识别天然同步。
+    let sum: number = 0;
+    for (let offset = 0; offset + 1 < 1280; offset += 2) {
+      let raw = chunk[offset] | (chunk[offset + 1] << 8);
+      if (raw >= 32768) raw -= 65536;
+      let sample = raw / 32768.0;
+      sum += sample * sample;
+    }
+    let rms = Math.sqrt(sum / 640);
+    this.voiceCallback?.({ "type": "amplitude", "rms": rms.toString() });
+    try {
+      engine.writeAudio(this.asrSessionId, chunk);
+    } catch (error) {
+      console.error(`asr writeAudio failed: ${JSON.stringify(error)}`);
+    }
+  }
+
   private stopVoiceRecording(): string {
     this.voiceActive = false;
-    let capturer = this.voiceCapturer;
-    this.voiceCapturer = undefined;
-    if (capturer != undefined) {
-      capturer.stop().then((): Promise<void> => capturer!.release()).catch((): void => undefined);
+    this.voiceStopping = true;
+    this.stopVoiceAsrTimer();
+    this.releaseVoiceCapturer();
+    let engine = this.asrEngine;
+    if (engine != undefined) {
+      try {
+        engine.finish(this.asrSessionId);
+      } catch (error) {
+        console.error(`asr finish failed: ${JSON.stringify(error)}`);
+        // 会话可能已被引擎自动收尾，直接交付已有文本。
+        this.deliverVoiceTranscript();
+      }
+    } else {
+      this.deliverVoiceTranscript();
     }
-    this.voiceCallback?.({ "type": "transcript", "text": "" });
-    this.voiceCallback = undefined;
+    // 引擎回调丢失的兜底：3s 后仍未交付就交付已有文本。
+    setTimeout((): void => {
+      if (this.voiceStopping) {
+        this.deliverVoiceTranscript();
+      }
+    }, 3000);
     return JSON.stringify({ "path": "" });
   }
 
   private cancelVoiceRecording() {
     this.voiceActive = false;
+    this.voiceStopping = false;
+    this.voicePendingText = "";
+    this.voiceAsrBuffer = new Uint8Array(0);
+    this.stopVoiceAsrTimer();
+    this.releaseVoiceCapturer();
+    let engine = this.asrEngine;
+    this.asrEngine = undefined;
+    if (engine != undefined) {
+      try {
+        engine.cancel(this.asrSessionId);
+      } catch (error) {
+        console.error(`asr cancel failed: ${JSON.stringify(error)}`);
+      }
+      try {
+        engine.shutdown();
+      } catch (error) {
+        console.error(`asr shutdown failed: ${JSON.stringify(error)}`);
+      }
+    }
+    this.voiceCallback = undefined;
+  }
+
+  private deliverVoiceTranscript(): void {
+    let callback = this.voiceCallback;
+    let text = this.voicePendingText;
+    this.voiceCallback = undefined;
+    this.voiceActive = false;
+    this.voiceStopping = false;
+    this.voicePendingText = "";
+    this.stopVoiceAsrTimer();
+    this.releaseVoiceCapturer();
+    this.shutdownAsrEngine();
+    callback?.({ "type": "transcript", "text": text });
+  }
+
+  private shutdownAsrEngine(): void {
+    let engine = this.asrEngine;
+    this.asrEngine = undefined;
+    if (engine != undefined) {
+      try {
+        engine.shutdown();
+      } catch (error) {
+        console.error(`asr shutdown failed: ${JSON.stringify(error)}`);
+      }
+    }
+  }
+
+  private stopVoiceAsrTimer(): void {
+    if (this.voiceAsrTimer != undefined) {
+      clearInterval(this.voiceAsrTimer);
+      this.voiceAsrTimer = undefined;
+    }
+  }
+
+  private releaseVoiceCapturer(): void {
     let capturer = this.voiceCapturer;
     this.voiceCapturer = undefined;
     if (capturer != undefined) {
       capturer.stop().then((): Promise<void> => capturer!.release()).catch((): void => undefined);
     }
-    this.voiceCallback = undefined;
+  }
+
+  private mapVoiceErrorCode(code: number): string {
+    if (code == 201) return "PERMISSION_DENIED";
+    if (code == 1002200006) return "MIC_OCCUPIED";
+    return "UNAVAILABLE";
   }
 
   private openComposerMediaSource(params: KRAny, callback: KuiklyRenderCallback) {
