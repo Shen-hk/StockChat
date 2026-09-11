@@ -154,10 +154,16 @@ class ChatViewModel(
                 },
                 onDone = {
                     streamState = StreamState.IDLE
-                    val question = payload.renderedPrompt ?: payload.text
                     // 收尾等显示端把已收到的文本打完再落定，避免最后一截被整段顶上来。
                     typewriter.complete {
-                        assistantMessage.content = CardResponseFallback.appendMissingCard(question, content)
+                        // 卡片完全由模型按当前问题的语义选择；客户端不再为了展示
+                        // 结构化能力而给纯文本回复追加默认标的卡，并在收尾时剔除
+                        // 与当前对话没有共同标的的协议块，避免无关卡片混入回答。
+                        assistantMessage.content = CardResponseSanitizer.removeUnrelatedCards(
+                            question = payload.renderedPrompt ?: payload.text,
+                            conversation = messages.filter { it.id != assistantId },
+                            response = content,
+                        )
                         assistantMessage.streaming = false
                         persist()
                     }

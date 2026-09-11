@@ -2,8 +2,8 @@ package com.kuikly.stockchat
 
 import com.kuikly.stockchat.chat.ChatContext
 import com.kuikly.stockchat.chat.ChatMessage
+import com.kuikly.stockchat.chat.CardResponseSanitizer
 import com.kuikly.stockchat.chat.MessageRole
-import com.kuikly.stockchat.chat.CardResponseFallback
 import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.chat.WatchlistIntent
 import com.kuikly.stockchat.chat.WatchlistSummaryBuilder
@@ -19,19 +19,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class ChatInfrastructureTest {
-    @Test
-    fun plainModelResponsesReceiveTheCardRequiredByQuestionIntent() {
-        assertTrue(CardResponseFallback.appendMissingCard("贵州茅台最近有什么资讯", "正文").contains("```card:news"))
-        assertTrue(CardResponseFallback.appendMissingCard("贵州茅台为什么涨", "正文").contains("```card:attribution"))
-        assertTrue(CardResponseFallback.appendMissingCard("PE 是什么", "正文").contains("```card:definition"))
-    }
-
-    @Test
-    fun modelCardResponseIsNotChangedByFallback() {
-        val response = "正文\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}\n```"
-        assertEquals(response, CardResponseFallback.appendMissingCard("贵州茅台怎么样", response))
-    }
-
     @Test
     fun watchlistIntentMatchesPortfolioQuestionsOnly() {
         listOf(
@@ -70,18 +57,50 @@ class ChatInfrastructureTest {
     }
 
     @Test
-    fun incompleteCardResponseIsNotChangedByFallback() {
-        val response = "正文\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}"
-        val fixed = CardResponseFallback.appendMissingCard("贵州茅台怎么样", response)
-        assertEquals(response, fixed)
-    }
-
-    @Test
     fun cardBlockCanBeReplacedInPlace() {
         val original = "正文\n```card:stock-quote\n{\"symbol\":\"BAD\"}"
         val broken = AiResponseLexer.lex(original, finished = true).last() as BrokenCardBlock
         val replacement = "```card:stock-quote\n{\"symbol\":\"600519.SH\"}\n```"
         assertEquals("正文\n$replacement", AiResponseLexer.replaceCardBlock(original, broken.id, replacement))
+    }
+
+    @Test
+    fun cardSanitizerRemovesCardsForSymbolsOutsideTheConversation() {
+        val response = "正文\n\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}\n```"
+
+        val sanitized = CardResponseSanitizer.removeUnrelatedCards(
+            question = "MACD 金叉是什么意思？",
+            conversation = emptyList(),
+            response = response,
+        )
+
+        assertEquals("正文", sanitized)
+    }
+
+    @Test
+    fun cardSanitizerKeepsCardsForAnEstablishedSymbol() {
+        val response = "正文\n\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}\n```"
+
+        val sanitized = CardResponseSanitizer.removeUnrelatedCards(
+            question = "贵州茅台今天怎么样？",
+            conversation = emptyList(),
+            response = response,
+        )
+
+        assertEquals(response, sanitized)
+    }
+
+    @Test
+    fun cardSanitizerDoesNotAddOrKeepAnUnrequestedDefinitionCard() {
+        val response = "PE 是市盈率。\n\n```card:definition\n{\"term\":\"市盈率 PE\"}\n```"
+
+        val sanitized = CardResponseSanitizer.removeUnrelatedCards(
+            question = "PE 是什么？",
+            conversation = emptyList(),
+            response = response,
+        )
+
+        assertEquals("PE 是市盈率。", sanitized)
     }
 
     @Test
@@ -96,6 +115,13 @@ class ChatInfrastructureTest {
 
         assertEquals("## 结论\n\n- **[贵州茅台](stockchat-entity://0)**的 [PE](stockchat-entity://1) 偏高", adapted.content)
         assertEquals(listOf("贵州茅台", "PE"), adapted.entities.map { it.text })
+    }
+
+    @Test
+    fun entityMarkdownAdapterPreservesQuoteAndTableSyntaxForSharedRendering() {
+        val markdown = "> 来源：样例记录\n\n| 字段甲 | 字段乙 |\n| --- | --- |\n| A | 12% |"
+
+        assertEquals(markdown, EntityMarkdownAdapter.withEntityLinks(markdown).content)
     }
 
     @Test

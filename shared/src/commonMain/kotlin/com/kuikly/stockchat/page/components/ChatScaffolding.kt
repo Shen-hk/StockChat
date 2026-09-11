@@ -89,7 +89,7 @@ internal fun ViewContainer<*, *>.RegressionQuestionRow(
     val cases = listOf(
         "手风琴" to "回归：手风琴 贵州茅台最近怎么样",
         "资讯 Sheet" to "回归：资讯 Sheet 看贵州茅台资讯",
-        "归因下钻" to "回归：归因下钻 为什么跌",
+        "归因下钻" to "回归：归因下钻 贵州茅台为什么跌",
         "分支追问" to "回归：分支追问 贵州茅台最近怎么样",
         "焦点放大" to "回归：焦点放大 贵州茅台最近怎么样",
         "对比卡" to "回归：对比卡 贵州茅台和五粮液比较",

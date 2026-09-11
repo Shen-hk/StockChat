@@ -45,12 +45,17 @@ data class UnknownIntent(override val type: String, val rawPayload: String) : Ca
 object CardPayloadParser {
     fun parse(type: String, payload: String): CardIntent = when (type) {
         "stock-quote", "stock-chart", "insight", "news", "stock-compare" ->
-            SymbolCardIntent(
-                type,
-                stringField(payload, "symbol") ?: "600519.SH",
-                stringField(payload, "source").orEmpty(),
-                stringField(payload, "asOf").orEmpty(),
-            )
+            stringField(payload, "symbol")
+                ?.takeIf { it.isNotBlank() }
+                ?.let { symbol ->
+                    SymbolCardIntent(
+                        type,
+                        symbol,
+                        stringField(payload, "source").orEmpty(),
+                        stringField(payload, "asOf").orEmpty(),
+                    )
+                }
+                ?: UnknownIntent(type, payload)
         "definition" -> DefinitionIntent(
             term = stringField(payload, "term") ?: "市盈率 PE",
             plainText = stringField(payload, "plainText") ?: "股价相对于每股收益的倍数，用来观察估值水平。",
@@ -58,13 +63,18 @@ object CardPayloadParser {
             source = stringField(payload, "source").orEmpty(),
             asOf = stringField(payload, "asOf").orEmpty(),
         )
-        "attribution" -> AttributionIntent(
-            symbol = stringField(payload, "symbol") ?: "600519.SH",
-            direction = stringField(payload, "direction") ?: "fall",
-            factors = parseFactors(payload).ifEmpty { defaultFactors() },
-            source = stringField(payload, "source").orEmpty(),
-            asOf = stringField(payload, "asOf").orEmpty(),
-        )
+        "attribution" -> stringField(payload, "symbol")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { symbol ->
+                AttributionIntent(
+                    symbol = symbol,
+                    direction = stringField(payload, "direction") ?: "fall",
+                    factors = parseFactors(payload).ifEmpty { defaultFactors() },
+                    source = stringField(payload, "source").orEmpty(),
+                    asOf = stringField(payload, "asOf").orEmpty(),
+                )
+            }
+            ?: UnknownIntent(type, payload)
         "suggestions" -> SuggestionsIntent(parseSuggestions(payload))
         else -> UnknownIntent(type, payload)
     }
