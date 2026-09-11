@@ -7,7 +7,7 @@ import com.kuikly.stockchat.data.GlossaryStore
 import com.kuikly.stockchat.data.config.AiConfig
 import com.kuikly.stockchat.data.config.AiConfigStore
 import com.kuikly.stockchat.data.provider.AiProvider
-import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
+import com.kuikly.stockchat.data.provider.OpenAiCompatAiProvider
 import com.kuikly.stockchat.data.provider.QuoteRepository
 import com.kuikly.stockchat.data.provider.SecuritySearchProvider
 import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
@@ -35,7 +35,7 @@ class ChatDependencies(
                 glossaryStore = market.glossaryStore,
                 quoteRepository = market.quoteRepository,
                 securitySearchProvider = market.securitySearchProvider,
-                aiProviderFactory = { config -> DeepSeekAiProvider(pagerId, config) },
+                aiProviderFactory = { config -> OpenAiCompatAiProvider(pagerId, config) },
             )
         }
     }

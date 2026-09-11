@@ -4,7 +4,7 @@ package com.kuikly.stockchat.data.config
  * 主流模型服务商预设。
  *
  * 所有预设均为 OpenAI 兼容的 chat/completions 接口（Bearer 鉴权），
- * 与 [com.kuikly.stockchat.data.provider.DeepSeekAiProvider] 的请求格式一致；
+ * 与 [com.kuikly.stockchat.data.provider.OpenAiCompatAiProvider] 的请求格式一致；
  * 选中预设后只需再填 API Key 即可使用。
  */
 data class ModelPreset(

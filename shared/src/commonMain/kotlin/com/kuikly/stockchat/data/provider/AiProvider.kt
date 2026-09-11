@@ -18,7 +18,12 @@ interface AiProvider {
     fun stop()
 }
 
-class DeepSeekAiProvider(
+/**
+ * OpenAI 兼容 Chat Completions 流式供应商（doc 01 ADR-7b）：DeepSeek、MiMo 等
+ * 同协议服务只需替换 baseUrl / apiKey / model 三个配置值即可切换。
+ * 原名 DeepSeekAiProvider，2026-09-11 起更名为 [OpenAiCompatAiProvider]。
+ */
+class OpenAiCompatAiProvider(
     override val pagerId: String,
     private val config: AiConfig,
 ) : AiProvider, PagerScope {

@@ -11,7 +11,7 @@ import com.kuikly.stockchat.data.config.AiConfig
 import com.kuikly.stockchat.data.config.AiConfigStore
 import com.kuikly.stockchat.data.config.ModelPreset
 import com.kuikly.stockchat.data.config.ModelPresets
-import com.kuikly.stockchat.data.provider.DeepSeekAiProvider
+import com.kuikly.stockchat.data.provider.OpenAiCompatAiProvider
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
@@ -283,7 +283,7 @@ internal class ApiConfigPage : BasePager() {
         }
         testing = true
         showStatus(false, "正在连接 API…")
-        DeepSeekAiProvider(pagerId, config).testConnection { success, message ->
+        OpenAiCompatAiProvider(pagerId, config).testConnection { success, message ->
             testing = false
             showStatus(success, message)
         }
