@@ -3,18 +3,20 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$env:CI = "true"
 
 $projectRoot = $PSScriptRoot
 $devecoHome = "C:\Users\shenhk\DevEco Studio"
 $ohosSdk = Join-Path $devecoHome "sdk\default\openharmony"
 $hdc = Join-Path $ohosSdk "toolchains\hdc.exe"
-$hvigor = Join-Path $devecoHome "tools\hvigor\bin\hvigorw.bat"
+$hvigor = Join-Path $devecoHome "tools\hvigor\hvigor\bin\hvigor.js"
 $konanClang = Join-Path $env:USERPROFILE ".konan\dependencies\llvm-12.0.1-windows-x86_64-20250713\bin\clang++.exe"
 $sharedLibrary = Join-Path $projectRoot "shared\build\bin\ohosArm64\debugShared\libshared.so"
 $sharedHeader = Join-Path $projectRoot "shared\build\bin\ohosArm64\debugShared\libshared_api.h"
 $nativeLibDir = Join-Path $projectRoot "ohosApp\entry\libs\arm64-v8a"
 $nativeSourceDir = Join-Path $projectRoot "ohosApp\entry\src\main\cpp"
 $hapOutputDir = Join-Path $projectRoot "ohosApp\entry\build\default\outputs\default"
+$ohosPageAssetDir = Join-Path $projectRoot "ohosApp\entry\src\main\resources\rawfile\ApiConfigPage"
 
 foreach ($tool in @($ohosSdk, $hdc, $hvigor)) {
     if (-not (Test-Path -LiteralPath $tool)) {
@@ -31,6 +33,7 @@ catch {
 }
 
 $env:OHOS_SDK_HOME = $ohosSdk
+$env:DEVECO_SDK_HOME = $devecoHome
 
 Push-Location $projectRoot
 try {
@@ -40,9 +43,16 @@ try {
     Copy-Item -LiteralPath $sharedLibrary -Destination $nativeLibDir -Force
     Copy-Item -LiteralPath $sharedHeader -Destination $nativeSourceDir -Force
 
+    # Kuikly's ImageUri.pageAssets resolves from the HAP rawfile bundle on
+    # HarmonyOS. The Android source-set asset declaration does not feed the
+    # separate HAP build, so mirror the shared page assets before packaging.
+    New-Item -ItemType Directory -Path $ohosPageAssetDir -Force | Out-Null
+    Get-ChildItem -LiteralPath (Join-Path $projectRoot "shared\src\commonMain\assets\ApiConfigPage") -File |
+        Copy-Item -Destination $ohosPageAssetDir -Force
+
     Push-Location (Join-Path $projectRoot "ohosApp")
     try {
-        & $hvigor --mode module -p module=entry@default -p product=default -p requiredDeviceType=phone assembleHap --analyze=normal --parallel
+        & node $hvigor --mode module -p module=entry@default -p product=default -p requiredDeviceType=phone assembleHap --analyze=normal --parallel
         if ($LASTEXITCODE -ne 0) { throw "HAP package build failed." }
     }
     finally {

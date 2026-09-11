@@ -37,6 +37,20 @@ Kotlin-js-store
 /walk-*.png
 /verify-*.png
 /verify-*.xml
+# 2026-09-11 追加：同一批真机验收截图 / UI dump / 一次性产物
+/*.jpeg
+/ui-*.xml
+/validation-*.xml
+/dbg-*.png
+/dbg-*.xml
+/smoke-*.png
+/layout.json
+/l0.json
+/l1.json
+/l2.json
+/ohos-link-verify.log
+/pnpm-lock.yaml
+/pnpm-workspace.yaml
 /.playwright-cli/
 /preview/
 *.bak.*
@@ -68,3 +82,8 @@ Kotlin-js-store
 *.pyc
 /shared/src/commonTest/kotlin/com/kuikly/stockchat/StarLayoutTest.kt
 /shared/src/commonTest/kotlin/com/kuikly/stockchat/TimeBrushLayoutTest.kt
+
+# 本机 DevEco 自动签名写入的证书路径与加密口令，只保留在本地工作区不入库
+ohosApp/build-profile.json5
+# HAP 打包时由 runOhosApp.ps1 从 shared/src/commonMain/assets 镜像出来的产物
+/ohosApp/entry/src/main/resources/rawfile/
