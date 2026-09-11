@@ -118,19 +118,20 @@ internal fun ViewContainer<*, *>.WelcomeSection(
             }
         }
         WelcomeTabRow(theme, marketTabSelected, onOpenMarket)
-        Text {
-            attr {
-                text("可以这样问")
-                alignSelfFlexStart()
-                marginTop(theme.spacing.xl)
-                fontSize(theme.type.meta)
-                fontWeightSemiBold()
-                color(theme.textTertiary)
-            }
-        }
-        defaultWelcomeStarters().forEachIndexed { index, starter ->
-            QuestionStarterCard(starter, theme, index, entranceVisible, reduceMotion, onChoose)
-        }
+        // 【2026-09-11 暂时下线】下方引导语 + 示例卡，恢复时取消注释即可：
+        // Text {
+        //     attr {
+        //         text("可以这样问")
+        //         alignSelfFlexStart()
+        //         marginTop(theme.spacing.xl)
+        //         fontSize(theme.type.meta)
+        //         fontWeightSemiBold()
+        //         color(theme.textTertiary)
+        //     }
+        // }
+        // defaultWelcomeStarters().forEachIndexed { index, starter ->
+        //     QuestionStarterCard(starter, theme, index, entranceVisible, reduceMotion, onChoose)
+        // }
     }
 }
 
@@ -150,8 +151,7 @@ private fun ViewContainer<*, *>.WelcomeBadge(theme: StockChatTheme) {
 }
 
 /**
- * 问AI / 看行情 切换（圆角长方形 228×54 / 字号 18，2026-09-05 定型、
- * 2026-09-10 整体放大 20%；不再是全圆胶囊）。
+ * 问AI / 看行情 切换（2026-09-11 整体缩小 15%：194×46 / 字号 15.3）。
  * 问AI 常选中；看市场是跳转入口：点击后滑块滑到右半格，滑动结束由调用方
  * 震动并跳转市场页（时序在 ChatPage.handleWelcomeMarketTap）。
  */
@@ -162,24 +162,24 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
 ) {
     View {
         attr {
-            marginTop(24f)
-            size(228f, 54f)
+            marginTop(20f)
+            size(194f, 46f)
             flexDirectionRow()
             alignItemsCenter()
             backgroundColor(theme.surfaceMuted)
-            borderRadius(14f)
+            borderRadius(12f)
         }
-        // 滑块：默认停在「问AI」半格（(228-6)/2 = 111），选中看市场时滑到右半格。
+        // 滑块：默认停在「问AI」半格（(194-6)/2 = 94），选中看市场时滑到右半格。
         View {
             attr {
                 absolutePosition(left = 3f, top = 3f)
-                size(111f, 48f)
-                borderRadius(12f)
+                size(94f, 41f)
+                borderRadius(10f)
                 backgroundColor(theme.surface)
                 touchEnable(false)
                 // 取值闭包必须在 attr 内现场调用才建立依赖；translate 用 offsetX=px。
                 val marketSelected = marketTabSelected()
-                transform(translate = Translate(0f, 0f, offsetX = if (marketSelected) 111f else 0f))
+                transform(translate = Translate(0f, 0f, offsetX = if (marketSelected) 94f else 0f))
                 // 无条件注册（R2/R5）：animate 绑定最后读到的 marketTabSelected()，
                 // 翻转周期消费上轮注册的 easeOut，滑动先快后慢。
                 animate(Animation.easeOut(0.22f), marketTabSelected())
@@ -187,10 +187,10 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
         }
         View {
             attr {
-                height(41f)
+                height(35f)
                 flex(1f)
                 allCenter()
-                borderRadius(20f)
+                borderRadius(17f)
                 // 读屏：按钮语义 + 朗读。
                 accessibility("问AI，当前选中")
                 accessibilityRole(AccessibilityRole.BUTTON)
@@ -199,7 +199,7 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
             Text {
                 attr {
                     text("问AI")
-                    fontSizeScaled(18f)
+                    fontSizeScaled(15.3f)
                     fontWeightSemiBold()
                     color(theme.textPrimary)
                 }
@@ -207,10 +207,10 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
         }
         View {
             attr {
-                height(41f)
+                height(35f)
                 flex(1f)
                 allCenter()
-                borderRadius(20f)
+                borderRadius(17f)
                 accessibility("看市场，打开市场总览")
                 accessibilityRole(AccessibilityRole.BUTTON)
                 accessibilityInfo(clickable = true, longClickable = false)
@@ -218,7 +218,7 @@ private fun ViewContainer<*, *>.WelcomeTabRow(
             Text {
                 attr {
                     text("看行情")
-                    fontSizeScaled(18f)
+                    fontSizeScaled(15.3f)
                     fontWeightSemiBold()
                     // 滑块滑到右半格时同步高亮，与滑块动画共用同一驱动。
                     color(if (marketTabSelected()) theme.textPrimary else theme.textSecondary)
