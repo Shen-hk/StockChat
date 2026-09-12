@@ -89,6 +89,8 @@ import com.kuikly.stockchat.chat.session.state.BackToTopState
 import com.kuikly.stockchat.chat.session.state.KuiklyBackToTopScheduler
 import com.kuikly.stockchat.chat.session.state.ImagePreviewCoordinator
 import com.kuikly.stockchat.chat.session.state.ImagePreviewState
+import com.kuikly.stockchat.chat.session.state.SessionChromeCoordinator
+import com.kuikly.stockchat.chat.session.state.SessionChromeState
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
@@ -383,7 +385,7 @@ internal class ChatPage : BasePager() {
                 ChatDrawerEffect.BLUR_COMPOSER -> blurComposer()
                 ChatDrawerEffect.HAPTIC_IMPACT ->
                     acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-                ChatDrawerEffect.RESET_HISTORY_QUERY -> historySearchQuery = ""
+                ChatDrawerEffect.RESET_HISTORY_QUERY -> sessionChromeCoordinator.resetHistoryQuery()
             }
         }
     }
@@ -403,7 +405,11 @@ internal class ChatPage : BasePager() {
     // liveDataMode 开关随之移除；顶部岛上的"实时"角标为常显。
     // 抽屉历史会话搜索词：drawer 的 Input 不受控，页面侧只存词 + 供 vbind 过滤；
     // 打开抽屉时重置，避免上次输入残留下次仍过滤。
-    private var historySearchQuery: String by observable("")
+    private val sessionChromeState = SessionChromeState()
+    private val sessionChromeCoordinator = SessionChromeCoordinator(sessionChromeState)
+    private var historySearchQuery: String
+        get() = sessionChromeState.historyQuery
+        set(value) { sessionChromeState.historyQuery = value }
     // ===== 对比会话（候选 / 卡片 / AI 流式解读）=====
     private val compareState = CompareInsightStateHolder()
     private val compareCoordinator by lazy {
@@ -457,8 +463,12 @@ internal class ChatPage : BasePager() {
     private val islandTermCompareVisible: Boolean get() = islandState.termCompareVisible
     private var islandWatchlisted: Boolean by observable(false)
     // Page data is injected after construction; use the safe fallback until created().
-    private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
-    private var glassModeManuallySelected = false
+    private var glassMode: GlassRenderingMode
+        get() = sessionChromeState.glassMode
+        set(value) { sessionChromeState.glassMode = value }
+    private var glassModeManuallySelected: Boolean
+        get() = sessionChromeState.glassModeManuallySelected
+        set(value) { sessionChromeState.glassModeManuallySelected = value }
     // 输入栏媒体面板与附件数据均由独立 Coordinator 管理；Page 仅处理原生 Effect。
     private val composerAttachmentState = ComposerAttachmentState()
     private val composerAttachmentCoordinator = ComposerAttachmentCoordinator(composerAttachmentState)
@@ -626,7 +636,7 @@ internal class ChatPage : BasePager() {
     ) 1 else 0
 
     override fun hostGlassModeDidChange(renderer: GlassRenderer) {
-        if (!glassModeManuallySelected) glassMode = renderer.mode
+        sessionChromeCoordinator.syncHostGlassMode(renderer.mode)
     }
 
     override fun created() {
@@ -4355,12 +4365,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun cycleGlassMode() {
-        glassModeManuallySelected = true
-        glassMode = when (glassMode) {
-            GlassRenderingMode.REALTIME -> GlassRenderingMode.SNAPSHOT
-            GlassRenderingMode.SNAPSHOT -> GlassRenderingMode.SIMPLIFIED
-            GlassRenderingMode.SIMPLIFIED -> GlassRenderingMode.REALTIME
-        }
+        sessionChromeCoordinator.cycleGlassMode()
     }
 
     private fun setFocusedCard(cardKey: String, focused: Boolean) {
