@@ -46,7 +46,9 @@ import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentCoordinator
 import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentState
 import com.kuikly.stockchat.chat.composer.state.AssistantPanel
 import com.kuikly.stockchat.chat.composer.state.ComposerAssistantCoordinator
+import com.kuikly.stockchat.chat.composer.state.ComposerAssistantEffect
 import com.kuikly.stockchat.chat.composer.state.ComposerAssistantState
+import com.kuikly.stockchat.chat.composer.state.KuiklyComposerAssistantScheduler
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusCoordinator
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusEffect
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusState
@@ -479,7 +481,11 @@ internal class ChatPage : BasePager() {
     // ===== @ 提及与 / 指令状态机（规范见 docs/10-输入栏@提及与斜杠指令交互规范_v1.0.md） =====
     // 联想面板维度（与 MEDIA 面板正交）：@ 触发 / / 触发 / 命令参数槽位。
     private val composerAssistantState = ComposerAssistantState()
-    private val composerAssistantCoordinator = ComposerAssistantCoordinator(composerAssistantState)
+    private val composerAssistantCoordinator = ComposerAssistantCoordinator(
+        state = composerAssistantState,
+        scheduler = KuiklyComposerAssistantScheduler(),
+        onEffect = ::handleComposerAssistantEffect,
+    )
     private var assistantPanel: AssistantPanel
         get() = composerAssistantState.panel
         set(value) { composerAssistantState.panel = value }
@@ -742,6 +748,7 @@ internal class ChatPage : BasePager() {
         islandCoordinator.onDestroy()
         entityCoordinator.onDestroy()
         compareCoordinator.onDestroy()
+        composerAssistantCoordinator.onDestroy()
         messageActionCoordinator.onDestroy()
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
@@ -3618,41 +3625,34 @@ internal class ChatPage : BasePager() {
      * @ / 命令参数态共用：参数态下 triggerSession == null 且 paramCommand != null 视为活跃。
      */
     private fun scheduleRemoteSearch(query: String) {
-        if (query.length < 2) return
-        val generation = composerAssistantCoordinator.nextRemoteSearchGeneration()
-        val panelActive = {
-            val session = triggerSession
-            (session != null && session.type == '@' && session.query == query) ||
-                (session == null && paramCommand != null)
-        }
-        setTimeout(REMOTE_SEARCH_DEBOUNCE_MS) {
-            if (!composerAssistantCoordinator.isCurrentRemoteSearch(generation)) return@setTimeout
-            if (!panelActive()) return@setTimeout
-            dependencies.securitySearchProvider.searchSecurities(query) { securities ->
-                // Provider 回调在后台线程：setTimeout(0) 跳回主线程再碰 observable（线程铁律）。
-                setTimeout(0) {
-                    if (!composerAssistantCoordinator.isCurrentRemoteSearch(generation)) return@setTimeout
-                    if (!panelActive()) return@setTimeout
-                    val added = composerAssistantCoordinator.mergeRemoteEntries(
+        composerAssistantCoordinator.requestRemoteSearch(query)
+    }
+
+    private fun handleComposerAssistantEffect(effect: ComposerAssistantEffect) {
+        when (effect) {
+            is ComposerAssistantEffect.SearchSecurities ->
+                dependencies.securitySearchProvider.searchSecurities(effect.query) { securities ->
+                    composerAssistantCoordinator.acceptRemoteSearchResults(
+                        generation = effect.generation,
+                        query = effect.query,
                         entries = securities.map { it.toCatalogEntry() },
                         limit = REMOTE_ENTRY_POOL_LIMIT,
                         isLocalSymbol = { ComposerCatalog.find(it) != null },
                     )
-                    if (!added) return@setTimeout
-                    if (triggerSession != null && triggerSession?.type == '@' && triggerSession?.query == query) {
-                        refreshAtCandidates(query)
-                        fetchQuotesForPanel(query)
-                    }
-                    // 参数态：面板内容按 paramPanelRenderKey 整帧重建，远端候选到达后
-                    // 需要 bump 才会在下一次重建中可见（否则要等用户再敲一个字符）。
-                    if (triggerSession == null && paramCommand != null) bumpParamPanelRenderKey()
-                    trackComposerEvent(
-                        "at_panel_show_src",
-                        "src" to "remote",
-                        "query_len" to query.length,
-                        "count" to atCandidates.size,
-                    )
                 }
+            is ComposerAssistantEffect.RemoteEntriesMerged -> {
+                if (effect.parameterPanelActive) {
+                    bumpParamPanelRenderKey()
+                } else {
+                    refreshAtCandidates(effect.query)
+                    fetchQuotesForPanel(effect.query)
+                }
+                trackComposerEvent(
+                    "at_panel_show_src",
+                    "src" to "remote",
+                    "query_len" to effect.query.length,
+                    "count" to atCandidates.size,
+                )
             }
         }
     }

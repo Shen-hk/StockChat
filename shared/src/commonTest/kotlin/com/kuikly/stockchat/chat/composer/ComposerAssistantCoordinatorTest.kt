@@ -2,9 +2,13 @@ package com.kuikly.stockchat.chat.composer
 
 import com.kuikly.stockchat.chat.composer.state.AssistantPanel
 import com.kuikly.stockchat.chat.composer.state.ComposerAssistantCoordinator
+import com.kuikly.stockchat.chat.composer.state.ComposerAssistantEffect
+import com.kuikly.stockchat.chat.composer.state.ComposerAssistantScheduler
+import com.kuikly.stockchat.chat.composer.state.ComposerAssistantTask
 import com.kuikly.stockchat.chat.composer.state.PlainComposerAssistantState
 import com.kuikly.stockchat.composer.AtCandidate
 import com.kuikly.stockchat.composer.CatalogEntry
+import com.kuikly.stockchat.composer.TriggerSession
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -59,5 +63,44 @@ class ComposerAssistantCoordinatorTest {
         assertEquals(2.3f, state.atCandidates.single().entry.chgPct)
         assertEquals(2.3f, state.remoteEntries.single().chgPct)
         assertEquals(1, state.atHighlight)
+    }
+
+    @Test
+    fun remoteSearchDebounceAndLateResponseAreCoordinatorOwned() {
+        val state = PlainComposerAssistantState().apply {
+            panel = AssistantPanel.AT_MENTION
+            triggerSession = TriggerSession('@', 0, "茅台", 3)
+        }
+        val scheduler = FakeScheduler()
+        val effects = mutableListOf<ComposerAssistantEffect>()
+        val coordinator = ComposerAssistantCoordinator(state, scheduler, effects::add)
+
+        coordinator.requestRemoteSearch("茅台")
+        scheduler.runAll()
+        val request = effects.single() as ComposerAssistantEffect.SearchSecurities
+
+        coordinator.closePanel()
+        coordinator.acceptRemoteSearchResults(
+            request.generation,
+            request.query,
+            listOf(CatalogEntry("600519.SH", "贵州茅台", "沪A")),
+            limit = 20,
+            isLocalSymbol = { false },
+        )
+        scheduler.runAll()
+
+        assertTrue(state.remoteEntries.isEmpty())
+        assertEquals(1, effects.size)
+    }
+
+    private class FakeScheduler : ComposerAssistantScheduler {
+        private val tasks = mutableListOf<() -> Unit>()
+        override fun schedule(delayMillis: Int, task: () -> Unit): ComposerAssistantTask {
+            tasks += task
+            return ComposerAssistantTask { tasks.remove(task) }
+        }
+        fun runAll() {
+            while (tasks.isNotEmpty()) tasks.removeAt(0).invoke()
+        }
     }
 }

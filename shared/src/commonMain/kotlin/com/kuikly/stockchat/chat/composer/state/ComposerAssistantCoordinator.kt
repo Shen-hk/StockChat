@@ -8,8 +8,27 @@ import com.kuikly.stockchat.composer.TriggerSession
 import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.reactive.handler.observableList
+import com.tencent.kuikly.core.timer.Timer
 
 internal enum class AssistantPanel { NONE, AT_MENTION, SLASH, COMMAND_PARAMS }
+
+internal fun interface ComposerAssistantTask { fun cancel() }
+internal fun interface ComposerAssistantScheduler {
+    fun schedule(delayMillis: Int, task: () -> Unit): ComposerAssistantTask
+}
+
+internal class KuiklyComposerAssistantScheduler : ComposerAssistantScheduler {
+    override fun schedule(delayMillis: Int, task: () -> Unit): ComposerAssistantTask {
+        val timer = Timer()
+        timer.schedule(delayMillis, delayMillis.coerceAtLeast(16)) { task(); timer.cancel() }
+        return ComposerAssistantTask(timer::cancel)
+    }
+}
+
+internal sealed interface ComposerAssistantEffect {
+    data class SearchSecurities(val generation: Int, val query: String) : ComposerAssistantEffect
+    data class RemoteEntriesMerged(val query: String, val parameterPanelActive: Boolean) : ComposerAssistantEffect
+}
 
 /** Reactive presentation state for @, slash and command-parameter panels. */
 internal interface ComposerAssistantStatePort {
@@ -92,7 +111,12 @@ internal class PlainComposerAssistantState : ComposerAssistantStatePort {
 }
 
 /** Owns panel reset and candidate replacement so no stale highlight survives a panel switch. */
-internal class ComposerAssistantCoordinator(val state: ComposerAssistantStatePort) {
+internal class ComposerAssistantCoordinator(
+    val state: ComposerAssistantStatePort,
+    private val scheduler: ComposerAssistantScheduler? = null,
+    private val onEffect: (ComposerAssistantEffect) -> Unit = {},
+) {
+    private val tasks = mutableListOf<ComposerAssistantTask>()
     fun showAt(candidates: List<AtCandidate>) {
         state.panel = AssistantPanel.AT_MENTION
         replaceAtCandidates(candidates)
@@ -139,6 +163,44 @@ internal class ComposerAssistantCoordinator(val state: ComposerAssistantStatePor
 
     fun isCurrentRemoteSearch(generation: Int): Boolean = generation == state.remoteSearchGeneration
 
+    /** Debounces provider work and owns the generation that invalidates late responses. */
+    fun requestRemoteSearch(query: String) {
+        if (query.length < REMOTE_SEARCH_MIN_LENGTH) return
+        val current = nextRemoteSearchGeneration()
+        schedule(REMOTE_SEARCH_DEBOUNCE_MS) {
+            if (isCurrentRemoteSearch(current) && isSearchActive(query)) {
+                onEffect(ComposerAssistantEffect.SearchSecurities(current, query))
+            }
+        }
+    }
+
+    /** Provider callbacks may be off-main; scheduling through the port returns to Kuikly's timer lane. */
+    fun acceptRemoteSearchResults(
+        generation: Int,
+        query: String,
+        entries: List<CatalogEntry>,
+        limit: Int,
+        isLocalSymbol: (String) -> Boolean,
+    ) {
+        schedule(0) {
+            if (!isCurrentRemoteSearch(generation) || !isSearchActive(query)) return@schedule
+            if (!mergeRemoteEntries(entries, limit, isLocalSymbol)) return@schedule
+            onEffect(
+                ComposerAssistantEffect.RemoteEntriesMerged(
+                    query = query,
+                    parameterPanelActive = state.triggerSession == null && state.paramCommand != null,
+                ),
+            )
+        }
+    }
+
+    fun onDestroy() {
+        ++state.remoteSearchGeneration
+        ++state.quoteGeneration
+        tasks.forEach(ComposerAssistantTask::cancel)
+        tasks.clear()
+    }
+
     fun mergeRemoteEntries(entries: List<CatalogEntry>, limit: Int, isLocalSymbol: (String) -> Boolean): Boolean {
         var added = false
         entries.forEach { entry ->
@@ -174,5 +236,20 @@ internal class ComposerAssistantCoordinator(val state: ComposerAssistantStatePor
             state.remoteEntries.addAll(updated)
         }
         return true
+    }
+
+    private fun isSearchActive(query: String): Boolean {
+        val session = state.triggerSession
+        return (session != null && session.type == '@' && session.query == query) ||
+            (session == null && state.paramCommand != null)
+    }
+
+    private fun schedule(delayMillis: Int, task: () -> Unit) {
+        scheduler?.let { tasks += it.schedule(delayMillis, task) } ?: task()
+    }
+
+    private companion object {
+        const val REMOTE_SEARCH_MIN_LENGTH = 2
+        const val REMOTE_SEARCH_DEBOUNCE_MS = 250
     }
 }
