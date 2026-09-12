@@ -65,6 +65,11 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartHostPort
 import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
 import com.kuikly.stockchat.detail.chart.state.DetailChartState
 import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
+import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
+import com.kuikly.stockchat.detail.ai.state.DetailAiInsightCoordinator
+import com.kuikly.stockchat.detail.ai.state.DetailAiState
+import com.kuikly.stockchat.detail.ai.state.KuiklyDetailAiScheduler
+import com.kuikly.stockchat.data.config.AiConfig
 // doc 29 集成：共享基建 + 板块组件（事件回调经这些基建接线）
 import com.kuikly.stockchat.page.detail.AnchorIndex
 import com.kuikly.stockchat.page.detail.AnomalyPoint
@@ -197,32 +202,47 @@ internal class StockDetailPage : BasePager() {
     // 玻璃帧，随后整页内容淡入，读起来是"卡片长成了详情页"。
     private var handoffPresented: Boolean by observable(true)
     private var handoffFadeActive = false
-    private var aiRevealLimit: Int by observable(0)
-    private var aiRevealSource = ""
-    // ---- AI 解读真实化（2026-09-08）：真实 LLM 流式 + 端侧模板兜底 ----
-    // 状态机与 MarketPage AI 复盘卡同构：0 本地(未请求/未配置) / 1 thinking /
-    // 2 streaming / 3 done / 4 error（回退端侧模板并如实标注）。
-    private var aiRemoteState: Int by observable(0)
-    private var aiRemoteText: String by observable("")
-    private var aiRemoteError: String by observable("")
-    private var aiRemoteModel: String by observable("")
-    private var aiRemoteGeneration = 0
-    private var aiRemoteRequested = false
-    private val aiChatDependencies by lazy { ChatDependencies.forPager(pagerId) }
-    private var aiRemoteProvider: AiProvider? = null
-    // 流式平滑器（复用聊天页 TypewriterSmoother）：网络回调在 Dispatchers.Default
-    // 后台线程触发，observable 只能在主线程写——此前 onDelta 直写 aiRemoteText 曾
-    // 导致详情页偶发闪退（非 UI 线程碰视图层）与流式内容不刷新。delta 一律先进
-    // 平滑器缓冲，由主线程节拍器逐字释放；顺带把「整段蹦出」变成打字机手感。
-    private var activeAiTypewriter: TypewriterSmoother? = null
-    // 占位图状态：页面已打开但行情/资金事实尚未就绪、AI 请求还没发出时显示骨架
-    // 占位（此前这段时间显示端侧模板文字，随后跳骨架，观感又慢又割裂）。
-    private var aiAwaitingFacts: Boolean by observable(false)
+    // AI 解读域（Wave 2 第 3 刀，见 docs/39 §9 / docs/43 D3）：唯一 owner 是
+    // DetailAiInsightCoordinator（合并主 aiRemote* 与圈选 circleAi* 两套同构
+    // 状态机为两个 AiInsightSession，同时收编 aiAwaitingFacts / aiRevealLimit /
+    // aiRevealSource）。字段以只读 getter 转发到 detailAiState 的 observable，
+    // DSL 闭包内读取仍建立反应式依赖（同 D1 quote 写法）。线程纪律（Provider
+    // 回调 → TypewriterSmoother 节拍 + jumpToMain 跳回主线程）由 session 内部
+    // 守住，不再依赖页面 setTimeout(0)。
+    private val detailAiState = DetailAiState()
+    private val detailAiCoordinator by lazy {
+        DetailAiInsightCoordinator(
+            state = detailAiState,
+            host = object : DetailAiHostPort {
+                override val pagerId = this@StockDetailPage.pagerId
+                override fun quote(): Quote = detailDataState.quote
+                override fun insight(): StockInsightBundle = detailDataState.insight
+                override fun newsList(): List<NewsItem> = detailDataState.newsList
+                override fun timelineSeries(): List<Double> = detailTimelineSeries(detailDataState.quote)
+                override fun loadConfig(): AiConfig = aiChatDependencies.configStore.load()
+                override fun configValidationError(config: AiConfig): String? = config.validationError()
+                override fun createProvider(config: AiConfig): AiProvider = aiChatDependencies.aiProviderFactory(config)
+                override fun jumpToMain(block: () -> Unit) { setTimeout(0) { block() } }
+            },
+            scheduler = KuiklyDetailAiScheduler(),
+            reduceMotion = reduceMotion,
+        )
+    }
+    private val aiRemoteState: Int get() = detailAiState.mainState
+    private val aiRemoteText: String get() = detailAiState.mainText
+    private val aiRemoteError: String get() = detailAiState.mainError
+    private val aiRemoteModel: String get() = detailAiState.mainModel
+    private val aiAwaitingFacts: Boolean get() = detailAiState.awaitingFacts
+    private val aiRevealLimit: Int get() = detailAiState.revealLimit
+    private val aiRevealSource: String get() = detailAiState.revealSource
+    private val circleAiState: Int get() = detailAiState.circleState
+    private val circleAiText: String get() = detailAiState.circleText
+    private val circleAiError: String get() = detailAiState.circleError
+    private val circleAiModel: String get() = detailAiState.circleModel
     private var expandedAttributionKey: String by observable("")
     private val selectedKLineIndex: Int get() = detailChartState.selectedKLineIndex
     private val chartViewportCommand: ChartViewportCommand get() = detailChartState.chartViewportCommand
     private var livePulseVersion = 0
-    private var aiRevealVersion = 0
     private var tickerLiftVersion = 0
     // ④ 声呐气泡横向漂移相位（0..1 循环，R1：draw 闭包内读取驱动 Canvas 重绘）。
     // 50 步 × 60ms ≈ 3s 一个往返周期；reduceMotion 恒 0（原地呼吸不漂移）。
@@ -273,16 +293,7 @@ internal class StockDetailPage : BasePager() {
     private val chartFlags: List<ChartFlag> get() = detailChartState.chartFlags           // B2 图侧新闻旗标
     private val bandRange: Triple<Int, Int, Boolean>? get() = detailChartState.bandRange  // ②/B2 区间高亮带 (start,end,fromSentence)
     private var selectedSentence: Int by observable(-1)                                   // ② 选中的解读句
-    // ---- ① 圈选即问 · AI 区间解读（2026-09-09）：圈选松手 → 端侧统计立即入气泡，
-    // 随后流式生成 AI 解读追加在气泡内（用户结合图看）。状态机与 aiRemote* 同构：
-    // 0 端侧 / 1 thinking / 2 streaming / 3 done / 4 失败（回退端侧统计并如实标注）。
-    private var circleAiState: Int by observable(0)
-    private var circleAiText: String by observable("")
-    private var circleAiError: String by observable("")
-    private var circleAiModel: String by observable("")
-    private var circleAiGeneration = 0
-    private var circleAiTypewriter: TypewriterSmoother? = null
-    private var circleAiProvider: AiProvider? = null
+    private val aiChatDependencies by lazy { ChatDependencies.forPager(pagerId) }
     private var tapePreview: NewsItem? by observable(null)                      // B1 长按先览
     private var tapePreviewAnchorX = 0f                                         // B1 气泡锚点（长按 pageX）
     private var tapePreviewAnchorY = 0f                                         // B1 气泡锚点（长按 pageY）
@@ -312,13 +323,9 @@ internal class StockDetailPage : BasePager() {
         // 由 DetailDataCoordinator 持有；下游 ticker/声呐/AI 触发经
         // handleDetailDataEffect 承接（见 detail/quote/state）。
         detailDataCoordinator.start(symbol, QuotePrefetchStore.peek(symbol))
-        // 占位图：等行情/资金事实就绪期间显示骨架（见 aiAwaitingFacts 注释）。
-        // 4s 兜底：极端弱网一直等不到分时则回落端侧模板，不无限占位。
-        aiAwaitingFacts = true
-        setTimeout(4000) {
-            if (!aiRemoteRequested && aiRemoteState == 0) aiAwaitingFacts = false
-        }
-        startAiReveal()
+        // AI 解读域：占位图等行情/资金事实就绪期间显示骨架；4s 兜底由 Coordinator 内 armAwaitingFactsFallback() 提供。
+        detailAiCoordinator.armAwaitingFactsFallback()
+        detailAiCoordinator.startReveal(buildInsightSummary())
         startTapeTimer()
     }
 
@@ -347,8 +354,8 @@ internal class StockDetailPage : BasePager() {
         }
         startLivePulse()
         startSonarDrift()
-        startAiReveal()
-        maybeStartAiInsight()
+        detailAiCoordinator.startReveal(buildInsightSummary())
+        detailAiCoordinator.maybeStartAiInsight()
         startDrawOn()
     }
 
@@ -375,23 +382,16 @@ internal class StockDetailPage : BasePager() {
         super.pageDidDisappear()
         livePulseVersion++
         sonarDriftVersion++
-        aiRevealVersion++
         drawVersion++
-        // 离开页面即中断进行中的 AI 解读流（generation 失效使残留回调全部 no-op）
-        aiRemoteProvider?.stop()
-        activeAiTypewriter?.cancel()
-        activeAiTypewriter = null
-        aiRemoteGeneration++
-        if (aiRemoteState == 1 || aiRemoteState == 2) {
-            aiRemoteState = if (aiRemoteText.isNotBlank()) 3 else 0
-        }
-        // 圈选 AI 流同样随页面离开中断
-        resetCircleAiStream()
+        // AI 解读域：中断进行中的两路流（generation 失效使残留回调全部 no-op），
+        // 已显示文本保留（state=3 有文本 / state=0 无文本，与原语义一致）。
+        detailAiCoordinator.onDisappear()
     }
 
     override fun pageWillDestroy() {
         detailDataCoordinator.onDestroy()
         detailChartCoordinator.onDestroy()
+        detailAiCoordinator.onDestroy()
         super.pageWillDestroy()
     }
 
@@ -1471,17 +1471,10 @@ internal class StockDetailPage : BasePager() {
     // setChartInteractionActive/issueChartViewportCommand）已迁入
     // DetailChartInteractionCoordinator（detail/chart/state）；本页只保留跨域
     // 编排：overlay 仲裁、圈选 AI 流、selectedSentence 联动、toast。
-
-    /** ① 中断圈选 AI 流并回到端侧态（generation 失效 + 停 provider + 停打字机）。 */
-    private fun resetCircleAiStream() {
-        circleAiProvider?.stop()
-        circleAiTypewriter?.cancel()
-        circleAiTypewriter = null
-        circleAiGeneration++
-        circleAiText = ""
-        circleAiError = ""
-        circleAiState = 0
-    }
+    // AI 流状态机（requestAiInsight/requestCircleAi/startAiReveal/toggleAiInsight/
+    // buildAiInsightPrompt/buildCircleAiPrompt）已迁入 DetailAiInsightCoordinator
+    // （detail/ai/state）；本页只保留 buildInsightSummary（端侧兜底文案）
+    // 与按句切分的纯文本辅助。
 
     /**
      * U1「点空白全关」：关闭图表气泡并清掉它挂的区间带（sonar/圈选带）。
@@ -1492,7 +1485,7 @@ internal class StockDetailPage : BasePager() {
             overlayArbiter.close()
             detailChartCoordinator.clearBandRange()
             // 关气泡即中断圈选 AI 流（气泡已不可见，流完也无处展示）
-            resetCircleAiStream()
+            detailAiCoordinator.cancelCircleAi()
         }
     }
 
@@ -1504,10 +1497,10 @@ internal class StockDetailPage : BasePager() {
         when (effect) {
             is DetailChartEffect.ChartBubbleShown -> {
                 // 新气泡内容一律重置上一段圈选 AI 流（generation 失效使旧回调全部 no-op）
-                resetCircleAiStream()
+                detailAiCoordinator.cancelCircleAi()
                 overlayArbiter.request(DetailOverlay.CHART_BUBBLE)
             }
-            is DetailChartEffect.CircleSelectionCommitted -> requestCircleAi(effect.lo, effect.hi)
+            is DetailChartEffect.CircleSelectionCommitted -> detailAiCoordinator.requestCircleAi(effect.lo, effect.hi)
             is DetailChartEffect.CircleSelectionRejected -> toastHint(effect.message)
         }
     }
@@ -1518,140 +1511,6 @@ internal class StockDetailPage : BasePager() {
         3 -> "AI 生成（$circleAiModel）· 仅供参考"
         4 -> "端侧统计 · AI 调用失败"
         else -> "端侧统计"   // 未请求 AI（声呐气泡/未配置）：不得挂「AI」名头
-    }
-
-    /**
-     * ① 圈选 AI 流式解读：复用聊天页同一套 API 配置与 DeepSeek 通路（与 AI 解读块
-     * 同范式）。端侧先算好区间全部事实槽位喂给模型，只允许引用区间内 HH:MM 时间；
-     * 未配置 API 时保持端侧统计（不打扰、不跳页），失败如实标注。
-     */
-    private fun requestCircleAi(lo: Int, hi: Int) {
-        val config = aiChatDependencies.configStore.load()
-        val configError = config.validationError()
-        if (configError != null) {
-            // 未配置/配置不完整：不发起请求，但如实落失败态（此前静默 return，
-            // 气泡顶着「AI」名头永远只有端侧统计，用户无从知晓 AI 根本没跑）。
-            circleAiError = "未配置 AI API（$configError）"
-            circleAiState = 4
-            return
-        }
-        val generation = ++circleAiGeneration
-        circleAiText = ""
-        circleAiError = ""
-        circleAiModel = config.model
-        circleAiState = 1
-        val provider = aiChatDependencies.aiProviderFactory(config)
-        circleAiProvider = provider
-        // 线程纪律：provider 回调全部来自后台线程，observable 写入须经打字机节拍器
-        // 或 setTimeout(0) 跳回主线程（与 requestAiInsight 同款，此前直写曾闪退）。
-        var content = ""
-        val smoother = TypewriterSmoother(pagerId) { revealed ->
-            if (generation != circleAiGeneration) return@TypewriterSmoother
-            circleAiText = revealed
-            if (circleAiState == 1 && revealed.isNotEmpty()) circleAiState = 2
-        }
-        circleAiTypewriter = smoother
-        // ① 兜底（2026-09-10）：provider 无请求超时，连接挂死/代理黑洞会让气泡
-        // 永停「正在生成区间解读…」＝这一圈没有解读。12s 仍无首个增量则如实落错
-        // 并释放 provider；已进流式（state 2）则不干预，交给 onDone/onError 收尾。
-        setTimeout(12000) {
-            if (generation == circleAiGeneration && circleAiState == 1) {
-                provider.stop()
-                circleAiError = "请求超时（12 秒无响应），请重试"
-                circleAiState = 4
-            }
-        }
-        provider.ask(
-            messages = listOf(AiChatMessage("user", buildCircleAiPrompt(lo, hi))),
-            onDelta = { delta ->
-                content += delta
-                if (generation == circleAiGeneration) smoother.append(delta)
-            },
-            onDone = {
-                if (generation != circleAiGeneration) return@ask
-                val fullContent = content
-                smoother.complete {
-                    setTimeout(0) {
-                        if (generation != circleAiGeneration) return@setTimeout
-                        if (sanitizeAiText(fullContent).isEmpty()) {
-                            circleAiError = "接口未返回有效内容"
-                            circleAiState = 4
-                        } else {
-                            circleAiState = 3
-                        }
-                    }
-                }
-            },
-            onError = { message ->
-                if (generation != circleAiGeneration) return@ask
-                setTimeout(0) {
-                    if (generation != circleAiGeneration) return@setTimeout
-                    smoother.flushNow()
-                    smoother.cancel()
-                    circleAiError = message
-                    circleAiState = 4
-                }
-            },
-        )
-    }
-
-    /** ① 圈选区间事实槽位（唯一事实来源），端侧算全，模型只允许引用区间内时间点。 */
-    private fun buildCircleAiPrompt(lo: Int, hi: Int): String {
-        val q = quote
-        val timeline = q.timeline
-        val seg = timeline.subList(lo, (hi + 1).coerceAtMost(timeline.size))
-        val series = detailTimelineSeries(q)
-        val p0 = series[lo]
-        val p1 = series[hi]
-        val pct = if (p0 != 0.0) (p1 - p0) / p0 * 100.0 else 0.0
-        val highPt = seg.maxByOrNull { it.price }
-        val lowPt = seg.minByOrNull { it.price }
-        // 区间终点与均价线关系（均价 = 真实 amount 口径，与图上虚线一致）
-        val averages = TimeLineCalculator.averagePrices(
-            timeline,
-            q.previousClose,
-            MarketTimelineSpec.forSymbol(q.symbol).lotSize,
-        )
-        val avgEnd = averages.getOrNull(hi)
-        val vsAvg = if (avgEnd != null && avgEnd > 0.0) {
-            "区间终点${if (p1 >= avgEnd) "高于" else "低于"}均价线（${Format.price(avgEnd)}）"
-        } else null
-        // 区间量能 vs 全天每分钟均量（放量/缩量，只述倍数事实）
-        val dayAvgVol = timeline.map { it.volume }.average().takeIf { !it.isNaN() } ?: 0.0
-        val segAvgVol = seg.map { it.volume }.average().takeIf { !it.isNaN() } ?: 0.0
-        val volDesc = if (dayAvgVol > 0.0) {
-            val ratio = segAvgVol / dayAvgVol
-            when {
-                ratio >= 1.5 -> "区间量能明显放大（约为全天每分钟均量的 ${Format.decimal(ratio, 1)} 倍）"
-                ratio <= 0.6 -> "区间量能收缩（约为全天每分钟均量的 ${Format.decimal(ratio, 1)} 倍）"
-                else -> "区间量能与全天每分钟均量相当"
-            }
-        } else null
-        val vsPrev = if (q.previousClose > 0.0) {
-            val a = (p0 - q.previousClose) / q.previousClose * 100.0
-            val b = (p1 - q.previousClose) / q.previousClose * 100.0
-            "区间起点较昨收 ${Format.percent(a)}，终点较昨收 ${Format.percent(b)}"
-        } else null
-        val facts = buildList {
-            add("圈选区间：${AnchorIndex.indexToTimeLabel(lo)} 至 ${AnchorIndex.indexToTimeLabel(hi)}")
-            add("区间起点 ${Format.price(p0)}，终点 ${Format.price(p1)}，区间涨跌 ${Format.percent(pct)}")
-            if (highPt != null) add("区间最高 ${Format.price(highPt.price)}（出现于 ${highPt.time}）")
-            if (lowPt != null) add("区间最低 ${Format.price(lowPt.price)}（出现于 ${lowPt.time}）")
-            vsAvg?.let { add(it) }
-            vsPrev?.let { add(it) }
-            volDesc?.let { add(it) }
-        }
-        return buildString {
-            appendLine("你是 A 股个股解读助手。用户刚在 ${q.name}（${q.symbol}）当日分时图上圈选了一段区间，请基于下面的圈选区间真实数据，用 2-3 句简体中文解读这段走势（用户正对照分时图阅读，请紧扣区间内事实）。")
-            appendLine()
-            appendLine("硬性要求：")
-            appendLine("1. 每句话必须至少引用一个具体分时时间点（HH:MM，仅限 09:30-11:30 或 13:00-15:00，且必须落在圈选区间内）；没有时间依据的句子不要写。")
-            appendLine("2. 只陈述与解释以上数据体现的事实，不预测后续涨跌，不给出买卖、仓位建议。")
-            appendLine("3. 直接输出句子，每句以句号结尾；不要小标题、序号、加粗、markdown 或任何卡片协议。")
-            appendLine()
-            appendLine("圈选区间数据（唯一事实来源，禁止编造未提供的数字）：")
-            facts.forEach { appendLine("- $it") }
-        }
     }
 
     /** ③ 指标长按抓取：chip 直接入上下文（降级路径），去重由 chipStore 负责。 */
@@ -1967,13 +1826,13 @@ internal class StockDetailPage : BasePager() {
                 detailChartCoordinator.applySonarPoints(detectAnomalies(detailTimelineSeries(next), null).take(3))
                 // 分时首次到达后择机启动真实 AI 解读（等 800ms 让资金流/财报尽量落位）；
                 // 只在分时"新到"时调度一次，不再随快照/K线回调重复 setTimeout。
-                if (effect.timelineJustArrived) setTimeout(800) { maybeStartAiInsight() }
+                if (effect.timelineJustArrived) setTimeout(800) { detailAiCoordinator.maybeStartAiInsight() }
                 if (effect.changed) playTicker()
             }
             DetailDataEffect.InsightLoaded -> {
-                startAiReveal()
+                detailAiCoordinator.startReveal(buildInsightSummary())
                 // 行情+洞察就绪后启动真实 AI 解读（未配置/无分时数据则保持端侧模板）
-                maybeStartAiInsight()
+                detailAiCoordinator.maybeStartAiInsight()
             }
             is DetailDataEffect.PrefetchApplied -> {
                 detailChartCoordinator.applySonarPoints(detectAnomalies(detailTimelineSeries(effect.quote), null).take(3))
@@ -2076,42 +1935,8 @@ internal class StockDetailPage : BasePager() {
             "最低 ${Format.price(q.low)}（${lowPoint?.time ?: "--"}），$toneDesc，位于平盘线$position。"
     }
 
-    private fun startAiReveal() {
-        val source = buildInsightSummary()
-        if (source == aiRevealSource && aiRevealLimit >= source.length) return
-        aiRevealSource = source
-        val version = ++aiRevealVersion
-        if (reduceMotion) {
-            aiRevealLimit = source.length
-            return
-        }
-        aiRevealLimit = 0
-        fun tick() {
-            if (version != aiRevealVersion) return
-            aiRevealLimit = (aiRevealLimit + 3).coerceAtMost(source.length)
-            if (aiRevealLimit < source.length) setTimeout(28) { tick() }
-        }
-        setTimeout(0) { tick() }
-    }
-
-    // ------------------------------------------------------------------
-    // AI 解读真实化（2026-09-08）：此前「重新解读」只是把端侧模板重新打字机
-    // 播一遍，从未调用 AI。现复用聊天页同一套 API 配置与 DeepSeek 通路
-    // （与 MarketPage AI 复盘卡同范式）：端侧先算好全部事实槽位喂给模型，
-    // 只要求模型按 HH:MM 引用时间，坐标仍由 AnchorIndex 端侧映射——
-    // 不让 LLM 猜数字、也不让它猜坐标。未配置/失败回退端侧模板并如实标注。
-    // ------------------------------------------------------------------
-
-    /** 行情与洞察就绪后自动请求一次；分时为空则不启动（防模型无依据编时间）。 */
-    private fun maybeStartAiInsight() {
-        if (aiRemoteRequested) return
-        if (quote.timeline.isEmpty()) return
-        if (insight.loading) return
-        aiRemoteRequested = true
-        aiAwaitingFacts = false
-        requestAiInsight()
-    }
-
+    // ── DSL 接线入口（doc 43 D3：AI 编排已迁入 Coordinator；本页只保留少量页侧转接）──
+    /** AI 解读块的「问 AI」按钮文案（与原 aiActionLabel 等价）：1/2→停止、3→重新解读、4→重试、其余→生成。 */
     private fun aiActionLabel(): String = when (aiRemoteState) {
         1, 2 -> "停止"
         3 -> "重新解读"
@@ -2119,135 +1944,9 @@ internal class StockDetailPage : BasePager() {
         else -> "生成"
     }
 
+    /** AI 解读块的「问 AI」按钮点击：流式中→停止；否则→请求一次。 */
     private fun toggleAiInsight() {
-        if (aiRemoteState == 1 || aiRemoteState == 2) {
-            aiRemoteProvider?.stop()
-            aiRemoteGeneration++
-            // 已收到的部分先全部显示再停（与聊天页 stop 范式一致）
-            activeAiTypewriter?.flushNow()
-            activeAiTypewriter?.cancel()
-            activeAiTypewriter = null
-            aiRemoteState = if (aiRemoteText.isNotBlank()) 3 else 0
-        } else {
-            requestAiInsight()
-        }
-    }
-
-    private fun requestAiInsight() {
-        val config = aiChatDependencies.configStore.load()
-        val configError = config.validationError()
-        if (configError != null) {
-            // 未配置时保持端侧模板，不弹页跳转；错误信息在来源行如实展示
-            aiAwaitingFacts = false
-            aiRemoteState = 0
-            aiRemoteError = "未配置 AI API（$configError）"
-            return
-        }
-        aiRemoteProvider?.stop()
-        activeAiTypewriter?.cancel()
-        val generation = ++aiRemoteGeneration
-        aiRemoteText = ""
-        aiRemoteError = ""
-        aiRemoteModel = config.model
-        aiRemoteState = 1
-        selectedSentence = -1
-        detailChartCoordinator.clearBandRange()
-        val provider = aiChatDependencies.aiProviderFactory(config)
-        aiRemoteProvider = provider
-        // 线程纪律：provider 回调全部来自 Dispatchers.Default 后台线程。
-        // observable 写入只允许发生在 onPublish（主线程节拍器回调）与
-        // setTimeout(0) 跳回主线程之后；后台线程直写曾造成闪退与不刷新。
-        var content = ""
-        val smoother = TypewriterSmoother(pagerId) { revealed ->
-            if (generation != aiRemoteGeneration) return@TypewriterSmoother
-            aiRemoteText = revealed
-            if (aiRemoteState == 1 && revealed.isNotEmpty()) aiRemoteState = 2
-        }
-        activeAiTypewriter = smoother
-        // 兜底（同 requestCircleAi）：12s 无首个增量则如实落错，避免 AI 块
-        // 永停骨架/思考态、本次访问「没有解读」；已进流式则交给 onDone/onError。
-        setTimeout(12000) {
-            if (generation == aiRemoteGeneration && aiRemoteState == 1) {
-                provider.stop()
-                aiRemoteError = "请求超时（12 秒无响应），请重试"
-                aiRemoteState = 4
-            }
-        }
-        provider.ask(
-            messages = listOf(AiChatMessage("user", buildAiInsightPrompt())),
-            onDelta = { delta ->
-                content += delta
-                if (generation == aiRemoteGeneration) smoother.append(delta)
-            },
-            onDone = {
-                if (generation != aiRemoteGeneration) return@ask
-                val fullContent = content
-                // 显示端把已收到的文本打完再落定（收尾回调由节拍器在主线程触发）
-                smoother.complete {
-                    setTimeout(0) {
-                        if (generation != aiRemoteGeneration) return@setTimeout
-                        if (sanitizeAiText(fullContent).isEmpty()) {
-                            aiRemoteError = "接口未返回有效内容"
-                            aiRemoteState = 4
-                        } else {
-                            aiRemoteState = 3
-                        }
-                    }
-                }
-            },
-            onError = { message ->
-                if (generation != aiRemoteGeneration) return@ask
-                // 出错也把已收到的部分流式文本放出来，再如实标错（跳回主线程写状态）
-                setTimeout(0) {
-                    if (generation != aiRemoteGeneration) return@setTimeout
-                    smoother.flushNow()
-                    smoother.cancel()
-                    aiRemoteError = message
-                    aiRemoteState = 4
-                }
-            },
-        )
-    }
-
-    /** 端侧事实槽位（唯一事实来源），要求模型逐句引用时间点。 */
-    private fun buildAiInsightPrompt(): String {
-        val q = quote
-        val timeline = q.timeline
-        val highPoint = timeline.maxByOrNull { it.price }
-        val lowPoint = timeline.minByOrNull { it.price }
-        val series = detailTimelineSeries(q)
-        val morningClose = series.getOrNull(119)
-        val openVsPrev = if (q.previousClose > 0.0) {
-            Format.percent((q.open - q.previousClose) / q.previousClose * 100.0)
-        } else "--"
-        val facts = buildList {
-            add("现价 ${Format.price(q.price)}（${Format.percent(q.changePercent)}），昨收 ${Format.price(q.previousClose)}，开盘 ${Format.price(q.open)}（较昨收 $openVsPrev）")
-            if (highPoint != null) add("日内最高 ${Format.price(q.high)}（出现于 ${highPoint.time}）")
-            if (lowPoint != null) add("日内最低 ${Format.price(q.low)}（出现于 ${lowPoint.time}）")
-            if (morningClose != null && morningClose != 0.0 && series.size > 120) {
-                add("上午收盘（11:30）${Format.price(morningClose)}，午后至今 ${Format.percent((q.price - morningClose) / morningClose * 100.0)}")
-            }
-            insight.fundFlow?.let {
-                add("今日主力资金净${if (it.main >= 0) "流入" else "流出"} ${Format.compactAmount(kotlin.math.abs(it.main))}")
-            }
-            insight.fundamentals?.financial?.let {
-                add("最新财报（${it.reportDate}）：营收同比 ${Format.percent(it.revenueYoY)}，净利润同比 ${Format.percent(it.profitYoY)}")
-            }
-            if (newsList.isNotEmpty()) {
-                add("近期资讯标题：${newsList.take(3).joinToString("；") { it.title }}")
-            }
-        }
-        return buildString {
-            appendLine("你是 A 股个股解读助手。请基于下面的今日真实数据，用 3-4 句简体中文解读 ${q.name}（${q.symbol}）今天的盘面走势。")
-            appendLine()
-            appendLine("硬性要求：")
-            appendLine("1. 每句话必须至少引用一个具体分时时间点（HH:MM，仅限 09:30-11:30 或 13:00-15:00），端侧会按句内时间在分时图上定位高亮区间；没有时间依据的句子不要写。")
-            appendLine("2. 只陈述与解释以上数据体现的事实，不预测后续涨跌，不给出买卖、仓位建议。")
-            appendLine("3. 直接输出句子，每句以句号结尾；不要小标题、序号、加粗、markdown 或任何卡片协议。")
-            appendLine()
-            appendLine("今日数据（唯一事实来源，禁止编造未提供的数字）：")
-            facts.forEach { appendLine("- $it") }
-        }
+        detailAiCoordinator.toggleInsight()
     }
 
     private fun buildInsightSummary(): String {
