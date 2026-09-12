@@ -1,18 +1,7 @@
 package com.kuikly.stockchat.chat
 
-/** A single image or extracted document fragment supplied with the current turn. */
-data class AiMediaPart(
-    val name: String,
-    val imageDataUrl: String? = null,
-    val documentText: String? = null,
-)
-
-data class AiChatMessage(
-    val role: String,
-    val content: String,
-    /** Only the active user turn carries media. History intentionally stays text-only. */
-    val media: List<AiMediaPart> = emptyList(),
-)
+typealias AiChatMessage = com.kuikly.stockchat.data.provider.AiChatMessage
+typealias AiMediaPart = com.kuikly.stockchat.data.provider.AiMediaPart
 
 object ChatContext {
     const val MAX_MESSAGES = 12

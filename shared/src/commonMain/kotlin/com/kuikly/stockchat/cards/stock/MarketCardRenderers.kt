@@ -15,7 +15,7 @@ import com.kuikly.stockchat.cards.core.FundFlowCardModel
 import com.kuikly.stockchat.cards.core.ShareholderCardModel
 import com.kuikly.stockchat.cards.core.ProductConceptCardModel
 import com.kuikly.stockchat.common.Format
-import com.kuikly.stockchat.page.components.SourceStampLine
+import com.kuikly.stockchat.cards.components.CardSourceStampLine
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -50,7 +50,7 @@ private object FundFlowRenderer : CardRenderer {
         container.CardTitle("资金流", "主力口径", context)
         container.MetricRow(listOf("主力" to value.main, "超大单" to value.superLarge, "大单" to value.large), context)
         container.Text { attr { text(value.explanation); marginTop(8f); fontSizeScaled(11.5f); lineHeightScaled(18f); color(context.theme.textSecondary) } }
-        container.SourceStampLine(value.stamp, context.theme)
+        container.CardSourceStampLine(value.stamp, context.theme)
     }
 }
 
@@ -67,7 +67,7 @@ private object FinancialRenderer : CardRenderer {
         }
         container.Text { attr { text("EPS ${Format.decimal(value.eps, 2)} · ROE ${Format.percent(value.roe)} · 毛利率 ${Format.percent(value.grossMargin)}"); marginTop(7f); fontSizeScaled(10.5f); color(context.theme.textTertiary) } }
         container.Text { attr { text(value.explanation); marginTop(8f); fontSizeScaled(11.5f); lineHeightScaled(18f); color(context.theme.textSecondary) } }
-        container.SourceStampLine(value.stamp, context.theme)
+        container.CardSourceStampLine(value.stamp, context.theme)
     }
 }
 
@@ -79,7 +79,7 @@ private object ShareholderRenderer : CardRenderer {
         container.Text { attr { text("${value.holders} 户"); fontSizeScaled(20f); fontWeightBold(); color(context.theme.textPrimary) } }
         container.Text { attr { text("较上期 ${if (value.change >= 0) "+" else ""}${value.change} 户 · ${Format.percent(value.changePercent)}"); marginTop(4f); fontSizeScaled(11f); color(if (value.change > 0) context.theme.fall else context.theme.rise) } }
         container.Text { attr { text(value.explanation); marginTop(8f); fontSizeScaled(11.5f); lineHeightScaled(18f); color(context.theme.textSecondary) } }
-        container.SourceStampLine(value.stamp, context.theme)
+        container.CardSourceStampLine(value.stamp, context.theme)
     }
 }
 
@@ -91,7 +91,7 @@ private object BillboardRenderer : CardRenderer {
         container.Text { attr { text(value.reason); fontSizeScaled(11.5f); lineHeightScaled(18f); color(context.theme.textSecondary) } }
         container.MetricRow(listOf("买入" to value.buyAmount, "卖出" to value.sellAmount, "净额" to value.netAmount), context, amount = true)
         container.Text { attr { text("龙虎榜只记录触发异动规则的交易日；没有近期记录不代表没有机构交易。"); marginTop(7f); fontSizeScaled(10.5f); color(context.theme.textTertiary) } }
-        container.SourceStampLine(value.stamp, context.theme)
+        container.CardSourceStampLine(value.stamp, context.theme)
     }
 }
 
@@ -107,7 +107,7 @@ private object CorporateActionRenderer : CardRenderer {
                 Text { attr { text("${item.date} · ${item.status}"); marginTop(2f); fontSizeScaled(9.5f); color(context.theme.textTertiary) } }
             }
         }
-        values.firstOrNull()?.let { container.SourceStampLine(it.stamp, context.theme) }
+        values.firstOrNull()?.let { container.CardSourceStampLine(it.stamp, context.theme) }
     }
 }
 
@@ -127,7 +127,7 @@ private object DisclosureRenderer : CardRenderer {
                 Text { attr { text(item.title); marginTop(5f); fontSizeScaled(12f); fontWeightSemiBold(); color(context.theme.textPrimary) } }
                 Text { attr { text(item.summary); marginTop(5f); fontSizeScaled(10.8f); lineHeightScaled(17f); color(context.theme.textSecondary) } }
                 Text { attr { text(item.riskLabel); marginTop(5f); fontSizeScaled(9.5f); color(if (item.riskLabel == "关注风险") context.theme.fall else context.theme.brand) } }
-                SourceStampLine(item.stamp, context.theme)
+                CardSourceStampLine(item.stamp, context.theme)
             }
         }
     }

@@ -1,6 +1,5 @@
 package com.kuikly.stockchat.data.provider
 
-import com.kuikly.stockchat.chat.AiChatMessage
 import com.kuikly.stockchat.data.config.AiConfig
 import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
