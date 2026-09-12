@@ -39,6 +39,8 @@ import com.kuikly.stockchat.chat.compare.state.CompareInsightRequester
 import com.kuikly.stockchat.chat.compare.state.CompareInsightState
 import com.kuikly.stockchat.chat.compare.state.CompareInsightStateHolder
 import com.kuikly.stockchat.chat.compare.state.PagerCompareTextRevealerFactory
+import com.kuikly.stockchat.chat.compare.component.ChatCompareOverlayProps
+import com.kuikly.stockchat.chat.compare.component.ChatCompareOverlays
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollCoordinator
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollState
 import com.kuikly.stockchat.chat.scroll.state.KuiklyChatScrollScheduler
@@ -1486,88 +1488,24 @@ internal class ChatPage : BasePager() {
                 ImagePreviewOverlay({ page.imagePreviewPath }, page.pagerData.pageViewWidth, page.pagerData.pageViewHeight,
                     page.pagerData.statusBarHeight, page::closeImagePreview)
             }
-            vif({ page.compareCard != null }) {
-                // 对比结果弹窗 + 蒙层（用户决策 2026-09-05，二轮修正）：整个块
-                // 声明在输入栏之后——蒙层必须绘制在输入栏（含渐变高光边）之上，
-                // 否则输入栏高光会从压暗的背景里"漏"出来。聊天区、灵动岛、
-                // 输入栏一起被压暗并吞掉点击；只有弹窗面板本身（块内后绘制）
-                // 和更上层的拖拽 overlay/CardSheet/抽屉不受影响。
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        backgroundColor(Color(0x59000000))
-                        touchEnable(true)
-                        animate(Animation.easeOut(0.2f), page.compareCard != null)
-                    }
-                    // 蒙层即收回（2026-09-09）：点面板外任意区域 = 退出对比，
-                    // 与面板内「退出」同走 clearCompare（含灵动岛几何复位）。
-                    event { click { page.clearCompare() } }
-                }
-                // 底部锚定容器（2026-09-09）：此前面板是根容器的流式子节点，
-                // 而根容器的兄弟节点全部 absolutePosition（主内容层/顶栏/输入栏），
-                // 流式位置落在 y=0 → 面板被顶到屏幕最上面。改为全屏容器 +
-                // justifyContentFlexEnd 锚底，AI 解读流式输出逐字到达、面板高度
-                // 连续小步生长时，顶缘随之向上拉长，底缘不动。
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        justifyContentFlexEnd()
-                        paddingBottom(page.pagerData.safeAreaInsets.bottom)
-                    }
-                    page.compareCard?.let { compareModel ->
-                        ActiveComparePanel(
-                            model = compareModel,
-                            theme = page.theme,
-                            insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
-                            insightText = { page.compareInsightText },
-                            insightError = { page.compareInsightError },
-                            onRetryInsight = { page.retryCompareInsight() },
-                            onOpenStock = { page.openStockDetail(it) },
-                            onClose = { page.clearCompare() },
-                        )
-                    }
-                }
-            }
-            // 术语对比弹窗：双槽位填满即弹出（与股票 compareCard 同款触发），
-            // 蒙层 + 面板绘制在输入栏之上，压暗聊天区/灵动岛/输入栏。
-            vif({
-                page.islandTermCompareVisible &&
-                    page.islandTermCompareLeftKey.isNotEmpty() &&
-                    page.islandTermCompareRightKey.isNotEmpty()
-            }) {
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        backgroundColor(Color(0x59000000))
-                        touchEnable(true)
-                        animate(Animation.easeOut(0.2f), page.islandTermCompareVisible)
-                    }
-                    // 蒙层即收回（2026-09-09）：同股票对比蒙层，点击 = 退出术语对比。
-                    event { click { page.clearIslandCompare() } }
-                }
-                // 底部锚定容器：同股票对比弹窗（2026-09-09），锚底 + 流式向上生长。
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        justifyContentFlexEnd()
-                        paddingBottom(page.pagerData.safeAreaInsets.bottom)
-                    }
-                    Glossary.byKey(page.islandTermCompareLeftKey)?.let { leftEntry ->
-                        Glossary.byKey(page.islandTermCompareRightKey)?.let { rightEntry ->
-                            TermComparePanel(
-                                left = leftEntry,
-                                right = rightEntry,
-                                theme = page.theme,
-                                insightLoading = { page.compareInsightState == CompareInsightState.LOADING },
-                                insightText = { page.compareInsightText },
-                                insightError = { page.compareInsightError },
-                                onRetryInsight = { page.retryCompareInsight() },
-                                onClose = { page.clearIslandCompare() },
-                            )
-                        }
-                    }
-                }
-            }
+            ChatCompareOverlays.render(
+                this,
+                ChatCompareOverlayProps(
+                    theme = page.theme,
+                    bottomInset = page.pagerData.safeAreaInsets.bottom,
+                    stockModel = { page.compareCard },
+                    termVisible = { page.islandTermCompareVisible },
+                    leftTermKey = { page.islandTermCompareLeftKey },
+                    rightTermKey = { page.islandTermCompareRightKey },
+                    insightState = { page.compareInsightState },
+                    insightText = { page.compareInsightText },
+                    insightError = { page.compareInsightError },
+                    onRetryInsight = page::retryCompareInsight,
+                    onOpenStock = page::openStockDetail,
+                    onCloseStock = page::clearCompare,
+                    onCloseTerm = page::clearIslandCompare,
+                ),
+            )
             vif({ page.entityDragActive }) {
                 page.renderEntityDragOverlay(this)
             }
