@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.risk
+package com.kuikly.stockchat.risk.domain
 
 import kotlin.math.PI
 import kotlin.math.abs

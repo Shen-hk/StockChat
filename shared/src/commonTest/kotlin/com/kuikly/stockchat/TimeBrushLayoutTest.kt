@@ -1,6 +1,6 @@
 package com.kuikly.stockchat
 
-import com.kuikly.stockchat.page.risk.TimeBrushLayout
+import com.kuikly.stockchat.risk.domain.TimeBrushLayout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

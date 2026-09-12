@@ -4,9 +4,9 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.data.provider.MarketCalendarEvent
-import com.kuikly.stockchat.page.risk.SkyGeometry
-import com.kuikly.stockchat.page.risk.SkyLayer
-import com.kuikly.stockchat.page.risk.StarLayout
+import com.kuikly.stockchat.risk.domain.SkyGeometry
+import com.kuikly.stockchat.risk.domain.SkyLayer
+import com.kuikly.stockchat.risk.domain.StarLayout
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.TextAlign
@@ -195,8 +195,8 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
             val phase = if (reduceMotion) 0f else beaconPhase()
             val cors = correlations()
             val offsets = dragOffsets()
-            fun x(s: com.kuikly.stockchat.page.risk.SkyStar): Float = s.x + (offsets[s.symbol]?.first ?: 0f)
-            fun y(s: com.kuikly.stockchat.page.risk.SkyStar): Float = s.y + (offsets[s.symbol]?.second ?: 0f)
+            fun x(s: com.kuikly.stockchat.risk.domain.SkyStar): Float = s.x + (offsets[s.symbol]?.first ?: 0f)
+            fun y(s: com.kuikly.stockchat.risk.domain.SkyStar): Float = s.y + (offsets[s.symbol]?.second ?: 0f)
 
             // LINK 层孤立星（无任何 |r|≥0.5 连线）退暗
             val linkedSymbols = if (ly == SkyLayer.LINK) {

@@ -1,7 +1,7 @@
 package com.kuikly.stockchat
 
-import com.kuikly.stockchat.page.risk.StarLayout
-import com.kuikly.stockchat.page.risk.StarMemberIn
+import com.kuikly.stockchat.risk.domain.StarLayout
+import com.kuikly.stockchat.risk.domain.StarMemberIn
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
