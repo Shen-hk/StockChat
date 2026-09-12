@@ -66,6 +66,7 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
 import com.kuikly.stockchat.detail.chart.state.DetailChartState
 import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
 import com.kuikly.stockchat.detail.page.component.DetailAiInsightBlock
+import com.kuikly.stockchat.detail.page.component.DetailAttributionBoard
 import com.kuikly.stockchat.detail.page.component.DetailChartCard
 import com.kuikly.stockchat.detail.page.component.DetailCompanyInfoSection
 import com.kuikly.stockchat.detail.page.component.DetailHeroSection
@@ -645,24 +646,16 @@ internal class StockDetailPage : BasePager() {
                         onShowDisclosurePeek = { page.detailOverlayCoordinator.showDisclosurePeek(it) },
                     )
 
-                    // ---- 涨跌归因 × AI 走势推演：同一工作台内切换手动重放 / AI 推测过程。 ----
-                    RevealBlock(10, { page.entranceVisible }, page.reduceMotion) {
-                        SectionLabel("涨跌归因与走势推演", page.theme, strong = true)
-                        AttributionForecastWorkbench(
-                            theme = page.theme,
-                            factors = listOf(
-                                FactorSpec("资金面", -0.30),
-                                FactorSpec("板块联动", -0.14),
-                                FactorSpec("市场整体", 0.05),
-                                FactorSpec("个股事件", -0.23),
-                            ),
-                            actualPct = { page.quote.changePercent },
-                            quote = { page.quote },
-                            mainFlow = { page.insight.fundFlow?.main },
-                            containerWidth = page.pagerData.pageViewWidth - 28f,
-                            reduceMotion = page.reduceMotion,
-                        )
-                    }
+                    // ---- 涨跌归因 × AI 走势推演（docs/43 D5 第六组件）----
+                    DetailAttributionBoard(
+                        theme = page.theme,
+                        reduceMotion = page.reduceMotion,
+                        entranceVisible = { page.entranceVisible },
+                        revealIndex = 10,
+                        quote = { page.quote },
+                        mainFlow = { page.insight.fundFlow?.main },
+                        containerWidth = page.pagerData.pageViewWidth - 28f,
+                    )
 
                 }
 
@@ -2985,7 +2978,7 @@ private fun ViewContainer<*, *>.AttributionBlock(
  * 把可手调的归因重放和 AI 情景推演收在一个工作台内。用户可随时回到手动归因，
  * AI 面则明确展示「读取快照 → 提取信号 → 合成情景」的推测链，而非黑盒结论。
  */
-private fun ViewContainer<*, *>.AttributionForecastWorkbench(
+internal fun ViewContainer<*, *>.AttributionForecastWorkbench(
     theme: StockChatTheme,
     factors: List<FactorSpec>,
     actualPct: () -> Double,
