@@ -2,6 +2,7 @@ package com.kuikly.stockchat.chat.composer.state
 
 import com.kuikly.stockchat.composer.AtCandidate
 import com.kuikly.stockchat.composer.CatalogEntry
+import com.kuikly.stockchat.composer.MentionEntity
 import com.kuikly.stockchat.composer.SlashCommand
 import com.kuikly.stockchat.composer.TriggerSession
 import com.tencent.kuikly.core.reactive.collection.ObservableList
@@ -27,6 +28,13 @@ internal interface ComposerAssistantStatePort {
     var remoteSearchGeneration: Int
     var quoteGeneration: Int
     val requestedQuoteSymbols: MutableSet<String>
+    var lastTrackedTriggerKey: String
+    var lastTrackedUnknownSlash: String
+    val mentionEntities: MutableList<MentionEntity>
+    val deepContextNotes: MutableList<String>
+    var deepContextVersion: Int
+    var routeFocusMention: MentionEntity?
+    val recentMentions: MutableList<String>
 }
 
 internal class ComposerAssistantState : ComposerAssistantStatePort {
@@ -49,6 +57,13 @@ internal class ComposerAssistantState : ComposerAssistantStatePort {
     override var remoteSearchGeneration = 0
     override var quoteGeneration = 0
     override val requestedQuoteSymbols = mutableSetOf<String>()
+    override var lastTrackedTriggerKey = ""
+    override var lastTrackedUnknownSlash = ""
+    override val mentionEntities = mutableListOf<MentionEntity>()
+    override val deepContextNotes = mutableListOf<String>()
+    override var deepContextVersion: Int by observable(0)
+    override var routeFocusMention: MentionEntity? = null
+    override val recentMentions = mutableListOf<String>()
 }
 
 internal class PlainComposerAssistantState : ComposerAssistantStatePort {
@@ -67,6 +82,13 @@ internal class PlainComposerAssistantState : ComposerAssistantStatePort {
     override var remoteSearchGeneration = 0
     override var quoteGeneration = 0
     override val requestedQuoteSymbols = mutableSetOf<String>()
+    override var lastTrackedTriggerKey = ""
+    override var lastTrackedUnknownSlash = ""
+    override val mentionEntities = mutableListOf<MentionEntity>()
+    override val deepContextNotes = mutableListOf<String>()
+    override var deepContextVersion = 0
+    override var routeFocusMention: MentionEntity? = null
+    override val recentMentions = mutableListOf<String>()
 }
 
 /** Owns panel reset and candidate replacement so no stale highlight survives a panel switch. */

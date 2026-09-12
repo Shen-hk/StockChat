@@ -506,18 +506,26 @@ internal class ChatPage : BasePager() {
     private var slashUnknown: String
         get() = composerAssistantState.slashUnknown
         set(value) { composerAssistantState.slashUnknown = value }
-    private var lastTrackedTriggerKey = ""
-    private var lastTrackedUnknownSlash = ""
+    private var lastTrackedTriggerKey: String
+        get() = composerAssistantState.lastTrackedTriggerKey
+        set(value) { composerAssistantState.lastTrackedTriggerKey = value }
+    private var lastTrackedUnknownSlash: String
+        get() = composerAssistantState.lastTrackedUnknownSlash
+        set(value) { composerAssistantState.lastTrackedUnknownSlash = value }
     // 固化提及注册表：只存实体顺序，激活态每次从文本扫描得出（规范 §4.6）。
-    private val mentionEntities = mutableListOf<MentionEntity>()
+    private val mentionEntities: MutableList<MentionEntity> get() = composerAssistantState.mentionEntities
     // 上下文标记（/深水区等），注入 system context（规范 §4.8）。
-    private val deepContextNotes = mutableListOf<String>()
-    private var deepContextVersion: Int by observable(0)
+    private val deepContextNotes: MutableList<String> get() = composerAssistantState.deepContextNotes
+    private var deepContextVersion: Int
+        get() = composerAssistantState.deepContextVersion
+        set(value) { composerAssistantState.deepContextVersion = value }
     // 路由带来的焦点标的（详情页/预警/星图等场景经 openChatWithQuestion 传入）。
     // 不进 mentionEntities（那里靠文本对账，问题文本里没有 @名称 会被剔除），
     // 而是在 buildSendPayload 组包时无条件并入 mentions——入口显式给了标的，
     // 信任之；与文本扫描结果由 ChatQuoteContext 按 symbol 去重。
-    private var routeFocusMention: MentionEntity? = null
+    private var routeFocusMention: MentionEntity?
+        get() = composerAssistantState.routeFocusMention
+        set(value) { composerAssistantState.routeFocusMention = value }
     private var commandValidationMessage: String
         get() = composerAssistantState.validationMessage
         set(value) { composerAssistantState.validationMessage = value }
@@ -527,7 +535,7 @@ internal class ChatPage : BasePager() {
         get() = composerAssistantState.paramCommand
         set(value) { composerAssistantState.paramCommand = value }
     // 最近提及（S1 数据源，最多 5 条，新的在前）。
-    private val recentMentions = mutableListOf<String>()
+    private val recentMentions: MutableList<String> get() = composerAssistantState.recentMentions
     // ===== @ 候选实时化（规范 10 §4.2 S5 / P5）=====
     // 远端搜索建议池：会话内累积，rank 时并入打分；Observable 以驱动候选行重渲染。
     private val remoteEntries: ObservableList<CatalogEntry> get() = composerAssistantState.remoteEntries as ObservableList<CatalogEntry>

@@ -18,6 +18,7 @@ class ComposerAssistantCoordinatorTest {
             slashHighlight = 1
             slashUnknown = "unknown"
             paramCommand = null
+            recentMentions += "600519.SH"
         }
         val coordinator = ComposerAssistantCoordinator(state)
 
@@ -29,6 +30,7 @@ class ComposerAssistantCoordinatorTest {
         assertEquals("", state.slashUnknown)
         assertTrue(state.atCandidates.isEmpty())
         assertTrue(state.slashCandidates.isEmpty())
+        assertEquals(listOf("600519.SH"), state.recentMentions)
     }
 
     @Test
