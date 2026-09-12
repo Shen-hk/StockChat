@@ -54,6 +54,9 @@ import com.kuikly.stockchat.chat.composer.state.ComposerFocusEffect
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusState
 import com.kuikly.stockchat.chat.composer.state.KuiklyComposerFocusScheduler
 import com.kuikly.stockchat.chat.composer.state.KuiklyVoiceInputScheduler
+import com.kuikly.stockchat.chat.composer.state.ComposerVisualCoordinator
+import com.kuikly.stockchat.chat.composer.state.ComposerVisualState
+import com.kuikly.stockchat.chat.composer.state.KuiklyComposerVisualScheduler
 import com.kuikly.stockchat.chat.composer.state.VoiceInputCoordinator
 import com.kuikly.stockchat.chat.composer.state.VoiceInputEffect
 import com.kuikly.stockchat.chat.composer.state.VoiceInputHostPort
@@ -230,7 +233,6 @@ import com.tencent.kuikly.core.views.View
 import com.tencent.kuikly.core.views.DivView
 import com.tencent.kuikly.core.views.SelectionType
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
-import com.tencent.kuikly.core.timer.Timer
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -624,15 +626,18 @@ internal class ChatPage : BasePager() {
     // 输入框渐变描边流动相位（0..2π）：composerRimFlowTimer 以 20fps 推进，
     // renderComposerGradientRim 的 Canvas draw 闭包内读取本值驱动重绘
     // （VoiceBar 同款 ReactiveObserver 范式）。页面不可见即停，省电。
-    private var composerRimPhase: Float by observable(0f)
-    private var composerRimFlowTimer: Timer? = null
+    private val composerVisualState = ComposerVisualState()
+    private val composerVisualCoordinator = ComposerVisualCoordinator(
+        composerVisualState,
+        KuiklyComposerVisualScheduler(),
+        log = { message -> KLog.i(COMPOSER_LOG_TAG, message) },
+    )
+    private val composerRimPhase: Float get() = composerVisualState.rimPhase
     // 输入栏折叠/展开的图标入场（R4）：vif 新挂载的视图首帧不播动画，展开态与
     // 折叠态图标的显隐经 mounted→presented 两帧翻转驱动（drawer 同款范式）。
     // 展开态图标以 presented 为入场驱动；折叠态图标以 !presented 为入场驱动，
     // 收起时对称回放。同值赋值不通知，翻转失败时也不会留下中间态。
-    private var composerChromePresented: Boolean by observable(false)
-    private var composerChromeVersion = 0
-    private var composerChromeTimer: Timer? = null
+    private val composerChromePresented: Boolean get() = composerVisualState.chromePresented
     private val composerReducedMotion by lazy { platformPrefersReducedMotion() }
     private val theme: StockChatTheme get() = appTheme()
     /** The document caps simultaneously visible real-time blur surfaces at two. */
@@ -751,6 +756,7 @@ internal class ChatPage : BasePager() {
         entityCoordinator.onDestroy()
         compareCoordinator.onDestroy()
         composerAssistantCoordinator.onDestroy()
+        composerVisualCoordinator.onDestroy()
         messageActionCoordinator.onDestroy()
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
@@ -2195,31 +2201,7 @@ internal class ChatPage : BasePager() {
      * 丢失时图标不会停留在 opacity 0（scheduleWelcomeEntranceSafety 同款思路）。
      */
     private fun scheduleComposerChromePresentation(target: Boolean) {
-        val version = ++composerChromeVersion
-        composerChromeTimer?.cancel()
-        composerChromeTimer = null
-        if (composerReducedMotion) {
-            composerChromePresented = target
-            return
-        }
-        val timer = Timer()
-        composerChromeTimer = timer
-        timer.schedule(32, 32) {
-            timer.cancel()
-            if (composerChromeTimer === timer) composerChromeTimer = null
-            if (version == composerChromeVersion && !isWillDestroy()) {
-                composerChromePresented = target
-            }
-        }
-        val safetyVersion = version
-        val safety = Timer()
-        safety.schedule(600, 600) {
-            safety.cancel()
-            if (safetyVersion == composerChromeVersion && !isWillDestroy() && composerChromePresented != target) {
-                KLog.i(COMPOSER_LOG_TAG, "chromePresentationSafety target=$target")
-                composerChromePresented = target
-            }
-        }
+        composerVisualCoordinator.presentChrome(target, composerReducedMotion)
     }
 
     private fun handleComposerFocusEffect(effect: ComposerFocusEffect) {
@@ -2327,18 +2309,11 @@ internal class ChatPage : BasePager() {
 
     /** 渐变描边流动：20fps 推进相位，一圈约 5s；幂等，页面出现时启动。 */
     private fun startComposerRimFlow() {
-        if (composerRimFlowTimer != null) return
-        val timer = Timer()
-        composerRimFlowTimer = timer
-        timer.schedule(50, 50) {
-            if (composerRimFlowTimer !== timer) return@schedule
-            composerRimPhase = (composerRimPhase + 0.063f) % (PI * 2f).toFloat()
-        }
+        composerVisualCoordinator.startRimFlow()
     }
 
     private fun stopComposerRimFlow() {
-        composerRimFlowTimer?.cancel()
-        composerRimFlowTimer = null
+        composerVisualCoordinator.stopRimFlow()
     }
 
     private fun renderComposerGradientRim(container: ViewContainer<*, *>) {
