@@ -15,7 +15,7 @@ import com.kuikly.stockchat.data.provider.HotspotSnapshot
 import com.kuikly.stockchat.data.provider.LimitUpStock
 import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
 import com.kuikly.stockchat.data.provider.SectorRank
-import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.kuikly.stockchat.page.components.ExplanationCard
 import com.kuikly.stockchat.page.components.InsightSectionTitle
 import com.tencent.kuikly.core.annotations.Page

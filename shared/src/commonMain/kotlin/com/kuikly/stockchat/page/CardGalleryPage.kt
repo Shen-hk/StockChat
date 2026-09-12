@@ -28,7 +28,7 @@ import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.config.DataSourceConfig
 import com.kuikly.stockchat.data.mock.MockDataBank
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.kuikly.stockchat.page.components.CardSheetHost
 import com.kuikly.stockchat.protocol.AttributionIntent
 import com.kuikly.stockchat.protocol.CardPayloadParser

@@ -31,10 +31,10 @@ import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuotePrefetchStore
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
-import com.kuikly.stockchat.page.components.AppTopBar
-import com.kuikly.stockchat.page.components.AppTopBarAction
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBarAction
 import com.kuikly.stockchat.page.components.DivergingBar
-import com.kuikly.stockchat.page.components.FeatureTile
+import com.kuikly.stockchat.foundation.ui.FeatureTile
 import com.kuikly.stockchat.foundation.ui.icon.LineIconBarChart
 import com.kuikly.stockchat.foundation.ui.icon.LineIconBellRinging
 import com.kuikly.stockchat.foundation.ui.icon.LineIconRadar

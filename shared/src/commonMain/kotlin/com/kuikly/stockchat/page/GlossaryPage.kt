@@ -23,7 +23,7 @@ import com.kuikly.stockchat.data.entity.GlossaryCategory
 import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
-import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.kuikly.stockchat.page.components.SegmentBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation

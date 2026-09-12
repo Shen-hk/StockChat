@@ -24,6 +24,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import com.kuikly.stockchat.risk.sky.component.RiskSkyChart
 
 /**
  * 详情页分时主图上的「新闻旗标」数据（doc 29 §4.3 B2 / 图侧）。

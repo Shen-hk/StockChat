@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.components
+package com.kuikly.stockchat.risk.sky.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.base.setTimeout

@@ -24,8 +24,8 @@ import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.platformCurrentDate
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
-import com.kuikly.stockchat.page.components.AppTopBar
-import com.kuikly.stockchat.page.components.AppTopBarAction
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBarAction
 import com.kuikly.stockchat.foundation.ui.icon.LineIconChecks
 import com.kuikly.stockchat.page.components.InsightSectionTitle
 import com.tencent.kuikly.core.annotations.Page

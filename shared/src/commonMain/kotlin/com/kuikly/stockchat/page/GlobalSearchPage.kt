@@ -16,7 +16,7 @@ import com.kuikly.stockchat.data.entity.Security
 import com.kuikly.stockchat.app.assembly.MarketDependencies
 import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
-import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.kuikly.stockchat.page.components.InsightSectionTitle
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation

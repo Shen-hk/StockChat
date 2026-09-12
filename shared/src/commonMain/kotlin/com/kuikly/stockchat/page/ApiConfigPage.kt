@@ -11,7 +11,7 @@ import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.data.config.AiConfig
 import com.kuikly.stockchat.data.config.ModelPreset
 import com.kuikly.stockchat.data.config.ModelPresets
-import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle

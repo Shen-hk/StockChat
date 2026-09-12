@@ -33,8 +33,8 @@ import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.app.platform.KuiklyKeyValueStorage
-import com.kuikly.stockchat.page.components.AppTopBar
-import com.kuikly.stockchat.page.components.RiskSkyChart
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
+import com.kuikly.stockchat.risk.sky.component.RiskSkyChart
 import com.kuikly.stockchat.page.risk.SkyLayer
 import com.kuikly.stockchat.page.risk.StarMemberIn
 import com.kuikly.stockchat.page.risk.StarLayout

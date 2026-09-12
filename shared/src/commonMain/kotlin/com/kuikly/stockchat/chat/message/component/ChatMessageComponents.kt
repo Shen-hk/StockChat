@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.components
+package com.kuikly.stockchat.chat.message.component
 
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 import com.kuikly.stockchat.foundation.ui.lineHeightScaled

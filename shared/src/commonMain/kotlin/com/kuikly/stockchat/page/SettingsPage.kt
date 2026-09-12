@@ -12,7 +12,7 @@ import com.kuikly.stockchat.foundation.design.FontScale
 import com.kuikly.stockchat.data.MarketDataPrefs
 import com.kuikly.stockchat.data.MarketDataSource
 import com.kuikly.stockchat.foundation.design.ThemeMode
-import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle

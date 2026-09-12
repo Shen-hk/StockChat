@@ -108,7 +108,7 @@ import com.kuikly.stockchat.page.components.BalanceSpectrumBlock
 import com.kuikly.stockchat.page.components.BlockState
 import com.kuikly.stockchat.page.components.ChartFlag
 import com.kuikly.stockchat.page.components.FactorReplayBlock
-import com.kuikly.stockchat.page.components.FeatureTile
+import com.kuikly.stockchat.foundation.ui.FeatureTile
 import com.kuikly.stockchat.page.components.IndustryCompareOverlay
 import com.kuikly.stockchat.page.components.MaterialityBadge
 import com.kuikly.stockchat.page.components.QuickReasonChips
@@ -121,12 +121,12 @@ import com.kuikly.stockchat.page.components.DetailTimelineChart
 import com.kuikly.stockchat.page.components.NewsMarquee
 import com.kuikly.stockchat.page.components.NewsSummaryBar
 import com.kuikly.stockchat.page.components.estimateNewsMarqueeLoopWidth
-import com.kuikly.stockchat.page.components.AppTopBar
-import com.kuikly.stockchat.page.components.AppTopBarAction
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBarAction
 import com.kuikly.stockchat.foundation.ui.icon.LineIconBookmark
 import com.kuikly.stockchat.foundation.ui.icon.LineIconDots
 import com.kuikly.stockchat.page.components.AtmosphereBackdrop
-import com.kuikly.stockchat.page.components.DataModeBadge
+import com.kuikly.stockchat.foundation.ui.feedback.DataModeBadge
 import com.kuikly.stockchat.foundation.ui.icon.LineIconBarChart
 import com.kuikly.stockchat.foundation.ui.icon.LineIconCopy
 import com.kuikly.stockchat.foundation.ui.icon.LineIconPin

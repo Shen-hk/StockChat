@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.chat.composer.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
-import com.kuikly.stockchat.page.components.ComposerGuideRow
+import com.kuikly.stockchat.chat.session.component.ComposerGuideRow
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.Color

@@ -4,8 +4,8 @@ import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.compare.state.CompareInsightState
 import com.kuikly.stockchat.data.entity.GlossaryEntry
-import com.kuikly.stockchat.page.components.ActiveComparePanel
-import com.kuikly.stockchat.page.components.TermComparePanel
+import com.kuikly.stockchat.chat.session.component.ActiveComparePanel
+import com.kuikly.stockchat.chat.session.component.TermComparePanel
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer

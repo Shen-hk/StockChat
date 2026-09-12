@@ -9,6 +9,7 @@ import com.tencent.kuikly.core.views.View
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import com.kuikly.stockchat.risk.sky.component.RiskSkyChart
 
 /** 叙事轴绘制几何（宽度由 Canvas 实测传入，其余常量与 doc 36 原型一致）。 */
 internal object NarrativeAxisLayout {

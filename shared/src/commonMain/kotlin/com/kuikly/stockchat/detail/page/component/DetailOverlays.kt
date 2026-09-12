@@ -5,7 +5,7 @@ import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 import com.kuikly.stockchat.data.provider.DisclosureItem
 import com.kuikly.stockchat.data.provider.NewsItem
-import com.kuikly.stockchat.page.components.FeatureTile
+import com.kuikly.stockchat.foundation.ui.FeatureTile
 import com.kuikly.stockchat.foundation.ui.icon.LineIconBarChart
 import com.kuikly.stockchat.foundation.ui.icon.LineIconCopy
 import com.kuikly.stockchat.foundation.ui.icon.LineIconPin
