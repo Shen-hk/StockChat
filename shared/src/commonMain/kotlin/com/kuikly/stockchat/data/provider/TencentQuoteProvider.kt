@@ -175,29 +175,74 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
 
     override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) {
         val code = TencentQuoteParser.remoteCode(symbol)
-        val url = kLineUrl(code, KLineInterval.DAY, KLineInterval.DAY.defaultCount)
-        network.requestGet(url, JSONObject()) { data, success, _, _ ->
-            onResult(if (success) TencentQuoteParser.parseSnapshot(data, symbol) else null)
+        requestKLineJson(code, KLineInterval.DAY, KLineInterval.DAY.defaultCount) { data ->
+            onResult(data?.let { TencentQuoteParser.parseSnapshot(it, symbol) })
         }
     }
 
     override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) {
         val code = TencentQuoteParser.remoteCode(symbol)
-        val url = "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=$code"
-        network.requestGet(url, JSONObject()) { data, success, _, _ ->
-            onResult(if (success) TencentQuoteParser.parseTimeline(data, symbol) else emptyList())
+        requestMinuteJson(code) { data ->
+            onResult(data?.let { TencentQuoteParser.parseTimeline(it, symbol) }.orEmpty())
         }
     }
 
     override fun kLines(symbol: String, count: Int, interval: KLineInterval, onResult: (List<KLinePoint>) -> Unit) {
         val code = TencentQuoteParser.remoteCode(symbol)
-        network.requestGet(kLineUrl(code, interval, count), JSONObject()) { data, success, _, _ ->
-            onResult(if (success) TencentQuoteParser.parseKLines(data, symbol, interval).takeLast(count) else emptyList())
+        requestKLineJson(code, interval, count) { data ->
+            onResult(data?.let { TencentQuoteParser.parseKLines(it, symbol, interval) }.orEmpty().takeLast(count))
         }
     }
 
-    private fun kLineUrl(code: String, interval: KLineInterval, count: Int): String =
-        "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=$code,${interval.requestPeriod},,,$count,qfq"
+    /**
+     * 2026-09-11 实测：`web.ifzq.gtimg.cn` 的 fqkline 被 WAF 整体拦截（任意 UA 均返回
+     * 501 拦截页 HTML），而同路径的 `ifzq.gtimg.cn` 与 `proxy.finance.qq.com/ifzqgtimg`
+     * 响应结构完全一致（qfqday + 内嵌 qt 快照）。按序降级，任一域名给出合法 JSON 即采用。
+     */
+    private fun requestKLineJson(
+        code: String,
+        interval: KLineInterval,
+        count: Int,
+        hostIndex: Int = 0,
+        onResult: (JSONObject?) -> Unit,
+    ) {
+        if (hostIndex >= KLINE_HOSTS.size) {
+            onResult(null)
+            return
+        }
+        val url = "${KLINE_HOSTS[hostIndex]}/appstock/app/fqkline/get?param=$code,${interval.requestPeriod},,,$count,qfq"
+        network.requestGet(url, JSONObject()) { data, success, _, _ ->
+            if (success && data.optJSONObject("data")?.optJSONObject(code) != null) {
+                onResult(data)
+            } else {
+                requestKLineJson(code, interval, count, hostIndex + 1, onResult)
+            }
+        }
+    }
+
+    private fun requestMinuteJson(code: String, hostIndex: Int = 0, onResult: (JSONObject?) -> Unit) {
+        if (hostIndex >= KLINE_HOSTS.size) {
+            onResult(null)
+            return
+        }
+        val url = "${KLINE_HOSTS[hostIndex]}/appstock/app/minute/query?code=$code"
+        network.requestGet(url, JSONObject()) { data, success, _, _ ->
+            if (success && data.optJSONObject("data")?.optJSONObject(code) != null) {
+                onResult(data)
+            } else {
+                requestMinuteJson(code, hostIndex + 1, onResult)
+            }
+        }
+    }
+
+    companion object {
+        /** K线/分时请求域名降级序：web 子域被 WAF 拦截后，主域与代理域均可用（2026-09-11 实测）。 */
+        private val KLINE_HOSTS = listOf(
+            "https://ifzq.gtimg.cn",
+            "https://proxy.finance.qq.com/ifzqgtimg",
+            "https://web.ifzq.gtimg.cn",
+        )
+    }
 }
 
 /**
