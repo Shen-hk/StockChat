@@ -108,6 +108,7 @@ import com.kuikly.stockchat.chat.session.state.KuiklyMarketFallbackScheduler
 import com.kuikly.stockchat.chat.session.component.ImagePreviewOverlay
 import com.kuikly.stockchat.chat.session.component.MessageActionOverlay
 import com.kuikly.stockchat.chat.session.component.ChatContextOverlays
+import com.kuikly.stockchat.chat.session.component.MarketFallbackPrompt
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
@@ -1598,59 +1599,13 @@ internal class ChatPage : BasePager() {
                     onSettings = { page.updateDrawerOpen(false); page.openPage(Routes.SETTINGS) },
                 )
             }
-            // 行情接口不可用时的显式降级确认。页面级定时器受可见性守卫，避免
-            // repository 全局 Handler 在 native bridge 已解绑时更新响应式视图。
-            vif({ page.marketFallbackPromptSymbol.isNotEmpty() }) {
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        zIndex(80, useOutline = false)
-                        backgroundColor(Color(0x88000000))
-                        allCenter()
-                        padding(24f)
-                    }
-                    event { click { page.dismissMarketFallbackPrompt() } }
-                    View {
-                        attr {
-                            width((page.pagerData.pageViewWidth - 48f).coerceAtMost(360f))
-                            padding(20f)
-                            borderRadius(20f)
-                            backgroundColor(page.theme.surface)
-                        }
-                        event { click { } }
-                        Text {
-                            attr {
-                                text("行情接口开小差了")
-                                fontSizeScaled(18f)
-                                fontWeightBold()
-                                color(page.theme.textPrimary)
-                            }
-                        }
-                        Text {
-                            attr {
-                                text("暂时没有收到真实行情数据。要切换到本地 Mock 数据继续查看吗？")
-                                marginTop(8f)
-                                fontSizeScaled(13f)
-                                lineHeightScaled(20f)
-                                color(page.theme.textSecondary)
-                            }
-                        }
-                        View {
-                            attr { flexDirectionRow(); marginTop(20f); justifyContentFlexEnd() }
-                            View {
-                                attr { padding(10f) }
-                                Text { attr { text("暂不切换"); fontSizeScaled(14f); fontWeightMedium(); color(page.theme.textSecondary) } }
-                                event { click { page.dismissMarketFallbackPrompt() } }
-                            }
-                            View {
-                                attr { padding(10f); marginLeft(8f) }
-                                Text { attr { text("切换到 Mock 数据"); fontSizeScaled(14f); fontWeightBold(); color(page.theme.brand) } }
-                                event { click { page.switchPromptedQuoteToMock() } }
-                            }
-                        }
-                    }
-                }
-            }
+            MarketFallbackPrompt(
+                theme = page.theme,
+                pageWidth = page.pagerData.pageViewWidth,
+                visible = { page.marketFallbackPromptSymbol.isNotEmpty() },
+                onDismiss = page::dismissMarketFallbackPrompt,
+                onSwitchToMock = page::switchPromptedQuoteToMock,
+            )
         }
     }
 
