@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.detail
+package com.kuikly.stockchat.detail.domain
 
 /**
  * 分时锚点索引器（doc 29 §3 共享基建 · ④声呐 / ②句图联动 / B2新闻旗 / 公告锚点 共用）。

@@ -14,7 +14,7 @@ page/MarketCalendarPage.kt|setTimeout|0
 page/MarketPage.kt|setTimeout|26
 page/RiskMapPage.kt|setTimeout|7
 page/SettingsPage.kt|setTimeout|0
-page/StockDetailPage.kt|setTimeout|27
+page/StockDetailPage.kt|setTimeout|21
 page/WatchlistPage.kt|setTimeout|3
 page/AlertCenterPage.kt|ProviderCtor|0
 page/ApiConfigPage.kt|ProviderCtor|1
@@ -47,8 +47,6 @@ page/components/AtmosphereBackdrop.kt
 page/components/CardSheet.kt
 page/components/ChatMessageComponents.kt
 page/components/ChatScaffolding.kt
-page/components/DetailBoardBlocks.kt
-page/components/DetailTimelineChart.kt
 page/components/DivergingBar.kt
 page/components/FeatureTile.kt
 page/components/InsightComponents.kt

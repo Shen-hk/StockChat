@@ -1,13 +1,14 @@
-package com.kuikly.stockchat.page.components
+package com.kuikly.stockchat.detail.page.component
 
 import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.data.lineHeightScaled
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
-import com.kuikly.stockchat.page.detail.FactorSpec
-import com.kuikly.stockchat.page.detail.Materiality
-import com.kuikly.stockchat.page.detail.replayContribution
+import com.kuikly.stockchat.detail.domain.FactorSpec
+import com.kuikly.stockchat.detail.domain.Materiality
+import com.kuikly.stockchat.detail.domain.replayContribution
+import com.kuikly.stockchat.page.components.RowGesture
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -33,7 +34,7 @@ import kotlin.math.abs
  * 翻转 presented），animate 在每个周期预注册（R5），不注册 0 时长动画。
  *
  * 注意：本文件 import 了 [Materiality]（来自 infra agent 并行创建的
- * com.kuikly.stockchat.page.detail.DetailRules）。若其落地为 `DetailRules.Materiality`
+ * com.kuikly.stockchat.detail.domain.DetailRules）。若其落地为 `DetailRules.Materiality`
  * 嵌套类型，请改为 `import ...DetailRules` 并改用 `DetailRules.Materiality`。
  */
 
@@ -598,7 +599,7 @@ private fun ViewContainer<*, *>.QuotePanel(
  *   内部 weights 为 observable List，拖动/点按更新对应权重。
  * - 底部结果行：重算涨跌 = Σ base×weight（2 位小数，涨红跌绿）+ 以 0 为中心的贡献条
  *   （重算值相对 actual 的比例）+ 「复原」文字按钮（权重全部回 1.0）+ 残差行（未解释部分）。
- * 重算逻辑见 [com.kuikly.stockchat.page.detail.replayContribution]（纯函数，已配单测）。
+ * 重算逻辑见 [com.kuikly.stockchat.detail.domain.replayContribution]（纯函数，已配单测）。
  */
 internal fun ViewContainer<*, *>.FactorReplayBlock(
     theme: StockChatTheme,

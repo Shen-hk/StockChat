@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.detail
+package com.kuikly.stockchat.detail.domain
 
 /**
  * 公司介绍 DSL 的只读内容模型。

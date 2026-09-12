@@ -91,8 +91,10 @@ function ruleOf(p, i) {
     if (i ~ /(^|[.])Toast$/) return "R1"
   }
   # R2 — component 不得持有数据/平台访问权，也不得向上依赖 Page 层
+  # 「数据访问层」以 data 包界定：否则 Feature 自己的 XxxStore（如 detail.domain.ContextChipStore）
+  # 会被后缀匹配误伤——它是纯模型，不是存储。
   if (isComponent(p)) {
-    if (i ~ /(Repository|Store|Provider|Bridge)$/) return "R2"
+    if (i ~ /^com[.]kuikly[.]stockchat[.]data[.]/ && i ~ /(Repository|Store|Provider|Bridge)$/) return "R2"
     if (i ~ /SharedPreferences$/)                  return "R2"
     if (i ~ /PagerScope$/)                         return "R2"
     if (isPageImp(i))                              return "R2"

@@ -31,54 +31,16 @@ chat/composer/component/ComposerInputRow.kt | R2 | com.kuikly.stockchat.page.com
 # ---------------------------------------------------------------------------
 # R2 — Detail Feature 组件依赖 Page 层（A-3 搬迁 + A-4 收口清账）
 # ---------------------------------------------------------------------------
-detail/page/component/DetailAiInsightBlock.kt | R2 | com.kuikly.stockchat.page.AiInsightBlock | A-3（14 区块离开 StockDetailPage.kt）
-detail/page/component/DetailAiInsightBlock.kt | R2 | com.kuikly.stockchat.page.RevealBlock | A-3（同上）
-detail/page/component/DetailAttributionBoard.kt | R2 | com.kuikly.stockchat.page.AttributionForecastWorkbench | A-3（同上）
-detail/page/component/DetailAttributionBoard.kt | R2 | com.kuikly.stockchat.page.RevealBlock | A-3（同上）
-detail/page/component/DetailAttributionBoard.kt | R2 | com.kuikly.stockchat.page.SectionLabel | A-3（同上）
-detail/page/component/DetailAttributionBoard.kt | R2 | com.kuikly.stockchat.page.detail.FactorSpec | A-3（page/detail → detail/domain）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.ChartLegend | A-3（14 区块离开 StockDetailPage.kt）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.ChartLoadingSkeleton | A-3（同上）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.ChartSegment | A-3（同上）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.ChartViewportControls | A-3（同上）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.RevealBlock | A-3（同上）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.components.ChartFlag | A-3（随 DetailTimelineChart 迁 detail/page/component）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.components.DetailTimelineChart | A-3（同上）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.detail.AnomalyPoint | A-3（page/detail → detail/domain）
-detail/page/component/DetailChartCard.kt | R2 | com.kuikly.stockchat.page.detail.DetailOverlay | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.BusinessInsightGrid | A-3（14 区块离开 StockDetailPage.kt）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.BusinessInsightItem | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.CompanyIndustryPanel | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.DisclosureMaterialityBlock | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.RevealBlock | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.SectionLabel | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.balanceSegmentsFor | A-3（纯函数迁 detail/domain）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.components.BalanceSpectrumBlock | A-3（随 DetailBoardBlocks 迁 detail/page/component）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.detail.DetailCompanyProfileCatalog | A-3（page/detail → detail/domain）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.detail.RelevanceAnchor | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.detail.materialityOf | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.detail.pickPinnedCard | A-3（同上）
-detail/page/component/DetailCompanyInfoSection.kt | R2 | com.kuikly.stockchat.page.detail.shareholderFootnote | A-3（同上）
-detail/page/component/DetailHeroSection.kt | R2 | com.kuikly.stockchat.page.TickerText | A-3（14 区块离开 StockDetailPage.kt）
-detail/page/component/DetailHeroSection.kt | R2 | com.kuikly.stockchat.page.detail.DetailChartHeaderSnapshot | A-3（page/detail → detail/domain）
 detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.components.NewsMarquee | A-3（NewsMarquee 归 detail 或保持原位，见任务书 §6）
 detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.components.NewsSummaryBar | A-3（同上）
-detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.detail.scoreNewsSentiment | A-3（page/detail → detail/domain）
 detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.FeatureTile | A-2（FeatureTile 确认留原位后改 import 目标）
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.QuickReasonChips | A-3（随 14 区块迁 detail/page/component）
 detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.formatTapeTime | A-3（同上）
 detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.truncateByWidth | A-3（同上）
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.detail.DetailOverlay | A-3（page/detail → detail/domain）
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.detail.Materiality | A-3（同上）
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.detail.materialityOf | A-3（同上）
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.detail.scoreNewsSentiment | A-3（同上）
+detail/page/component/DetailBoardBlocks.kt | R2 | com.kuikly.stockchat.page.components.RowGesture | A-3 引入（该文件迁出 page.components 后失去同包可见性）；A-4 收口：RowGestureLayer 有 Watchlist + Detail 两个真实消费方，届时应上移 foundation/ui/gesture
 
 # ---------------------------------------------------------------------------
 # R2 — page/components/ 内部文件依赖 Page 层（A-3 搬迁清账）
 # ---------------------------------------------------------------------------
-page/components/DetailBoardBlocks.kt | R2 | com.kuikly.stockchat.page.detail.FactorSpec | A-3（文件迁 detail/page/component）
-page/components/DetailBoardBlocks.kt | R2 | com.kuikly.stockchat.page.detail.Materiality | A-3（同上）
-page/components/DetailBoardBlocks.kt | R2 | com.kuikly.stockchat.page.detail.replayContribution | A-3（同上）
 page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyGeometry | 轨 B（B-1 的 risk 纵切）
 page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyLayer | 轨 B（同上）
 page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.StarLayout | 轨 B（同上）
@@ -86,12 +48,3 @@ page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.StarLayout
 # ---------------------------------------------------------------------------
 # R3 — state 层不得依赖 UI / 具体平台实现（A-3 解 5 个文件的锚点）
 # ---------------------------------------------------------------------------
-detail/ai/state/AiInsightPrompts.kt | R3 | com.kuikly.stockchat.page.components.detailTimelineSeries | A-3（随 DetailTimelineChart 迁 detail/page/component）
-detail/ai/state/AiInsightPrompts.kt | R3 | com.kuikly.stockchat.page.detail.AnchorIndex | A-3（page/detail → detail/domain）
-detail/chart/state/DetailChartInteractionCoordinator.kt | R3 | com.kuikly.stockchat.page.components.ChartFlag | A-3（随 DetailTimelineChart 迁 detail/page/component）
-detail/chart/state/DetailChartInteractionCoordinator.kt | R3 | com.kuikly.stockchat.page.detail.AnchorIndex | A-3（page/detail → detail/domain）
-detail/chart/state/DetailChartInteractionCoordinator.kt | R3 | com.kuikly.stockchat.page.detail.AnomalyPoint | A-3（同上）
-detail/chart/state/DetailChartUiState.kt | R3 | com.kuikly.stockchat.page.components.ChartFlag | A-3（随 DetailTimelineChart 迁 detail/page/component）
-detail/chart/state/DetailChartUiState.kt | R3 | com.kuikly.stockchat.page.detail.AnomalyPoint | A-3（page/detail → detail/domain）
-detail/overlay/state/DetailOverlayCoordinator.kt | R3 | com.kuikly.stockchat.page.detail.DetailOverlay | A-3（同上）
-detail/overlay/state/DetailOverlayUiState.kt | R3 | com.kuikly.stockchat.page.detail.DetailOverlay | A-3（同上）

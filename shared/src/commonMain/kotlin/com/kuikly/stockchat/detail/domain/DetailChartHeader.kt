@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.detail
+package com.kuikly.stockchat.detail.domain
 
 import com.kuikly.stockchat.cards.core.StockChartMode
 import com.kuikly.stockchat.cards.core.StockChartPeriod

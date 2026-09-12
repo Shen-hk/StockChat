@@ -4,8 +4,6 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.data.lineHeightScaled
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.page.AiInsightBlock
-import com.kuikly.stockchat.page.RevealBlock
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.views.Text

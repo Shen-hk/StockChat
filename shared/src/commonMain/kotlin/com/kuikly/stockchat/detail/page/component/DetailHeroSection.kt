@@ -6,8 +6,7 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.page.TickerText
-import com.kuikly.stockchat.page.detail.DetailChartHeaderSnapshot
+import com.kuikly.stockchat.detail.domain.DetailChartHeaderSnapshot
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind

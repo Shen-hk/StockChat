@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.detail
+package com.kuikly.stockchat.detail.domain
 
 import com.tencent.kuikly.core.reactive.handler.observable
 
