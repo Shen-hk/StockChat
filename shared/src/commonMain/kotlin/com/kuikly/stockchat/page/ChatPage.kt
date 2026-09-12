@@ -64,6 +64,8 @@ import com.kuikly.stockchat.chat.composer.state.VoiceInputEffect
 import com.kuikly.stockchat.chat.composer.state.VoiceInputHostPort
 import com.kuikly.stockchat.chat.composer.state.VoiceInputState
 import com.kuikly.stockchat.chat.composer.component.AtCandidatePanelProps
+import com.kuikly.stockchat.chat.composer.component.ComposerActionRow
+import com.kuikly.stockchat.chat.composer.component.ComposerActionRowProps
 import com.kuikly.stockchat.chat.composer.component.CommandParamPanelProps
 import com.kuikly.stockchat.chat.composer.component.ComposerAssistantCandidatePanels
 import com.kuikly.stockchat.chat.composer.component.ComposerCommandParamPanel
@@ -1318,165 +1320,22 @@ internal class ChatPage : BasePager() {
                                     }
                                 }
                             }
-                            // 过渡不变量：操作行始终保留在树上，只动画它占用的布局高度；
-                            // 这样 @、/、语音、附件和发送按钮不会在首帧突然把胶囊顶高。
-                            View {
-                                attr {
-                                    val expanded = page.composerExpanded
-                                    height(if (expanded) COMPOSER_ACTION_ROW_HEIGHT else 0f)
-                                    marginTop(if (expanded) COMPOSER_ACTION_ROW_GAP else 0f)
-                                    opacity(if (expanded) 1f else 0f)
-                                    touchEnable(expanded)
-                                    animate(Animation.easeOut(COMPOSER_LAYOUT_DURATION), expanded)
-                                }
-                                View { attr { flexDirectionRow(); alignItemsCenter() }
-                                    // 展开态图标入场壳（R4：vif 挂载首帧不播动画，由
-                                    // presented 两帧翻转驱动；R2：attr 内读 observable、
-                                    // animate 最后注册）。按左→右 30ms 错峰浮入。
-                                    View {
-                                        attr {
-                                            opacity(if (page.composerChromePresented) 1f else 0f)
-                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                            animate(Animation.easeOut(0.24f), page.composerChromePresented)
-                                        }
-                                        View {
-                                            attr {
-                                                size(46f, 46f)
-                                                allCenter()
-                                                borderRadius(23f)
-                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                                touchEnable(!page.isVoiceBusy())
-                                            }
-                                            Text {
-                                                attr {
-                                                    text("@")
-                                                    fontSizeScaled(18f)
-                                                    fontWeightSemiBold()
-                                                    color(page.theme.brand)
-                                }
-                            }
-                                            event { click { page.onTriggerButtonTapped('@') } }
-                                        }
-                                    }
-                                    View {
-                                        attr {
-                                            opacity(if (page.composerChromePresented) 1f else 0f)
-                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                            animate(Animation.easeOut(0.24f).delay(0.03f), page.composerChromePresented)
-                                        }
-                                        View {
-                                            attr {
-                                                size(46f, 46f)
-                                                marginLeft(8f)
-                                                allCenter()
-                                                borderRadius(23f)
-                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                                touchEnable(!page.isVoiceBusy())
-                                            }
-                                            Text {
-                                                attr {
-                                                    text("/")
-                                                    fontSizeScaled(18f)
-                                                    fontWeightSemiBold()
-                                                    color(page.theme.brand)
-                                                }
-                                            }
-                                            event { click { page.onTriggerButtonTapped('/') } }
-                                        }
-                                    }
-                                    View { attr { flex(1f) } }
-                                    View {
-                                        attr {
-                                            opacity(if (page.composerChromePresented) 1f else 0f)
-                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                            animate(Animation.easeOut(0.24f).delay(0.06f), page.composerChromePresented)
-                                        }
-                                        View {
-                                            attr {
-                                                size(46f, 46f)
-                                                marginRight(6f)
-                                                allCenter()
-                                                borderRadius(23f)
-                                            }
-                                            // 与折叠态语音开关同款声波图标（Lucide
-                                            // audio-lines），颜色随主题表皮反转。
-                                            vbind({ page.themeRebuildKey() }) {
-                                                LineIconAudioLines(color = page.theme.textPrimary, size = 26f)
-                                            }
-                                            // 展开态点击语音（豆包式）：直接折叠并进入语音
-                                            // 模式，一步呈现折叠态"按住说话"样式；不再在
-                                            // 展开态按住录音。
-                                            event { click { page.enterVoiceModeFromExpanded() } }
-                                        }
-                                    }
-                                    // 展开态右侧媒体入口：拍照图标改为 + 号（2026-09-05）。
-                                    View {
-                                        attr {
-                                            opacity(if (page.composerChromePresented) 1f else 0f)
-                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                            animate(Animation.easeOut(0.24f).delay(0.09f), page.composerChromePresented)
-                                        }
-                                        View {
-                                            attr {
-                                                size(46f, 46f)
-                                                marginRight(4f)
-                                                allCenter()
-                                                borderRadius(23f)
-                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                                touchEnable(!page.isVoiceBusy())
-                                            }
-                                            LineIconPlus(
-                                                color = page.theme.textSecondary,
-                                                size = 22f,
-                                            )
-                                            event { click { page.openMediaSheet() } }
-                                        }
-                                    }
-                                    View {
-                                        attr {
-                                            opacity(if (page.composerChromePresented) 1f else 0f)
-                                            transform(Translate(0f, if (page.composerChromePresented) 0f else 8f))
-                                            animate(Animation.easeOut(0.24f).delay(0.12f), page.composerChromePresented)
-                                        }
-                                        View {
-                                            attr {
-                                                size(44f, 44f)
-                                                allCenter()
-                                                borderRadius(22f)
-                                                backgroundColor(
-                                                    when {
-                                                        page.viewModel.streamState == StreamState.STREAMING -> page.theme.divider
-                                                        page.isCommandSendBlocked() -> page.theme.surfaceMuted
-                                                        else -> page.theme.brand
-                                                    }
-                                                )
-                                                boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
-                                                opacity(if (page.isVoiceBusy()) 0.4f else 1f)
-                                                touchEnable(!page.isVoiceBusy())
-                                            }
-                                            vif({ page.viewModel.streamState == StreamState.STREAMING }) {
-                                                LineIconStop(color = page.theme.onBrand, size = 18f)
-                                            }
-                                            vif({ page.viewModel.streamState != StreamState.STREAMING }) {
-                                                Text {
-                                                    attr {
-                                                        text("↑")
-                                                        fontSizeScaled(18f)
-                                                        fontWeightSemiBold()
-                                                        color(if (page.isCommandSendBlocked()) page.theme.textTertiary else page.theme.onBrand)
-                                                    }
-                                                }
-                                            }
-                                            event {
-                                                click {
-                                                    if (page.viewModel.streamState == StreamState.STREAMING) page.viewModel.stop()
-                                                    else page.submitInput()
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            ComposerActionRow(
+                                ComposerActionRowProps(
+                                    theme = page.theme,
+                                    expanded = { page.composerExpanded },
+                                    presented = { page.composerChromePresented },
+                                    voiceBusy = page::isVoiceBusy,
+                                    themeKey = page::themeRebuildKey,
+                                    streamState = { page.viewModel.streamState },
+                                    sendBlocked = page::isCommandSendBlocked,
+                                    onTrigger = page::onTriggerButtonTapped,
+                                    onVoice = page::enterVoiceModeFromExpanded,
+                                    onMedia = page::openMediaSheet,
+                                    onStop = page.viewModel::stop,
+                                    onSend = page::submitInput,
+                                ),
+                            )
                         page.renderComposerGradientRim(this)
                     }
                     }
