@@ -44,6 +44,9 @@ import com.kuikly.stockchat.chat.scroll.state.ChatScrollState
 import com.kuikly.stockchat.chat.scroll.state.KuiklyChatScrollScheduler
 import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentCoordinator
 import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentState
+import com.kuikly.stockchat.chat.composer.state.AssistantPanel
+import com.kuikly.stockchat.chat.composer.state.ComposerAssistantCoordinator
+import com.kuikly.stockchat.chat.composer.state.ComposerAssistantState
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusCoordinator
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusEffect
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusState
@@ -454,20 +457,34 @@ internal class ChatPage : BasePager() {
     private var composerMediaHostRegistered = false
     // ===== @ 提及与 / 指令状态机（规范见 docs/10-输入栏@提及与斜杠指令交互规范_v1.0.md） =====
     // 联想面板维度（与 MEDIA 面板正交）：@ 触发 / / 触发 / 命令参数槽位。
-    private var assistantPanel: AssistantPanel by observable(AssistantPanel.NONE)
+    private val composerAssistantState = ComposerAssistantState()
+    private val composerAssistantCoordinator = ComposerAssistantCoordinator(composerAssistantState)
+    private var assistantPanel: AssistantPanel
+        get() = composerAssistantState.panel
+        set(value) { composerAssistantState.panel = value }
     // 活动触发会话；同一时刻最多一个（规范 §3.1）。
-    private var triggerSession: TriggerSession? = null
+    private var triggerSession: TriggerSession?
+        get() = composerAssistantState.triggerSession
+        set(value) { composerAssistantState.triggerSession = value }
     // 文本、选区、组合区必须作为一个原子快照流转，不允许分散字段被
     // textDidChange / selectionChange 交叉覆盖。
     private var composerEditingState = TextInputState("")
     // 拼音组合态：面板冻结显示"输入中…"（规范 §3.5）。
-    private var triggerComposing: Boolean by observable(false)
-    private var atCandidates: ObservableList<AtCandidate> by observableList()
-    private var atHighlight: Int by observable(0)
-    private var slashCandidates: ObservableList<SlashCommand> by observableList()
-    private var slashHighlight: Int by observable(0)
+    private var triggerComposing: Boolean
+        get() = composerAssistantState.composing
+        set(value) { composerAssistantState.composing = value }
+    private val atCandidates: ObservableList<AtCandidate> get() = composerAssistantState.atCandidates as ObservableList<AtCandidate>
+    private var atHighlight: Int
+        get() = composerAssistantState.atHighlight
+        set(value) { composerAssistantState.atHighlight = value }
+    private val slashCandidates: ObservableList<SlashCommand> get() = composerAssistantState.slashCandidates as ObservableList<SlashCommand>
+    private var slashHighlight: Int
+        get() = composerAssistantState.slashHighlight
+        set(value) { composerAssistantState.slashHighlight = value }
     // 未知命令提示（规范 §5.6）：非空时面板显示"没有找到 /xxx"。
-    private var slashUnknown: String by observable("")
+    private var slashUnknown: String
+        get() = composerAssistantState.slashUnknown
+        set(value) { composerAssistantState.slashUnknown = value }
     private var lastTrackedTriggerKey = ""
     private var lastTrackedUnknownSlash = ""
     // 固化提及注册表：只存实体顺序，激活态每次从文本扫描得出（规范 §4.6）。
@@ -480,10 +497,14 @@ internal class ChatPage : BasePager() {
     // 而是在 buildSendPayload 组包时无条件并入 mentions——入口显式给了标的，
     // 信任之；与文本扫描结果由 ChatQuoteContext 按 symbol 去重。
     private var routeFocusMention: MentionEntity? = null
-    private var commandValidationMessage: String by observable("")
+    private var commandValidationMessage: String
+        get() = composerAssistantState.validationMessage
+        set(value) { composerAssistantState.validationMessage = value }
     // / 命令参数态（规范 §5.4）。参数值不落字段，每次从输入文本实时解析，
     // 保证面板显示与最终发送用的是同一套解析结果。
-    private var paramCommand: SlashCommand? by observable(null)
+    private var paramCommand: SlashCommand?
+        get() = composerAssistantState.paramCommand
+        set(value) { composerAssistantState.paramCommand = value }
     // 最近提及（S1 数据源，最多 5 条，新的在前）。
     private val recentMentions = mutableListOf<String>()
     // ===== @ 候选实时化（规范 10 §4.2 S5 / P5）=====
@@ -497,7 +518,7 @@ internal class ChatPage : BasePager() {
     // 参数态下打字/点选导致的 args 变化必须靠 vfor 的 collection 操作整帧重建面板
     // （2026-09-10 真机复现：参数面板在打字期间完全冻结）。bump = clear+add 产生
     // REMOVE/ADD 操作对，vfor 逐项重建。
-    private var paramPanelRenderKey: ObservableList<Int> by observableList()
+    private val paramPanelRenderKey: ObservableList<Int> get() = composerAssistantState.paramPanelRenderKey as ObservableList<Int>
     // Composer state machine (规范见 docs/09-输入栏默认态与输入态转换规范_v1.0.md).
     // 默认态 → 输入态由点击/聚焦/开面板触发；输入态是"粘"的：收起键盘不再回退，
     // 只有"键盘已收起时点击非输入栏区域"这一次点击才回到默认态。
@@ -3466,8 +3487,7 @@ internal class ChatPage : BasePager() {
 
     /** 重建参数面板内容（见 paramPanelRenderKey 注释）。 */
     private fun bumpParamPanelRenderKey() {
-        paramPanelRenderKey.clear()
-        paramPanelRenderKey.add(0)
+        composerAssistantCoordinator.bumpParamRenderKey()
     }
 
     private fun updateComposerEditingState(state: TextInputState) {
@@ -3598,10 +3618,7 @@ internal class ChatPage : BasePager() {
 
     /** 本地目录 + 远端池统一打分并刷新 @ 候选列表。 */
     private fun refreshAtCandidates(query: String) {
-        val list = rankAtCandidates(query)
-        atCandidates.clear()
-        atCandidates.addAll(list)
-        atHighlight = 0
+        composerAssistantCoordinator.replaceAtCandidates(rankAtCandidates(query))
     }
 
     private fun rankAtCandidates(query: String): List<AtCandidate> =
@@ -3780,14 +3797,7 @@ internal class ChatPage : BasePager() {
      * 真正清命令的时机是：命令名被删掉、发送完成、注入新问句、收起输入栏。
      */
     private fun closeAssistantPanel() {
-        if (assistantPanel == AssistantPanel.NONE && triggerSession == null) return
-        assistantPanel = AssistantPanel.NONE
-        triggerSession = null
-        atCandidates.clear()
-        slashCandidates.clear()
-        slashUnknown = ""
-        atHighlight = 0
-        slashHighlight = 0
+        composerAssistantCoordinator.closePanel()
     }
 
     private fun openImagePreview(path: String) {
@@ -4626,7 +4636,6 @@ private fun assistantPanelHeight(rowCount: Int, rowHeight: Float): Float {
 /**
  * 联想面板维度（规范 10 §2）：@ 提及、/ 命令选择、/ 命令参数槽位三态在此维度切换。
  */
-private enum class AssistantPanel { NONE, AT_MENTION, SLASH, COMMAND_PARAMS }
 
 /** 输入栏「+」可选的媒体来源（底部弹层磁贴入口，样式对齐抽屉 DrawerTile）。 */
 private enum class ComposerMediaAction(val source: String, val label: String) {
