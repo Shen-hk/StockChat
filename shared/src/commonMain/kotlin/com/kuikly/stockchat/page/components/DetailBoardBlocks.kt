@@ -23,6 +23,7 @@ import com.tencent.kuikly.core.timer.setTimeout
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import kotlin.math.abs
+import com.kuikly.stockchat.shared.cards.component.CardShell
 
 /**
  * 详情页板块级交互组件（doc 29：A1/H1/E3/F1/F3/G1/B1 各区块）。

@@ -1,8 +1,8 @@
 package com.kuikly.stockchat
 
 import com.kuikly.stockchat.cards.theme.GlassPalette
-import com.kuikly.stockchat.glass.GlassRenderer
-import com.kuikly.stockchat.glass.GlassRenderingMode
+import com.kuikly.stockchat.foundation.design.GlassRenderer
+import com.kuikly.stockchat.foundation.design.GlassRenderingMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

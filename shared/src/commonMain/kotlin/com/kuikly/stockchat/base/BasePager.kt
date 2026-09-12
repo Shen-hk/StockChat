@@ -11,7 +11,7 @@ import com.kuikly.stockchat.foundation.design.FontScale
 import com.kuikly.stockchat.foundation.ui.FontScaleRuntime
 import com.kuikly.stockchat.foundation.design.ThemeMode
 import com.kuikly.stockchat.foundation.design.resolveStockChatTheme
-import com.kuikly.stockchat.glass.GlassRenderer
+import com.kuikly.stockchat.foundation.design.GlassRenderer
 
 internal abstract class BasePager : Pager() {
     private var nightModel: Boolean? by observable(null)

@@ -5,7 +5,7 @@ import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.shared.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
@@ -43,6 +43,7 @@ import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import com.kuikly.stockchat.foundation.design.GlassRenderer
 
 @Page(Routes.CARD_GALLERY, supportInLocal = true)
 internal class CardGalleryPage : BasePager() {
@@ -298,7 +299,7 @@ private fun ViewContainer<*, *>.GalleryCard(
     onToggleDrill: (String) -> Unit,
     onStartSubThread: (CardModel) -> Unit,
     onToggleSubThread: () -> Unit,
-    glass: com.kuikly.stockchat.glass.GlassRenderer,
+    glass: com.kuikly.stockchat.foundation.design.GlassRenderer,
 ) {
     Text {
         attr {
@@ -349,7 +350,7 @@ private fun ViewContainer<*, *>.GalleryCardShell(
     onOpenSheet: (CardModel) -> Unit,
     onToggleDrill: (String) -> Unit,
     onStartSubThread: (CardModel) -> Unit,
-    glass: com.kuikly.stockchat.glass.GlassRenderer,
+    glass: com.kuikly.stockchat.foundation.design.GlassRenderer,
 ) {
     vif({ expandedCardKey() == cardKey }) {
         CardShell(model, GalleryCardContext(model, theme, density, cardKey, true, drilledKeys, onToggleExpanded, onOpenSheet, onToggleDrill, onStartSubThread, glass))
@@ -370,7 +371,7 @@ private fun GalleryCardContext(
     onOpenSheet: (CardModel) -> Unit,
     onToggleDrill: (String) -> Unit,
     onStartSubThread: (CardModel) -> Unit,
-    glass: com.kuikly.stockchat.glass.GlassRenderer,
+    glass: com.kuikly.stockchat.foundation.design.GlassRenderer,
 ) = CardContext(
     theme = theme,
     density = density,

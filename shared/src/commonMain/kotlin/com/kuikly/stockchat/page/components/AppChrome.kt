@@ -18,8 +18,8 @@ import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.data.entity.GlossaryCategory
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuotePoint
-import com.kuikly.stockchat.glass.GlassBackdrop
-import com.kuikly.stockchat.glass.GlassRenderer
+import com.kuikly.stockchat.foundation.ui.surface.GlassBackdrop
+import com.kuikly.stockchat.foundation.design.GlassRenderer
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -39,6 +39,16 @@ import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import com.kuikly.stockchat.foundation.ui.icon.LineIconArrowLeft
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBarChart
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBellRinging
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBook
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBookmark
+import com.kuikly.stockchat.foundation.ui.icon.LineIconMenu
+import com.kuikly.stockchat.foundation.ui.icon.LineIconPlus
+import com.kuikly.stockchat.foundation.ui.icon.LineIconRadar
+import com.kuikly.stockchat.foundation.ui.icon.LineIconSearch
+import com.kuikly.stockchat.foundation.ui.icon.LineIconSliders
 
 /** A dense, value-first top-bar state for pages whose Hero has scrolled away. */
 data class AppTopBarMetric(

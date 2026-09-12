@@ -2,9 +2,9 @@ package com.kuikly.stockchat.chat.composer.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
-import com.kuikly.stockchat.page.components.LineIconAudioLines
-import com.kuikly.stockchat.page.components.LineIconKeyboard
-import com.kuikly.stockchat.page.components.LineIconPlus
+import com.kuikly.stockchat.foundation.ui.icon.LineIconAudioLines
+import com.kuikly.stockchat.foundation.ui.icon.LineIconKeyboard
+import com.kuikly.stockchat.foundation.ui.icon.LineIconPlus
 import com.kuikly.stockchat.page.components.VoiceBar
 import com.kuikly.stockchat.voice.VoiceState
 import com.tencent.kuikly.core.base.Animation

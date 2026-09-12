@@ -5,7 +5,7 @@ import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.shared.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.DefinitionCardModel

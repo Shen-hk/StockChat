@@ -20,9 +20,7 @@ page/components/DetailBoardBlocks.kt | R6 | 详情页看板块 | A-3/A-4 Detail 
 page/components/DetailTimelineChart.kt | R6 | 详情页分时图（touch 流 scrub） | A-3/A-4 Detail 组件归档
 page/components/DivergingBar.kt | R6 | 市场页发散条 | A-5 P1-Market 纵切
 page/components/FeatureTile.kt | R6 | 只有 4 个使用方且 padding/标题/动作尚未统一 | 暂留原位（doc 46 §5「不做」），接口统一后再上移
-page/components/GeneratedSvgCanvasIcons.kt | R6 | 1,789 行图标资源，不属组件归档范围 | 不迁移（doc 46 §5「不做」）
-page/components/InsightComponents.kt | R6 | 内含第二套 SourceStampLine，与 cards/components 重复 | A-2 合并入 foundation/ui/feedback
-page/components/LineIcons.kt | R6 | 线性图标库，被 11 个文件引用，属共享基座 | A-2 迁 foundation/ui/icon
+page/components/InsightComponents.kt | R6 | 通用解读组件（SourceStampLine 已于 A-2 迁出） | B-2/P1-Market 复用处稳定后
 page/components/MarketNarrativeAxis.kt | R6 | 市场页叙事轴 | A-5 P1-Market 纵切
 page/components/NewsMarquee.kt | R6 | Market 与 Detail 复用的弹幕/走马灯，接口未稳定 | A-4/A-5 复用处稳定后
 page/components/NewsTape.kt | R6 | 同上 | A-4/A-5 复用处稳定后

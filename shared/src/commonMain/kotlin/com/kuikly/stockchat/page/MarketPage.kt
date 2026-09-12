@@ -39,13 +39,13 @@ import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.data.provider.timeLabelOf
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.AppTopBarAction
-import com.kuikly.stockchat.page.components.LineIconCalendar
-import com.kuikly.stockchat.page.components.LineIconRefresh
+import com.kuikly.stockchat.foundation.ui.icon.LineIconCalendar
+import com.kuikly.stockchat.foundation.ui.icon.LineIconRefresh
 import com.kuikly.stockchat.page.components.AppTopBarMetric
 import com.kuikly.stockchat.page.components.AtmosphereBackdrop
 import com.kuikly.stockchat.page.components.MarketNarrativeAxis
 import com.kuikly.stockchat.page.components.NewsMarquee
-import com.kuikly.stockchat.page.components.SourceStampLine
+import com.kuikly.stockchat.foundation.ui.feedback.SourceStampLine
 import com.kuikly.stockchat.page.components.formatTapeTime
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Anchor

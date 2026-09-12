@@ -2,7 +2,7 @@ package com.kuikly.stockchat.chat.welcome.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
-import com.kuikly.stockchat.page.components.LineIconTrendUp
+import com.kuikly.stockchat.foundation.ui.icon.LineIconTrendUp
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle

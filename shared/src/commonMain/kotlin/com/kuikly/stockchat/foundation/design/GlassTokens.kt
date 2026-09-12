@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.glass
+package com.kuikly.stockchat.foundation.design
 
 import com.kuikly.stockchat.cards.theme.GlassMaterial
 import kotlin.math.max

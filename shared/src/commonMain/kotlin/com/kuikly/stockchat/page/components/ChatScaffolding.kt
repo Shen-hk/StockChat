@@ -3,7 +3,7 @@ package com.kuikly.stockchat.page.components
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.shared.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.StockCompareCardModel
@@ -17,6 +17,9 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBarChart
+import com.kuikly.stockchat.foundation.ui.icon.LineIconFileText
+import com.kuikly.stockchat.foundation.ui.icon.LineIconStar
 
 
 internal fun ViewContainer<*, *>.DateDivider(theme: StockChatTheme) {

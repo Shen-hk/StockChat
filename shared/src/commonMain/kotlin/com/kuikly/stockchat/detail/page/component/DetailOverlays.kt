@@ -6,9 +6,9 @@ import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 import com.kuikly.stockchat.data.provider.DisclosureItem
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.page.components.FeatureTile
-import com.kuikly.stockchat.page.components.LineIconBarChart
-import com.kuikly.stockchat.page.components.LineIconCopy
-import com.kuikly.stockchat.page.components.LineIconPin
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBarChart
+import com.kuikly.stockchat.foundation.ui.icon.LineIconCopy
+import com.kuikly.stockchat.foundation.ui.icon.LineIconPin
 import com.kuikly.stockchat.page.components.QuickReasonChips
 import com.kuikly.stockchat.page.components.formatTapeTime
 import com.kuikly.stockchat.page.components.truncateByWidth
