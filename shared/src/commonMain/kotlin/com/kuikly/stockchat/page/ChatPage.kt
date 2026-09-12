@@ -62,8 +62,9 @@ import com.kuikly.stockchat.chat.composer.state.VoiceInputEffect
 import com.kuikly.stockchat.chat.composer.state.VoiceInputHostPort
 import com.kuikly.stockchat.chat.composer.state.VoiceInputState
 import com.kuikly.stockchat.chat.composer.component.AtCandidatePanelProps
+import com.kuikly.stockchat.chat.composer.component.CommandParamPanelProps
 import com.kuikly.stockchat.chat.composer.component.ComposerAssistantCandidatePanels
-import com.kuikly.stockchat.chat.composer.component.ComposerCandidateRows
+import com.kuikly.stockchat.chat.composer.component.ComposerCommandParamPanel
 import com.kuikly.stockchat.chat.composer.component.SlashCommandPanelProps
 import com.kuikly.stockchat.chat.composer.state.KuiklyMediaSheetScheduler
 import com.kuikly.stockchat.chat.composer.state.MAX_COMPOSER_ATTACHMENTS
@@ -3948,192 +3949,28 @@ internal class ChatPage : BasePager() {
     }
 
     private fun renderCommandParams(container: ViewContainer<*, *>) {
-        val page = this
-        // R1：vif creator 的内容只构建一次（ConditionView.didCreated 守卫），参数态下
-        // 打字/点选/远端到达都要靠 paramPanelRenderKey 的 collection 操作触发本 vfor
-        // 整帧重建，下面的 args/missing/currentKey 才能读到最新值（所见即所发）。
-        vfor({ page.paramPanelRenderKey }) { _ ->
-        val command = page.paramCommand ?: return@vfor
-        // 参数值实时解析：与发送时同一套 resolveCommandFromText，面板所见即所发。
-        val args = page.resolveCommandFromText(
-            page.viewModel.inputText,
-            SolidTokenRegistry.verify(page.mentionEntities, page.viewModel.inputText),
-        )?.args.orEmpty()
-        val missing = page.missingRequiredParams(command, args)
-        // 当前槽位判定：必填缺口优先；否则若末尾输入恰好命中某可选 ENUM 的选项
-        //（如 /复盘 直接打"周"），跳到该 ENUM 槽，不被前面的可选 SECURITY 槽拦住。
-        val trailing = page.currentParamQuery(command)
-        val currentKey = missing.firstOrNull()?.key
-            ?: command.params.firstOrNull { p ->
-                args[p.key].isNullOrBlank() && p.type == ParamType.ENUM && trailing in p.enumOptions
-            }?.key
-            ?: command.params.firstOrNull { args[it.key].isNullOrBlank() }?.key
-        val currentParam = command.params.firstOrNull { it.key == currentKey }
-        val requiredTotal = command.params.count { it.required }
-        // 槽位数量由命令 schema 决定、不会跳动，高度按条数算：
-        // 标题 32f + 每槽 40f + 底部提示 36f，超出上限则在框内滚动。
-        val wanted = 32f + command.params.size * 40f + 36f +
-            if (currentParam?.type == ParamType.SECURITY) {
-                18f + ASSISTANT_PANEL_MAX_ROWS * (CANDIDATE_ROW_HEIGHT + 4f)
-            } else {
-                0f
-            }
-        Scroller {
-            attr {
-                height(minOf(wanted, ASSISTANT_PANEL_MAX_ROWS * COMMAND_ROW_HEIGHT + ASSISTANT_PANEL_PADDING))
-                marginTop(8f)
-                flexDirectionColumn()
-                backgroundColor(page.theme.surface)
-                borderRadius(12f)
-                padding(10f)
-            }
-            View {
-                attr { flexDirectionRow(); alignItemsCenter(); marginBottom(8f) }
-                View {
-                    attr { width(24f); height(24f); marginRight(8f); alignItemsCenter(); justifyContentCenter(); backgroundColor(page.theme.brandSoft); borderRadius(6f) }
-                    Text { attr { text(command.icon); fontSizeScaled(12f); color(page.theme.brand) } }
-                }
-                Text { attr { text("/${command.name} · 参数"); fontSizeScaled(13f); color(page.theme.textPrimary) } }
-                View { attr { flex(1f) } }
-                if (requiredTotal > 0) {
-                    Text {
-                        attr {
-                            text("必填 ${requiredTotal - missing.size}/$requiredTotal")
-                            fontSizeScaled(10f)
-                            color(if (missing.isEmpty()) page.theme.brand else page.theme.textSecondary)
-                            marginRight(8f)
-                        }
-                    }
-                }
-                View {
-                    attr {
-                        height(22f); paddingLeft(8f); paddingRight(8f)
-                        alignItemsCenter(); justifyContentCenter()
-                        backgroundColor(page.theme.surfaceMuted); borderRadius(7f)
-                    }
-                    event { click { page.cancelActiveCommand() } }
-                    Text { attr { text("✕ 取消"); fontSizeScaled(10f); color(page.theme.textSecondary) } }
-                }
-            }
-            command.params.forEach { param ->
-                val filled = args[param.key].orEmpty()
-                View {
-                    attr {
-                        flexDirectionRow()
-                        alignItemsCenter()
-                        marginTop(4f)
-                        padding(6f)
-                        backgroundColor(
-                            when {
-                                filled.isNotEmpty() -> page.theme.brandSoft
-                                param.key == currentKey -> page.theme.surface
-                                else -> page.theme.surfaceMuted
-                            }
-                        )
-                        borderRadius(8f)
-                    }
-                    // 已填槽位可点击重填（闭环编辑）：SECURITY 槽移除 @token，ENUM 槽移除选项词。
-                    if (filled.isNotEmpty()) {
-                        event { click { page.clearFilledParamSlot(command, param) } }
-                    }
-                    View { attr { flex(1f); flexDirectionColumn() }
-                        Text { attr { text(param.label + if (param.required) " *" else "（可选）"); fontSizeScaled(11f); color(if (param.key == currentKey) page.theme.brand else page.theme.textSecondary) } }
-                        Text { attr { text(if (filled.isNotEmpty()) filled else param.placeholder); fontSizeScaled(12f); color(if (filled.isNotEmpty()) page.theme.textPrimary else page.theme.textTertiary) } }
-                    }
-                    Text {
-                        attr {
-                            text(if (filled.isNotEmpty()) "重填" else when (param.type) { ParamType.SECURITY -> "@" ; ParamType.ENUM -> "选" ; else -> "文" })
-                            fontSizeScaled(9f)
-                            color(page.theme.textTertiary)
-                        }
-                    }
-                }
-            }
-            if (currentParam?.type == ParamType.SECURITY) {
-                val query = page.currentParamQuery(command)
-                val candidates = page.rankAtCandidates(query).take(ASSISTANT_PANEL_MAX_ROWS)
-                Text {
-                    attr {
-                        text(
-                            when {
-                                query.isEmpty() -> "选择${currentParam.label}"
-                                candidates.isEmpty() -> "没有匹配「$query」的标的 · 可输入完整名称或代码后发送"
-                                else -> "匹配「$query」"
-                            }
-                        )
-                        marginTop(10f)
-                        fontSizeScaled(10f)
-                        color(page.theme.textTertiary)
-                    }
-                }
-                candidates.forEachIndexed { index, candidate ->
-                    View {
-                        attr {
-                            height(CANDIDATE_ROW_HEIGHT)
-                            flexDirectionRow()
-                            alignItemsCenter()
-                            marginTop(4f)
-                            paddingLeft(10f)
-                            paddingRight(10f)
-                            backgroundColor(if (index == 0) page.theme.brandSoft else page.theme.surfaceMuted)
-                            borderRadius(8f)
-                        }
-                        event { click { page.selectParamSecurityCandidate(candidate) } }
-                        if (candidate.entry.kind == MentionType.BOARD) {
-                            ComposerCandidateRows.renderBoard(this, candidate, query, page.theme)
-                        } else {
-                            ComposerCandidateRows.renderSecurity(this, candidate, query, page.theme)
-                        }
-                    }
-                }
-            } else if (currentParam?.type == ParamType.ENUM) {
-                Text {
-                    attr {
-                        text("选择${currentParam.label}")
-                        marginTop(10f)
-                        fontSizeScaled(10f)
-                        color(page.theme.textTertiary)
-                    }
-                }
-                View {
-                    attr { flexDirectionRow(); alignItemsCenter(); marginTop(6f) }
-                    currentParam.enumOptions.forEach { option ->
-                        View {
-                            attr {
-                                height(28f)
-                                marginRight(7f)
-                                paddingLeft(11f)
-                                paddingRight(11f)
-                                allCenter()
-                                backgroundColor(page.theme.brandSoft)
-                                borderRadius(8f)
-                            }
-                            Text { attr { text(option); fontSizeScaled(12f); fontWeightMedium(); color(page.theme.brand) } }
-                            event { click { page.selectParamEnumOption(option) } }
-                        }
-                    }
-                }
-            }
-            View {
-                attr { marginTop(8f); alignItemsCenter(); justifyContentCenter(); height(28f) }
-                Text {
-                    attr {
-                        text(
-                            when {
-                                missing.isNotEmpty() -> "还差必填：${missing.joinToString("、") { it.label }} · 点下方候选或直接输入"
-                                command.params.any { args[it.key].isNullOrBlank() } -> "必填已齐 · 可点选可选参数或直接发送"
-                                else -> "参数已齐 · 点击发送键发送"
-                            }
-                        )
-                        fontSizeScaled(10f)
-                        color(page.theme.textTertiary)
-                    }
-                }
-            }
-        }
-        } // vfor paramPanelRenderKey
+        ComposerCommandParamPanel.render(
+            container,
+            CommandParamPanelProps(
+                theme = theme,
+                renderKeys = paramPanelRenderKey,
+                command = { paramCommand },
+                resolveArgs = { command ->
+                    resolveCommandFromText(
+                        viewModel.inputText,
+                        SolidTokenRegistry.verify(mentionEntities, viewModel.inputText),
+                    )?.args.orEmpty()
+                },
+                missingRequired = ::missingRequiredParams,
+                currentQuery = ::currentParamQuery,
+                rankCandidates = ::rankAtCandidates,
+                onCancel = ::cancelActiveCommand,
+                onClearFilled = ::clearFilledParamSlot,
+                onSelectSecurity = ::selectParamSecurityCandidate,
+                onSelectEnum = ::selectParamEnumOption,
+            ),
+        )
     }
-
     private fun cycleGlassMode() {
         sessionChromeCoordinator.cycleGlassMode()
     }
@@ -4311,16 +4148,6 @@ private data class ChatQuoteState(
 )
 
 
-/**
- * 联想面板最多可见行数：候选条数超过这个行数后，面板定高、超出部分在框内滚动。
- * 固定为 3 行——既避免面板把输入栏顶得太高，也能覆盖绝大多数"输入几个字即命中"的场景。
- *
- * 注意不能用 `maxHeight`：Kuikly 的 Scroller contentView 是绝对定位、高度由内容决定，
- * 实测 `maxHeight` 压不住，面板会被撑到完整高度。所以这里按候选条数**算出实际高度**
- * 再用 `height()` 定死——候选少时贴合内容（不留空白框），多到 3 行就截断滚动。
- */
-private const val ASSISTANT_PANEL_MAX_ROWS = 3
-
 /** 远端搜索建议防抖：停止输入 250ms 后才发请求（规范 §6.2 防抖 80ms 的宽松版，省配额）。 */
 private const val REMOTE_SEARCH_DEBOUNCE_MS = 250
 
@@ -4335,33 +4162,6 @@ private const val COMPOSER_GUIDE_HEIGHT = 42f
 private const val COMPOSER_ACTION_ROW_HEIGHT = 46f
 private const val COMPOSER_ACTION_ROW_GAP = 8f
 private const val COMPOSER_LAYOUT_DURATION = 0.28f
-
-/** 候选行高：单行横排 5 项信息（名称/代码/市场/涨跌/来源）。 */
-private const val CANDIDATE_ROW_HEIGHT = 42f
-
-/** 面板上下 padding 之和（attr 里 padding(4f) 上下各 4f）。 */
-private const val ASSISTANT_PANEL_PADDING = 8f
-
-/** 命令面板行高：图标 + 命令名/描述两行文字，比候选行高一些。 */
-private const val COMMAND_ROW_HEIGHT = 52f
-
-/** 空态/组合态的面板高度：比一整行候选略高，避免只有一行文字却占满屏。 */
-private const val ASSISTANT_PANEL_EMPTY_HEIGHT = 52f
-
-/** 未知命令态需要容纳解释文字和近似建议。 */
-private const val UNKNOWN_COMMAND_PANEL_HEIGHT = 88f
-
-/** 按候选条数算面板高度：少了贴合，多到 [ASSISTANT_PANEL_MAX_ROWS] 行截断滚动。 */
-private fun assistantPanelHeight(rowCount: Int, rowHeight: Float): Float {
-    if (rowCount <= 0) return ASSISTANT_PANEL_EMPTY_HEIGHT
-    val wanted = rowCount * rowHeight + ASSISTANT_PANEL_PADDING
-    val capped = ASSISTANT_PANEL_MAX_ROWS * rowHeight + ASSISTANT_PANEL_PADDING
-    return minOf(wanted, capped)
-}
-
-/**
- * 联想面板维度（规范 10 §2）：@ 提及、/ 命令选择、/ 命令参数槽位三态在此维度切换。
- */
 
 /** 输入栏「+」可选的媒体来源（底部弹层磁贴入口，样式对齐抽屉 DrawerTile）。 */
 private enum class ComposerMediaAction(val source: String, val label: String) {
