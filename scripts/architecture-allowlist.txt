@@ -50,10 +50,8 @@ page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.StarLayout
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# R2 — 合并（轨A线 × 轨B线）后新暴露：RiskSkyChart 随 B-2 迁入 component/，
-#      但它依赖的星图几何/布局仍在 page/risk/；B-3 会把 StarLayout/SkyGeometry/SkyLayer
-#      迁到 risk/domain/，届时删除以下三条。
+# R2 — B-4 后仅存一条：RowGestureLayer 仍留在 page/components/（B-2 归位遗留），
+#      因 RowGesture.AXIS_SLOP 被 detail 的 DetailBoardBlocks 引用，搬移需与轨 A
+#      协同改 import；UndoBar/DivergingBar 已随 B-4 迁 watchlist/component/。
 # ---------------------------------------------------------------------------
-risk/sky/component/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyGeometry | B-3（StarLayout 迁 risk/domain 后随迁）
-risk/sky/component/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyLayer | 同上
-risk/sky/component/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.StarLayout | 同上
+watchlist/component/WatchlistList.kt | R2 | com.kuikly.stockchat.page.components.RowGestureLayer | page.components 归位（需与轨 A 协同改 DetailBoardBlocks 的 RowGesture import）
