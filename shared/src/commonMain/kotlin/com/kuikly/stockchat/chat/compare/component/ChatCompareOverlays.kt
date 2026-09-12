@@ -3,7 +3,7 @@ package com.kuikly.stockchat.chat.compare.component
 import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.compare.state.CompareInsightState
-import com.kuikly.stockchat.data.entity.Glossary
+import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.page.components.ActiveComparePanel
 import com.kuikly.stockchat.page.components.TermComparePanel
 import com.tencent.kuikly.core.base.Animation
@@ -19,6 +19,7 @@ internal data class ChatCompareOverlayProps(
     val termVisible: () -> Boolean,
     val leftTermKey: () -> String,
     val rightTermKey: () -> String,
+    val termEntry: (String) -> GlossaryEntry?,
     val insightState: () -> CompareInsightState,
     val insightText: () -> String,
     val insightError: () -> String,
@@ -75,8 +76,8 @@ internal object ChatCompareOverlays {
                     absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
                     justifyContentFlexEnd(); paddingBottom(props.bottomInset)
                 }
-                Glossary.byKey(props.leftTermKey())?.let { left ->
-                    Glossary.byKey(props.rightTermKey())?.let { right ->
+                props.termEntry(props.leftTermKey())?.let { left ->
+                    props.termEntry(props.rightTermKey())?.let { right ->
                         TermComparePanel(
                             left = left,
                             right = right,

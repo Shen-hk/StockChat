@@ -2,7 +2,6 @@ package com.kuikly.stockchat.chat.composer.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.composer.AtCandidate
-import com.kuikly.stockchat.composer.CommandRegistry
 import com.kuikly.stockchat.composer.MentionType
 import com.kuikly.stockchat.composer.SlashCommand
 import com.kuikly.stockchat.data.fontSizeScaled
@@ -29,6 +28,7 @@ internal data class SlashCommandPanelProps(
     val unknown: () -> String,
     val candidates: () -> ObservableList<SlashCommand>,
     val highlight: () -> Int,
+    val suggest: (String) -> List<SlashCommand>,
     val onSelect: (SlashCommand) -> Unit,
 )
 
@@ -113,7 +113,7 @@ internal object ComposerAssistantCandidatePanels {
                     attr { padding(10f); flexDirectionColumn() }
                     Text { attr { text("未识别命令：/${props.unknown()}"); fontSizeScaled(12f); color(props.theme.textSecondary) } }
                     Text { attr { text("将作为普通文本发送"); fontSizeScaled(10f); color(props.theme.textTertiary) } }
-                    val suggestions = CommandRegistry.suggest(props.unknown())
+                    val suggestions = props.suggest(props.unknown())
                     if (suggestions.isNotEmpty()) {
                         View {
                             attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }

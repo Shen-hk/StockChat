@@ -1497,6 +1497,7 @@ internal class ChatPage : BasePager() {
                     termVisible = { page.islandTermCompareVisible },
                     leftTermKey = { page.islandTermCompareLeftKey },
                     rightTermKey = { page.islandTermCompareRightKey },
+                    termEntry = Glossary::byKey,
                     insightState = { page.compareInsightState },
                     insightText = { page.compareInsightText },
                     insightError = { page.compareInsightError },
@@ -3790,6 +3791,7 @@ internal class ChatPage : BasePager() {
                 unknown = { slashUnknown },
                 candidates = { slashCandidates },
                 highlight = { slashHighlight },
+                suggest = CommandRegistry::suggest,
                 onSelect = ::selectSlashCommand,
             ),
         )
