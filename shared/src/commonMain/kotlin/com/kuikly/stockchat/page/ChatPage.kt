@@ -87,6 +87,8 @@ import com.kuikly.stockchat.chat.session.state.KuiklyFollowUpScheduler
 import com.kuikly.stockchat.chat.session.state.BackToTopCoordinator
 import com.kuikly.stockchat.chat.session.state.BackToTopState
 import com.kuikly.stockchat.chat.session.state.KuiklyBackToTopScheduler
+import com.kuikly.stockchat.chat.session.state.ImagePreviewCoordinator
+import com.kuikly.stockchat.chat.session.state.ImagePreviewState
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
@@ -321,7 +323,9 @@ internal class ChatPage : BasePager() {
         )
     }
     // 已发送图片的全屏预览。路径非空即挂载，关闭时清空以释放 Image 子树。
-    private var imagePreviewPath: String by observable("")
+    private val imagePreviewState = ImagePreviewState()
+    private val imagePreviewCoordinator = ImagePreviewCoordinator(imagePreviewState)
+    private val imagePreviewPath: String get() = imagePreviewState.path
 
     private val peekSymbol: String get() = entityState.peekSymbol
     private val peekVisible: Boolean get() = entityState.peekVisible
@@ -3749,12 +3753,11 @@ internal class ChatPage : BasePager() {
     }
 
     private fun openImagePreview(path: String) {
-        if (path.isBlank()) return
-        imagePreviewPath = path
+        imagePreviewCoordinator.open(path)
     }
 
     private fun closeImagePreview() {
-        imagePreviewPath = ""
+        imagePreviewCoordinator.close()
     }
 
     /** 结束 / 命令参数态。 */
