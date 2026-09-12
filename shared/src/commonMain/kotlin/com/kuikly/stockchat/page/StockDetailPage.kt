@@ -67,6 +67,7 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartState
 import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
 import com.kuikly.stockchat.detail.page.component.DetailAiInsightBlock
 import com.kuikly.stockchat.detail.page.component.DetailChartCard
+import com.kuikly.stockchat.detail.page.component.DetailCompanyInfoSection
 import com.kuikly.stockchat.detail.page.component.DetailHeroSection
 import com.kuikly.stockchat.detail.page.component.DetailNewsTicker
 import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
@@ -623,111 +624,26 @@ internal class StockDetailPage : BasePager() {
                         onPickSentence = { page.pickSentence(it) },
                     )
 
-                    // 公司介绍 / 公司数据共享同一信息区；公司数据面承接下方事实卡。
-                    RevealBlock(4, { page.entranceVisible }, page.reduceMotion) {
-                        CompanyIndustryPanel(
-                            selectedTab = { page.companyInfoTab },
-                            profile = { DetailCompanyProfileCatalog.forSymbol(page.symbol) },
-                            quote = { page.quote },
-                            theme = page.theme,
-                            reduceMotion = page.reduceMotion,
-                            tabTrackWidth = (page.pagerData.pageViewWidth - 38f).coerceAtLeast(120f),
-                            onSelectTab = { page.selectCompanyInfoTab(it) },
-                        )
-                    }
-
-                    // ---- 公司数据：只在右侧「公司数据」切面挂载。 ----
-                    vif({ page.companyInfoTab == 1 }) {
-                    vbind({ page.insight }) {
-                        val fundamentals = page.insight.fundamentals
-                        // doc 29 E1 今日相关置顶：billboard 数据非空 → 该卡 pinnedToday（至多一张置顶）
-                        val relevanceAnchors = listOf(
-                            RelevanceAnchor("fund-flow", false, ""),
-                            RelevanceAnchor("financial", false, ""),
-                            RelevanceAnchor("shareholders", false, ""),
-                            RelevanceAnchor("billboard", fundamentals?.billboard != null, "今日上龙虎榜"),
-                            RelevanceAnchor("actions", false, ""),
-                        )
-                        val pinnedId = pickPinnedCard(relevanceAnchors, relevanceAnchors.map { it.cardId })
-                        // doc 29 E2 注脚：仅用真实可得输入——股东户数的户均变化由户数环比在
-                        // 「总股本不变」假设下推导（-h/(100+h)），不伪造行业分位等缺失数据，
-                        // 无输入的注脚一律不显示。
-                        val shareholderNote = fundamentals?.shareholder?.let { sh ->
-                            val denom = 100.0 + sh.changePercent
-                            val perHolder = if (denom != 0.0) -sh.changePercent / denom * 100.0 else 0.0
-                            shareholderFootnote(sh.changePercent, perHolder)
-                        }
-                        val businessCards = listOfNotNull(
-                            page.insight.fundFlow?.let { BusinessInsightItem("fund-flow", "资金流", FundFlowCardModel(it, "fund-flow:${page.symbol}")) },
-                            fundamentals?.financial?.let { BusinessInsightItem("financial", "财务", FinancialCardModel(it, "financial:${page.symbol}")) },
-                            fundamentals?.shareholder?.let {
-                                BusinessInsightItem("shareholders", "股东户数", ShareholderCardModel(it, "shareholders:${page.symbol}"), footnote = shareholderNote)
-                            },
-                            fundamentals?.billboard?.let {
-                                BusinessInsightItem("billboard", "龙虎榜", BillboardCardModel(it, "billboard:${page.symbol}"), pinned = "billboard" == pinnedId)
-                            },
-                            fundamentals?.actions?.takeIf { it.isNotEmpty() }?.let {
-                                BusinessInsightItem("actions", "分红与解禁", CorporateActionCardModel(it, "actions:${page.symbol}"))
-                            },
-                            // E1：置顶卡移到第一位（无事件日原序）
-                        ).let { cards -> if (pinnedId == null) cards else cards.sortedByDescending { it.pinned } }
-                        SectionLabel("公司数据", page.theme, strong = true)
-                        BusinessInsightGrid(
-                            items = businessCards,
-                            context = ctx,
-                            theme = page.theme,
-                            wide = wide,
-                            baseIndex = 0,
-                            entranceVisible = { page.companyDataPresented },
-                            reduceMotion = page.reduceMotion,
-                            // E2 注脚点击 → 展示判定依据（U3 两步溯源）
-                            onFootnoteClick = { note -> page.toastHint("${note.rationale} · 端侧规则") },
-                        )
-                    }
-                    }
-
-                    RevealBlock(9, { page.entranceVisible }, page.reduceMotion) {
-                        SectionLabel("公告与研报", page.theme, strong = true)
-                        // F1+F3 同卡（原型 .ann-card）：公告要点与研报评级光谱是同一张卡
-                        // 的上下两段，对外是一个视图，中间不再隔两张卡的白边。
-                        View {
-                            attr {
-                                marginTop(8f)
-                                padding(12f)
-                                borderRadius(14f)
-                                backgroundColor(page.theme.surface)
-                                border(Border(0.5f, BorderStyle.SOLID, page.theme.divider))
-                            }
-                            // vbind({insight})：公告列表随 insight 加载重建（R1：builder 闭包不追踪 observable）
-                            vbind({ page.insight }) {
-                                // F1 公告要点 · 端侧评级（前 3 条，标题+徽章+日期，点击条目看判定依据）
-                                DisclosureMaterialityBlock(
-                                    items = page.insight.disclosures.take(3),
-                                    theme = page.theme,
-                                    inset = true,
-                                    // 2026-09-09 修复：原为具名 onPeek + 尾随 lambda 混用（编译错误），
-                                    // 改为全具名；尾随 lambda 原本意图即 onExplain
-                                    onExplain = { title -> page.toastHint(materialityOf(title).rule) },
-                                    onPeek = { item -> page.detailOverlayCoordinator.showDisclosurePeek(item) },
-                                )
-                            }
-
-                            // ---- F3 多空观点光谱：并入公告与研报同一张卡（原型 .balance 在 ann-card 内） ----
-                            // vbind({insight})：真实评级光谱（东财研报库近 90 天 emRatingName 聚合）
-                            // 随 insight 加载重建（R1：builder 闭包不追踪 observable）；在线缺失时
-                            // 回落演示段（明确标注 示例 · 演示数据），光谱不空转。
-                            vbind({ page.insight }) {
-                                BalanceSpectrumBlock(
-                                    theme = page.theme,
-                                    segments = balanceSegmentsFor(page.insight.ratingSpectrum, page.theme),
-                                    initialIndex = 0,
-                                    containerWidth = page.pagerData.pageViewWidth - 28f,
-                                    reduceMotion = page.reduceMotion,
-                                    inset = true,
-                                )
-                            }
-                        }
-                    }
+                    // 公司介绍 / 公司数据 + 业务卡 + 公告研报（docs/43 D5 第五组件）----
+                    DetailCompanyInfoSection(
+                        theme = page.theme,
+                        reduceMotion = page.reduceMotion,
+                        entranceVisible = { page.entranceVisible },
+                        tabPanelRevealIndex = 4,
+                        disclosureRevealIndex = 9,
+                        symbol = { page.symbol },
+                        quote = { page.quote },
+                        insight = { page.insight },
+                        companyInfoTab = { page.companyInfoTab },
+                        companyDataPresented = { page.companyDataPresented },
+                        tabTrackWidth = (page.pagerData.pageViewWidth - 38f).coerceAtLeast(120f),
+                        containerWidth = page.pagerData.pageViewWidth - 28f,
+                        wide = wide,
+                        ctx = ctx,
+                        onSelectCompanyTab = { page.selectCompanyInfoTab(it) },
+                        onToastHint = { page.toastHint(it) },
+                        onShowDisclosurePeek = { page.detailOverlayCoordinator.showDisclosurePeek(it) },
+                    )
 
                     // ---- 涨跌归因 × AI 走势推演：同一工作台内切换手动重放 / AI 推测过程。 ----
                     RevealBlock(10, { page.entranceVisible }, page.reduceMotion) {
@@ -1659,7 +1575,7 @@ private data class TrendOutlook(
     val color: Color,
 )
 
-private data class BusinessInsightItem(
+internal data class BusinessInsightItem(
     val id: String,
     val label: String,
     val model: CardModel,
@@ -1673,7 +1589,7 @@ private data class BusinessInsightItem(
  * 行业数据与公司介绍的共享卡。横向滑动仅在横向位移明显大于纵向位移时接管，
  * 所以正常纵向浏览仍交给详情页 Scroller；标签点击为无手势偏好的等价入口。
  */
-private fun ViewContainer<*, *>.CompanyIndustryPanel(
+internal fun ViewContainer<*, *>.CompanyIndustryPanel(
     selectedTab: () -> Int,
     profile: () -> DetailCompanyProfile,
     quote: () -> Quote,
@@ -1888,7 +1804,7 @@ private fun ViewContainer<*, *>.CompanyIndustryPanelEntrance(
     }
 }
 
-private fun ViewContainer<*, *>.SectionLabel(
+internal fun ViewContainer<*, *>.SectionLabel(
     text: String,
     theme: StockChatTheme,
     // true = 章节级节头（原型 .sec-head .t：12px/800/主文字色）；默认弱样式仅用于
@@ -2099,7 +2015,7 @@ private fun ViewContainer<*, *>.SecondaryMetricRow(
     }
 }
 
-private fun ViewContainer<*, *>.BusinessInsightGrid(
+internal fun ViewContainer<*, *>.BusinessInsightGrid(
     items: List<BusinessInsightItem>,
     context: CardContext,
     theme: StockChatTheme,
@@ -3345,7 +3261,7 @@ private fun trendOutlook(q: Quote, mainFlow: Double?, theme: StockChatTheme): Tr
  * [inset] = 并入「公告与研报」大卡（原型 .ann-card：公告行直接落在卡面上，行间细分割线）；
  * false = 独立灰底子卡（旧形态，保留兼容）。
  */
-private fun ViewContainer<*, *>.DisclosureMaterialityBlock(
+internal fun ViewContainer<*, *>.DisclosureMaterialityBlock(
     items: List<DisclosureItem>,
     theme: StockChatTheme,
     inset: Boolean = false,
@@ -3472,7 +3388,7 @@ private fun ViewContainer<*, *>.NewsSection(theme: StockChatTheme) {
  * 真实评级光谱（东财研报库近 90 天 emRatingName 聚合）→ BalanceSegment；
  * 在线缺失/无覆盖时回落演示段（维持原占位形态与「示例 · 演示数据」标注），光谱不空转。
  */
-private fun balanceSegmentsFor(spectrum: RatingSpectrum?, theme: StockChatTheme): List<BalanceSegment> {
+internal fun balanceSegmentsFor(spectrum: RatingSpectrum?, theme: StockChatTheme): List<BalanceSegment> {
     val real = spectrum?.segments
         ?.takeIf { it.isNotEmpty() }
         ?.map { seg -> BalanceSegment(seg.label, seg.count, ratingSpectrumColor(seg.label, theme), seg.quote) }
