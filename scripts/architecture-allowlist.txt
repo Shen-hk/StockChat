@@ -1,0 +1,33 @@
+# 架构门禁豁免清单（doc 46 A-1）
+# 格式：相对路径 | 规则编号 | 原因 | 预计清除的工作包
+# 规则编号：R1 data 层依赖 UI/响应式 · R2 component 层依赖 Store/Provider · R3 state 层依赖 page.*/平台实现
+#           R4 shared/foundation 依赖 Feature · R5 Page 新增 setTimeout/Provider/by observable · R6 page/components 新增文件
+# 纪律：禁止整目录豁免；每一条都要写清原因与由哪个工作包清除；债务清掉后必须删掉对应行。
+#
+# ── R3 ─────────────────────────────────────────────
+detail/ai/state/AiInsightPrompts.kt | R3 | prompt 组装函数反向依赖 page.detail 的 AnchorIndex / detailTimelineSeries | A-4
+detail/chart/state/DetailChartInteractionCoordinator.kt | R3 | 图表交互状态反向依赖 page.components.ChartFlag 与 page.detail 模型 | A-4
+detail/chart/state/DetailChartUiState.kt | R3 | 同上（UI 状态持有 page 侧类型） | A-4
+detail/overlay/state/DetailOverlayCoordinator.kt | R3 | 浮层状态持有 page.detail.DetailOverlay | A-3/A-4
+detail/overlay/state/DetailOverlayUiState.kt | R3 | 同上 | A-3/A-4
+# ── R6 ─────────────────────────────────────────────
+page/components/AppChrome.kt | R6 | 通用顶栏 + Chat 私有件（StockIsland/ChatDrawer）混装 1,756 行 | B-2 整体拆除
+page/components/AtmosphereBackdrop.kt | R6 | 氛围背景层 | 未纳入本轮 27 人日（doc 45 §12.3）
+page/components/CardSheet.kt | R6 | 通用卡面板，被 AppTopBar/CardGallery 等复用 | A-2 之后的共享组件盘点
+page/components/ChatMessageComponents.kt | R6 | Chat 私有消息组件 | B-2 迁 chat/message/component
+page/components/ChatScaffolding.kt | R6 | Chat 私有脚手架 | B-2 迁 chat/**/component
+page/components/DetailBoardBlocks.kt | R6 | 详情页看板块 | A-3/A-4 Detail 组件归档
+page/components/DetailTimelineChart.kt | R6 | 详情页分时图（touch 流 scrub） | A-3/A-4 Detail 组件归档
+page/components/DivergingBar.kt | R6 | 市场页发散条 | A-5 P1-Market 纵切
+page/components/FeatureTile.kt | R6 | 只有 4 个使用方且 padding/标题/动作尚未统一 | 暂留原位（doc 46 §5「不做」），接口统一后再上移
+page/components/GeneratedSvgCanvasIcons.kt | R6 | 1,789 行图标资源，不属组件归档范围 | 不迁移（doc 46 §5「不做」）
+page/components/InsightComponents.kt | R6 | 内含第二套 SourceStampLine，与 cards/components 重复 | A-2 合并入 foundation/ui/feedback
+page/components/LineIcons.kt | R6 | 线性图标库，被 11 个文件引用，属共享基座 | A-2 迁 foundation/ui/icon
+page/components/MarketNarrativeAxis.kt | R6 | 市场页叙事轴 | A-5 P1-Market 纵切
+page/components/NewsMarquee.kt | R6 | Market 与 Detail 复用的弹幕/走马灯，接口未稳定 | A-4/A-5 复用处稳定后
+page/components/NewsTape.kt | R6 | 同上 | A-4/A-5 复用处稳定后
+page/components/RiskSkyChart.kt | R6 | 服务 RiskMapPage 的星图渲染 | B-2 迁 risk/sky/component
+page/components/RowGestureLayer.kt | R6 | 行手势层，服务自选/列表 | B-4 或后续列表工作包
+page/components/SegmentBar.kt | R6 | 分段控件，主要服务 Glossary | P1-Glossary/Alert（doc 47 §11）
+page/components/UndoBar.kt | R6 | 5s 撤销条，主要服务 Watchlist | B-4 迁 watchlist/component
+page/components/VoiceBar.kt | R6 | Chat 语音条（VOICE_AMP_BARS=56，右对齐） | B-2 迁 chat/voice/component

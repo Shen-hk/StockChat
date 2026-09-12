@@ -1,0 +1,18 @@
+# 规则 5 计数基线（doc 46 A-1）：Page 文件不得新增 setTimeout / Provider 构造 / 业务 by observable
+# 格式：相对路径 | setTimeout | Provider 构造 | by observable
+# 语义：门禁只拦截「相比本表增加」；工作包重构使计数下降时应同步下调本表，让门禁随之收紧。
+# 计数的 Provider 构造 = 形如 `XxxProvider(` 的具体类型构造（工厂调用如 `connectionTestProvider(` 不计）。
+#
+page/AlertCenterPage.kt | 3 | 0 | 9
+page/ApiConfigPage.kt | 1 | 0 | 10
+page/CardGalleryPage.kt | 2 | 0 | 9
+page/ChatPage.kt | 12 | 0 | 1
+page/GlobalSearchPage.kt | 3 | 0 | 3
+page/GlossaryPage.kt | 3 | 0 | 12
+page/HotspotPage.kt | 0 | 2 | 1
+page/MarketCalendarPage.kt | 0 | 1 | 0
+page/MarketPage.kt | 26 | 2 | 32
+page/RiskMapPage.kt | 7 | 0 | 23
+page/SettingsPage.kt | 0 | 0 | 1
+page/StockDetailPage.kt | 27 | 0 | 22
+page/WatchlistPage.kt | 3 | 0 | 18
