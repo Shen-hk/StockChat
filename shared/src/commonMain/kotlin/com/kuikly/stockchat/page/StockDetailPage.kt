@@ -48,12 +48,18 @@ import com.kuikly.stockchat.data.provider.QuotePrefetchStore
 import com.kuikly.stockchat.data.provider.DisclosureItem
 import com.kuikly.stockchat.data.provider.DisclosureKind
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.data.provider.QuoteLoadResult
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.StockInsightBundle
-import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
 import com.kuikly.stockchat.data.provider.RatingSpectrum
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
-import com.kuikly.stockchat.data.provider.quoteLabel
+import com.kuikly.stockchat.detail.quote.state.DetailDataCoordinator
+import com.kuikly.stockchat.detail.quote.state.DetailDataEffect
+import com.kuikly.stockchat.detail.quote.state.DetailDataState
+import com.kuikly.stockchat.detail.quote.state.DetailInsightPort
+import com.kuikly.stockchat.detail.quote.state.DetailNewsPort
+import com.kuikly.stockchat.detail.quote.state.DetailQuotePort
+import com.kuikly.stockchat.detail.quote.state.KuiklyDetailDataScheduler
 // doc 29 集成：共享基建 + 板块组件（事件回调经这些基建接线）
 import com.kuikly.stockchat.page.detail.AnchorIndex
 import com.kuikly.stockchat.page.detail.AnomalyPoint
@@ -135,19 +141,45 @@ internal class StockDetailPage : BasePager() {
     private val watchlistStore get() = dependencies.watchlistStore
     // Page instances are constructed before Kuikly assigns pagerId. Do not
     // touch page-scoped storage/repositories from a property initializer.
-    private var quote: Quote by observable(Quote.placeholder("600519.SH", "贵州茅台"))
-    private var dataModeLabel: String by observable("正在连接行情")
+    // Quote/Insight/News 加载域：唯一 owner 是 DetailDataCoordinator（Wave 2 第 1
+    // 刀，见 docs/39 §9）。字段以只读 getter 转发到 detailDataState 的 observable，
+    // 保证 DSL 闭包内的读取仍建立反应式依赖（同 Chat Island 模式，见
+    // ChatPage.islandExpanded）。ticker 动效、声呐异动、AI 触发仍在本页处理，见
+    // handleDetailDataEffect。
+    private val detailDataState = DetailDataState()
+    private val detailDataCoordinator by lazy {
+        DetailDataCoordinator(
+            state = detailDataState,
+            quotePort = object : DetailQuotePort {
+                override fun cachedOrOffline(symbol: String) = quoteRepository.cachedOrOffline(symbol)
+                override fun load(symbol: String, onResult: (QuoteLoadResult) -> Unit) =
+                    quoteRepository.load(symbol, onResult)
+            },
+            insightPort = object : DetailInsightPort {
+                override fun cachedStock(symbol: String) = dependencies.insightRepository.cachedStock(symbol)
+                override fun loadStock(symbol: String, onResult: (StockInsightBundle) -> Unit) =
+                    dependencies.insightRepository.loadStock(symbol, onResult)
+            },
+            newsPort = object : DetailNewsPort {
+                override fun stockNews(symbol: String, onResult: (List<NewsItem>) -> Unit) =
+                    dependencies.stockNewsProvider.stockNews(symbol, onResult)
+            },
+            scheduler = KuiklyDetailDataScheduler(),
+        ) { effect -> handleDetailDataEffect(effect) }
+    }
+    private val quote: Quote get() = detailDataState.quote
+    private val dataModeLabel: String get() = detailDataState.dataModeLabel
+    private val quoteLoading: Boolean get() = detailDataState.quoteLoading
+    private val chartDataLoading: Boolean get() = detailDataState.chartDataLoading
+    private val insight: StockInsightBundle get() = detailDataState.insight
+    private val newsList: List<NewsItem> get() = detailDataState.newsList
     private var chartMode: StockChartMode by observable(StockChartMode.TIMELINE)
     private var chartPeriod: StockChartPeriod by observable(StockChartPeriod.DAY)
     private var watchlisted: Boolean by observable(false)
     private var watchlistHint: String by observable("")
     private var topProgress: Float by observable(0f)
     private var topCompactVisible: Boolean by observable(false)
-    // 顶部报价先到、分时后到是常态：分开状态使价格立即可读，同时不渲染空图表。
-    private var quoteLoading: Boolean by observable(true)
-    private var chartDataLoading: Boolean by observable(true)
     private var requestedMarketDataSource = MarketDataSource.REAL
-    private var marketDataRequestRevision = 0
     private var tickerLift: Boolean by observable(false)
     private var tickerDirectionUp: Boolean by observable(true)
     private var previousPriceText: String by observable("")
@@ -201,14 +233,12 @@ internal class StockDetailPage : BasePager() {
     private var chartScrubLock: Boolean by observable(false)
     /** 非响应式镜像：动画节拍器读取它，交互期间暂停背景 Canvas 动画重绘。 */
     private var chartInteractionActive = false
-    private var newsList: List<NewsItem> by observable(emptyList())
     private var newsSummary: NewsItem? by observable(null)
     // ---- 弹幕 v2（对齐市场页）：页侧持有节拍——setTimeout 链 33ms 步进 offset
     // （≈30dp/s）。点按即停：摘要条展开（newsSummary）或长按先览（tapePreview）
     // 期间暂停步进，收起/松手后恢复；reduceMotion 不流动。交互口径不变。
     private var tapeOffset: Float by observable(0f)
     private var tapeTimerStarted = false
-    private var insight: StockInsightBundle by observable(OfflineMarketInsightProvider().stock("600519.SH"))
     private var companyInfoTab: Int by observable(0) // 0 = 公司介绍，1 = 公司数据
     // 公司数据切面每次挂载都从隐藏态开始，下一帧翻转为可见，供下方卡片消费入场动画。
     private var companyDataPresented: Boolean by observable(false)
@@ -260,45 +290,13 @@ internal class StockDetailPage : BasePager() {
         MarketCardRenderers.ensureRegistered()
         symbol = pagerData.params.optString("symbol").ifEmpty { "600519.SH" }
         requestedMarketDataSource = selectedMarketDataSource()
-        // 页面对象的默认占位是茅台，但路由参数在 created() 才可读取。必须立刻
-        // 用当前代码覆盖，网络尚未回调或请求失败时也不能把所有详情页标题显示成茅台。
-        quote = Quote.placeholder(symbol, symbol)
         handoffFadeActive = pagerData.params.optString("krTransition") == "islandExpand"
         handoffPresented = !handoffFadeActive || reduceMotion
-        // 预取命中（openStockDetail 转场期 warm / 进应用预热，2026-09-10）：
-        // 整页数据（价格+分时+日K）直接到位，跳过骨架空白期。不用 applyQuote
-        // 是为了避免挂载前播放 ticker lift（previousText 会以占位价「—」入画）；
-        // 声呐/AI 的启动由下方 insight 回调与 pageDidAppear 正常承接。随后的
-        // load() 照常刷新（observable 同值写不通知，命中帧不会闪动）。
-        val prefetched = QuotePrefetchStore.peek(symbol)
-        if (prefetched != null) {
-            quote = prefetched
-            quoteLoading = false
-            chartDataLoading = prefetched.timeline.isEmpty()
-            dataModeLabel = "预加载行情（可能延迟）"
-            sonarPoints = detectAnomalies(detailTimelineSeries(prefetched), null).take(3)
-        } else quoteRepository.cachedOrOffline(symbol)?.let {
-            quote = it
-            quoteLoading = false
-            chartDataLoading = it.timeline.isEmpty()
-        }
         watchlisted = watchlistStore.contains(symbol)
-        quoteRepository.load(symbol) { result ->
-            result.quote?.let { applyQuote(it) }
-            quoteLoading = false
-            chartDataLoading = quote.timeline.isEmpty()
-            dataModeLabel = result.mode.quoteLabel()
-        }
-        // 兜底：行情回调整体丢失（极端弱网/断链）时不让顶部价格永远停在骨架空态；
-        // 复位后由「更新于 等待刷新」如实表达未刷新成功。回调正常到达时同值写不通知。
-        setTimeout(6000) { if (quoteLoading) quoteLoading = false }
-        insight = dependencies.insightRepository.cachedStock(symbol)
-        dependencies.insightRepository.loadStock(symbol) {
-            insight = it
-            startAiReveal()
-            // 行情+洞察就绪后启动真实 AI 解读（未配置/无分时数据则保持端侧模板）
-            maybeStartAiInsight()
-        }
+        // Quote（含预取命中/缓存兜底/真实加载/合并规则）、Insight、News 的加载统一
+        // 由 DetailDataCoordinator 持有；下游 ticker/声呐/AI 触发经
+        // handleDetailDataEffect 承接（见 detail/quote/state）。
+        detailDataCoordinator.start(symbol, QuotePrefetchStore.peek(symbol))
         // 占位图：等行情/资金事实就绪期间显示骨架（见 aiAwaitingFacts 注释）。
         // 4s 兜底：极端弱网一直等不到分时则回落端侧模板，不无限占位。
         aiAwaitingFacts = true
@@ -306,12 +304,6 @@ internal class StockDetailPage : BasePager() {
             if (!aiRemoteRequested && aiRemoteState == 0) aiAwaitingFacts = false
         }
         startAiReveal()
-        // 新闻弹幕带：东财个股资讯（失败回 Mock 由 Fallback 链外置；此处空列表=整条隐藏）
-        dependencies.stockNewsProvider.stockNews(symbol) { items ->
-            if (items.isNotEmpty() && newsList.isEmpty()) {
-                newsList = items.take(12)
-            }
-        }
         startTapeTimer()
     }
 
@@ -322,7 +314,7 @@ internal class StockDetailPage : BasePager() {
         val selectedSource = selectedMarketDataSource()
         if (selectedSource != requestedMarketDataSource) {
             requestedMarketDataSource = selectedSource
-            reloadQuoteForCurrentSource()
+            detailDataCoordinator.reload(symbol)
         }
         entranceVisible = reduceMotion
         if (!reduceMotion) {
@@ -364,19 +356,6 @@ internal class StockDetailPage : BasePager() {
             .getString(MarketDataPrefs.KEY_SOURCE),
     )
 
-    private fun reloadQuoteForCurrentSource() {
-        quoteLoading = true
-        chartDataLoading = true
-        val revision = ++marketDataRequestRevision
-        quoteRepository.load(symbol) { result ->
-            if (revision != marketDataRequestRevision) return@load
-            result.quote?.let { applyQuote(it) }
-            quoteLoading = false
-            chartDataLoading = quote.timeline.isEmpty()
-            dataModeLabel = result.mode.quoteLabel()
-        }
-    }
-
     override fun pageDidDisappear() {
         super.pageDidDisappear()
         livePulseVersion++
@@ -393,6 +372,11 @@ internal class StockDetailPage : BasePager() {
         }
         // 圈选 AI 流同样随页面离开中断
         resetCircleAiStream()
+    }
+
+    override fun pageWillDestroy() {
+        detailDataCoordinator.onDestroy()
+        super.pageWillDestroy()
     }
 
     override fun body(): ViewBuilder {
@@ -2001,29 +1985,37 @@ internal class StockDetailPage : BasePager() {
     private fun watchlistReason(): String =
         watchlistStore.list().firstOrNull { it.symbol == symbol }?.reason.orEmpty()
 
-    private fun applyQuote(input: Quote) {
-        val old = quote
-        // 序列只增不减：快照先行到达时 timeline/kLines 为空（腾讯快照不带分时），
-        // 绝不能用空序列覆盖已有分时——否则图表塌成一条昨收基线横线、K线页签空白，
-        // 且分时请求失败时永不恢复。真实序列到达（非空）时才整体替换。
-        var next = input
-        if (next.timeline.isEmpty() && old.timeline.isNotEmpty()) next = next.copy(timeline = old.timeline)
-        if (next.kLines.isEmpty() && old.kLines.isNotEmpty()) next = next.copy(kLines = old.kLines)
-        if (next.weekKLines.isEmpty() && old.weekKLines.isNotEmpty()) next = next.copy(weekKLines = old.weekKLines)
-        if (next.monthKLines.isEmpty() && old.monthKLines.isNotEmpty()) next = next.copy(monthKLines = old.monthKLines)
-        val changed = old.price != next.price || old.changePercent != next.changePercent
-        previousPriceText = Format.price(old.price)
-        previousPercentText = Format.percent(old.changePercent)
-        previousChangeText = "${Format.signed(old.change)}  ${Format.percent(old.changePercent)}"
-        tickerDirectionUp = next.price >= old.price
-        quote = next
-        // doc 29 ④ 异动声呐：分时到达后跑一次端侧检测（成交量暂不参与确认，见已知简化）。
-        // 同屏 ≤3 点（doc §4.4 呼吸预算，U4），超出的按 |涨跌幅| 降序舍弃。
-        sonarPoints = detectAnomalies(detailTimelineSeries(next), null).take(3)
-        // 分时首次到达后择机启动真实 AI 解读（等 800ms 让资金流/财报尽量落位）；
-        // 只在分时"新到"时调度一次，不再随快照/K线回调重复 setTimeout。
-        if (next.timeline.isNotEmpty() && old.timeline.isEmpty()) setTimeout(800) { maybeStartAiInsight() }
-        if (changed) playTicker()
+    /**
+     * DetailDataCoordinator 的下游副作用：quote 合并/insight 就位后，ticker 动效、
+     * 声呐异动派生、AI 洞察触发仍是本页（及后续 Wave2 第 2/3 刀）的地盘，本函数
+     * 原样承接原 `applyQuote()` 的这部分逻辑。
+     */
+    private fun handleDetailDataEffect(effect: DetailDataEffect) {
+        when (effect) {
+            is DetailDataEffect.QuoteApplied -> {
+                val old = effect.previous
+                val next = effect.next
+                previousPriceText = Format.price(old.price)
+                previousPercentText = Format.percent(old.changePercent)
+                previousChangeText = "${Format.signed(old.change)}  ${Format.percent(old.changePercent)}"
+                tickerDirectionUp = next.price >= old.price
+                // doc 29 ④ 异动声呐：分时到达后跑一次端侧检测（成交量暂不参与确认，见已知简化）。
+                // 同屏 ≤3 点（doc §4.4 呼吸预算，U4），超出的按 |涨跌幅| 降序舍弃。
+                sonarPoints = detectAnomalies(detailTimelineSeries(next), null).take(3)
+                // 分时首次到达后择机启动真实 AI 解读（等 800ms 让资金流/财报尽量落位）；
+                // 只在分时"新到"时调度一次，不再随快照/K线回调重复 setTimeout。
+                if (effect.timelineJustArrived) setTimeout(800) { maybeStartAiInsight() }
+                if (effect.changed) playTicker()
+            }
+            DetailDataEffect.InsightLoaded -> {
+                startAiReveal()
+                // 行情+洞察就绪后启动真实 AI 解读（未配置/无分时数据则保持端侧模板）
+                maybeStartAiInsight()
+            }
+            is DetailDataEffect.PrefetchApplied -> {
+                sonarPoints = detectAnomalies(detailTimelineSeries(effect.quote), null).take(3)
+            }
+        }
     }
 
     private fun playTicker() {
