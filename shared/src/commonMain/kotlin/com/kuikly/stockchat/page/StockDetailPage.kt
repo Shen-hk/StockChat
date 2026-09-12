@@ -71,6 +71,7 @@ import com.kuikly.stockchat.detail.page.component.DetailChartCard
 import com.kuikly.stockchat.detail.page.component.DetailCompanyInfoSection
 import com.kuikly.stockchat.detail.page.component.DetailHeroSection
 import com.kuikly.stockchat.detail.page.component.DetailNewsTicker
+import com.kuikly.stockchat.detail.page.component.DetailOverlays
 import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
 import com.kuikly.stockchat.detail.ai.state.DetailAiInsightCoordinator
 import com.kuikly.stockchat.detail.ai.state.DetailAiState
@@ -689,287 +690,27 @@ internal class StockDetailPage : BasePager() {
                         ),
                     )
                 }
-                // U1 点空白全关：REASON_CHIPS 层的透明遮罩（开新层自动被仲裁器切换）
-                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.REASON_CHIPS }) {
-                    View {
-                        attr { absolutePositionAllZero(); touchEnable(true) }
-                        event { click { page.detailOverlayCoordinator.close() } }
-                    }
-                }
-                // H1 快捷理由 chips：底栏上方浮出（U1 仲裁层）
-                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.REASON_CHIPS }) {
-                    View {
-                        attr {
-                            absolutePosition(
-                                left = 14f,
-                                right = 14f,
-                                bottom = 76f + page.pagerData.safeAreaInsets.bottom,
-                            )
-                        }
-                        QuickReasonChips(
-                            theme = page.theme,
-                            reasons = listOf("等回调到位", "财报前布局", "跟热点板块"),
-                            visible = { true },
-                            onPick = { page.pickQuickReason(it) },
-                            reduceMotion = page.reduceMotion,
-                        )
-                    }
-                }
-                // U1 点空白全关：MORE_MENU 层的透明遮罩（开新层自动被仲裁器切换）
-                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.MORE_MENU }) {
-                    View {
-                        attr { absolutePositionAllZero(); touchEnable(true) }
-                        event { click { page.detailOverlayCoordinator.close() } }
-                    }
-                }
-                // ⋯ 更多操作菜单（2026-09-10）：锚在顶栏 ⋯（右缘 12f + 57f 高的顶栏）
-                // 下方的小卡片，U1 仲裁层互斥。条目改为公共 FeatureTile 磁贴横排
-                // （与抽屉/输入栏媒体弹层同一视觉语言），只挂真实可用的动作。
-                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.MORE_MENU }) {
-                    View {
-                        attr {
-                            absolutePosition(
-                                top = page.pagerData.statusBarHeight + 62f,
-                                // left 自算（右缘 12f 对齐 ⋯ 按钮触控区），不依赖 right 单边锚定
-                                left = (page.pagerData.pageViewWidth - 250f - 12f).coerceAtLeast(12f),
-                            )
-                            width(250f)
-                            paddingTop(12f)
-                            paddingBottom(12f)
-                            paddingLeft(12f)
-                            paddingRight(12f)
-                            borderRadius(16f)
-                            backgroundColor(page.theme.surface)
-                            border(Border(0.5f, BorderStyle.SOLID, page.theme.divider))
-                            boxShadow(BoxShadow(0f, 10f, 26f, page.theme.textPrimary.opacity(0.20f)))
-                            touchEnable(true)
-                        }
-                        View {
-                            attr { flexDirectionRow() }
-                            FeatureTile(
-                                label = "记当初理由",
-                                theme = page.theme,
-                                height = 66f,
-                                icon = { LineIconPin(page.theme.textPrimary, 22f) },
-                            ) {
-                                // 仲裁器语义：请求 REASON_CHIPS 即自动关闭 MORE_MENU
-                                page.detailOverlayCoordinator.request(DetailOverlay.REASON_CHIPS)
-                            }
-                            View { attr { width(8f) } }
-                            FeatureTile(
-                                label = "AI 解读",
-                                theme = page.theme,
-                                height = 66f,
-                                icon = { LineIconBarChart(page.theme.textPrimary, 22f) },
-                            ) { page.toggleAiInsight() }
-                            View { attr { width(8f) } }
-                            FeatureTile(
-                                label = "复制代码",
-                                theme = page.theme,
-                                height = 66f,
-                                icon = { LineIconCopy(page.theme.textPrimary, 22f) },
-                            ) { page.copySymbolToPasteboard() }
-                        }
-                    }
-                }
-                // B1 长按先览小气泡（doc 29 原型 .preview：fixed 浮层、left=胶囊左缘钳右、
-                // top=胶囊底+8——「像聊天气泡一样从所按消息上引出来」）。锚点取长按事件
-                // 的 pageX/pageY（触摸点在根 Page 坐标系，Kuikly LongPressParams 原生提供，
-                // 无需估算胶囊布局位置）；finger 在胶囊上（高 28），+20 ≈ 胶囊底+8。
-                // 松手 700ms 消失由页侧计时调度；原型同为 position:fixed，显示期间不随页面滚动。
-                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.TAPE_PREVIEW && page.tapePreview != null }) {
-                    vbind({ page.tapePreview?.id ?: "" }) {
-                        val preview = page.tapePreview
-                        if (preview != null) {
-                            val sentiment = scoreNewsSentiment(preview.title).isPositive
-                            val left = (page.tapePreviewAnchorX - 20f)
-                                .coerceIn(12f, (page.pagerData.pageViewWidth - 248f).coerceAtLeast(12f))
-                            View {
-                                attr {
-                                    absolutePosition(left = left, top = page.tapePreviewAnchorY + 20f)
-                                    width(236f)
-                                    padding(10f)
-                                    borderRadius(12f)
-                                    backgroundColor(page.theme.surface)
-                                    border(Border(1f, BorderStyle.SOLID, page.theme.brand.opacity(0.5f)))
-                                    boxShadow(BoxShadow(0f, 8f, 22f, page.theme.textPrimary.opacity(0.16f)))
-                                    touchEnable(true)
-                                }
-                                Text {
-                                    attr {
-                                        text("${formatTapeTime(preview.time)} · ${if (sentiment == true) "利好" else if (sentiment == false) "利空" else "中性"}")
-                                        fontSizeScaled(10f)
-                                        fontWeightSemiBold()
-                                        color(
-                                            when (sentiment) {
-                                                true -> page.theme.rise
-                                                false -> page.theme.fall
-                                                null -> page.theme.textTertiary
-                                            }
-                                        )
-                                    }
-                                }
-                                Text {
-                                    attr {
-                                        text(truncateByWidth(preview.title, 42f))
-                                        marginTop(4f)
-                                        fontSizeScaled(10f)
-                                        lineHeightScaled(14f)
-                                        color(page.theme.textSecondary)
-                                    }
-                                }
-                                Text {
-                                    attr {
-                                        text("点按展开与落旗 · 端侧规则")
-                                        marginTop(5f)
-                                        fontSizeScaled(9.5f)
-                                        color(page.theme.brand)
-                                    }
-                                }
-                                event { click { page.onNewsTapped(preview) } }
-                            }
-                        }
-                    }
-                }
-                // F1 公告/研报长按预览（2026-09-09）：蒙层 + 底部浮卡，MarketPage peek 同构。
-                vif({ page.disclosurePeek != null }) {
-                    View {
-                        attr {
-                            absolutePositionAllZero()
-                            zIndex(20, useOutline = false)
-                            backgroundColor(page.theme.textPrimary.opacity(0.26f))
-                            val shown = page.disclosurePeekVisible
-                            opacity(if (shown) 1f else 0f)
-                            touchEnable(shown)
-                            if (!page.reduceMotion) animate(Animation.easeOut(0.20f), page.disclosurePeekVisible)
-                        }
-                        event { click { page.detailOverlayCoordinator.dismissDisclosurePeek() } }
-                    }
-                    View {
-                        attr {
-                            absolutePosition(
-                                left = 14f,
-                                right = 14f,
-                                bottom = 76f + page.pagerData.safeAreaInsets.bottom,
-                            )
-                            zIndex(21, useOutline = false)
-                            padding(16f)
-                            borderRadius(18f)
-                            backgroundColor(page.theme.surface)
-                            border(Border(1f, BorderStyle.SOLID, page.theme.divider))
-                            boxShadow(BoxShadow(0f, 14f, 30f, page.theme.textPrimary.opacity(0.18f)))
-                            val shown = page.disclosurePeekVisible
-                            opacity(if (shown) 1f else 0f)
-                            touchEnable(shown)
-                            if (!page.reduceMotion) {
-                                transform(scale = Scale(if (shown) 1f else 0.96f, if (shown) 1f else 0.96f))
-                                animate(Animation.easeOut(0.20f), page.disclosurePeekVisible)
-                            }
-                        }
-                        View {
-                            attr { flexDirectionRow(); alignItemsCenter() }
-                            Text {
-                                attr {
-                                    text(page.disclosurePeek?.title ?: "")
-                                    flex(1f)
-                                    fontSizeScaled(13f)
-                                    fontWeightBold()
-                                    color(page.theme.textPrimary)
-                                    lineHeightScaled(18f)
-                                }
-                            }
-                            Text {
-                                attr { text("关闭"); fontSizeScaled(11f); color(page.theme.brand) }
-                                event { click { page.detailOverlayCoordinator.dismissDisclosurePeek() } }
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(
-                                    // 研报先给可读摘要；券商与日期降到来源行，避免元数据
-                                    // 抢占长按预览的首屏内容。
-                                    (page.disclosurePeek?.takeIf { it.kind != DisclosureKind.RESEARCH }
-                                        ?.let { "${it.kind.label} · ${it.publisher} · ${it.date}" } ?: "")
-                                )
-                                marginTop(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 0f else 8f)
-                                fontSizeScaled(10f)
-                                color(page.theme.textTertiary)
-                            }
-                        }
-                        // 重要度规则只适用于公告；研报展示机构标题提炼，不混入无关的公告评级。
-                        vif({ page.disclosurePeek?.kind != DisclosureKind.RESEARCH }) {
-                            Text {
-                                attr {
-                                    text(
-                                        page.disclosurePeek?.let { item ->
-                                            val verdict = when (materialityOf(item.title).level) {
-                                                Materiality.HIGH -> "高重要度"
-                                                Materiality.MID -> "中重要度"
-                                                Materiality.LOW -> "低重要度"
-                                            }
-                                            "端侧评级：$verdict · ${materialityOf(item.title).rule}"
-                                        } ?: ""
-                                    )
-                                    marginTop(8f)
-                                    fontSizeScaled(11f)
-                                    lineHeightScaled(16f)
-                                    color(page.theme.textSecondary)
-                                }
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(page.disclosurePeek?.summary?.takeIf { it.isNotBlank() } ?: "")
-                                marginTop(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 8f else 6f)
-                                fontSizeScaled(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 12f else 11f)
-                                lineHeightScaled(if (page.disclosurePeek?.kind == DisclosureKind.RESEARCH) 18f else 16f)
-                                color(page.theme.textSecondary)
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(page.disclosurePeek?.let { item ->
-                                    if (item.kind == DisclosureKind.RESEARCH) {
-                                        "来源：${item.publisher} · ${item.date} · 机构观点仅供参考"
-                                    } else {
-                                        item.stamp.source.takeIf { it.isNotBlank() }
-                                            ?.let { "来源：$it · 只述事实，不构成建议" }
-                                            ?: "只述事实，不构成建议"
-                                    }
-                                } ?: "只述事实，不构成建议")
-                                marginTop(8f)
-                                fontSizeScaled(9f)
-                                color(page.theme.textTertiary)
-                            }
-                        }
-                        vif({ page.disclosurePeek?.url?.isNotBlank() == true }) {
-                            View {
-                                attr {
-                                    alignSelfFlexStart()
-                                    marginTop(12f)
-                                    paddingTop(7f); paddingBottom(7f)
-                                    paddingLeft(10f); paddingRight(10f)
-                                    borderRadius(9f)
-                                    backgroundColor(page.theme.brandSoft)
-                                }
-                                Text {
-                                    attr {
-                                        text("查看公告原文  ↗")
-                                        fontSizeScaled(11f)
-                                        fontWeightSemiBold()
-                                        color(page.theme.brand)
-                                    }
-                                }
-                                event {
-                                    click {
-                                        val url = page.disclosurePeek?.url.orEmpty()
-                                        if (url.isNotBlank()) page.openUrl(url)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // U1 就地浮层（REASON_CHIPS + MORE_MENU + TAPE_PREVIEW + DISCLOSURE_PEEK）----
+                DetailOverlays(
+                    theme = page.theme,
+                    reduceMotion = page.reduceMotion,
+                    statusBarHeight = page.pagerData.statusBarHeight,
+                    bottomInset = page.pagerData.safeAreaInsets.bottom,
+                    pageViewWidth = page.pagerData.pageViewWidth,
+                    overlayActive = { page.detailOverlayCoordinator.active() },
+                    tapePreview = { page.tapePreview },
+                    tapePreviewAnchorX = { page.tapePreviewAnchorX },
+                    tapePreviewAnchorY = { page.tapePreviewAnchorY },
+                    disclosurePeek = { page.disclosurePeek },
+                    disclosurePeekVisible = { page.disclosurePeekVisible },
+                    onCloseOverlay = { page.detailOverlayCoordinator.close() },
+                    onPickQuickReason = { page.pickQuickReason(it) },
+                    onRequestReasonChips = { page.detailOverlayCoordinator.request(DetailOverlay.REASON_CHIPS) },
+                    onCopySymbolToPasteboard = { page.copySymbolToPasteboard() },
+                    onToggleAiInsight = { page.toggleAiInsight() },
+                    onTapPreviewItem = { page.onNewsTapped(it) },
+                    onDismissDisclosurePeek = { page.detailOverlayCoordinator.dismissDisclosurePeek() },
+                )
                 DetailBottomBar(
                     theme = page.theme,
                     renderer = page.hostGlassRenderer,
