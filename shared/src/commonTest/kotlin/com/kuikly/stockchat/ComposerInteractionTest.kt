@@ -128,6 +128,18 @@ class ComposerInteractionTest {
     }
 
     @Test
+    fun triggerRemovalClearsOnlyTheUnfinishedFragment() {
+        val removed = ComposerTextOperations.removeTriggerFragment(
+            text = "看看 @茅台 怎么样",
+            cursor = 6,
+            activeSession = TriggerSession('@', 3, "茅台", 6),
+        )
+
+        assertEquals("看看  怎么样", removed.text)
+        assertEquals(3, removed.cursor)
+    }
+
+    @Test
     fun sendPayloadInjectsMentionCommandAndBoardContext() {
         val board = MentionEntity("BK0477", "白酒", MentionType.BOARD, "@白酒(板块)")
         val payload = SendPayload(

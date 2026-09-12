@@ -9,9 +9,10 @@ import com.kuikly.stockchat.richtext.EntityRecognizer
 import com.kuikly.stockchat.richtext.EntityType
 
 /**
- * A model may still emit a card despite the system prompt. Keep structured cards
- * tied to an entity already established by the current turn or conversation;
- * this prevents a fallback/demo symbol from appearing in a generic answer.
+ * Keep structured cards tied to an entity already established by the current
+ * turn or conversation; this prevents a fallback/demo symbol from appearing in
+ * a generic answer while allowing the prompt to add useful market cards by
+ * default for a known stock.
  */
 internal object CardResponseSanitizer {
     fun removeUnrelatedCards(

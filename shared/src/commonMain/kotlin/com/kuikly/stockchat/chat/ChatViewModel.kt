@@ -353,7 +353,17 @@ class ChatViewModel(
 
     private fun restoreMessages(restored: List<StoredChatMessage>) {
         restored.forEach { item ->
-            messages.add(ChatMessage(pagerId, item.id.ifEmpty { newId() }, item.role, item.content, failed = item.failed, cancelled = item.cancelled))
+            messages.add(
+                ChatMessage(
+                    pagerId,
+                    item.id.ifEmpty { newId() },
+                    item.role,
+                    item.content,
+                    failed = item.failed,
+                    cancelled = item.cancelled,
+                    attachments = item.attachments,
+                ),
+            )
         }
         nextId = nextMessageId(messages)
     }

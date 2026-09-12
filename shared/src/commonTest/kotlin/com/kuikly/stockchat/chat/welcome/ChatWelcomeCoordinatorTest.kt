@@ -98,13 +98,9 @@ class ChatWelcomeCoordinatorTest {
         assertFalse(state.marketTabSelected)
     }
 
-    /**
-     * 回归（2026-09-10）：跳市场页会先走 onDisappear，把 420ms 的自动复位
-     * 定时器取消掉，marketTabSelected 停在 true——返回聊天页后滑块卡在
-     * 「看行情」。消失即必须复位，且返回后可以再次发起跳转。
-     */
+    /** 市场页返回后才让 Tab 从“看行情”滑回“问AI”，而不是在遮罩下静默复位。 */
     @Test
-    fun disappearingAfterMarketTapResetsTheTabSlider() {
+    fun marketReturnAnimatesTheTabSliderHome() {
         val scheduler = FakeWelcomeScheduler()
         val state = PlainChatWelcomeState()
         val effects = mutableListOf<ChatWelcomeEffect>()
@@ -115,11 +111,11 @@ class ChatWelcomeCoordinatorTest {
         assertTrue(state.marketTabSelected)
         scheduler.runNext(240) // 跳转市场页，本页随之 onDisappear
         coordinator.onDisappear()
-        assertFalse(state.marketTabSelected)
-        scheduler.runAll() // 复位定时器不得在消失后再改状态
-        assertFalse(state.marketTabSelected)
+        assertTrue(state.marketTabSelected)
 
         coordinator.onAppear(sessionEmpty = true, fullMode = true)
+        scheduler.runNext(120)
+        assertFalse(state.marketTabSelected)
         coordinator.onOpenMarketRequested()
         assertTrue(state.marketTabSelected)
         scheduler.runNext(240)
@@ -134,15 +130,43 @@ class ChatWelcomeCoordinatorTest {
         )
     }
 
+    @Test
+    fun marketReturnAndNewChatReplaceCardsThenReplayEntrance() {
+        val scheduler = FakeWelcomeScheduler()
+        val state = PlainChatWelcomeState()
+        var refreshes = 0
+        val coordinator = coordinator(state, scheduler, onRefreshStarters = { refreshes++ })
+
+        coordinator.onAppear(sessionEmpty = true, fullMode = true)
+        coordinator.onWelcomeMounted()
+        scheduler.runNext(32)
+        coordinator.onOpenMarketRequested()
+        coordinator.onDisappear()
+        coordinator.onAppear(sessionEmpty = true, fullMode = true)
+
+        assertEquals(1, refreshes)
+        assertFalse(state.entranceVisible)
+        scheduler.runNext(32)
+        assertTrue(state.entranceVisible)
+
+        coordinator.onNewEmptySession()
+        assertEquals(2, refreshes)
+        assertFalse(state.entranceVisible)
+        scheduler.runNext(32)
+        assertTrue(state.entranceVisible)
+    }
+
     private fun coordinator(
         state: ChatWelcomeStatePort,
         scheduler: FakeWelcomeScheduler,
         onEffect: (ChatWelcomeEffect) -> Unit = {},
+        onRefreshStarters: () -> Unit = {},
     ): ChatWelcomeCoordinator = ChatWelcomeCoordinator(
         state = state,
         starterStore = WelcomeStarterStore(InMemoryKeyValueStorage(), setOf("MOVE", "TERM")),
         scheduler = scheduler,
         reducedMotion = false,
+        onRefreshStarters = onRefreshStarters,
         onEffect = onEffect,
     )
 }

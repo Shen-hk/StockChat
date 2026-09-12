@@ -6,6 +6,20 @@ data class ComposerTextEdit(val text: String, val cursor: Int)
 /** Pure text transformations shared by composer interaction handlers. */
 object ComposerTextOperations {
 
+    /** Removes the currently active, unfinished @ or / fragment without touching surrounding text. */
+    fun removeTriggerFragment(
+        text: String,
+        cursor: Int,
+        activeSession: TriggerSession,
+    ): ComposerTextEdit {
+        val start = activeSession.triggerStart.coerceIn(0, text.length)
+        val end = cursor.coerceIn(start, text.length)
+        return ComposerTextEdit(
+            text = text.substring(0, start) + text.substring(end),
+            cursor = start,
+        )
+    }
+
     /** Inserts a solid @ mention in place of the current selection. */
     fun insertMention(
         text: String,

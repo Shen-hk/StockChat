@@ -56,7 +56,9 @@ static void HRFireCallback(KuiklyRenderCallback callback, NSDictionary *payload)
 }
 
 static NSString *HRComposerMediaDir(void) {
-    NSString *dir = [NSTemporaryDirectory() stringByAppendingPathComponent:@"composer_media"];
+    NSURL *supportURL = [[NSFileManager defaultManager] URLsForDirectory:NSApplicationSupportDirectory
+                                                               inDomains:NSUserDomainMask].firstObject;
+    NSString *dir = [[supportURL URLByAppendingPathComponent:@"composer_media" isDirectory:YES] path];
     [[NSFileManager defaultManager] createDirectoryAtPath:dir
                               withIntermediateDirectories:YES
                                                attributes:nil error:nil];

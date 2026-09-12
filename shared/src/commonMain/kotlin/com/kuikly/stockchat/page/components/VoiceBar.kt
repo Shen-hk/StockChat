@@ -22,10 +22,15 @@ import kotlin.math.PI
  * 后面长出来并从右向左走过"；旧样本（左缘）alpha 淡出。不做任何光晕、
  * 不显示计时。
  *
- * 纯渲染组件，全部状态经 lambda 注入；在 Canvas draw / attr 闭包内读取
- * observable（amps / cancelArmed / transcribing），由 ReactiveObserver
- * 驱动重绘。条高已在页侧完成 min(1, rms×2.5) 增益与非对称平滑
- * （升 0.6 / 落 0.25），静音样本为 0。
+ * 纯渲染组件，全部状态经 lambda 注入；在 Canvas draw 闭包内读取
+ * observable（amps / cancelArmed），由 ReactiveObserver 驱动重绘。条高
+ * 已在页侧完成 min(1, rms×2.5) 增益与非对称平滑（升 0.6 / 落 0.25），
+ * 静音样本为 0。
+ *
+ * 不得把 amps 挂到 vbind key——高频驱动每帧整树重建，Canvas 还没来得及
+ * 渲染就被下一帧重建销毁，波形全空白（铁律：高频驱动不得挂 vbind key）。
+ * 正确做法是在 draw 闭包内直接读 observable，让响应式系统驱动 Canvas
+ * 重绘（Android 端 draw 闭包注册响应式依赖，原始版本即此模式）。
  */
 fun ViewContainer<*, *>.VoiceBar(
     theme: StockChatTheme,
@@ -52,6 +57,9 @@ fun ViewContainer<*, *>.VoiceBar(
                     marginRight(8f)
                 }
             }) { ctx, w, h ->
+                // 在 draw 闭包内直接读 observable（amps/cancelArmed），响应式
+                // 系统在值变化时触发 Canvas 重绘。不挂 vbind key——高频驱动
+                // 每 ~35ms 一次整树重建会令 Canvas 在渲染前被销毁（铁律）。
                 val values = amps()
                 val armed = cancelArmed()
                 ctx.batchDraw = true
@@ -60,11 +68,7 @@ fun ViewContainer<*, *>.VoiceBar(
                     val barW = 3f
                     val gap = 3f
                     val total = n * barW + (n - 1) * gap
-                    // 右对齐起画：波形永远贴着右缘（最新采样完整可见），
-                    // 超出画布的左侧最旧条目被裁掉；空白样本（0 高）不画，
-                    // 所以录音开始时整条空白、声波从右缘向左生长出来。
                     var x = w - total
-                    // 常规态 brand 蓝（上滑取消变 rise 红）；左缘（旧样本）淡出。
                     val base = if (armed) theme.rise else theme.brand
                     val cy = h / 2f
                     for (i in 0 until n) {
@@ -72,7 +76,6 @@ fun ViewContainer<*, *>.VoiceBar(
                         if (bh > 0.8f) {
                             val fade = 0.35f + 0.65f * (i.toFloat() / (n - 1).toFloat())
                             ctx.fillStyle(base.opacity(fade))
-                            // 圆角 1.5 的竖条（路径手绘，CanvasContext 无 fillRect）
                             val top = cy - bh / 2f
                             val bottom = cy + bh / 2f
                             val r = minOf(1.5f, bh / 2f)

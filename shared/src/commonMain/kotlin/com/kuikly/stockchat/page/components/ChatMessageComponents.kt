@@ -101,6 +101,8 @@ internal class ChatMessageActions(
     val onShareMessage: (String) -> Unit,
     // 重试 = 从该条 AI 回复起截断重新生成（含其后消息）。
     val onRegenerate: (String) -> Unit,
+    /** Opens a sent image in the page-owned preview overlay. */
+    val onPreviewImage: (String) -> Unit,
     // ===== 完成后的引导语 chips =====
     // 取值闭包读 observable（messages 列表 / message.streaming），在 vif 闭包内
     // 调用建立响应依赖；mount/presented 由页侧双态机驱动（R4 两帧入场）。
@@ -147,6 +149,7 @@ internal fun ViewContainer<*, *>.ChatMessageView(
                                 if (index < images.size - 1) marginRight(8f)
                                 backgroundColor(Color(0x11000000))
                             }
+                            event { click { actions.onPreviewImage(att.path) } }
                         }
                     }
                 }

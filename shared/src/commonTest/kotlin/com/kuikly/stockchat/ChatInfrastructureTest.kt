@@ -91,6 +91,19 @@ class ChatInfrastructureTest {
     }
 
     @Test
+    fun cardSanitizerKeepsMarketCardsForASymbolEstablishedInConversation() {
+        val response = "结论\n\n```card:stock-chart\n{\"symbol\":\"600519.SH\"}\n```"
+
+        val sanitized = CardResponseSanitizer.removeUnrelatedCards(
+            question = "它接下来怎么看？",
+            conversation = listOf(ChatMessage("test", "user-1", MessageRole.USER, "贵州茅台今天怎么样？")),
+            response = response,
+        )
+
+        assertEquals(response, sanitized)
+    }
+
+    @Test
     fun cardSanitizerDoesNotAddOrKeepAnUnrequestedDefinitionCard() {
         val response = "PE 是市盈率。\n\n```card:definition\n{\"term\":\"市盈率 PE\"}\n```"
 
@@ -107,6 +120,12 @@ class ChatInfrastructureTest {
     fun sseParserReadsDeltaAndDoneEvents() {
         assertEquals("你好", SseEventParser.delta("data: {\"choices\":[{\"delta\":{\"content\":\"你好\"}}]}"))
         assertEquals("", SseEventParser.delta("data: [DONE]"))
+    }
+
+    @Test
+    fun sseParserSkipsReasoningAndAcceptsTypedContent() {
+        assertEquals("", SseEventParser.delta("data: {\"choices\":[{\"delta\":{\"content\":null,\"reasoning_content\":\"scratch work\"}}]}"))
+        assertEquals("你好", SseEventParser.delta("data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"你\"},{\"type\":\"text\",\"text\":\"好\"}]}}]}"))
     }
 
     @Test

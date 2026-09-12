@@ -397,12 +397,12 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     }
 
     /**
-     * 拍照：输出直接写到缓存目录（FileProvider URI）。注意宿主**不声明**
+     * 拍照：输出直接写到应用私有持久目录（FileProvider URI）。注意宿主**不声明**
      * CAMERA 权限——声明了反而要求运行时授权，而 ACTION_IMAGE_CAPTURE
      * 由相机应用持权拍摄，宿主无需该权限。
      */
     private fun launchCameraSource(currentActivity: KuiklyRenderActivity) {
-        val dir = File(currentActivity.cacheDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
+        val dir = File(currentActivity.filesDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
         val file = File(dir, "camera_${System.currentTimeMillis()}.jpg")
         pendingCameraFile = file
         val uri = FileProvider.getUriForFile(
@@ -428,7 +428,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
     /**
      * onActivityResult 统一入口（Activity 转发）：把选中内容复制到
-     * cache/composer_media 下的宿主私有文件，再经 composerMediaResultHost
+     * files/composer_media 下的宿主私有文件，再经 composerMediaResultHost
      * 回传 {type:"ok", source, items:[{kind, path, name}...]}；取消回传 {type:"cancel"}。
      * 复制在后台线程执行，结果统一 post 回主线程（与 Kuikly 桥接约定一致）。
      */
@@ -613,7 +613,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
         /**
          * onActivityResult 统一入口（Activity 转发）：把选中内容复制到
-         * cache/composer_media 下的宿主私有文件，再经 composerMediaResultHost
+         * files/composer_media 下的宿主私有文件，再经 composerMediaResultHost
          * 回传 {type:"ok", source, items:[{kind, path, name}...]}（图库多选时
          * items 为多条，拍照/文档恒为单条）；取消回传 {type:"cancel"}。
          * 复制在后台线程执行，结果统一 post 回主线程（与 Kuikly 桥接约定一致）。
@@ -730,7 +730,7 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
                                 name.contains('.') -> name.substringAfterLast('.')
                                 else -> if (isImage) "jpg" else "dat"
                             }
-                            val dir = File(activity.cacheDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
+                            val dir = File(activity.filesDir, COMPOSER_MEDIA_DIR).apply { mkdirs() }
                             val target = File(dir, "pick_${System.currentTimeMillis()}_${picked.size}.$extension")
                             resolver.openInputStream(uri)?.use { input ->
                                 target.outputStream().use { output -> input.copyTo(output) }

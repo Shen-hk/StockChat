@@ -29,18 +29,20 @@ internal fun ViewContainer<*, *>.DateDivider(theme: StockChatTheme) {
 }
 
 /**
- * 输入框上方引导语气泡（2026-09-10 用户反馈三轮；2026-09-11 四轮改白色填充）：
- * 仅收起态显示、展开态隐藏；chip 白色填充（读 surface，深色模式自动落深灰）
- * + 细描边，方角矩形（8f 圆弧）+ 文字前 icon 提升阅读性。
- * 点按 = injectQuestion（展开输入栏带入问题，与欢迎引导同款行为）。
- * 引导语为可陈述事实的问法（合规文案铁律：不含推荐/怎么选类措辞）。
+ * 输入框上方引导语气泡（2026-09-12 用户反馈：仿豆包风格升级可见性）：
+ * 仅收起态显示、展开态隐藏。2026-09-11 四轮白色填充 / 细描边仍偏弱，
+ * 截图里几乎与背景融在一起；这次按豆包样式重做——
+ * - surfaceMuted 浅灰胶囊（深色模式下深一档），去描边，靠背景对比承担可见性
+ * - 14f 圆角更近胶囊，height 26→30、padding 横向 +2、字号 11→13、字重 medium
+ * - 主色 icon 14f（之前 12f），让 chip 不再像输入框自带组件
+ * 点按 = injectQuestion（与欢迎引导同款行为）。
  */
 internal fun ViewContainer<*, *>.ComposerGuideRow(
     theme: StockChatTheme,
     onSelect: (String) -> Unit,
 ) {
     Scroller {
-        attr { height(28f); flexDirectionRow() }
+        attr { height(30f); flexDirectionRow() }
         listOf(
             "看下当前大盘行情" to "chart",
             "分析下昨天日报" to "report",
@@ -48,32 +50,31 @@ internal fun ViewContainer<*, *>.ComposerGuideRow(
         ).forEach { (prompt, icon) ->
             View {
                 attr {
-                    height(26f)
-                    marginRight(7f)
-                    paddingLeft(9f)
-                    paddingRight(10f)
+                    height(30f)
+                    marginRight(8f)
+                    paddingLeft(11f)
+                    paddingRight(12f)
                     justifyContentCenter()
-                    // 白色填充（2026-09-11 用户反馈：透明填充存在感太弱）+ 细描边
-                    // + 方角矩形（8f 圆弧，替代 13f 胶囊）。读 surface 而非硬编码白，
-                    // 深色模式自动落深灰卡色。
-                    backgroundColor(theme.surface)
-                    borderRadius(8f)
-                    border(Border(0.5f, BorderStyle.SOLID, theme.divider))
+                    // 浅灰胶囊（豆包样式）：去细描边，深色模式 surfaceMuted 自动落深灰，
+                    // 对比度比白 surface+半透明描边高一级，避免截图里看不到。
+                    backgroundColor(theme.surfaceMuted)
+                    borderRadius(14f)
                     flexDirectionRow()
                     alignItemsCenter()
                 }
-                // 文字前的语义 icon：brand 色提升引导感与扫读锚点。
+                // 文字前的语义 icon：brand 色 + 14f，承担扫读锚点。
                 when (icon) {
-                    "chart" -> LineIconBarChart(theme.brand, 12f)
-                    "report" -> LineIconFileText(theme.brand, 12f)
-                    else -> LineIconStar(theme.brand, 12f)
+                    "chart" -> LineIconBarChart(theme.brand, 14f)
+                    "report" -> LineIconFileText(theme.brand, 14f)
+                    else -> LineIconStar(theme.brand, 14f)
                 }
                 Text {
                     attr {
                         text(prompt)
-                        marginLeft(4f)
-                        fontSizeScaled(11f)
-                        color(theme.textSecondary)
+                        marginLeft(5f)
+                        fontSizeScaled(13f)
+                        fontWeightMedium()
+                        color(theme.textPrimary)
                     }
                 }
                 event { click { onSelect(prompt) } }

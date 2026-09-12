@@ -36,6 +36,7 @@ internal class ChatWelcomeCoordinator(
     private val starterStore: WelcomeStarterStore,
     private val scheduler: WelcomeScheduler,
     private val reducedMotion: Boolean,
+    private val onRefreshStarters: () -> Unit = {},
     private val onEffect: (ChatWelcomeEffect) -> Unit,
 ) {
     private val keywords = listOf("行情", "术语", "财报", "公告")
@@ -47,6 +48,8 @@ internal class ChatWelcomeCoordinator(
     private var cursorShown = false
     private var entrancePresented = false
     private var marketSelected = false
+    // Only the market shortcut sets this; ordinary foregrounding must not replay welcome.
+    private var refreshWelcomeAfterMarketReturn = false
     private var keywordTask: WelcomeScheduledTask? = null
     private var cursorTask: WelcomeScheduledTask? = null
     private var entranceTask: WelcomeScheduledTask? = null
@@ -60,6 +63,13 @@ internal class ChatWelcomeCoordinator(
         state.fullMode = fullMode
         state.destroyed = false
         startKeywordLoopIfNeeded()
+        if (refreshWelcomeAfterMarketReturn) {
+            refreshWelcomeAfterMarketReturn = false
+            if (state.sessionEmpty) {
+                restartWelcomeEntrance(refreshStarters = true)
+            }
+            scheduleMarketTabReturnReset()
+        }
         // If the page disappeared during the 32ms mounted -> presented window,
         // restart that phase on return. The component has already registered
         // its easeOut animation, so this preserves the R4/R5 entrance instead
@@ -76,11 +86,8 @@ internal class ChatWelcomeCoordinator(
         stopKeywordLoop(lock = false)
         cancelEntranceTasks()
         cancelMarketTasks()
-        // 「看行情」的自动复位定时器（420ms）活不过跳转：openPage 市场页会让
-        // 本页先走 onDisappear，复位任务被 cancelMarketTasks 取消后
-        // marketTabSelected 停在 true，返回时滑块就卡在「看行情」半格。
-        // 消失即复位：跳转动画期滑块会先滑回「问AI」，回程必然落在默认态。
-        setMarketSelected(false)
+        // 保留“看行情”选中态到页面回来；onAppear 后再滑回“问AI”，让用户能
+        // 看见一次完整的返回归位，而不是在市场页遮住时静默重置。
     }
 
     fun onDestroy() {
@@ -96,11 +103,7 @@ internal class ChatWelcomeCoordinator(
         state.sessionEmpty = true
         state.keywordStopped = false
         state.welcomeMounted = true
-        ++entranceVersion
-        entranceTask?.cancel()
-        entranceTask = null
-        setEntrancePresented(true)
-        scheduleEntranceSafety()
+        restartWelcomeEntrance(refreshStarters = true)
         startKeywordLoopIfNeeded()
     }
 
@@ -138,6 +141,7 @@ internal class ChatWelcomeCoordinator(
 
     fun onOpenMarketRequested() {
         if (marketSelected) return
+        refreshWelcomeAfterMarketReturn = true
         setMarketSelected(true)
         val version = ++marketVersion
         marketOpenTask?.cancel()
@@ -225,6 +229,32 @@ internal class ChatWelcomeCoordinator(
         entranceTask = scheduler.schedule(delay, repeating = false) {
             if (entranceVersion == version && isActive()) task()
         }
+    }
+
+    /** Gives the returned page one frame to paint the right tab before sliding it home. */
+    private fun scheduleMarketTabReturnReset() {
+        val version = ++marketVersion
+        marketResetTask?.cancel()
+        marketResetTask = scheduler.schedule(120, repeating = false) {
+            if (marketVersion == version && isActive()) setMarketSelected(false)
+        }
+    }
+
+    /** Replays the R4 mounted -> presented transition after the four cards are replaced. */
+    private fun restartWelcomeEntrance(refreshStarters: Boolean) {
+        if (refreshStarters) onRefreshStarters()
+        ++entranceVersion
+        entranceTask?.cancel()
+        entranceTask = null
+        if (reducedMotion) {
+            setEntrancePresented(true)
+            return
+        }
+        // New vfor cards register easeOut while false; this flip consumes it (R4/R5).
+        setEntrancePresented(false)
+        val version = entranceVersion
+        scheduleEntranceStep(version, 32) { setEntrancePresented(true) }
+        scheduleEntranceSafety()
     }
 
     /** Version-guarded fallback so a lost mount/frame callback cannot leave cards transparent. */

@@ -62,10 +62,14 @@ internal abstract class BasePager : Pager() {
 
     private fun reloadAppearancePrefs() {
         val prefs = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
-        appearanceModeId = prefs.getItem(AppearancePrefs.KEY_THEME_MODE).ifEmpty { ThemeMode.SYSTEM.id }
-        appearanceFontScaleId = prefs.getItem(AppearancePrefs.KEY_FONT_SCALE).ifEmpty { FontScale.STANDARD.id }
-        // fontSizeScaled/lineHeightScaled 扩展按 pagerId 查表取系数
-        FontScaleRuntime.update(pagerId, FontScale.fromId(appearanceFontScaleId).factor)
+        val nextMode = prefs.getItem(AppearancePrefs.KEY_THEME_MODE).ifEmpty { ThemeMode.SYSTEM.id }
+        val nextFontScale = prefs.getItem(AppearancePrefs.KEY_FONT_SCALE).ifEmpty { FontScale.STANDARD.id }
+        // 先更新非响应式的字号倍率表，再写入会同步触发 vbind 重建的 observable。
+        // 若倒置顺序，首个重建会读到上一档倍率；倍率表自身不通知，只能在下一次
+        // 点击又触发重建时才“补上”，表现为字体大小永远慢一档。
+        FontScaleRuntime.update(pagerId, FontScale.fromId(nextFontScale).factor)
+        appearanceModeId = nextMode
+        appearanceFontScaleId = nextFontScale
         syncStatusBarIconsToHost()
     }
 

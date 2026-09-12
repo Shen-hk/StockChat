@@ -247,13 +247,15 @@ private fun stockMarkdownConfig(
     return MarkdownConfig(
         colors = MarkdownColors(
             text = if (dark) 0xFFF5F5F7 else 0xFF1D1D1F,
-            codeBackground = if (dark) 0xFF2C2C2E else 0xFFF1F1EF,
-            inlineCodeBackground = if (dark) 0xFF2C2C2E else 0xFFF1F1EF,
-            dividerColor = if (dark) 0xFF363638 else 0xFFE8E8E6,
-            tableBackground = if (dark) 0xFF1D1D1F else 0xFFFFFFFF,
-            blockQuoteBar = if (dark) 0xFF82A8FF else 0xFF2563EB,
-            blockQuoteBackground = if (dark) 0xFF1E3158 else 0xFFEFF6FF,
-            linkColor = if (dark) 0xFF82A8FF else 0xFF2563EB,
+            // Markdown 的非正文元素共享一组克制的蓝青信息色：表格、引用、代码和
+            // 链接在长回答中都有自己的层次，但不抢正文与涨跌色的注意力。
+            codeBackground = if (dark) 0xFF202A3D else 0xFFF2F6FF,
+            inlineCodeBackground = if (dark) 0xFF26334A else 0xFFE7F0FF,
+            dividerColor = if (dark) 0xFF33486A else 0xFFC9D9F2,
+            tableBackground = if (dark) 0xFF172235 else 0xFFF5F9FF,
+            blockQuoteBar = if (dark) 0xFF79B8FF else 0xFF1677D2,
+            blockQuoteBackground = if (dark) 0xFF172B4D else 0xFFEAF4FF,
+            linkColor = if (dark) 0xFF8CC8FF else 0xFF1269B0,
             codeText = if (dark) 0xFFF5F5F7 else 0xFF1D1D1F,
         ),
         typography = stockMarkdownTypography(dark),
@@ -311,9 +313,10 @@ private fun stockMarkdownTypography(dark: Boolean): MarkdownTypography {
         text = body,
         code = TextStyleConfig(fontSize = 14f, lineHeight = 21f, fontWeight = FontWeight.Medium, color = textColor),
         inlineCode = TextStyleConfig(fontSize = 15f, fontWeight = FontWeight.SemiBold, color = textColor),
-        h1 = TextStyleConfig(fontSize = 21f, lineHeight = 30f, fontWeight = FontWeight.Bold, color = textColor),
-        h2 = TextStyleConfig(fontSize = 18.5f, lineHeight = 27f, fontWeight = FontWeight.Bold, color = textColor),
-        h3 = TextStyleConfig(fontSize = 17f, lineHeight = 24f, fontWeight = FontWeight.Bold, color = textColor),
+        // 与输出协议对齐：唯一的大标题清晰领起回答，二、三级标题逐级收束。
+        h1 = TextStyleConfig(fontSize = 24f, lineHeight = 34f, fontWeight = FontWeight.Bold, color = textColor),
+        h2 = TextStyleConfig(fontSize = 20f, lineHeight = 29f, fontWeight = FontWeight.Bold, color = textColor),
+        h3 = TextStyleConfig(fontSize = 17f, lineHeight = 25f, fontWeight = FontWeight.Bold, color = textColor),
         h4 = TextStyleConfig(fontSize = 16f, lineHeight = 25f, fontWeight = FontWeight.Bold, color = textColor),
         h5 = body,
         h6 = body,

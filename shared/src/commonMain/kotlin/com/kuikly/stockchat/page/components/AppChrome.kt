@@ -67,6 +67,13 @@ data class AppTopBarMetric(
     val flash: Boolean = false,
 )
 
+/** A compact, cross-platform Tabler-style action for a secondary-page top bar. */
+data class AppTopBarAction(
+    val icon: ViewContainer<*, *>.(Color, Float, Boolean) -> Unit,
+    val onClick: () -> Unit,
+    val selected: () -> Boolean = { false },
+)
+
 data class IslandGestureMotion(
     val phase: IslandGesturePhase = IslandGesturePhase.IDLE,
     val offsetY: Float = 0f,
@@ -84,6 +91,11 @@ data class IslandGestureMotion(
 internal const val ISLAND_ANIMATION_RETURN = "island-gesture-return"
 internal const val ISLAND_ANIMATION_CLOSE = "island-gesture-close"
 internal const val ISLAND_ANIMATION_DETAIL = "island-gesture-detail"
+
+// Chat 顶部三颗收起态胶囊（菜单、标题岛、搜索/新对话）统一按当前视觉尺寸放大 15%。
+// 展开后的行情/术语卡不使用此系数，避免影响卡片的信息密度与手势阈值。
+private const val CHAT_TOP_CAPSULE_SCALE = 1.15f
+private const val CHAT_TOP_CONTROL_SIZE = 44f * CHAT_TOP_CAPSULE_SCALE
 
 /**
  * The compact, conversation-first chrome used by ChatHome.
@@ -131,6 +143,7 @@ fun ViewContainer<*, *>.ChatTopNav(
     onToggleIsland: () -> Unit = {},
     onIslandGesture: (String, Float) -> Unit = { _, _ -> },
     onIslandMotionComplete: (String) -> Unit = {},
+    onIslandInteraction: () -> Unit = {},
     onToggleIslandWatchlist: (String) -> Unit = {},
     onOpenIslandCompare: () -> Unit = {},
     onClearIslandCompare: () -> Unit = {},
@@ -145,12 +158,12 @@ fun ViewContainer<*, *>.ChatTopNav(
             // the flex column, the page content is laid out below it and there
             // is nothing for the backdrop blur to refract.
             absolutePosition(top = 0f, left = 0f, right = 0f)
-            height(statusBarHeight + 44f)
+            height(statusBarHeight + CHAT_TOP_CONTROL_SIZE)
             paddingTop(statusBarHeight)
             // Solid page colour is kept only behind the system status bar.
             // The nav row sits on a transparent backdrop so its glass islands
             // float over page content; the ~3dp feather softens the edge.
-            val chromeHeight = statusBarHeight + 44f
+            val chromeHeight = statusBarHeight + CHAT_TOP_CONTROL_SIZE
             val solidStop = (statusBarHeight / chromeHeight).coerceIn(0f, 1f)
             val featherStop = ((statusBarHeight + 3f) / chromeHeight).coerceIn(0f, 1f)
             backgroundLinearGradient(
@@ -162,7 +175,7 @@ fun ViewContainer<*, *>.ChatTopNav(
         }
         View {
             attr {
-                height(44f)
+                height(CHAT_TOP_CONTROL_SIZE)
                 paddingLeft(10f)
                 paddingRight(10f)
                 flexDirectionRow()
@@ -170,7 +183,7 @@ fun ViewContainer<*, *>.ChatTopNav(
             }
             View {
                 attr {
-                    size(44f, 44f); allCenter(); borderRadius(22f)
+                    size(CHAT_TOP_CONTROL_SIZE, CHAT_TOP_CONTROL_SIZE); allCenter(); borderRadius(CHAT_TOP_CONTROL_SIZE / 2f)
                     backgroundColor(theme.surface)
                     border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
                     boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
@@ -214,7 +227,12 @@ fun ViewContainer<*, *>.ChatTopNav(
                         )
                     }
                 }
-                Text { attr { text(if (drawerOpen()) "×" else "☰"); fontSizeScaled(22f); color(theme.textPrimary) } }
+                vif({ drawerOpen() }) {
+                    Text { attr { text("×"); fontSizeScaled(22f); color(theme.textPrimary) } }
+                }
+                vif({ !drawerOpen() }) {
+                    LineIconMenu(theme.textPrimary, 20f)
+                }
                 event { click { onMenu() } }
             }
             // The middle slot stays empty: the floating title island below is
@@ -225,7 +243,7 @@ fun ViewContainer<*, *>.ChatTopNav(
             // 收拢联动 p 挂在整颗气泡上，展开时整体向右滑出。
             View {
                 attr {
-                    height(44f)
+                    height(CHAT_TOP_CONTROL_SIZE)
                     // Mirror of the menu button above：同款进度联动 p，向右滑出。
                     val e = islandPresented()
                     val motion = islandGestureMotion()
@@ -260,11 +278,11 @@ fun ViewContainer<*, *>.ChatTopNav(
                         )
                     }
                 }
-                // 胶囊主体（44 高，与左侧菜单钮同一圆心高度）
+                // 胶囊主体（与左侧菜单钮同一圆心高度）
                 View {
                     attr {
-                        height(44f); flexDirectionRow(); alignItemsCenter()
-                        borderRadius(22f)
+                        height(CHAT_TOP_CONTROL_SIZE); flexDirectionRow(); alignItemsCenter()
+                        borderRadius(CHAT_TOP_CONTROL_SIZE / 2f)
                         backgroundColor(theme.surface)
                         border(Border(0.5f, BorderStyle.SOLID, Color(0x000000, 0.05f)))
                         boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.14f)))
@@ -272,7 +290,7 @@ fun ViewContainer<*, *>.ChatTopNav(
                     // 左半：全局搜索（Lucide search 对齐：镜柄朝右下）
                     View {
                         attr {
-                            size(44f, 44f); allCenter()
+                            size(CHAT_TOP_CONTROL_SIZE, CHAT_TOP_CONTROL_SIZE); allCenter()
                             touchEnable(!islandPresented())
                         }
                         LineIconSearch(theme.textPrimary, 20f)
@@ -283,7 +301,7 @@ fun ViewContainer<*, *>.ChatTopNav(
                     // 右半：新对话
                     View {
                         attr {
-                            size(43.5f, 44f); allCenter()
+                            size(CHAT_TOP_CONTROL_SIZE - 0.5f, CHAT_TOP_CONTROL_SIZE); allCenter()
                             touchEnable(!islandPresented())
                         }
                         LineIconPlus(theme.brand, 20f)
@@ -323,6 +341,7 @@ fun ViewContainer<*, *>.ChatTopNav(
             onToggle = onToggleIsland,
             onGesture = onIslandGesture,
             onMotionComplete = onIslandMotionComplete,
+            onInteraction = onIslandInteraction,
             onToggleWatchlist = onToggleIslandWatchlist,
             onOpenCompare = onOpenIslandCompare,
             onClearCompare = onClearIslandCompare,
@@ -369,6 +388,7 @@ private fun ViewContainer<*, *>.StockIsland(
     onToggle: () -> Unit,
     onGesture: (String, Float) -> Unit,
     onMotionComplete: (String) -> Unit,
+    onInteraction: () -> Unit,
     onToggleWatchlist: (String) -> Unit,
     onOpenCompare: () -> Unit,
     onClearCompare: () -> Unit,
@@ -380,7 +400,7 @@ private fun ViewContainer<*, *>.StockIsland(
     // 用户决策 2026-09-05：胶囊锚点常驻 60dp，侧边栏展开时不再横移让位——
     // 抽屉盖住它即可，收起后原位出现，全程没有横向跳动。
     val expandedIslandInset = 14f
-    val collapsedIslandLeft = 60f
+    val collapsedIslandLeft = 64f
     // Collapsed pill width is fitted to the title text: a per-character advance
     // (bold weight, default font) plus a small side padding.  This keeps the
     // capsule tight around "StockChat" and stretches naturally when a longer
@@ -389,11 +409,11 @@ private fun ViewContainer<*, *>.StockIsland(
     // padding keeps the glyphs from touching the pill edge.
     val charAdvance = if (title == null) 10f else 8f
     val charCount = (title ?: "StockChat").length
-    // Collapsed geometry scaled +10% (2026-09-05) to match the enlarged
-    // 44dp side buttons; expanded card geometry is untouched.
-    val collapsedWidth = ((charCount * charAdvance + 20f) * 1.1f).coerceAtLeast(88f)
-    val collapsedHeight = 39.6f
-    val collapsedRadius = 19.8f
+    // 收起态标题岛与两侧控制胶囊同步放大 15%；展开卡片几何保持不变。
+    val collapsedWidth = ((charCount * charAdvance + 20f) * 1.1f * CHAT_TOP_CAPSULE_SCALE)
+        .coerceAtLeast(88f * CHAT_TOP_CAPSULE_SCALE)
+    val collapsedHeight = 39.6f * CHAT_TOP_CAPSULE_SCALE
+    val collapsedRadius = 19.8f * CHAT_TOP_CAPSULE_SCALE
     val expandedWidth = (pageWidth - expandedIslandInset * 2f).coerceAtLeast(collapsedWidth)
     val quoteHeight = 140f
     // 术语讲解卡：标题行 + 人话解释（≤3 行）+ A股例子（≤2 行），比行情卡高 18dp。
@@ -474,10 +494,22 @@ private fun ViewContainer<*, *>.StockIsland(
                 // left edge and right edge shrinking in lockstep.
                 val collapsedLeft = collapsedIslandLeft
                 val targetLeft = when {
-                    navigating -> expandedIslandInset
+                    // Detail handoff expands from the card's 14dp gutters to
+                    // the viewport itself.  Keeping the normal card inset
+                    // here makes only the right edge grow (width = pageWidth)
+                    // and leaves a visible seam on the left.  Move the left
+                    // edge to zero in the same animation cycle as the width
+                    // so both edges spread evenly to the page bounds.
+                    navigating -> 0f
                     gestureEnabled && dragY < 0f ->
                         expandedIslandInset -
                             (expandedIslandInset - collapsedLeft) * closeProgress
+                    // Downward drag grows the card by the remaining 28dp of
+                    // viewport width.  Move the left edge through that same
+                    // progress so the live, finger-following morph expands
+                    // toward both viewport edges instead of only to the right.
+                    gestureEnabled && dragY > 0f ->
+                        expandedIslandInset * (1f - spreadProgress)
                     e && !dropTextOnly -> expandedIslandInset
                     else -> collapsedLeft
                 }
@@ -764,6 +796,7 @@ private fun ViewContainer<*, *>.StockIsland(
                 // capture area is large enough for a reliable one-thumb swipe.
                 // Up dismisses; down continues into the current stock detail.
                 IslandGestureHandle(gestureMotion, onGesture)
+                event { click { onInteraction() } }
             }
 
             // Expanded term-card layer：术语讲解卡（长按蓝色术语高亮进入）。
@@ -866,6 +899,7 @@ private fun ViewContainer<*, *>.StockIsland(
                     }
                 }
                 IslandGestureHandle(gestureMotion, onGesture)
+                event { click { onInteraction() } }
             }
 
             // Drag target layer. It replaces the quote content while a stock is hovering so the
@@ -1394,9 +1428,9 @@ fun ViewContainer<*, *>.ChatDrawer(
         DrawerGroupTitle("个人空间", theme)
         View {
             attr { flexDirectionRow() }
-            DrawerTile("自选股", theme, icon = { LineIconStar(theme.textPrimary, 22f) }) { onClose(); onOpenWatchlist() }
+            DrawerTile("自选股", theme, icon = { LineIconBookmark(theme.textPrimary, 22f) }) { onClose(); onOpenWatchlist() }
             View { attr { width(8f) } }
-            DrawerTile("风险地图", theme, icon = { LineIconShieldCheck(theme.textPrimary, 22f) }) { onClose(); onOpenRiskMap() }
+            DrawerTile("风险地图", theme, icon = { LineIconRadar(theme.textPrimary, 22f) }) { onClose(); onOpenRiskMap() }
             View { attr { width(8f) } }
             DrawerTile("术语表", theme, icon = { LineIconBook(theme.textPrimary, 22f) }) { onClose(); onOpenGlossary() }
         }
@@ -1405,7 +1439,7 @@ fun ViewContainer<*, *>.ChatDrawer(
             attr { flexDirectionRow() }
             DrawerTile("市场总览", theme, icon = { LineIconBarChart(theme.textPrimary, 22f) }) { onClose(); onOpenMarket() }
             View { attr { width(8f) } }
-            DrawerTile("异动预警", theme, icon = { LineIconBell(theme.textPrimary, 22f) }) { onClose(); onOpenAlerts() }
+            DrawerTile("异动预警", theme, icon = { LineIconBellRinging(theme.textPrimary, 22f) }) { onClose(); onOpenAlerts() }
             // 全局搜索入口已移到底部固定栏（2026-09-08 五轮）。
         }
 
@@ -1472,12 +1506,12 @@ fun ViewContainer<*, *>.ChatDrawer(
             }
             View {
                 attr { size(32f, 32f); allCenter() }
-                LineIconSearch(theme.textSecondary, 19f)
+                LineIconSearch(theme.textSecondary, 22f)
                 event { click { onClose(); onOpenSearch() } }
             }
             View {
                 attr { size(32f, 32f); marginLeft(6f); allCenter() }
-                LineIconSliders(theme.textSecondary, 19f)
+                LineIconSliders(theme.textSecondary, 22f)
                 event { click { onSettings() } }
             }
         }
@@ -1564,10 +1598,7 @@ fun ViewContainer<*, *>.AppTopBar(
     progress: () -> Float? = { null },
     reduceMotion: Boolean = false,
     compactMetrics: () -> List<AppTopBarMetric> = { emptyList() },
-    // 2026-09-10：label 从 String 改为 () -> String——标签在 Text attr 内读取，
-    // 动态字形（详情页未自选☆/已自选★）才能随 observable 翻转（R1：builder
-    // 快照只取初值）。静态标签调用点包一层 { } 即可。
-    actions: List<Pair<() -> String, () -> Unit>> = emptyList(),
+    actions: List<AppTopBarAction> = emptyList(),
     // 2026-09-08：顶栏统一去毛玻璃，改为 theme.surface 实色 + 发丝分隔线
     // （与详情页原型一致）。renderer 参数保留以兼容既有调用点，当前不参与绘制。
 ) {
@@ -1596,14 +1627,20 @@ fun ViewContainer<*, *>.AppTopBar(
             }
             if (backLabel != null) {
                 View {
-                    attr { paddingRight(8f); minWidth(44f); height(44f); justifyContentCenter() }
-                    Text {
+                    attr { minWidth(44f); height(44f); allCenter() }
+                    // “地图”是术语页的视图切换；其余二级页面统一为返回箭头。
+                    View {
                         attr {
-                            text(backLabel)
-                            // 单字符（‹）按大号图形字号渲染，文字标签（返回）保持常规。
-                            fontSizeScaled(if (backLabel.length == 1) 22f else 15f)
-                            fontWeightMedium()
-                            color(theme.brand)
+                            width(32f)
+                            height(32f)
+                            allCenter()
+                            borderRadius(10f)
+                            backgroundColor(theme.surface.opacity(0f))
+                        }
+                        if (backLabel == "地图") {
+                            LineIconRadar(theme.brand, 18f)
+                        } else {
+                            LineIconArrowLeft(theme.brand, 19f)
                         }
                     }
                     event { click { onBack() } }
@@ -1691,9 +1728,8 @@ fun ViewContainer<*, *>.AppTopBar(
                     }
                 }
             }
-            actions.forEach { (label, action) ->
-                // 2026-09-08：去圈圈框框，动作只保留实体字形、放大到 44pt 触控区，
-                // 靠字号与字重撑住存在感，不再用底色/描边圈住。
+            actions.forEach { action ->
+                // 二级页操作使用同一枚柔和圆角按钮；不再裸露 Tabler 式细线。
                 View {
                     attr {
                         marginLeft(4f)
@@ -1701,21 +1737,20 @@ fun ViewContainer<*, *>.AppTopBar(
                         height(44f)
                         allCenter()
                     }
-                    Text {
-                        attr {
-                            val glyph = label()
-                            text(glyph)
-                            // 符号字形（＋ ✓ ☆ ★ ⋯）给图形级字号；两字以上是文字动作。
-                            fontSizeScaled(if (glyph.length > 1) 15f else 21f)
-                            fontWeightSemiBold()
-                            color(
-                                if (glyph == "+" || glyph == "✓" ||
-                                    glyph == "★" || glyph == "☆"
-                                ) theme.brand else theme.textPrimary
-                            )
+                    vbind({ action.selected() }) {
+                        val selected = action.selected()
+                        View {
+                            attr {
+                                width(32f)
+                                height(32f)
+                                allCenter()
+                                borderRadius(10f)
+                                backgroundColor(if (selected) theme.brand.opacity(0.14f) else theme.divider.opacity(0.42f))
+                            }
+                            action.icon.invoke(this, if (selected) theme.brand else theme.textPrimary, 19f, selected)
                         }
                     }
-                    event { click { action() } }
+                    event { click { action.onClick() } }
                 }
             }
         }

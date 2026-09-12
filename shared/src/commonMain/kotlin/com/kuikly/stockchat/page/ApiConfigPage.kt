@@ -19,6 +19,7 @@ import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
+import com.tencent.kuikly.core.base.ViewRef
 import com.tencent.kuikly.core.base.attr.ImageUri
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
@@ -26,8 +27,10 @@ import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.Image
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.Scroller
+import com.tencent.kuikly.core.views.ScrollerView
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import com.tencent.kuikly.core.timer.setTimeout
 
 @Page(Routes.API_CONFIG, supportInLocal = true)
 internal class ApiConfigPage : BasePager() {
@@ -40,6 +43,10 @@ internal class ApiConfigPage : BasePager() {
     private var statusSuccess: Boolean by observable(false)
     private var selectedPresetId: String by observable(ModelPresets.all.first().id)
     private var slotVersion: Int by observable(0)
+    /** Input reports the actual IME height; the form reserves it and follows the focused key field. */
+    private var apiKeyKeyboardHeight: Float by observable(0f)
+    private var apiKeyKeyboardLayoutVersion = 0
+    private var configScrollerRef: ViewRef<ScrollerView<*, *>>? = null
     private val configStore by lazy { AiConfigStore(pagerId) }
     private val theme: StockChatTheme get() = appTheme()
 
@@ -53,13 +60,17 @@ internal class ApiConfigPage : BasePager() {
         return {
             attr { backgroundColor(page.theme.page) }
             Scroller {
+                ref { page.configScrollerRef = it }
                 attr {
                     flex(1f)
                     // 竖向 Scroller 水平 padding 会被双倍扣除，padding(16f) 后右 padding 清 0 对齐（同 ChatPage）。
                     padding(16f)
                     paddingRight(0f)
                     paddingTop(page.pagerData.statusBarHeight + 73f)
-                    paddingBottom(28f + page.pagerData.safeAreaInsets.bottom)
+                    // adjustResize alone only shrinks the native host. Reserve
+                    // the IME inside this independent form scroller as well so
+                    // the API Key field can be moved above the keyboard.
+                    paddingBottom(28f + page.pagerData.safeAreaInsets.bottom + page.apiKeyKeyboardHeight)
                 }
                 // 换肤重建键（同 ChatPage/SettingsPage 约定）：子树以参数捕获
                 // theme / appIsDarkTheme（body 只跑一次，R1），从通用设置返回后
@@ -156,7 +167,10 @@ internal class ApiConfigPage : BasePager() {
                                     placeholder("输入你的 API Key")
                                     placeholderColor(page.theme.textTertiary)
                                 }
-                                event { textDidChange { page.apiKey = it.text } }
+                                event {
+                                    textDidChange { page.apiKey = it.text }
+                                    keyboardHeightChange { page.handleApiKeyKeyboardLayout(it.height) }
+                                }
                             }
                         }
                         vif({ !page.revealKey }) {
@@ -170,7 +184,10 @@ internal class ApiConfigPage : BasePager() {
                                     placeholderColor(page.theme.textTertiary)
                                     keyboardTypePassword()
                                 }
-                                event { textDidChange { page.apiKey = it.text } }
+                                event {
+                                    textDidChange { page.apiKey = it.text }
+                                    keyboardHeightChange { page.handleApiKeyKeyboardLayout(it.height) }
+                                }
                             }
                         }
                     }
@@ -342,6 +359,29 @@ internal class ApiConfigPage : BasePager() {
     private fun showStatus(success: Boolean, message: String) {
         statusSuccess = success
         statusMessage = message
+    }
+
+    /** Keep the API Key input visible after the native IME has resized the host. */
+    private fun handleApiKeyKeyboardLayout(height: Float) {
+        apiKeyKeyboardHeight = height.coerceAtLeast(0f)
+        if (height <= 0f) return
+        val version = ++apiKeyKeyboardLayoutVersion
+        // The first pass follows the resize; the second covers Android's IME
+        // animation frame where ScrollerView has not measured its new height.
+        intArrayOf(16, 220).forEach { delay ->
+            setTimeout(delay) {
+                if (version == apiKeyKeyboardLayoutVersion && apiKeyKeyboardHeight > 0f) {
+                    scrollApiKeyIntoView()
+                }
+            }
+        }
+    }
+
+    private fun scrollApiKeyIntoView() {
+        val scroller = configScrollerRef?.view ?: return
+        val contentHeight = scroller.contentView?.frame?.height ?: return
+        val maxOffset = (contentHeight - scroller.frame.height - 8f).coerceAtLeast(0f)
+        scroller.setContentOffset(0f, maxOffset, true)
     }
 }
 

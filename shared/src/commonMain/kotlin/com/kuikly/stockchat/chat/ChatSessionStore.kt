@@ -67,9 +67,16 @@ class ChatSessionStore(
         val resolvedSessionId = sessionId.ifBlank { newSessionId() }
         val storedMessages = messages
             .takeLast(MAX_MESSAGES)
-            .filter { !it.streaming && it.content.isNotBlank() }
+            .filter { !it.streaming && (it.content.isNotBlank() || it.attachments.isNotEmpty()) }
             .map { message ->
-                StoredChatMessage(message.id, message.role, message.content, message.failed, message.cancelled)
+                StoredChatMessage(
+                    message.id,
+                    message.role,
+                    message.content,
+                    message.failed,
+                    message.cancelled,
+                    message.attachments,
+                )
             }
         val sessions = readSessions()
             .filterNot { it.id == resolvedSessionId }
@@ -199,6 +206,7 @@ data class StoredChatMessage(
     val content: String,
     val failed: Boolean,
     val cancelled: Boolean,
+    val attachments: List<MessageAttachment> = emptyList(),
 )
 
 private data class StoredChatSession(
@@ -222,6 +230,16 @@ private fun StoredChatSession.toJson(): JSONObject = JSONObject().apply {
                 put("content", message.content)
                 put("failed", message.failed)
                 put("cancelled", message.cancelled)
+                put("attachments", JSONArray().apply {
+                    message.attachments.forEach { attachment ->
+                        put(JSONObject().apply {
+                            put("id", attachment.id)
+                            put("path", attachment.path)
+                            put("name", attachment.name)
+                            put("isImage", attachment.isImage)
+                        })
+                    }
+                })
             })
         }
     })
@@ -246,9 +264,26 @@ private fun JSONArray.toStoredChatMessages(): List<StoredChatMessage> = buildLis
         val item = optJSONObject(index) ?: return@repeat
         val role = runCatching { MessageRole.valueOf(item.optString("role")) }.getOrNull() ?: return@repeat
         val content = item.optString("content")
-        if (content.isNotBlank()) {
-            add(StoredChatMessage(item.optString("id"), role, content, item.optBoolean("failed"), item.optBoolean("cancelled")))
+        val attachments = item.optJSONArray("attachments")?.toMessageAttachments().orEmpty()
+        if (content.isNotBlank() || attachments.isNotEmpty()) {
+            add(StoredChatMessage(item.optString("id"), role, content, item.optBoolean("failed"), item.optBoolean("cancelled"), attachments))
         }
+    }
+}
+
+private fun JSONArray.toMessageAttachments(): List<MessageAttachment> = buildList {
+    repeat(length()) { index ->
+        val item = optJSONObject(index) ?: return@repeat
+        val path = item.optString("path")
+        if (path.isBlank()) return@repeat
+        add(
+            MessageAttachment(
+                id = item.optString("id").ifBlank { "attachment_$index" },
+                path = path,
+                name = item.optString("name"),
+                isImage = item.optBoolean("isImage"),
+            ),
+        )
     }
 }
 

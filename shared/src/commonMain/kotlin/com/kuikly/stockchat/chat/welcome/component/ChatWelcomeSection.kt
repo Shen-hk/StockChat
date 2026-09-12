@@ -8,11 +8,15 @@ import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.ColorStop
 import com.tencent.kuikly.core.base.Direction
+import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.base.attr.AccessibilityRole
+import com.tencent.kuikly.core.directives.vfor
+import com.tencent.kuikly.core.reactive.collection.ObservableList
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
+import kotlin.random.Random
 
 internal enum class WelcomeMode { FULL, BRIEF }
 
@@ -31,6 +35,30 @@ internal fun defaultWelcomeStarters(): List<WelcomeStarter> = listOf(
     WelcomeStarter(WelcomeStarterKind.REPORT, "用三句话讲下贵州茅台的中报", "营收 · 净利 · 同比变化"),
     WelcomeStarter(WelcomeStarterKind.COMPARE, "对比茅台和五粮液的营收与净利润", "只陈事实，不做选择建议"),
 )
+
+/** 每轮从四个长度档各抽一句，再按长度排列，保持卡片从短到长。 */
+internal fun randomWelcomeStarters(random: Random = Random.Default): List<WelcomeStarter> = listOf(
+    listOf(
+        WelcomeStarter(WelcomeStarterKind.TERM, "MACD 是什么？", "一句话讲清，再举个例子"),
+        WelcomeStarter(WelcomeStarterKind.TERM, "什么是市盈率？", "用通俗的话说明白"),
+        WelcomeStarter(WelcomeStarterKind.MOVE, "今天大盘怎么看？", "涨跌、成交与情绪"),
+    ),
+    listOf(
+        WelcomeStarter(WelcomeStarterKind.MOVE, "贵州茅台今天为什么跌？", "消息面 · 资金面 · 板块联动"),
+        WelcomeStarter(WelcomeStarterKind.TERM, "MACD 金叉通常代表什么？", "解释含义与局限"),
+        WelcomeStarter(WelcomeStarterKind.REPORT, "怎么看一家公司营收增长？", "给出三个关键指标"),
+    ),
+    listOf(
+        WelcomeStarter(WelcomeStarterKind.REPORT, "用三句话讲下贵州茅台的中报", "营收 · 净利 · 同比变化"),
+        WelcomeStarter(WelcomeStarterKind.MOVE, "某只股票放量上涨说明什么？", "结合量价和板块分析"),
+        WelcomeStarter(WelcomeStarterKind.TERM, "市盈率（PE）多少算高？", "给区间，再举个实际例子"),
+    ),
+    listOf(
+        WelcomeStarter(WelcomeStarterKind.COMPARE, "对比茅台和五粮液的营收与净利润", "只陈事实，不做选择建议"),
+        WelcomeStarter(WelcomeStarterKind.COMPARE, "宁德时代和比亚迪的业务有什么不同？", "从主营、客户和风险对比"),
+        WelcomeStarter(WelcomeStarterKind.REPORT, "帮我快速读懂一份财报里最值得关注的变化", "先结论，后列数据依据"),
+    ),
+).map { it[random.nextInt(it.size)] }.sortedBy { it.question.length }
 
 /** 问AI 分区的示例卡（看市场分区是跳转入口，不占推荐位）。 */
 internal fun aiWelcomeStarters(): List<WelcomeStarter> = listOf(
@@ -56,6 +84,8 @@ internal fun ViewContainer<*, *>.WelcomeSection(
     rotatingKeyword: () -> String,
     cursorVisible: () -> Boolean,
     entranceVisible: () -> Boolean,
+    starterRenderKeys: ObservableList<Int>,
+    starters: () -> List<WelcomeStarter>,
     /** 「看市场」胶囊选中态（取值闭包）：驱动滑块滑到右半格并高亮文案。 */
     marketTabSelected: () -> Boolean,
     onMounted: () -> Unit,
@@ -69,30 +99,32 @@ internal fun ViewContainer<*, *>.WelcomeSection(
             paddingTop(1f)
             paddingLeft(6f)
             paddingRight(6f)
-            paddingBottom(theme.spacing.lg)
+            paddingBottom(0f)
+            // 顶部欢迎区维持居中；“为你推荐”和问题卡另行左对齐。
             alignItemsCenter()
-            // 文案必须始终可见；入场只交给示例卡做阶梯上滑，避免空会话白屏。
-            opacity(1f)
         }
         // 入场只能从实际挂载点启动。pageDidAppear 可能早于 body/子视图构建，
         // 在那里触发会令一次性的 presented 变化发生在 attr 注册依赖之前。
         ref { onMounted() }
-        // 顶部呼吸位：固定 50dp（用户决策 2026-09-05）。必须用固定值而不是屏高
+        // 顶部呼吸位：固定 80dp（在原有基础上整体下移 30dp）。必须用固定值而不是屏高
         // 比例——0.22×屏高档（≈176dp）曾把底部示例卡推出首屏，导致"进去要先上
         // 划才能看全"。50dp 档内容总高仍留有余量，任何机型首屏完整可见。
-        View { attr { height(50f) } }
-        WelcomeBadge(theme)
-        // 主题句：StockChat帮你看 + 轮播词 + 打字光标（22 号）
+        View { attr { height(110f) } }
+        WelcomeBadge(theme, entranceVisible, reduceMotion)
+        // 主题句：StockChat帮你看 + 轮播词 + 打字光标（24 号）
         View {
             attr {
                 flexDirectionRow()
                 alignItemsCenter()
-                justifyContentCenter()
+                opacity(if (reduceMotion || entranceVisible()) 1f else 0f)
+                transform(scale = if (reduceMotion || entranceVisible()) Scale.DEFAULT else Scale(0.82f, 0.82f))
+                // 主题句与图标只做缩放回弹，不参与上滑。
+                animate(Animation.springEaseOut(0.40f, 0.78f, 0.18f).delay(0.05f), entranceVisible())
             }
             Text {
                 attr {
                     text("StockChat帮你看")
-                    fontSizeScaled(22f)
+                    fontSizeScaled(24f)
                     fontWeightBold()
                     color(theme.textPrimary)
                 }
@@ -101,7 +133,7 @@ internal fun ViewContainer<*, *>.WelcomeSection(
                 attr {
                     // 必须在 attr 内部调用取值闭包，否则打字机文案不会重绘。
                     text(rotatingKeyword())
-                    fontSizeScaled(22f)
+                    fontSizeScaled(24f)
                     fontWeightBold()
                     color(theme.brand)
                 }
@@ -109,7 +141,7 @@ internal fun ViewContainer<*, *>.WelcomeSection(
             View {
                 attr {
                     width(2.5f)
-                    height(24f)
+                    height(26f)
                     marginLeft(3f)
                     backgroundColor(theme.brand)
                     // step-end 闪烁：直接切 opacity，不注册 animate()。
@@ -118,25 +150,43 @@ internal fun ViewContainer<*, *>.WelcomeSection(
             }
         }
         WelcomeTabRow(theme, marketTabSelected, onOpenMarket)
-        // 【2026-09-11 暂时下线】下方引导语 + 示例卡，恢复时取消注释即可：
-        // Text {
-        //     attr {
-        //         text("可以这样问")
-        //         alignSelfFlexStart()
-        //         marginTop(theme.spacing.xl)
-        //         fontSize(theme.type.meta)
-        //         fontWeightSemiBold()
-        //         color(theme.textTertiary)
-        //     }
-        // }
-        // defaultWelcomeStarters().forEachIndexed { index, starter ->
-        //     QuestionStarterCard(starter, theme, index, entranceVisible, reduceMotion, onChoose)
-        // }
+        // 「为你推荐」(2026-09-11 恢复自 f6d65b1「暂时下线」段)：保留
+        // defaultWelcomeStarters + QuestionStarterCard 入场阶梯动画（R4/R5），
+        // 仅把文案从「可以这样问」改为「为你推荐」以贴合欢迎区语义。
+        // 标题 + 示例卡保留问AI / 看行情胶囊外的视觉重心位置，避免与顶部动效打架。
+        Text {
+            attr {
+                text("为你推荐")
+                alignSelfFlexStart()
+                marginTop(theme.spacing.lg)
+                marginBottom(theme.spacing.sm)
+                fontSizeScaled(12f)
+                fontWeightSemiBold()
+                color(theme.textTertiary)
+            }
+        }
+        // vfor 是推荐内容的重建边界：调用方先换普通快照，再 clear + add key（R7）。
+        vfor({ starterRenderKeys }) {
+            View {
+                attr {
+                    alignSelfStretch()
+                    flexDirectionColumn()
+                    alignItemsFlexStart()
+                }
+                starters().forEachIndexed { index, starter ->
+                    QuestionStarterCard(starter, theme, index, entranceVisible, reduceMotion, onChoose)
+                }
+            }
+        }
     }
 }
 
 /** 主题句上方的品牌图标（82dp brand 圆角方块 + 趋势线，2026-09-10 放大 20%）。装饰元素，读屏跳过。 */
-private fun ViewContainer<*, *>.WelcomeBadge(theme: StockChatTheme) {
+private fun ViewContainer<*, *>.WelcomeBadge(
+    theme: StockChatTheme,
+    entranceVisible: () -> Boolean,
+    reduceMotion: Boolean,
+) {
     View {
         attr {
             size(82f, 82f)
@@ -145,6 +195,11 @@ private fun ViewContainer<*, *>.WelcomeBadge(theme: StockChatTheme) {
             borderRadius(20f)
             backgroundColor(theme.brand)
             accessibilityRole(AccessibilityRole.NONE)
+            // 从略小的尺寸弹到原尺寸，springEaseOut 的轻微越界形成欢迎回弹感。
+            val visible = reduceMotion || entranceVisible()
+            opacity(if (visible) 1f else 0f)
+            transform(scale = if (visible) Scale.DEFAULT else Scale(0.72f, 0.72f))
+            animate(Animation.springEaseOut(0.42f, 0.76f, 0.18f), entranceVisible())
         }
         LineIconTrendUp(color = theme.onBrand, size = 44f)
     }

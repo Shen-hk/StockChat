@@ -7,7 +7,7 @@ enum class MessageRole { SYSTEM, USER, ASSISTANT }
 
 /**
  * 消息层附件（UI 无关）：发送时从输入栏快照进用户消息，仅用于气泡回显。
- * 本轮不进会话持久化（缓存文件可能被系统回收，恢复后不保真）。
+ * 附件文件由宿主复制到应用私有持久目录；元数据随会话保存，恢复后仍可预览和查看文件名。
  */
 data class MessageAttachment(
     val id: String,
