@@ -66,6 +66,8 @@ import com.kuikly.stockchat.chat.composer.state.VoiceInputState
 import com.kuikly.stockchat.chat.composer.component.AtCandidatePanelProps
 import com.kuikly.stockchat.chat.composer.component.ComposerActionRow
 import com.kuikly.stockchat.chat.composer.component.ComposerActionRowProps
+import com.kuikly.stockchat.chat.composer.component.ComposerChrome
+import com.kuikly.stockchat.chat.composer.component.ComposerChromeProps
 import com.kuikly.stockchat.chat.composer.component.ComposerInputRow
 import com.kuikly.stockchat.chat.composer.component.ComposerInputRowProps
 import com.kuikly.stockchat.chat.composer.component.CommandParamPanelProps
@@ -1090,80 +1092,21 @@ internal class ChatPage : BasePager() {
                     // glass backdrop.
                     // 原生 TextArea 不可靠地继承绝对定位父层的 alpha；把欢迎入场
                     // 直接挂在胶囊内容层，确保文字、边框和操作按钮同步淡入上浮。
-                    View {
-                        attr {
-                            val emptySession = page.viewModel.messages.isEmpty()
-                            val welcomePresented = page.welcomeState.entranceVisible
-                            val visible = !emptySession || welcomePresented
-                            opacity(if (visible) 1f else 0f)
-                            transform(Translate(0f, if (visible) 0f else 18f))
-                            animate(Animation.easeOut(0.36f).delay(0.10f), page.welcomeState.entranceVisible)
-                        }
-                        View {
-                        attr {
-                            absolutePosition(bottom = 0f, left = 0f, right = 0f)
-                            height(10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
-                            backgroundColor(page.theme.page)
-                            touchEnable(false)
-                        }
-                    }
-                    // 输入框上方引导语气泡（2026-09-12 用户反馈：仿豆包升级
-                    // chip 可见性 + 去掉本页内「可以这样问」label ——「为你推荐」已在
-                    // WelcomeSection 顶部出现；点按 chip = injectQuestion。
-                    //
-                    // 过渡不变量：引导语不随展开态卸载。它用固定基线高度退场，
-                    // 让底部胶囊的锚点在同一帧里连续移动，而不是先删掉内容再撑高输入栏。
-                    View {
-                        attr {
-                            val expanded = page.composerExpanded
-                            height(if (expanded) 0f else COMPOSER_GUIDE_HEIGHT)
-                            opacity(if (expanded) 0f else 1f)
-                            touchEnable(!expanded)
-                            animate(Animation.easeOut(COMPOSER_LAYOUT_DURATION), expanded)
-                        }
-                        View {
-                            attr {
-                                marginBottom(8f)
-                                paddingTop(8f)
-                                paddingBottom(8f)
-                                alignSelfFlexStart()
-                            }
-                            ComposerGuideRow(page.theme) { text -> page.injectQuestion(text) }
-                        }
-                    }
-                    // Two states: a short collapsed bar (＋ / input / 语音 / 拍照, no
-                    // send) and the expanded composing bar from the HTML prototype.
-                    // The glass remains transparent. Its gradient rim is painted
-                    // above it, rather than used as a coloured background beneath it.
-                    View {
-                        attr {
-                            borderRadius(26f)
-                            paddingTop(9f)
-                            paddingBottom(9f)
-                            paddingLeft(10f)
-                            paddingRight(10f)
-                            // 悬浮感：与顶部灵动岛胶囊同款阴影（AppChrome 灵动岛
-                            // 0/8/22/0.16），让输入栏像浮在列表上方而不是贴底。
-                            boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
-                            // 表皮跟随主题：浅色 = 纯白，深色 = surface 深灰。attr 内
-                            // 读 page.theme 注册依赖，换肤时本块随 observable 重放
-                            // （animate 的键取自实参里的 entityDrag 读，不受影响）。
-                            backgroundColor(
-                                if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) page.theme.brandSoft
-                                else page.theme.surface
-                            )
-                            transform(
-                                scale = if (page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER) {
-                                    Scale(1.015f, 1.015f)
-                                } else {
-                                    Scale.DEFAULT
-                                }
-                            )
-                            animate(
-                                Animation.easeOut(0.16f),
-                                page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER,
-                            )
-                        }
+                    ComposerChrome(
+                        ComposerChromeProps(
+                            theme = page.theme,
+                            emptySession = { page.viewModel.messages.isEmpty() },
+                            welcomePresented = { page.welcomeState.entranceVisible },
+                            expanded = { page.composerExpanded },
+                            keyboardHeight = { page.keyboardHeight },
+                            bottomInset = page.pagerData.safeAreaInsets.bottom,
+                            composerDropActive = {
+                                page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER
+                            },
+                            onGuideSelected = page::injectQuestion,
+                            renderRim = page::renderComposerGradientRim,
+                        ),
+                    ) {
                             // 上下文备注条（@提及/命令带出的深上下文）：保持在胶囊内、
                             // 与输入语义强绑定，不随「最近标的」气泡外移。
                             vif({ page.isComposerVisuallyExpanded() && page.deepContextVersion >= 0 && page.deepContextNotes.isNotEmpty() }) {
@@ -1220,8 +1163,6 @@ internal class ChatPage : BasePager() {
                                     onSend = page::submitInput,
                                 ),
                             )
-                        page.renderComposerGradientRim(this)
-                    }
                     }
                     }
                 }
