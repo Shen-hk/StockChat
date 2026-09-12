@@ -16,6 +16,7 @@ import com.kuikly.stockchat.cards.core.StockChartMode
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.ChatMessage
 import com.kuikly.stockchat.chat.MessageRole
+import com.kuikly.stockchat.chat.card.state.SubThreadState
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.AttributionIntent
@@ -44,15 +45,6 @@ import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.SelectableOption
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
-
-internal data class SubThreadState(
-    val cardId: String,
-    val title: String,
-    val input: String,
-    val response: String,
-    val streaming: Boolean = false,
-    val collapsed: Boolean = false,
-)
 
 internal data class ChatMessageRenderState(
     val repairingCardKey: String,

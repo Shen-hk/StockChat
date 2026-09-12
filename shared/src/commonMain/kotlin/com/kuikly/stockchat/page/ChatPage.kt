@@ -13,7 +13,6 @@ import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.CardEvent
 import com.kuikly.stockchat.cards.core.CardModel
 import com.kuikly.stockchat.cards.core.AttributionCardModel
-import com.kuikly.stockchat.cards.core.InsightCardModel
 import com.kuikly.stockchat.cards.core.NewsCardModel
 import com.kuikly.stockchat.cards.core.SkeletonCardModel
 import com.kuikly.stockchat.cards.core.StockChartCardModel
@@ -31,6 +30,9 @@ import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatViewModel
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.StreamState
+import com.kuikly.stockchat.chat.card.state.CardInteractionCoordinator
+import com.kuikly.stockchat.chat.card.state.CardInteractionEffect
+import com.kuikly.stockchat.chat.card.state.CardInteractionState
 import com.kuikly.stockchat.chat.compare.state.CompareInsightCoordinator
 import com.kuikly.stockchat.chat.compare.state.CompareInsightEffect
 import com.kuikly.stockchat.chat.compare.state.CompareInsightRequester
@@ -111,7 +113,6 @@ import com.kuikly.stockchat.page.components.ChatMessageView
 import com.kuikly.stockchat.page.components.DateDivider
 import com.kuikly.stockchat.page.components.ComposerGuideRow
 import com.kuikly.stockchat.page.components.RegressionQuestionRow
-import com.kuikly.stockchat.page.components.SubThreadState
 import com.kuikly.stockchat.chat.welcome.component.WelcomeMode
 import com.kuikly.stockchat.chat.welcome.component.WelcomeSection
 import com.kuikly.stockchat.chat.welcome.component.WelcomeStarter
@@ -521,13 +522,17 @@ internal class ChatPage : BasePager() {
     private val voiceAmps: FloatArray get() = voiceInputState.amplitudes
     private val voiceMicFill: Float get() = voiceInputState.micFill
     private val voiceInputMode: Boolean get() = voiceInputState.inputMode
-    private var expandedCardKey: String by observable("")
-    private var focusedCardKey: String by observable("")
-    private var repairingCardKey: String by observable("")
-    // Do not mount a modal during the native long-press gesture itself: its
-    // full-screen scrim would swallow that gesture's terminal touch event.
-    private var drilledKeys: ObservableList<String> by observableList()
-    private var subThreads: ObservableList<SubThreadState> by observableList()
+    // Card sheets themselves have a dedicated coordinator; this owner covers
+    // card-local expansion, focus, repair and deep-dive threads.
+    private val cardInteractionState = CardInteractionState()
+    private val cardInteractionCoordinator by lazy {
+        CardInteractionCoordinator(cardInteractionState, ::handleCardInteractionEffect)
+    }
+    private val expandedCardKey: String get() = cardInteractionState.expandedCardKey
+    private val focusedCardKey: String get() = cardInteractionState.focusedCardKey
+    private val repairingCardKey: String get() = cardInteractionState.repairingCardKey
+    private val drilledKeys: MutableList<String> get() = cardInteractionState.drilledKeys
+    private val subThreads get() = cardInteractionState.subThreads
     // 回到顶部悬浮按钮：mounted/presented 双态机（同 drawer 模式，R4——vif 挂载
     // 的视图首帧不播动画，挂载后一拍再翻 presented）；version 使过期回调失效。
     private var chatBackToTopMounted: Boolean by observable(false)
@@ -2184,12 +2189,8 @@ internal class ChatPage : BasePager() {
         entityCoordinator.resetForNewSession()
         islandCoordinator.resetForNewSession()
         cardSheetCoordinator.reset()
-        expandedCardKey = ""
-        focusedCardKey = ""
-        repairingCardKey = ""
+        cardInteractionCoordinator.resetForNewSession()
         compareCoordinator.resetForNewSession()
-        drilledKeys.clear()
-        subThreads.clear()
         requestedSymbols.clear()
         quoteStates.clear()
         deepContextNotes.clear()
@@ -3371,7 +3372,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun toggleCardExpanded(cardKey: String) {
-        expandedCardKey = if (expandedCardKey == cardKey) "" else cardKey
+        cardInteractionCoordinator.toggleExpanded(cardKey)
     }
 
     private fun handleCompareEffect(effect: CompareInsightEffect) {
@@ -4533,20 +4534,16 @@ internal class ChatPage : BasePager() {
     }
 
     private fun setFocusedCard(cardKey: String, focused: Boolean) {
-        focusedCardKey = if (focused) cardKey else ""
+        cardInteractionCoordinator.setFocused(cardKey, focused)
     }
 
     private fun handleCompareCandidate(cardKey: String, symbol: String) {
         compareCoordinator.selectCardCandidate(cardKey, symbol, ::quoteFor)
-        if (compareCard != null) focusedCardKey = ""
+        if (compareCard != null) cardInteractionCoordinator.clearFocused()
     }
 
     private fun handleCardEvent(cardKey: String, event: CardEvent) {
-        when (event) {
-            is CardEvent.FocusStart -> acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-            is CardEvent.FocusEnd -> if (focusedCardKey == cardKey) focusedCardKey = ""
-            else -> Unit
-        }
+        cardInteractionCoordinator.onCardEvent(cardKey, event)
     }
 
     private fun injectQuestion(question: String) {
@@ -4619,58 +4616,49 @@ internal class ChatPage : BasePager() {
     private fun handleSheetPan(state: String, y: Float) = cardSheetCoordinator.onPan(state, y)
 
     private fun toggleDrill(drillKey: String) {
-        val index = drilledKeys.indexOf(drillKey)
-        if (index >= 0) drilledKeys.removeAt(index) else drilledKeys.add(drillKey)
+        cardInteractionCoordinator.toggleDrill(drillKey)
     }
 
     private fun startSubThread(model: CardModel) {
-        val insight = model as? InsightCardModel ?: return
-        val existing = subThreads.indexOfFirst { it.cardId == insight.cardId }
-        if (existing >= 0) {
-            subThreads[existing] = subThreads[existing].copy(collapsed = false)
-            return
-        }
-        val state = SubThreadState(insight.cardId, "分支：AI 解读深挖", "", "正在生成深入解读…", streaming = true)
-        subThreads.add(state)
-        requestSubThread(insight.cardId, "请围绕以下解读继续深入说明：${insight.summary}")
+        cardInteractionCoordinator.startSubThread(model)
     }
 
     private fun toggleSubThread(cardId: String) {
-        val index = subThreads.indexOfFirst { it.cardId == cardId }
-        if (index >= 0) subThreads[index] = subThreads[index].copy(collapsed = !subThreads[index].collapsed)
+        cardInteractionCoordinator.toggleSubThread(cardId)
     }
 
     private fun updateSubThreadInput(cardId: String, input: String) {
-        val index = subThreads.indexOfFirst { it.cardId == cardId }
-        if (index >= 0) subThreads[index] = subThreads[index].copy(input = input)
+        cardInteractionCoordinator.updateSubThreadInput(cardId, input)
     }
 
     private fun sendSubThread(cardId: String) {
-        val state = subThreads.firstOrNull { it.cardId == cardId } ?: return
-        if (state.streaming || state.input.isBlank()) return
-        val index = subThreads.indexOfFirst { it.cardId == cardId }
-        subThreads[index] = state.copy(response = "正在生成深入解读…", input = "", streaming = true, collapsed = false)
-        requestSubThread(cardId, state.input)
+        cardInteractionCoordinator.sendSubThread(cardId)
     }
 
     private fun retryCard(messageId: String, blockId: String, cardType: String, rawCard: String) {
-        val key = "$messageId:$blockId"
-        if (repairingCardKey.isNotEmpty()) return
-        repairingCardKey = key
-        viewModel.retryCard(
-            messageId = messageId,
-            blockId = blockId,
-            cardType = cardType.ifBlank { "stock-quote" },
-            rawCard = rawCard,
-            onDone = {
-                repairingCardKey = ""
-                keepChatAtBottomTemporarily()
-            },
-            onError = { error ->
-                repairingCardKey = ""
-                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(error)
-            },
-        )
+        cardInteractionCoordinator.retryCard(messageId, blockId, cardType, rawCard)
+    }
+
+    private fun handleCardInteractionEffect(effect: CardInteractionEffect) {
+        when (effect) {
+            CardInteractionEffect.HapticImpact ->
+                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+            is CardInteractionEffect.RequestSubThread -> requestSubThread(effect.cardId, effect.prompt)
+            is CardInteractionEffect.RetryCard -> viewModel.retryCard(
+                messageId = effect.messageId,
+                blockId = effect.blockId,
+                cardType = effect.cardType,
+                rawCard = effect.rawCard,
+                onDone = {
+                    cardInteractionCoordinator.onRetryDone()
+                    keepChatAtBottomTemporarily()
+                },
+                onError = { error ->
+                    cardInteractionCoordinator.onRetryError()
+                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(error)
+                },
+            )
+        }
     }
 
     private fun requestSubThread(cardId: String, prompt: String) {
@@ -4679,10 +4667,10 @@ internal class ChatPage : BasePager() {
             prompt = prompt,
             onDelta = { delta ->
                 response += delta
-                updateSubThread(cardId) { it.copy(response = response, streaming = true) }
+                cardInteractionCoordinator.onSubThreadDelta(cardId, response)
             },
-            onDone = { updateSubThread(cardId) { it.copy(response = response.ifBlank { "暂未生成内容" }, streaming = false) } },
-            onError = { error -> updateSubThread(cardId) { it.copy(response = error, streaming = false) } },
+            onDone = { cardInteractionCoordinator.onSubThreadDone(cardId, response) },
+            onError = { error -> cardInteractionCoordinator.onSubThreadError(cardId, error) },
         )
     }
 
@@ -4704,10 +4692,6 @@ internal class ChatPage : BasePager() {
         compareCoordinator.retryTermInsight(left, right)
     }
 
-    private fun updateSubThread(cardId: String, update: (SubThreadState) -> SubThreadState) {
-        val index = subThreads.indexOfFirst { it.cardId == cardId }
-        if (index >= 0) subThreads[index] = update(subThreads[index])
-    }
 
     private fun quoteFor(symbol: String): Quote? {
         return quoteStates.firstOrNull { it.symbol == symbol }?.quote ?: quoteRepository.cachedOrOffline(symbol)
