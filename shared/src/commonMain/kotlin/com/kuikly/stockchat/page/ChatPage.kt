@@ -31,7 +31,12 @@ import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatViewModel
 import com.kuikly.stockchat.chat.MessageRole
 import com.kuikly.stockchat.chat.StreamState
-import com.kuikly.stockchat.chat.TypewriterSmoother
+import com.kuikly.stockchat.chat.compare.state.CompareInsightCoordinator
+import com.kuikly.stockchat.chat.compare.state.CompareInsightEffect
+import com.kuikly.stockchat.chat.compare.state.CompareInsightRequester
+import com.kuikly.stockchat.chat.compare.state.CompareInsightState
+import com.kuikly.stockchat.chat.compare.state.CompareInsightStateHolder
+import com.kuikly.stockchat.chat.compare.state.PagerCompareTextRevealerFactory
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollCoordinator
 import com.kuikly.stockchat.chat.scroll.state.ChatScrollState
 import com.kuikly.stockchat.chat.scroll.state.KuiklyChatScrollScheduler
@@ -369,6 +374,29 @@ internal class ChatPage : BasePager() {
     // 抽屉历史会话搜索词：drawer 的 Input 不受控，页面侧只存词 + 供 vbind 过滤；
     // 打开抽屉时重置，避免上次输入残留下次仍过滤。
     private var historySearchQuery: String by observable("")
+    // ===== 对比会话（候选 / 卡片 / AI 流式解读）=====
+    private val compareState = CompareInsightStateHolder()
+    private val compareCoordinator by lazy {
+        CompareInsightCoordinator(
+            state = compareState,
+            requester = object : CompareInsightRequester {
+                override fun request(
+                    prompt: String,
+                    onDelta: (String) -> Unit,
+                    onDone: () -> Unit,
+                    onError: (String) -> Unit,
+                ) = viewModel.askSubThread(prompt, onDelta, onDone, onError)
+            },
+            revealerFactory = PagerCompareTextRevealerFactory(pagerId),
+            onEffect = ::handleCompareEffect,
+        )
+    }
+    private val compareCandidateKey: String get() = compareState.candidateCardKey
+    private val compareCandidateSymbol: String get() = compareState.candidateSymbol
+    private val compareCard: StockCompareCardModel? get() = compareState.card
+    private val compareInsightState: CompareInsightState get() = compareState.insightState
+    private val compareInsightText: String get() = compareState.insightText
+    private val compareInsightError: String get() = compareState.insightError
     // Dynamic island: the top title capsule morphs into a live quote card.
     // 状态机（展开/收敛/自动收起/详情交接/返回复位/对比 lobby）由
     // QuoteIslandCoordinator 独占；页面只保留自选态、实体拖拽字段与 Effect
@@ -381,7 +409,7 @@ internal class ChatPage : BasePager() {
             host = object : IslandHostPort {
                 override fun isPageVisible() = pageVisible
                 override fun pageHeight() = pagerData.pageViewHeight
-                override fun hasCompareCard() = compareCard != null
+                override fun hasCompareCard() = compareCoordinator.hasCard()
             },
             scheduler = KuiklyIslandScheduler(),
         ) { effect -> handleIslandEffect(effect) }
@@ -500,14 +528,6 @@ internal class ChatPage : BasePager() {
     private var expandedCardKey: String by observable("")
     private var focusedCardKey: String by observable("")
     private var repairingCardKey: String by observable("")
-    private var compareCandidateKey: String by observable("")
-    private var compareCandidateSymbol: String by observable("")
-    private var compareCard: StockCompareCardModel? by observable(null)
-    private var compareInsightState: CompareInsightState by observable(CompareInsightState.IDLE)
-    private var compareInsightText: String by observable("")
-    private var compareInsightError: String by observable("")
-    private var compareInsightPairKey = ""
-    private var compareInsightVersion = 0
     // Do not mount a modal during the native long-press gesture itself: its
     // full-screen scrim would swallow that gesture's terminal touch event.
     private var drilledKeys: ObservableList<String> by observableList()
@@ -665,6 +685,7 @@ internal class ChatPage : BasePager() {
         drawerCoordinator.onDestroy()
         islandCoordinator.onDestroy()
         entityCoordinator.onDestroy()
+        compareCoordinator.onDestroy()
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
         mediaSheetCoordinator.reset()
@@ -2167,10 +2188,7 @@ internal class ChatPage : BasePager() {
         expandedCardKey = ""
         focusedCardKey = ""
         repairingCardKey = ""
-        compareCandidateKey = ""
-        compareCandidateSymbol = ""
-        compareCard = null
-        resetCompareInsight()
+        compareCoordinator.resetForNewSession()
         drilledKeys.clear()
         subThreads.clear()
         requestedSymbols.clear()
@@ -3455,13 +3473,7 @@ internal class ChatPage : BasePager() {
         val leftSymbol = islandCompareLeftSymbol
         val rightSymbol = islandCompareRightSymbol
         if (leftSymbol.isEmpty() || rightSymbol.isEmpty()) return
-        val left = quoteFor(leftSymbol) ?: return
-        val right = quoteFor(rightSymbol) ?: return
-        compareCard = StockCompareCardModel(
-            listOf(left, right),
-            "island-compare:${left.symbol}:${right.symbol}",
-        )
-        requestCompareInsightIfNeeded(left, right)
+        compareCoordinator.syncIslandCard(quoteFor(leftSymbol), quoteFor(rightSymbol))
     }
 
     private fun clearIslandCompare() = islandCoordinator.clearCompare()
@@ -3508,7 +3520,7 @@ internal class ChatPage : BasePager() {
         if (!islandTermCompareVisible) return
         val left = Glossary.byKey(islandTermCompareLeftKey) ?: return
         val right = Glossary.byKey(islandTermCompareRightKey) ?: return
-        requestTermCompareInsightIfNeeded(left, right)
+        compareCoordinator.requestTermInsight(left, right)
     }
 
     private fun isIslandTermCompareLobbyVisible(): Boolean = islandCoordinator.isTermLobbyVisible()
@@ -3640,6 +3652,12 @@ internal class ChatPage : BasePager() {
         expandedCardKey = if (expandedCardKey == cardKey) "" else cardKey
     }
 
+    private fun handleCompareEffect(effect: CompareInsightEffect) {
+        when (effect) {
+            is CompareInsightEffect.RequestQuote -> requestQuote(effect.symbol)
+        }
+    }
+
     // ===== 灵动岛（状态机在 QuoteIslandCoordinator，见 chat/island/state）=====
     // Page 只做 Effect adapter：路由、行情、Glossary、触感、Toast，以及
     // CompareInsight（尚未迁出的域）与实体拖拽残留（转发 EntityInteractionCoordinator）的清理。
@@ -3658,12 +3676,9 @@ internal class ChatPage : BasePager() {
             is IslandEffect.EncounterTerm -> glossaryStore.encounter(effect.key)
             IslandEffect.SyncCompareCard -> syncIslandCompareCard()
             IslandEffect.SyncTermComparePanel -> syncTermComparePanel()
-            IslandEffect.ResetCompareInsight -> resetCompareInsight()
-            IslandEffect.ClearCompareCard -> compareCard = null
-            IslandEffect.ClearCompareCandidate -> {
-                compareCandidateKey = ""
-                compareCandidateSymbol = ""
-            }
+            IslandEffect.ResetCompareInsight -> compareCoordinator.reset()
+            IslandEffect.ClearCompareCard -> compareCoordinator.clearCard()
+            IslandEffect.ClearCompareCandidate -> compareCoordinator.clearCandidate()
             IslandEffect.ClearStockDrag -> entityCoordinator.clearStockDragResidue()
             IslandEffect.ClearTermDrag -> entityCoordinator.clearTermDragResidue()
         }
@@ -4800,25 +4815,8 @@ internal class ChatPage : BasePager() {
     }
 
     private fun handleCompareCandidate(cardKey: String, symbol: String) {
-        requestQuote(symbol)
-        if (compareCandidateSymbol.isEmpty() || compareCandidateSymbol == symbol) {
-            compareCandidateKey = cardKey
-            compareCandidateSymbol = symbol
-            compareCard = null
-            return
-        }
-        val left = quoteFor(compareCandidateSymbol)
-        val right = quoteFor(symbol)
-        if (left != null && right != null) {
-            compareCard = StockCompareCardModel(listOf(left, right), "active-compare:${left.symbol}:${right.symbol}")
-            compareCandidateKey = ""
-            compareCandidateSymbol = ""
-            focusedCardKey = ""
-            requestCompareInsightIfNeeded(left, right)
-        } else {
-            requestQuote(compareCandidateSymbol)
-            requestQuote(symbol)
-        }
+        compareCoordinator.selectCardCandidate(cardKey, symbol, ::quoteFor)
+        if (compareCard != null) focusedCardKey = ""
     }
 
     private fun handleCardEvent(cardKey: String, event: CardEvent) {
@@ -4975,135 +4973,13 @@ internal class ChatPage : BasePager() {
         val cardQuotes = compareCard?.quotes.orEmpty()
         val left = cardQuotes.getOrNull(0) ?: quoteFor(islandCompareLeftSymbol) ?: return
         val right = cardQuotes.getOrNull(1) ?: quoteFor(islandCompareRightSymbol) ?: return
-        compareInsightPairKey = ""
-        requestCompareInsightIfNeeded(left, right)
+        compareCoordinator.retryStockInsight(left, right)
     }
 
     private fun retryTermCompareInsight() {
         val left = Glossary.byKey(islandTermCompareLeftKey) ?: return
         val right = Glossary.byKey(islandTermCompareRightKey) ?: return
-        compareInsightPairKey = ""
-        requestTermCompareInsightIfNeeded(left, right)
-    }
-
-    private fun resetCompareInsight() {
-        compareInsightVersion += 1
-        compareInsightPairKey = ""
-        compareInsightState = CompareInsightState.IDLE
-        compareInsightText = ""
-        compareInsightError = ""
-    }
-
-    /**
-     * 术语对比 AI 解读：与股票对比共用 insight 状态机（会话互斥），
-     * 只做两个概念的区别与联系的事实性解释（合规文案铁律：不做价值判断）。
-     */
-    private fun requestTermCompareInsightIfNeeded(left: GlossaryEntry, right: GlossaryEntry) {
-        val pairKey = "term:${left.key}:${right.key}"
-        if (compareInsightPairKey == pairKey && compareInsightState != CompareInsightState.ERROR) return
-        compareInsightPairKey = pairKey
-        compareInsightState = CompareInsightState.LOADING
-        compareInsightText = ""
-        compareInsightError = ""
-        val requestVersion = ++compareInsightVersion
-        // 流式打字机（与主聊天流同款，见 TypewriterSmoother）：delta 全量进缓冲、
-        // 按节拍逐字释放到面板。面板高度因此随文本连续小步生长，而不是 onDone
-        // 时整段顶上来把卡片"弹"一下。
-        val typewriter = TypewriterSmoother(pagerId) { revealed ->
-            if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@TypewriterSmoother
-            compareInsightText = revealed
-        }
-        viewModel.askSubThread(
-            prompt = "用不超过 120 字向 A 股新手解释金融术语「${left.term}」和「${right.term}」的区别与联系，" +
-                "各举一个它们分别适用的小场景。只做事实性解释，不要给任何买卖建议或倾向性结论。",
-            onDelta = { delta ->
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                typewriter.append(delta)
-            },
-            onDone = {
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) {
-                    typewriter.cancel()
-                    return@askSubThread
-                }
-                // 收尾等显示端把缓冲打完再落 READY，避免最后一截整段蹦出。
-                typewriter.complete {
-                    if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@complete
-                    compareInsightText = compareInsightText.ifBlank { "暂未生成对比解读" }
-                    compareInsightState = CompareInsightState.READY
-                }
-            },
-            onError = { error ->
-                typewriter.cancel()
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                compareInsightError = error
-                compareInsightState = CompareInsightState.ERROR
-            },
-        )
-    }
-
-    private fun requestCompareInsightIfNeeded(left: Quote, right: Quote) {
-        val pairKey = "${left.symbol}:${right.symbol}"
-        if (compareInsightPairKey == pairKey && compareInsightState != CompareInsightState.ERROR) return
-        compareInsightPairKey = pairKey
-        compareInsightState = CompareInsightState.LOADING
-        compareInsightText = ""
-        compareInsightError = ""
-        val requestVersion = ++compareInsightVersion
-        // 流式打字机（同 requestTermCompareInsightIfNeeded）：逐字释放，
-        // 面板高度连续生长，onDone 不再整段顶高卡片。
-        val typewriter = TypewriterSmoother(pagerId) { revealed ->
-            if (requestVersion == compareInsightVersion && compareInsightPairKey == pairKey) {
-                compareInsightText = revealed
-            }
-        }
-        viewModel.askSubThread(
-            prompt = buildCompareInsightPrompt(left, right),
-            onDelta = { delta ->
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                typewriter.append(delta)
-            },
-            onDone = {
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) {
-                    typewriter.cancel()
-                    return@askSubThread
-                }
-                typewriter.complete {
-                    if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@complete
-                    compareInsightText = compareInsightText.ifBlank { "暂未生成对比解读" }
-                    compareInsightState = CompareInsightState.READY
-                }
-            },
-            onError = { error ->
-                typewriter.cancel()
-                if (requestVersion != compareInsightVersion || compareInsightPairKey != pairKey) return@askSubThread
-                compareInsightError = error
-                compareInsightState = CompareInsightState.ERROR
-            },
-        )
-    }
-
-    private fun buildCompareInsightPrompt(left: Quote, right: Quote): String {
-        return """
-            请基于以下两只股票的即时行情做一个简洁对比解读。
-            要求：
-            1. 只解释差异和可能关注点，不给买卖建议。
-            2. 用 3 到 5 句中文，适合显示在手机卡片里。
-            3. 明确说明价格、涨跌幅、日内高低点、成交额、换手率里的关键差异。
-
-            股票 A：${left.name} ${left.symbol}
-            价格：${Format.price(left.price)}
-            涨跌幅：${Format.percent(left.changePercent)}
-            日内高低：${Format.price(left.high)} / ${Format.price(left.low)}
-            成交额：${Format.compactAmount(left.amount)}
-            换手率：${Format.decimal(left.turnoverRate, 2)}%
-
-            股票 B：${right.name} ${right.symbol}
-            价格：${Format.price(right.price)}
-            涨跌幅：${Format.percent(right.changePercent)}
-            日内高低：${Format.price(right.high)} / ${Format.price(right.low)}
-            成交额：${Format.compactAmount(right.amount)}
-            换手率：${Format.decimal(right.turnoverRate, 2)}%
-        """.trimIndent()
+        compareCoordinator.retryTermInsight(left, right)
     }
 
     private fun updateSubThread(cardId: String, update: (SubThreadState) -> SubThreadState) {
@@ -5116,8 +4992,6 @@ internal class ChatPage : BasePager() {
     }
 
 }
-
-private enum class CompareInsightState { IDLE, LOADING, READY, ERROR }
 
 private data class ChatQuoteState(
     val symbol: String,
