@@ -24,6 +24,22 @@ class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, Disc
         demoStamp
     }
 
+    companion object {
+        /**
+         * 公开的演示板块列表（DEMO 标注），供市场页「板块行情」槽位冷启动/在线为空时使用。
+         * 与 instance 的 [overviewValue] / [hotspotValue] 返回的 sectors 同源——但本入口不构造
+         * Provider 实例，避免 Page 层额外的 ProviderCtor 计数（架构门禁 R5）。
+         */
+        fun demoSectorsList(): List<SectorRank> = listOf(
+            SectorRank("BK1036", "半导体", 3.26, 1_286_000_000.0, 112, 39),
+            SectorRank("BK1055", "机器人", 2.48, 936_000_000.0, 86, 31),
+            SectorRank("BK0477", "通信设备", 1.76, 512_000_000.0, 74, 43),
+            SectorRank("BK0737", "证券", 0.84, 278_000_000.0, 31, 18),
+            SectorRank("BK0480", "医药商业", -1.35, -426_000_000.0, 19, 67),
+            SectorRank("BK0474", "白酒", -2.12, -814_000_000.0, 8, 53),
+        )
+    }
+
     fun stock(symbol: String): StockInsightBundle = if (realMode) {
         StockInsightBundle()
     } else {
@@ -105,14 +121,7 @@ class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, Disc
         )
     }
 
-    private fun demoSectors() = listOf(
-        SectorRank("BK1036", "半导体", 3.26, 1_286_000_000.0, 112, 39),
-        SectorRank("BK1055", "机器人", 2.48, 936_000_000.0, 86, 31),
-        SectorRank("BK0477", "通信设备", 1.76, 512_000_000.0, 74, 43),
-        SectorRank("BK0737", "证券", 0.84, 278_000_000.0, 31, 18),
-        SectorRank("BK0480", "医药商业", -1.35, -426_000_000.0, 19, 67),
-        SectorRank("BK0474", "白酒", -2.12, -814_000_000.0, 8, 53),
-    )
+    private fun demoSectors() = demoSectorsList()
 
     /**
      * 市场页新闻弹幕带（doc 36 §9.1）：真实/模拟模式均给一组带日内时间戳的演示快讯，
