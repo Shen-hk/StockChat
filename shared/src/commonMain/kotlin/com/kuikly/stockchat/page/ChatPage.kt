@@ -66,6 +66,8 @@ import com.kuikly.stockchat.chat.composer.state.VoiceInputState
 import com.kuikly.stockchat.chat.composer.component.AtCandidatePanelProps
 import com.kuikly.stockchat.chat.composer.component.ComposerActionRow
 import com.kuikly.stockchat.chat.composer.component.ComposerActionRowProps
+import com.kuikly.stockchat.chat.composer.component.ComposerInputRow
+import com.kuikly.stockchat.chat.composer.component.ComposerInputRowProps
 import com.kuikly.stockchat.chat.composer.component.CommandParamPanelProps
 import com.kuikly.stockchat.chat.composer.component.ComposerAssistantCandidatePanels
 import com.kuikly.stockchat.chat.composer.component.ComposerCommandParamPanel
@@ -1178,148 +1180,30 @@ internal class ChatPage : BasePager() {
                             vif({ page.composerAttachmentState.attachments.isNotEmpty() }) {
                                 page.renderComposerAttachmentRow(this)
                             }
-                            // TextArea 必须永远挂在同一个父节点下。折叠/展开只改布局和
-                            // 周边操作区，不再用 vif 替换输入组件，避免聚焦期间原生
-                            // EditText 被移除或在尚未 attach 时调用 autofocus。
-                            View {
-                                attr {
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                }
-                                // 折叠态只保留左侧 + 与右侧语音两个操作位：纯黑线条、
-                                // 透明背景（2026-09-05 设计调整）。2026-09-06 放大 50%：
-                                // 32→48（图标 16→24 / 18→27），与文本区同高垂直居中。
-                                vif({ !page.isComposerVisuallyExpanded() }) {
-                                    // 收起回放壳（用户反馈 2026-09-08：外表圆圈大小不动）：
-                                    // 48dp 触控区固定不缩放，缩放/淡入只作用在加号本体
-                                    // 内层（驱动仍为 !presented，收起翻转时由挂载周期
-                                    // 注册的 easeOut 消费，R2/R5）。
-                                    View {
-                                        attr {
-                                            size(48f, 48f)
-                                            marginRight(7f)
-                                            allCenter()
-                                            borderRadius(24f)
+                            ComposerInputRow(
+                                ComposerInputRowProps(
+                                    theme = page.theme,
+                                    visuallyExpanded = page::isComposerVisuallyExpanded,
+                                    chromePresented = { page.composerChromePresented },
+                                    themeKey = page::themeRebuildKey,
+                                    voiceMode = { page.voiceInputMode },
+                                    voiceState = { page.voiceState },
+                                    voiceCancelArmed = { page.voiceCancelArmed },
+                                    voiceAmplitudes = { page.voiceAmps },
+                                    renderTextArea = { page.renderComposerTextArea(it) },
+                                    onMiddleTap = {
+                                        if (!page.voiceInputMode && !page.isComposerExpanded() && page.voiceState == VoiceState.IDLE) {
+                                            KLog.i(COMPOSER_LOG_TAG, "composerMiddleTap expand")
+                                            page.expandComposer(requestFocus = true)
                                         }
-                                        View {
-                                            attr {
-                                                opacity(if (!page.composerChromePresented) 1f else 0f)
-                                                transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
-                                                animate(Animation.easeOut(0.2f), !page.composerChromePresented)
-                                            }
-                                            // 图标色原为硬编码纯黑（2026-09-05 设计）：
-                                            // 深色表皮下改读 textPrimary 随主题反转；
-                                            // Canvas 图标的颜色在挂载帧捕获，需 vbind
-                                            // 键翻转重建才能换肤。
-                                            vbind({ page.themeRebuildKey() }) {
-                                                LineIconPlus(color = page.theme.textPrimary, size = 24f)
-                                            }
-                                        }
-                                        // 折叠态「+」：与展开态同款底部媒体来源弹层。
-                                        event { click { page.openMediaSheet() } }
-                                    }
-                                }
-                                View {
-                                    attr {
-                                        flex(1f)
-                                        minHeight(if (page.isComposerVisuallyExpanded()) 44f else 48f)
-                                        paddingLeft(12f)
-                                        paddingRight(12f)
-                                        justifyContentCenter()
-                                        borderRadius(16f)
-                                        backgroundColor(Color(0xFFFFFFFF, 0f))
-                                    }
-                                    // 点击兜底：空文本时原生 TextArea 可能收缩到极小高，
-                                    // 点击落不到 EditText 上。整条中段可点，任何测量
-                                    // 异常下都能进入输入态；已展开/语音模式下守卫直接跳过
-                                    // （语音模式下中段是"按住说话"，触摸由覆盖层处理）。
-                                    event {
-                                        click {
-                                            if (!page.voiceInputMode && !page.isComposerExpanded() && page.voiceState == VoiceState.IDLE) {
-                                                KLog.i(COMPOSER_LOG_TAG, "composerMiddleTap expand")
-                                                page.expandComposer(requestFocus = true)
-                                            }
-                                        }
-                                    }
-                                    page.renderComposerTextArea(this)
-                                    // 语音模式（豆包式）："按住说话"是普通 flex 子项，
-                                    // 恰好替代文字位置（语音模式下 TextArea 被压到 0 高，
-                                    // 见 renderComposerTextArea）。不用 absolutePosition——
-                                    // 实测在中段（纵向 column + justifyContentCenter）里
-                                    // 定位偏下被遮挡。白底；录音期间保持挂载（vif 卸载
-                                    // 会丢 touchUp，录音卡到 60s 超时），"按住说话"文案仅
-                                    // 在 IDLE 显示，录音 UI 由其上层的 VoiceBar 呈现。
-                                    // 2026-09-06 定稿：不做任何光晕（全屏圆顶与按钮级
-                                    // boxShadow 均已移除），视觉反馈只有滚动声波与变红提示。
-                                    vif({ page.voiceInputMode }) {
-                                        View {
-                                            attr {
-                                                height(48f)
-                                                allCenter()
-                                                borderRadius(16f)
-                                                backgroundColor(page.theme.surface)
-                                            }
-                                            vif({ page.voiceState == VoiceState.IDLE }) {
-                                                Text {
-                                                    attr {
-                                                        text("按住 说话")
-                                                        fontSizeScaled(15f)
-                                                        color(page.theme.textSecondary)
-                                                    }
-                                                }
-                                            }
-                                            event {
-                                                touchDown { e -> page.handleVoiceTouchDown(e.pageY) }
-                                                touchMove { e -> page.handleVoiceTouchMove(e.pageY) }
-                                                touchUp { page.handleVoiceTouchUp() }
-                                            }
-                                        }
-                                    }
-                                    vif({ page.voiceState != VoiceState.IDLE }) {
-                                        VoiceBar(
-                                            theme = page.theme,
-                                            transcribing = { page.voiceState == VoiceState.TRANSCRIBING },
-                                            cancelArmed = { page.voiceCancelArmed },
-                                            amps = { page.voiceAmps },
-                                        )
-                                    }
-                                }
-                                vif({ !page.isComposerVisuallyExpanded() }) {
-                                    // 外层：收起回放入场（驱动 presented）；
-                                    // 内层：录音缩放（驱动 voiceState）。双驱动必须拆
-                                    // 父子视图，同 attr 双 animate 违反 R3。
-                                    View {
-                                        attr {
-                                            opacity(if (!page.composerChromePresented) 1f else 0f)
-                                            transform(scale = if (!page.composerChromePresented) Scale.DEFAULT else Scale(0.6f, 0.6f))
-                                            animate(Animation.easeOut(0.2f), !page.composerChromePresented)
-                                        }
-                                        View {
-                                            attr {
-                                                size(48f, 48f)
-                                                marginLeft(7f)
-                                                allCenter()
-                                                borderRadius(24f)
-                                            }
-                                            // 语音模式开关（豆包式）：文字态显示声波线条
-                                            // （Lucide audio-lines 对齐），语音模式显示键盘
-                                            // （Lucide keyboard 对齐），点击互相切换；按住
-                                            // 说话手势已移至中段覆盖层。
-                                            vif({ !page.voiceInputMode }) {
-                                                vbind({ page.themeRebuildKey() }) {
-                                                    LineIconAudioLines(color = page.theme.textPrimary, size = 27f)
-                                                }
-                                            }
-                                            vif({ page.voiceInputMode }) {
-                                                vbind({ page.themeRebuildKey() }) {
-                                                    LineIconKeyboard(color = page.theme.textPrimary, size = 27f)
-                                                }
-                                            }
-                                            event { click { page.toggleVoiceInputMode() } }
-                                        }
-                                    }
-                                }
-                            }
+                                    },
+                                    onOpenMedia = page::openMediaSheet,
+                                    onToggleVoiceMode = page::toggleVoiceInputMode,
+                                    onVoiceDown = page::handleVoiceTouchDown,
+                                    onVoiceMove = page::handleVoiceTouchMove,
+                                    onVoiceUp = page::handleVoiceTouchUp,
+                                ),
+                            )
                             ComposerActionRow(
                                 ComposerActionRowProps(
                                     theme = page.theme,
