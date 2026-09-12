@@ -9,6 +9,8 @@ import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.data.AppearancePrefs
 import com.kuikly.stockchat.data.FontScale
+import com.kuikly.stockchat.data.MarketDataPrefs
+import com.kuikly.stockchat.data.MarketDataSource
 import com.kuikly.stockchat.data.ThemeMode
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
@@ -19,6 +21,7 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.module.SharedPreferencesModule
+import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -38,11 +41,24 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.SETTINGS, supportInLocal = true)
 internal class SettingsPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
+    private var marketDataSource: MarketDataSource by observable(MarketDataSource.REAL)
 
     private fun persistAppearance(key: String, value: String) {
         acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
             .setItem(key, value)
         reloadAppearance()
+    }
+
+    override fun created() {
+        super.created()
+        val prefs = acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+        marketDataSource = MarketDataSource.fromId(prefs.getString(MarketDataPrefs.KEY_SOURCE))
+    }
+
+    private fun persistMarketDataSource(source: MarketDataSource) {
+        acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
+            .setString(MarketDataPrefs.KEY_SOURCE, source.id)
+        marketDataSource = source
     }
 
     override fun body(): ViewBuilder {
@@ -100,6 +116,39 @@ internal class SettingsPage : BasePager() {
                 }
                 FontPreviewCard(theme = page.theme)
                 SettingsSectionTitle("模型与数据", "", page.theme)
+                SettingsSectionTitle("行情来源", "真实接口未在等待窗口内返回有效行情时，会自动切换为该股票的本地 Mock 交易日数据。", page.theme)
+                View {
+                    attr {
+                        marginTop(12f)
+                        height(44f)
+                        padding(4f)
+                        borderRadius(12f)
+                        backgroundColor(page.theme.surfaceMuted)
+                        flexDirectionRow()
+                    }
+                    MarketDataSource.entries.forEach { source ->
+                        MarketDataSourceTab(
+                            source = source,
+                            theme = page.theme,
+                            isSelected = { page.marketDataSource == source },
+                            onClick = { page.persistMarketDataSource(source) },
+                        )
+                    }
+                }
+                Text {
+                    attr {
+                        text(
+                            if (page.marketDataSource == MarketDataSource.REAL) {
+                                "当前：优先请求真实行情；切回此项后每次请求都会先探测接口。"
+                            } else {
+                                "当前：直接使用本地 Mock 数据（固定为一个交易日）。"
+                            }
+                        )
+                        marginTop(8f)
+                        fontSizeScaled(11f)
+                        color(page.theme.textTertiary)
+                    }
+                }
                 ApiConfigEntryRow(theme = page.theme) {
                     page.openPage(Routes.API_CONFIG)
                 }
@@ -126,6 +175,32 @@ internal class SettingsPage : BasePager() {
                 backLabel = "‹",
                 onBack = { page.closePage() },
             )
+            }
+        }
+    }
+}
+
+private fun ViewContainer<*, *>.MarketDataSourceTab(
+    source: MarketDataSource,
+    theme: StockChatTheme,
+    isSelected: () -> Boolean,
+    onClick: () -> Unit,
+) {
+    View {
+        attr {
+            flex(1f)
+            height(36f)
+            borderRadius(9f)
+            backgroundColor(if (isSelected()) theme.surface else Color(0x00000000))
+            allCenter()
+        }
+        event { click { onClick() } }
+        Text {
+            attr {
+                text(source.label)
+                fontSizeScaled(13f)
+                fontWeightMedium()
+                color(if (isSelected()) theme.brand else theme.textSecondary)
             }
         }
     }

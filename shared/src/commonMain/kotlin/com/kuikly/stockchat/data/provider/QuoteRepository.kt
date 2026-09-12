@@ -2,18 +2,17 @@ package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.entity.Security
+import com.kuikly.stockchat.data.MarketDataSource
+import com.kuikly.stockchat.data.mock.MockQuoteProvider
 
 /** A page-independent source of truth for quotes, their short-lived cache, and offline fallback. */
 class QuoteRepository(
     private val online: QuoteProvider,
-    // 数据源开关：真实模式降级终点 = NullQuoteProvider（空态）；模拟模式 = MockQuoteProvider（原状态）。
-    private val offline: QuoteProvider = if (com.kuikly.stockchat.data.config.DataSourceConfig.USE_REAL_MARKET_DATA) {
-        NullQuoteProvider
-    } else {
-        com.kuikly.stockchat.data.mock.MockQuoteProvider()
-    },
+    private val offline: QuoteProvider = MockQuoteProvider(),
     private val cacheStore: QuoteCacheStore = NoOpQuoteCacheStore,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
+    /** 每次请求时读取，保证从设置页返回后不会沿用创建 repository 时的旧选择。 */
+    private val selectedSource: () -> MarketDataSource = { MarketDataSource.REAL },
 ) {
     companion object {
         const val SNAPSHOT_TTL_MILLIS = 60_000L
@@ -38,6 +37,11 @@ class QuoteRepository(
      * resource type and published whenever the snapshot and any newer series are available.
      */
     fun load(symbol: String, onResult: (QuoteLoadResult) -> Unit) {
+        val requestSource = selectedSource()
+        if (requestSource == MarketDataSource.MOCK) {
+            loadMock(symbol, onResult)
+            return
+        }
         var latestSnapshot: QuoteLoadResult? = null
         var latestTimeline = fresh(timelines[symbol], SERIES_TTL_MILLIS)?.value.orEmpty()
         val latestKLines = KLineInterval.entries.associateWithTo(mutableMapOf()) { interval ->
@@ -56,9 +60,12 @@ class QuoteRepository(
             onResult(snapshot.copy(quote = quote))
         }
 
+        var fallbackToMock = false
+
         // Series requests begin immediately. A fast series response is retained until the
         // snapshot arrives, instead of being dropped because there is no Quote to copy yet.
         online.timeline(symbol) { points ->
+            if (fallbackToMock) return@timeline
             val resolved = if (points.isNotEmpty()) points else offlineTimeline(symbol)
             if (resolved.isNotEmpty()) {
                 if (points.isNotEmpty()) saveTimeline(symbol, points)
@@ -68,6 +75,7 @@ class QuoteRepository(
         }
         KLineInterval.entries.forEach { interval ->
             online.kLines(symbol, interval.defaultCount, interval) { points ->
+                if (fallbackToMock) return@kLines
                 val resolved = if (points.isNotEmpty()) points else offlineKLines(symbol, interval.defaultCount, interval)
                 if (resolved.isNotEmpty()) {
                     if (points.isNotEmpty()) saveKLines(symbol, interval, points)
@@ -76,10 +84,47 @@ class QuoteRepository(
                 }
             }
         }
-        snapshot(symbol) { result ->
-            latestSnapshot = result
+        online.snapshot(symbol) { quote ->
+            if (fallbackToMock) return@snapshot
+            // 空响应不立刻发布缓存或 Mock：先让详情/列表继续显示呼吸骨架，
+            // 由下面的统一超时窗口决定是否降级，避免网络抖动时闪一下旧数据。
+            if (quote == null) {
+                // 保留注入式自定义 offline provider 的同步契约，方便业务专用
+                // repository 与既有单测；产品默认的 MockQuoteProvider 才走骨架窗口。
+                if (offline !is MockQuoteProvider) {
+                    fallbackToMock = true
+                    val cached = fresh(snapshots[symbol], SNAPSHOT_TTL_MILLIS)
+                    if (cached != null) {
+                        latestSnapshot = QuoteLoadResult(cached.value.asCached(), DataMode.CACHE, cached.savedAtMillis)
+                    } else {
+                        latestTimeline = offlineTimeline(symbol)
+                        KLineInterval.entries.forEach { interval ->
+                            latestKLines[interval] = offlineKLines(symbol, interval.defaultCount, interval)
+                        }
+                        latestSnapshot = QuoteLoadResult(offlineQuote(symbol), DataMode.OFFLINE, nowMillis())
+                    }
+                    publish()
+                }
+                return@snapshot
+            }
+            saveSnapshot(symbol, quote)
+            latestSnapshot = QuoteLoadResult(quote, DataMode.ONLINE, nowMillis())
             publish()
         }
+        // 不在 repository 中挂跨页面的 Handler 兜底。它不绑定 Kuikly pager 生命周期，
+        // 页面已卸载时再发布 Observable 会调用失效的 native bridge 并导致应用闪退。
+        // 无回调的弱网场景保持调用方的加载安全态；正常的成功/失败回调仍按上方链路处理。
+    }
+
+    private fun loadMock(symbol: String, onResult: (QuoteLoadResult) -> Unit) {
+        val quote = offlineQuote(symbol)?.let { base ->
+            var resolved = base.copy(timeline = offlineTimeline(symbol))
+            KLineInterval.entries.forEach { interval ->
+                resolved = resolved.withKLines(interval, offlineKLines(symbol, interval.defaultCount, interval))
+            }
+            resolved
+        }
+        onResult(QuoteLoadResult(quote, DataMode.OFFLINE, nowMillis()))
     }
 
     private fun offlineTimeline(symbol: String): List<QuotePoint> {
@@ -110,11 +155,20 @@ class QuoteRepository(
         Securities.search(query, limit)
 
     fun cachedOrOfflineResult(symbol: String): QuoteLoadResult {
+        if (selectedSource() == MarketDataSource.MOCK) {
+            return QuoteLoadResult(offlineQuote(symbol), DataMode.OFFLINE, nowMillis())
+        }
         val cached = fresh(snapshots[symbol], SNAPSHOT_TTL_MILLIS)
         if (cached != null) {
             return QuoteLoadResult(cached.value.withCachedSeries(symbol).asCached(), DataMode.CACHE, cached.savedAtMillis)
         }
-        return QuoteLoadResult(offlineQuote(symbol), DataMode.OFFLINE, nowMillis())
+        // 真实模式的首帧不能偷塞 Mock：调用方应保留骨架，等 load() 的真实响应
+        // 或超时降级统一发布；否则详情页会在请求窗口里先闪出离线价格。
+        return if (offline is MockQuoteProvider) {
+            QuoteLoadResult(null, DataMode.AUTO, nowMillis())
+        } else {
+            QuoteLoadResult(offlineQuote(symbol), DataMode.OFFLINE, nowMillis())
+        }
     }
 
     private fun snapshot(symbol: String, onResult: (QuoteLoadResult) -> Unit) {

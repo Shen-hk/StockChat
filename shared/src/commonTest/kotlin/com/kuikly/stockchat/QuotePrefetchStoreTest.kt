@@ -37,6 +37,20 @@ class QuotePrefetchStoreTest {
     }
 
     @Test
+    fun snapshotIsAvailableBeforeSlowTimelineAndIsUpgradedAfterward() {
+        var now = 1_000L
+        val base = MockDataBank.quote("600519.SH")!!.copy(timeline = emptyList())
+        val timeline = MockDataBank.quote("600519.SH")!!.timeline.take(3)
+        val provider = DeferredTimelinePrefetchProvider(base, timeline)
+
+        QuotePrefetchStore.warm(listOf("600519.SH"), provider, { now })
+        assertEquals(emptyList(), QuotePrefetchStore.peek("600519.SH", { now })!!.timeline)
+
+        provider.deliverTimeline()
+        assertEquals(timeline, QuotePrefetchStore.peek("600519.SH", { now })!!.timeline)
+    }
+
+    @Test
     fun peekMissesAfterFreshnessWindowAndWarmSkipsFreshSymbols() {
         var now = 1_000L
         val provider = MutablePrefetchProvider(MockDataBank.quote("600519.SH")!!, emptyList())
@@ -84,5 +98,21 @@ class QuotePrefetchStoreTest {
 
         override fun kLines(symbol: String, count: Int, interval: KLineInterval, onResult: (List<com.kuikly.stockchat.data.provider.KLinePoint>) -> Unit) =
             onResult(emptyList())
+    }
+
+    private class DeferredTimelinePrefetchProvider(
+        private val quote: Quote,
+        private val timeline: List<QuotePoint>,
+    ) : QuoteProvider {
+        override val mode: DataMode = DataMode.ONLINE
+        private var timelineCallback: ((List<QuotePoint>) -> Unit)? = null
+
+        override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) = onResult(quote)
+        override fun timeline(symbol: String, onResult: (List<QuotePoint>) -> Unit) {
+            timelineCallback = onResult
+        }
+        override fun kLines(symbol: String, count: Int, interval: KLineInterval, onResult: (List<com.kuikly.stockchat.data.provider.KLinePoint>) -> Unit) = onResult(emptyList())
+
+        fun deliverTimeline() = timelineCallback?.invoke(timeline)
     }
 }

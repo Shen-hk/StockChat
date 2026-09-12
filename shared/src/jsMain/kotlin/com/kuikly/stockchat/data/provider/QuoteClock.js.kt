@@ -10,3 +10,7 @@ internal actual fun platformCurrentDate(compact: Boolean): String {
 }
 internal actual fun platformCurrentHour(): Int = Date().getHours()
 internal actual fun platformCurrentMinuteOfDay(): Int = Date().getHours() * 60 + Date().getMinutes()
+internal actual fun platformSchedule(delayMillis: Long, block: () -> Unit) {
+    val setTimeout: dynamic = js("setTimeout")
+    setTimeout(block, delayMillis)
+}

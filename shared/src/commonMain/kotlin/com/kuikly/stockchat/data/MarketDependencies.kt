@@ -38,6 +38,7 @@ class MarketDependencies(
                 riskSnapshotStore = RiskSnapshotStore(storage),
                 quoteRepository = QuoteRepository(
                     online = TencentQuoteProvider(pagerId),
+                    selectedSource = { MarketDataPrefs.source(storage) },
                     cacheStore = SharedPreferencesQuoteCacheStore(storage),
                 ),
                 insightRepository = MarketInsightRepository(

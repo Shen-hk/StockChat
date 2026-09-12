@@ -6,8 +6,8 @@ fun DataMode.quoteLabel(): String = when (this) {
     DataMode.AUTO -> "自动数据模式"
     DataMode.ONLINE -> "实时行情"
     DataMode.CACHE -> "缓存行情"
-    // 真实模式：OFFLINE = 网络失败且无缓存的真实空态；模拟模式：OFFLINE = 离线演示。
-    DataMode.OFFLINE -> if (com.kuikly.stockchat.data.config.DataSourceConfig.USE_REAL_MARKET_DATA) "离线 · 暂无数据" else "离线演示模式"
+    // 股票行情的 OFFLINE 统一来自 MockDataBank，不能再标成“暂无数据”。
+    DataMode.OFFLINE -> "Mock 数据（离线兜底）"
 }
 
 /** The provider-native K-line series. WEEK and MONTH are not derived from daily rows. */

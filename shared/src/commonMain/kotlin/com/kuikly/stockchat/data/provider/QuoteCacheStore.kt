@@ -34,6 +34,10 @@ class SharedPreferencesQuoteCacheStore(
 ) : QuoteCacheStore {
     constructor(pagerId: String) : this(PagerKeyValueStorage(pagerId))
 
+    init {
+        migrateFromLargeSeriesCache()
+    }
+
     override fun loadSnapshots(): List<StoredQuote<Quote>> =
         readRows(SNAPSHOT_KEY).mapNotNull { row ->
             val symbol = row.optString("symbol")
@@ -64,25 +68,19 @@ class SharedPreferencesQuoteCacheStore(
         upsert(SNAPSHOT_KEY, symbol) {
             put("symbol", symbol)
             put("savedAtMillis", savedAtMillis)
-            put("quote", quote.toJson())
+            // 分时和 K 线已有独立的会话内缓存。把它们再塞进快照会让一条行情
+            // 被重复序列化四次；真实模式下多只股票同时刷新会阻塞 Kuikly UI 线程。
+            put("quote", quote.toSnapshotJson())
         }
     }
 
     override fun saveTimeline(symbol: String, points: List<QuotePoint>, savedAtMillis: Long) {
-        upsert(TIMELINE_KEY, symbol) {
-            put("symbol", symbol)
-            put("savedAtMillis", savedAtMillis)
-            put("points", points.toQuotePointArray())
-        }
+        // 逐分钟序列最多数百点，频繁落盘会在网络回调线程制造明显卡顿。
+        // QuoteRepository 已持有五分钟会话缓存；冷启动时重新请求即可。
     }
 
     override fun saveKLines(symbol: String, interval: KLineInterval, points: List<KLinePoint>, savedAtMillis: Long) {
-        upsert(KLINE_KEY, "$symbol:${interval.name}") {
-            put("symbol", symbol)
-            put("interval", interval.name)
-            put("savedAtMillis", savedAtMillis)
-            put("points", points.toKLinePointArray())
-        }
+        // 同上：K 线只保留会话缓存，避免每个 interval 都重写整份 SharedPreferences JSON。
     }
 
     private fun readRows(key: String): List<JSONObject> {
@@ -103,7 +101,7 @@ class SharedPreferencesQuoteCacheStore(
     private fun upsert(key: String, id: String, build: JSONObject.() -> Unit) {
         val rows = JSONArray()
         val existing = readRows(key).filterNot { it.optString("cacheId") == id }
-        existing.takeLast(MAX_ROWS - 1).forEach(rows::put)
+        existing.takeLast(MAX_SNAPSHOT_ROWS - 1).forEach(rows::put)
         rows.put(JSONObject().apply {
             put("cacheId", id)
             build()
@@ -111,15 +109,33 @@ class SharedPreferencesQuoteCacheStore(
         preferences.setString(key, rows.toString())
     }
 
+    /**
+     * v1 把整日分时、日/周/月 K 线同时写入三份 JSON，且快照中又嵌套了一份，
+     * 造成 SharedPreferences 文件持续膨胀。迁移不读取旧内容，防止启动时 JSON
+     * 反序列化旧大对象再次卡住；旧键清空后下一次启动即可恢复轻量状态。
+     */
+    private fun migrateFromLargeSeriesCache() {
+        if (preferences.getString(CACHE_VERSION_KEY) == CACHE_VERSION) return
+        preferences.setString(LEGACY_SNAPSHOT_KEY, "")
+        preferences.setString(LEGACY_TIMELINE_KEY, "")
+        preferences.setString(LEGACY_KLINE_KEY, "")
+        preferences.setString(CACHE_VERSION_KEY, CACHE_VERSION)
+    }
+
     companion object {
-        private const val SNAPSHOT_KEY = "stockchat_quote_snapshots_v1"
-        private const val TIMELINE_KEY = "stockchat_quote_timelines_v1"
-        private const val KLINE_KEY = "stockchat_quote_klines_v1"
-        private const val MAX_ROWS = 24
+        private const val CACHE_VERSION_KEY = "stockchat_quote_cache_version"
+        private const val CACHE_VERSION = "2"
+        private const val LEGACY_SNAPSHOT_KEY = "stockchat_quote_snapshots_v1"
+        private const val LEGACY_TIMELINE_KEY = "stockchat_quote_timelines_v1"
+        private const val LEGACY_KLINE_KEY = "stockchat_quote_klines_v1"
+        private const val SNAPSHOT_KEY = "stockchat_quote_snapshots_v2"
+        private const val TIMELINE_KEY = "stockchat_quote_timelines_v2"
+        private const val KLINE_KEY = "stockchat_quote_klines_v2"
+        private const val MAX_SNAPSHOT_ROWS = 8
     }
 }
 
-private fun Quote.toJson(): JSONObject = JSONObject().apply {
+private fun Quote.toSnapshotJson(): JSONObject = JSONObject().apply {
     put("symbol", symbol)
     put("name", name)
     put("price", price)
@@ -135,10 +151,6 @@ private fun Quote.toJson(): JSONObject = JSONObject().apply {
     put("marketCap", marketCap)
     put("timestamp", timestamp)
     put("source", source)
-    put("timeline", timeline.toQuotePointArray())
-    put("kLines", kLines.toKLinePointArray())
-    put("weekKLines", weekKLines.toKLinePointArray())
-    put("monthKLines", monthKLines.toKLinePointArray())
 }
 
 private fun JSONObject.toQuote(): Quote? {

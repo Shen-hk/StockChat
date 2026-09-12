@@ -16,7 +16,8 @@ import kotlinx.coroutines.sync.Mutex
  *   随后的 quoteRepository.load 照常刷新（observable 同值写不通知，无闪动）。
  *
  * 数据口径与 QuoteRepository 一致：复用 TencentQuoteProvider（快照自带日 K，
- * 分时单独拉取后合并）。在线失败不在此兜底——详情页自身链路会回落缓存/离线。
+ * 分时单独拉取后合并）。快照到达即先写入，详情首屏无需再等较慢的分时请求；
+ * 分时到达后再补全缓存。在线失败不在此兜底——详情页自身链路会回落缓存/离线。
  *
  * 线程模型：回调可能来自 NetworkModule 后台线程，全部状态读写走跨平台 Mutex。
  */
@@ -88,37 +89,43 @@ object QuotePrefetchStore {
     }
 
     private fun request(symbol: String, provider: QuoteProvider, nowMillis: () -> Long) {
-        // 快照（含日 K）与分时并行；两路齐了再合并入缓存，快照先行也能单独立项。
+        // 快照（含日 K）与分时并行。首包可用性不应绑定到较慢的分时请求；
+        // 局部状态也统一在锁内更新，避免两个网络回调交错时用旧序列覆盖新序列。
         var snapshotQuote: Quote? = null
         var timeline: List<QuotePoint> = emptyList()
         var pending = 2
 
-        fun settle() {
-            val finished = withLock {
-                pending -= 1
-                if (pending == 0) inFlight.remove(symbol)
-                pending == 0
-            }
-            if (!finished) return
-            val merged = snapshotQuote?.takeIf { it.price > 0.0 }?.let { quote ->
-                if (timeline.isNotEmpty()) quote.copy(timeline = timeline) else quote
-            }
-            if (merged != null) {
-                withLock {
-                    entries[symbol] = Entry(merged, nowMillis())
-                    while (entries.size > MAX_ENTRIES) {
-                        entries.remove(entries.keys.first())
-                    }
+        fun putLocked(quote: Quote) {
+            entries[symbol] = Entry(quote, nowMillis())
+            while (entries.size > MAX_ENTRIES) entries.remove(entries.keys.first())
+        }
+
+        fun settle() = withLock {
+            pending -= 1
+            if (pending == 0) {
+                inFlight.remove(symbol)
+                snapshotQuote?.takeIf { it.price > 0.0 }?.let { quote ->
+                    putLocked(if (timeline.isNotEmpty()) quote.copy(timeline = timeline) else quote)
                 }
             }
         }
 
         provider.snapshot(symbol) { quote ->
-            snapshotQuote = quote
+            withLock {
+                snapshotQuote = quote
+                // 转场期间若快照先到，价格可以立即在详情首屏使用；图表仍由页面
+                // 保持骨架，直到分时已到位。
+                quote?.takeIf { it.price > 0.0 }?.let(::putLocked)
+            }
             settle()
         }
         provider.timeline(symbol) { points ->
-            timeline = points
+            withLock {
+                timeline = points
+                snapshotQuote?.takeIf { it.price > 0.0 }?.let { quote ->
+                    putLocked(if (points.isNotEmpty()) quote.copy(timeline = points) else quote)
+                }
+            }
             settle()
         }
     }

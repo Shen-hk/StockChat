@@ -7,6 +7,9 @@ internal expect fun platformCurrentHour(): Int
 /** 北京时区当前「时×60+分」，供 SnapshotStore 分钟节流入库（doc 36 §7）。 */
 internal expect fun platformCurrentMinuteOfDay(): Int
 
+/** Schedules repository-level fallback without coupling data code to a Pager instance. */
+internal expect fun platformSchedule(delayMillis: Long, block: () -> Unit)
+
 /**
  * 北京时区（UTC+8）下 days 天前的 yyyy-MM-dd。纯 common 实现（epochDay → 民用日期），
  * 避免为东财研报接口的 beginTime 参数给每个平台再补 actual。窗口参数差一天不影响业务。

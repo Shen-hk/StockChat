@@ -36,6 +36,11 @@ internal actual fun platformCurrentMinuteOfDay(): Int {
     return hour * 60 + minute
 }
 
+// HarmonyOS native currently has no main-loop timer exposed by the shared runtime.
+// Network callbacks still resolve normally; an immediate fallback prevents a hung request
+// from leaving the screen permanently blank on this target.
+internal actual fun platformSchedule(delayMillis: Long, block: () -> Unit) = block()
+
 @OptIn(ExperimentalForeignApi::class)
 private fun currentTimeParts(): Pair<Int, Int> = memScoped {
     val now = alloc<time_tVar>()

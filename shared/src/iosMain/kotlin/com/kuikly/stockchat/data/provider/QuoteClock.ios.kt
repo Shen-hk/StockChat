@@ -24,3 +24,6 @@ internal actual fun platformCurrentMinuteOfDay(): Int {
     val minute = cal.component(NSCalendarUnitMinute, fromDate = NSDate()).toInt()
     return hour * 60 + minute
 }
+internal actual fun platformSchedule(delayMillis: Long, block: () -> Unit) {
+    platform.Foundation.NSTimer.scheduledTimerWithTimeInterval(delayMillis / 1_000.0, false) { _ -> block() }
+}
