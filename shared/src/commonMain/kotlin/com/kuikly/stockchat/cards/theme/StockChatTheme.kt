@@ -90,6 +90,7 @@ data class SpacingTokens(
     val x2: Float = 24f,
     val x3: Float = 28f,
     val x4: Float = 32f,
+    val x11: Float = 60f,
 )
 
 data class TypeTokens(

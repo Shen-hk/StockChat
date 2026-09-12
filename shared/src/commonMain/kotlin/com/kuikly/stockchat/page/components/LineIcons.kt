@@ -7,7 +7,7 @@ import com.tencent.kuikly.core.views.CanvasContext
 import kotlin.math.PI
 
 /**
- * Line icons for the composer (input bar).
+ * Tabler Icons 风格的圆角线性图标，统一用于输入栏、抽屉与二级页顶栏。
  *
  * All icons are designed on a 24×24 grid and drawn with [Canvas] so the
  * stroke scales losslessly with `size`.  The grid transform is applied via
@@ -17,6 +17,7 @@ import kotlin.math.PI
 
 private const val GRID = 24f
 private const val STROKE = 1.8f
+
 
 private fun ViewContainer<*, *>.lineIcon(
     color: Color,
@@ -54,13 +55,163 @@ private fun CanvasContext.roundRectPath(x: Float, y: Float, w: Float, h: Float, 
 
 /** ＋ : new chat / attachment. */
 fun ViewContainer<*, *>.LineIconPlus(color: Color, size: Float) {
-    lineIcon(color, size) {
+    GeneratedIcon8(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.8f) {
         beginPath()
         moveTo(12f, 5f)
         lineTo(12f, 19f)
         moveTo(5f, 12f)
         lineTo(19f, 12f)
         stroke()
+    }
+}
+
+/** Three horizontal bars: side drawer trigger. */
+fun ViewContainer<*, *>.LineIconMenu(color: Color, size: Float) {
+    GeneratedIcon7(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.1f) {
+        beginPath()
+        moveTo(0.8f, 4f); lineTo(23.2f, 4f)
+        moveTo(0.8f, 12f); lineTo(23.2f, 12f)
+        moveTo(0.8f, 20f); lineTo(18f, 20f)
+        stroke()
+    }
+}
+
+/** − : compact zoom-out control. */
+fun ViewContainer<*, *>.LineIconMinus(color: Color, size: Float) {
+    lineIcon(color, size) {
+        beginPath()
+        moveTo(5f, 12f)
+        lineTo(19f, 12f)
+        stroke()
+    }
+}
+
+/**
+ * 二级页返回：圆角短箭头（chevron-left），纯线条。
+ * 与右侧 [LineIconChevronRight] 对称，小尺寸下视觉重心稳。
+ */
+fun ViewContainer<*, *>.LineIconArrowLeft(color: Color, size: Float) {
+    GeneratedIcon3(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.2f) {
+        beginPath()
+        moveTo(15f, 18f)
+        lineTo(9f, 12f)
+        lineTo(15f, 6f)
+        stroke()
+    }
+}
+
+/** Right-facing chevron for chart panning; kept explicit so transforms cannot mirror it. */
+fun ViewContainer<*, *>.LineIconArrowRight(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2.2f) {
+        beginPath()
+        moveTo(9f, 18f)
+        lineTo(15f, 12f)
+        lineTo(9f, 6f)
+        stroke()
+    }
+}
+
+/** Compact reset-to-full-range glyph for chart controls. */
+fun ViewContainer<*, *>.LineIconReset(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        arc(12f, 12f, 7f, 0.45f, 5.85f, false)
+        stroke()
+        beginPath()
+        moveTo(5.2f, 7f)
+        lineTo(5.2f, 12f)
+        lineTo(10f, 10f)
+        stroke()
+    }
+}
+
+/** Three soft dots: overflow actions（点标记，非背景填充）. */
+fun ViewContainer<*, *>.LineIconDots(color: Color, size: Float) {
+    lineIcon(color, size) {
+        listOf(6f, 12f, 18f).forEach { x ->
+            beginPath()
+            arc(x, 12f, 1.6f, 0f, (2f * PI).toFloat(), false)
+            fill()
+        }
+    }
+}
+
+/** Calendar: 圆角外框 + 顶部双挂耳 + 中线，纯线条简笔画（无填充点）. */
+fun ViewContainer<*, *>.LineIconCalendar(color: Color, size: Float) {
+    GeneratedIcon10(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.1f) {
+        beginPath(); moveTo(3.5f, 7.3f); lineTo(20.5f, 7.3f); lineTo(20.5f, 19.2f); lineTo(3.5f, 19.2f); closePath(); stroke()
+        beginPath(); moveTo(7.8f, 2.5f); lineTo(7.8f, 7.3f); moveTo(16.2f, 2.5f); lineTo(16.2f, 7.3f); stroke()
+        beginPath(); moveTo(6.8f, 10.5f); lineTo(13.5f, 10.5f); moveTo(6.8f, 15.3f); lineTo(20f, 15.3f); stroke()
+    }
+}
+
+/** Double check (Tabler `checks`): mark every alert as read. */
+fun ViewContainer<*, *>.LineIconChecks(color: Color, size: Float) {
+    lineIcon(color, size, strokeWidth = 2f) {
+        beginPath()
+        moveTo(3.5f, 12f); lineTo(7.5f, 16f); lineTo(13.5f, 8f)
+        moveTo(10.5f, 16f); lineTo(12.5f, 18f); lineTo(20.5f, 7f)
+        stroke()
+    }
+}
+
+/**
+ * 自选股：圆角书签，纯线条描边。
+ * 选中态由调用方以品牌色 + 软圆角药丸背景表达（见 AppChrome 顶栏动作容器），
+ * 图标自身恒为描边，不再实心填充。
+ */
+@Suppress("UNUSED_PARAMETER")
+fun ViewContainer<*, *>.LineIconBookmark(color: Color, size: Float, selected: Boolean = false) {
+    GeneratedIcon4(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.2f) {
+        beginPath()
+        moveTo(5.2f, 21.9f); lineTo(5.2f, 4.3f); quadraticCurveTo(5.2f, 2f, 7.5f, 2f); lineTo(20.9f, 2f); quadraticCurveTo(22.8f, 2f, 22.8f, 4.3f); lineTo(22.8f, 20.9f); lineTo(12f, 17.3f); closePath(); stroke()
+    }
+}
+
+/**
+ * 风险地图：用三个圆润节点与连接关系表达“组合关系”，取代传统雷达扫描圈。
+ * 这是供应链库常见的节点/路径思路，也更贴合本页用途。
+ */
+fun ViewContainer<*, *>.LineIconRadar(color: Color, size: Float) {
+    GeneratedIcon5(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.2f) {
+        beginPath()
+        moveTo(21f, 5f); lineTo(3f, 5f); moveTo(21f, 12f); lineTo(3f, 12f); moveTo(16f, 19f); lineTo(3f, 19f); stroke()
+        beginPath(); moveTo(14f, 3f); lineTo(14f, 7f); moveTo(8f, 10f); lineTo(8f, 14f); moveTo(16f, 17f); lineTo(16f, 21f); stroke()
+    }
+}
+
+/** 异动预警：轮廓铃铛 + 一颗提示点，纯线条（钟体描边，仅提示点为实心点标记）. */
+fun ViewContainer<*, *>.LineIconBellRinging(color: Color, size: Float) {
+    GeneratedIcon1(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 1.9f) {
+        beginPath()
+        moveTo(6f, 8f)
+        arc(12f, 8f, 6f, PI.toFloat(), 0f, false)
+        bezierCurveTo(18f, 15f, 21f, 17f, 21f, 17f)
+        lineTo(3f, 17f)
+        bezierCurveTo(6f, 15f, 6f, 8f, 6f, 8f)
+        stroke()
+        beginPath()
+        moveTo(10.3f, 21f)
+        quadraticCurveTo(12f, 23f, 13.7f, 21f)
+        stroke()
+        beginPath()
+        arc(12f, 8f, 6f, PI.toFloat(), 0f, false)
+        stroke()
+        beginPath(); moveTo(5f, 18.5f); lineTo(19f, 18.5f); stroke()
     }
 }
 
@@ -330,6 +481,8 @@ fun ViewContainer<*, *>.LineIconTrendUp(color: Color, size: Float) {
 
 /** Open book (Lucide `book-open`): terminology learning. */
 fun ViewContainer<*, *>.LineIconBook(color: Color, size: Float) {
+    GeneratedIcon6(color, size)
+    return
     lineIcon(color, size, strokeWidth = 2f) {
         // Left page.
         beginPath()
@@ -502,31 +655,16 @@ fun ViewContainer<*, *>.LineIconCopy(color: Color, size: Float) {
     }
 }
 
-/**
- * Refresh（Lucide `refresh-cw` 对齐）：重新生成回复。
- * 两段圆弧 + 两个 L 形箭头。
- */
+/** Refresh: 二级页刷新，圆弧 + 箭头，纯线条（描边与同级图标统一为 2f）. */
 fun ViewContainer<*, *>.LineIconRefresh(color: Color, size: Float) {
-    lineIcon(color, size, strokeWidth = 2f) {
-        // 上弧：M3 12a9 9 0 0 1 9-9 …L21 8。
+    GeneratedIcon9(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.1f) {
         beginPath()
-        arc(12f, 12f, 9f, PI.toFloat(), (PI * 1.5f).toFloat(), false)
-        lineTo(18.7f, 5.7f)
-        lineTo(21f, 8f)
-        // 箭头 M21 3v5h-5。
-        moveTo(21f, 3f)
-        lineTo(21f, 8f)
-        lineTo(16f, 8f)
+        arc(12f, 12f, 8.6f, (-PI * 0.18f).toFloat(), (PI * 1.62f).toFloat(), false)
         stroke()
-        // 下弧（镜像）：M21 12a9 9 0 0 1-9 9 …L3 16。
         beginPath()
-        arc(12f, 12f, 9f, 0f, (PI * 0.5f).toFloat(), false)
-        lineTo(5.3f, 18.3f)
-        lineTo(3f, 16f)
-        // 箭头 M8 16H3v5。
-        moveTo(8f, 16f)
-        lineTo(3f, 16f)
-        lineTo(3f, 21f)
+        moveTo(20.3f, 5.1f); lineTo(20.3f, 10.6f); lineTo(14.9f, 10.6f)
         stroke()
     }
 }
@@ -597,13 +735,14 @@ fun ViewContainer<*, *>.LineIconPin(color: Color, size: Float) {
 
 /** Search (Lucide `search`): magnifier. */
 fun ViewContainer<*, *>.LineIconSearch(color: Color, size: Float) {
-    lineIcon(color, size, strokeWidth = 2f) {
+    GeneratedIcon0(color, size)
+    return
+    lineIcon(color, size, strokeWidth = 2.1f) {
         beginPath()
-        arc(11f, 11f, 7f, 0f, (PI * 2).toFloat(), false)
+        arc(10.6f, 10.6f, 7.1f, 0f, (PI * 2).toFloat(), false)
         stroke()
         beginPath()
-        moveTo(21f, 21f)
-        lineTo(16.35f, 16.35f)
+        moveTo(20.8f, 20.8f); lineTo(15.7f, 15.7f)
         stroke()
     }
 }
@@ -670,21 +809,19 @@ fun ViewContainer<*, *>.LineIconBarChart(color: Color, size: Float) {
 
 /** Sliders horizontal (Lucide `sliders-horizontal`): settings. */
 fun ViewContainer<*, *>.LineIconSliders(color: Color, size: Float) {
+    GeneratedIcon2(color, size)
+    return
     lineIcon(color, size, strokeWidth = 2f) {
         beginPath()
         // 横线三段。
-        moveTo(21f, 4f); lineTo(14f, 4f)
-        moveTo(10f, 4f); lineTo(3f, 4f)
-        moveTo(21f, 12f); lineTo(12f, 12f)
-        moveTo(8f, 12f); lineTo(3f, 12f)
-        moveTo(21f, 20f); lineTo(16f, 20f)
-        moveTo(12f, 20f); lineTo(3f, 20f)
+        moveTo(21f, 5f); lineTo(3f, 5f)
+        moveTo(21f, 12f); lineTo(3f, 12f)
+        moveTo(21f, 19f); lineTo(3f, 19f)
         stroke()
-        // 竖向滑块。
         beginPath()
-        moveTo(14f, 2f); lineTo(14f, 6f)
-        moveTo(8f, 10f); lineTo(8f, 14f)
-        moveTo(16f, 18f); lineTo(16f, 22f)
+        arc(11f, 5f, 2f, 0f, (2f * PI).toFloat(), false)
+        arc(8f, 12f, 2f, 0f, (2f * PI).toFloat(), false)
+        arc(16f, 19f, 2f, 0f, (2f * PI).toFloat(), false)
         stroke()
     }
 }

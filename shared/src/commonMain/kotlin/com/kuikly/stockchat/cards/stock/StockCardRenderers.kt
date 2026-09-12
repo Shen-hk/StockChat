@@ -23,6 +23,8 @@ import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.chart.model.KLineCalculator
+import com.kuikly.stockchat.chart.model.ChartViewportAction
+import com.kuikly.stockchat.chart.model.ChartViewportCommand
 import com.kuikly.stockchat.common.Format
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -35,6 +37,7 @@ import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.TextAlign
 import com.tencent.kuikly.core.views.View
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -228,8 +231,9 @@ object StockChartCardRenderer : CardRenderer {
  *  - 双指捏合：两指间距驱动窗口根数，锚定捏合中点所在蜡烛不随缩放漂移；
  *    捏合期间回调 onZoomActive(true) 锁外层 Scroller（两指会被原生滚动接管，
  *    分时图 onScrubActive 同款机制），松一指/松手恢复；
- *  - 单指拖动：十字线立即跟随手指；拖出窗口边缘时窗口整体跟随平移（带图滚动）。
- *    单指不锁 Scroller——竖向 Scroller 不拦截横向位移，纵向拖动仍滚动页面；
+ *  - 单指拖动：先以 6dp 阈值仲裁方向；横向意图立即锁定外层 Scroller 后十字线
+ *    跟随手指，竖向意图交还页面。这样小幅纵向抖动不会打断正在看的十字线；
+ *    拖出窗口边缘时窗口整体跟随平移（带图滚动）。
  *  - touch 流挂同尺寸手势覆盖层 View（Canvas 本体 touchEnable(false)，
  *    DetailTimelineChart 同款范式；多指按 TouchParams.touches/pointerId 同步）。
  *
@@ -245,6 +249,8 @@ internal fun KLineChart(
     onSelectIndex: ((Int) -> Unit)? = null,
     chartHeight: Float = K_COMPACT_CHART_HEIGHT,
     onZoomActive: ((Boolean) -> Unit)? = null,
+    onCrosshairActive: ((Boolean) -> Unit)? = null,
+    viewportCommand: () -> ChartViewportCommand = { ChartViewportCommand() },
 ) {
     val sourceLines = when (model.period) {
         StockChartPeriod.DAY -> model.quote.kLines
@@ -290,7 +296,7 @@ internal fun KLineChart(
     state.windowStart = (lines.size - state.windowCount).coerceAtLeast(0)
 
     fun effectiveSel(): Int =
-        (if (onSelectIndex != null) selectedIndex() else state.selected)
+        (if (onSelectIndex != null) state.dragSelected.takeIf { it >= 0 } ?: selectedIndex() else state.selected)
             .takeIf { it in lines.indices } ?: lines.lastIndex
 
     /** 对前一根收盘的涨跌幅（首根对自身开盘价），随值行与端边读数共用。 */
@@ -311,6 +317,17 @@ internal fun KLineChart(
     var pinchAnchorIdx = 0
     var crosshairDragging = false
     var zooming = false
+    var downX = 0f
+    var downY = 0f
+    /** 0 = wait, 1 = chart crosshair, 2 = vertical page scroll. */
+    var singleFingerAxis = 0
+    var gestureDone = false
+    // 视觉十字线只写组件本地 observable；详情页头部/指标板的外部选中态至多每帧
+    // 同步一次，避免高频 touchMove 让整页的 vbind 在同一帧内重复计算。
+    var pendingSelection = -1
+    var selectionDispatchScheduled = false
+    var selectionDispatchVersion = 0
+    var lastDeliveredSelection = -1
 
     fun dist(a: Pair<Float, Float>, b: Pair<Float, Float>): Float {
         val dx = a.first - b.first
@@ -322,14 +339,6 @@ internal fun KLineChart(
     fun mergePointers(e: TouchParams) {
         e.touches.forEach { t -> pointers[t.pointerId] = t.x to t.y }
         pointers[e.pointerId.toLong()] = e.x to e.y
-    }
-
-    /** 抬指同步：先移除主触点，再以剩余 touches 重建（防幽灵指针卡住捏合态）。 */
-    fun dropPointer(e: TouchParams) {
-        pointers.remove(e.pointerId.toLong())
-        e.touches.forEach { t ->
-            if (t.pointerId != e.pointerId.toLong()) pointers[t.pointerId] = t.x to t.y
-        }
     }
 
     fun beginPinch() {
@@ -368,6 +377,46 @@ internal fun KLineChart(
         pinchBaseDist = 0f
     }
 
+    fun dispatchSelection(index: Int, immediately: Boolean = false) {
+        if (state.dragSelected != index) state.dragSelected = index
+        if (onSelectIndex == null) return
+        if (immediately) {
+            selectionDispatchVersion++
+            selectionDispatchScheduled = false
+            pendingSelection = -1
+            if (index != lastDeliveredSelection) {
+                lastDeliveredSelection = index
+                onSelectIndex.invoke(index)
+            }
+            return
+        }
+        pendingSelection = index
+        if (selectionDispatchScheduled) return
+        selectionDispatchScheduled = true
+        val version = selectionDispatchVersion
+        setTimeout(16) {
+            if (version != selectionDispatchVersion) return@setTimeout
+            selectionDispatchScheduled = false
+            val next = pendingSelection
+            pendingSelection = -1
+            if (next >= 0 && next != lastDeliveredSelection) {
+                lastDeliveredSelection = next
+                onSelectIndex.invoke(next)
+            }
+        }
+    }
+
+    fun flushSelection() {
+        val next = pendingSelection
+        pendingSelection = -1
+        selectionDispatchVersion++
+        selectionDispatchScheduled = false
+        if (next >= 0 && next != lastDeliveredSelection) {
+            lastDeliveredSelection = next
+            onSelectIndex?.invoke(next)
+        }
+    }
+
     /** 十字线跟随手指；拖出窗口边缘则窗口整体平移（带图滚动，主流 App 手感）。 */
     fun followCrosshair(x: Float) {
         val raw = (state.windowStart +
@@ -378,7 +427,31 @@ internal fun KLineChart(
             raw < state.windowStart -> state.windowStart = raw
             raw > end -> state.windowStart = (raw - state.windowCount + 1).coerceAtLeast(0)
         }
-        onSelectIndex?.invoke(raw)
+        dispatchSelection(raw)
+    }
+
+    fun applyViewportCommand(command: ChartViewportCommand) {
+        if (command.revision == state.lastViewportCommand) return
+        state.lastViewportCommand = command.revision
+        val oldCount = state.windowCount.coerceIn(1, lines.size)
+        val minCount = min(K_MIN_VISIBLE, lines.size)
+        val newCount = when (command.action) {
+            ChartViewportAction.ZOOM_IN -> (oldCount * 0.70f).roundToInt().coerceIn(minCount, lines.size)
+            ChartViewportAction.ZOOM_OUT -> (oldCount / 0.70f).roundToInt().coerceIn(minCount, lines.size)
+            ChartViewportAction.RESET -> min(defaultVisible, lines.size)
+            else -> oldCount
+        }
+        val newStart = when (command.action) {
+            ChartViewportAction.PAN_LEFT -> (state.windowStart - (oldCount * 0.22f).roundToInt()).coerceAtLeast(0)
+            ChartViewportAction.PAN_RIGHT -> (state.windowStart + (oldCount * 0.22f).roundToInt())
+                .coerceAtMost((lines.size - oldCount).coerceAtLeast(0))
+            ChartViewportAction.ZOOM_IN, ChartViewportAction.ZOOM_OUT ->
+                (state.windowStart + oldCount / 2 - newCount / 2).coerceIn(0, (lines.size - newCount).coerceAtLeast(0))
+            ChartViewportAction.RESET -> (lines.size - newCount).coerceAtLeast(0)
+            ChartViewportAction.NONE -> state.windowStart
+        }
+        state.windowStart = newStart
+        state.windowCount = newCount
     }
 
     container.View {
@@ -386,6 +459,13 @@ internal fun KLineChart(
             height(chartHeight)
             marginTop(10f)
             alignSelfStretch()
+        }
+        // 详情页控制条通过 revisioned command 驱动这个私有视窗；普通卡片保持默认 NOOP。
+        View {
+            attr {
+                width(0f); height(0f); opacity(0f); touchEnable(false)
+                applyViewportCommand(viewportCommand())
+            }
         }
         // Canvas 只负责绘制：touch 事件在 GroupEvent 上，Canvas 本体不吃触摸，
         // 手势统一由上方同尺寸覆盖层承担（DetailTimelineChart 同款范式）。
@@ -538,31 +618,65 @@ internal fun KLineChart(
                 if (onSelectIndex != null) {
                     touchDown { e ->
                         mergePointers(e)
+                        gestureDone = false
+                        selectionDispatchVersion++
+                        selectionDispatchScheduled = false
+                        pendingSelection = -1
                         if (pointers.size >= 2 && lines.size > K_MIN_VISIBLE) {
+                            if (crosshairDragging) onCrosshairActive?.invoke(false)
                             crosshairDragging = false
+                            singleFingerAxis = 1
                             beginPinch()
                         } else {
-                            crosshairDragging = true
-                            followCrosshair(e.x)
+                            // 不在 DOWN 就抢父滚动：先等方向明确，普通页面上下滑不受影响。
+                            downX = e.x
+                            downY = e.y
+                            singleFingerAxis = 0
+                            crosshairDragging = false
                         }
                     }
                     touchMove { e ->
+                        if (gestureDone) return@touchMove
                         mergePointers(e)
                         if (zooming) {
                             applyPinch()
-                        } else if (crosshairDragging && pointers.size == 1) {
-                            followCrosshair(pointers.values.first().first)
+                        } else if (pointers.size == 1) {
+                            val point = pointers.values.first()
+                            if (singleFingerAxis == 0) {
+                                val dx = point.first - downX
+                                val dy = point.second - downY
+                                if (max(abs(dx), abs(dy)) <= K_GESTURE_AXIS_SLOP) return@touchMove
+                                // 打平归竖向：页面的自然滚动优先，减少想滚页时点亮十字线。
+                                singleFingerAxis = if (abs(dx) > abs(dy)) 1 else 2
+                                if (singleFingerAxis == 1) {
+                                    crosshairDragging = true
+                                    onCrosshairActive?.invoke(true)
+                                }
+                            }
+                            if (crosshairDragging) followCrosshair(point.first)
                         }
                     }
-                    touchUp { e ->
-                        dropPointer(e)
-                        if (pointers.size < 2) endZoom()
-                        // 捏合收一指 → 余指转为十字线拖动
-                        crosshairDragging = pointers.isNotEmpty()
+                    touchUp { _ ->
+                        if (gestureDone) return@touchUp
+                        gestureDone = true
+                        // 保留原有轻点选中语义；仅方向明确的纵向手势交给页面。
+                        if (!zooming && singleFingerAxis == 0) followCrosshair(downX)
+                        flushSelection()
+                        // 单指抬起即结束本轮仲裁；清表防止余指回调遗留为下一轮的幽灵指针。
+                        pointers.clear()
+                        endZoom()
+                        if (crosshairDragging) onCrosshairActive?.invoke(false)
+                        crosshairDragging = false
+                        singleFingerAxis = 0
                     }
                     touchCancel { _ ->
+                        if (gestureDone) return@touchCancel
+                        gestureDone = true
                         pointers.clear()
+                        flushSelection()
+                        if (crosshairDragging) onCrosshairActive?.invoke(false)
                         crosshairDragging = false
+                        singleFingerAxis = 0
                         endZoom()
                     }
                 } else {
@@ -597,72 +711,7 @@ internal fun KLineChart(
             }
         }
     }
-    // ── 随值数据行 1：定位日期 + 涨跌幅 + 收价（attr 内读 effectiveSel 建立依赖，R1）──
-    container.View {
-        attr {
-            marginTop(6f)
-            paddingTop(6f)
-            borderTop(Border(0.5f, BorderStyle.SOLID, theme.divider))
-            flexDirectionRow()
-            alignItemsCenter()
-        }
-        Text {
-            attr {
-                text("定位 ${lines[effectiveSel()].date}")
-                fontSizeScaled(10f)
-                color(theme.textTertiary)
-                flex(1f)
-            }
-        }
-        Text {
-            attr {
-                val i = effectiveSel()
-                text(Format.percent(pctOf(i)))
-                fontSizeScaled(10f)
-                fontWeightMedium()
-                color(toneOf(i))
-                marginRight(8f)
-            }
-        }
-        Text {
-            attr {
-                val i = effectiveSel()
-                text("收 ${Format.price(lines[i].close)}")
-                fontSizeScaled(10f)
-                fontWeightSemiBold()
-                color(toneOf(i))
-            }
-        }
-    }
-    // ── 随值数据行 2：开 / 高 / 低 / 量 ──
-    container.View {
-        attr { marginTop(5f); flexDirectionRow() }
-        listOf(
-            "开" to { i: Int -> Format.price(lines[i].open) },
-            "高" to { i: Int -> Format.price(lines[i].high) },
-            "低" to { i: Int -> Format.price(lines[i].low) },
-            "量" to { i: Int -> "${Format.compactAmount(lines[i].volume)}手" },
-        ).forEachIndexed { index, (label, valueOf) ->
-            View {
-                attr { flex(1f); flexDirectionRow(); alignItemsCenter() }
-                Text { attr { text(label); fontSizeScaled(9f); color(theme.textTertiary) } }
-                Text {
-                    attr {
-                        val i = effectiveSel()
-                        text(valueOf(i))
-                        marginLeft(3f)
-                        fontSizeScaled(10.5f)
-                        fontWeightMedium()
-                        color(if (label == "量") theme.textSecondary else toneOf(i))
-                    }
-                }
-            }
-            if (index < 3) {
-                View { attr { width(0.5f); height(12f); backgroundColor(theme.divider) } }
-            }
-        }
-    }
-    // ── 随值数据行 3：MA5 / MA10 / MA20 选中蜡烛数值 ──
+    // ── 只保留均线参考值；OHLC/涨跌/量额已统一显示在详情页顶部 ──
     container.View {
         attr { marginTop(4f); flexDirectionRow() }
         listOf(5 to theme.brand, 10 to theme.textSecondary, 20 to theme.textTertiary).forEach { (period, color) ->
@@ -686,12 +735,16 @@ internal fun KLineChart(
  */
 private class KLineChartState {
     var selected by observable(-1)
+    /** 详情页拖动中的本地十字线位置；使绘制不必等待页面级状态回写。 */
+    var dragSelected by observable(-1)
     var windowCount by observable(0)
     var windowStart by observable(0)
+    var lastViewportCommand by observable(0)
 }
 
 /** 捏合放大后最少可见蜡烛根数（再少单根过宽，失真）。 */
 private const val K_MIN_VISIBLE = 20
+private const val K_GESTURE_AXIS_SLOP = 6f
 
 private const val K_COMPACT_CHART_HEIGHT = 168f
 private const val K_COMPACT_PRICE_H = 112f

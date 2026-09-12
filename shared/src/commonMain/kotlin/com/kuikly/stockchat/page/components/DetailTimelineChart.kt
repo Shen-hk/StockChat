@@ -4,17 +4,14 @@ import com.kuikly.stockchat.data.fontSizeScaled
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
+import com.kuikly.stockchat.chart.model.ChartViewportAction
+import com.kuikly.stockchat.chart.model.ChartViewportCommand
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuotePoint
 import com.kuikly.stockchat.data.provider.MarketTimelineSpec
-import com.tencent.kuikly.core.base.Border
-import com.tencent.kuikly.core.base.BorderStyle
-import com.tencent.kuikly.core.base.BoxShadow
 import com.tencent.kuikly.core.base.ViewContainer
-import com.tencent.kuikly.core.directives.vbind
-import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.timer.setTimeout
 import com.tencent.kuikly.core.views.Canvas
@@ -97,6 +94,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     onScrubLeave: () -> Unit = {},                     // ⑤ 松手离开 scrub（页面 2s 后清预填）
     onScrubActive: (Boolean) -> Unit = {},             // 长按进/出 scrub（页面锁/解锁 Scroller 滚动）
     onBlankTap: () -> Unit = {},                       // U1 点空白（非声呐、非拖动的轻点）回调
+    viewportCommand: () -> ChartViewportCommand = { ChartViewportCommand() },
 ) {
     // ── 新增交互的内部状态 ──
     // 响应式字段放进一个小类（与 StockDetailPage 的 `by observable(...)` 同来源/同形态，
@@ -130,6 +128,43 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
     var cachedAverageBaseline = Double.NaN
     var cachedAverageSymbol = ""
     var cachedAverages = emptyList<Double>()
+    // 量能色与最大量只由分时序列决定；此前每次十字线移动、声呐呼吸帧都会
+    // 全量扫描一次，240 个点的图在拖动时会额外制造 GC 和掉帧。
+    var cachedVolumeTimeline: List<QuotePoint>? = null
+    var cachedVolumeOpen = Double.NaN
+    var cachedVolumeFlags = emptyList<Boolean?>()
+    var cachedMaxVolume = 1.0
+
+    fun viewportFor(q: Quote): Pair<Int, Int> {
+        val maxSpan = (MarketTimelineSpec.forSymbol(q.symbol).slotCount - 1).coerceAtLeast(1)
+        val span = state.viewportSpan.takeIf { it > 0 }?.coerceIn(TIMELINE_MIN_SPAN, maxSpan) ?: maxSpan
+        val start = state.viewportStart.coerceIn(0, (maxSpan - span).coerceAtLeast(0))
+        return start to span
+    }
+
+    fun applyViewportCommand(command: ChartViewportCommand, q: Quote) {
+        if (command.revision == state.lastViewportCommand) return
+        state.lastViewportCommand = command.revision
+        val maxSpan = (MarketTimelineSpec.forSymbol(q.symbol).slotCount - 1).coerceAtLeast(1)
+        val (oldStart, oldSpan) = viewportFor(q)
+        val newSpan = when (command.action) {
+            ChartViewportAction.ZOOM_IN -> (oldSpan * 0.70f).roundToInt().coerceIn(TIMELINE_MIN_SPAN, maxSpan)
+            ChartViewportAction.ZOOM_OUT -> (oldSpan / 0.70f).roundToInt().coerceIn(TIMELINE_MIN_SPAN, maxSpan)
+            ChartViewportAction.RESET -> maxSpan
+            else -> oldSpan
+        }
+        val newStart = when (command.action) {
+            ChartViewportAction.PAN_LEFT -> (oldStart - (oldSpan * 0.22f).roundToInt()).coerceAtLeast(0)
+            ChartViewportAction.PAN_RIGHT -> (oldStart + (oldSpan * 0.22f).roundToInt())
+                .coerceAtMost((maxSpan - oldSpan).coerceAtLeast(0))
+            ChartViewportAction.ZOOM_IN, ChartViewportAction.ZOOM_OUT ->
+                (oldStart + oldSpan / 2 - newSpan / 2).coerceIn(0, (maxSpan - newSpan).coerceAtLeast(0))
+            ChartViewportAction.RESET -> 0
+            ChartViewportAction.NONE -> oldStart
+        }
+        state.viewportStart = newStart
+        state.viewportSpan = newSpan
+    }
 
     fun averagesFor(q: Quote): List<Double> {
         if (
@@ -146,6 +181,16 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
             )
         }
         return cachedAverages
+    }
+
+    fun volumeMetricsFor(q: Quote): Pair<List<Boolean?>, Double> {
+        if (cachedVolumeTimeline !== q.timeline || cachedVolumeOpen != q.open) {
+            cachedVolumeTimeline = q.timeline
+            cachedVolumeOpen = q.open
+            cachedVolumeFlags = TimeLineCalculator.volumeRisingFlags(q.timeline, q.open)
+            cachedMaxVolume = q.timeline.maxOfOrNull { it.volume }?.coerceAtLeast(1.0) ?: 1.0
+        }
+        return cachedVolumeFlags to cachedMaxVolume
     }
 
     fun dispatchScrub(index: Int, immediately: Boolean = false) {
@@ -193,6 +238,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
         if (q.timeline.isEmpty() || q.previousClose <= 0.0) return -1
         val pw = (containerWidth - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
         val slots = MarketTimelineSpec.forSymbol(q.symbol).slotCount
+        val (viewportStart, viewportSpan) = viewportFor(q)
         val g = TimeLineCalculator.calculateSymmetric(
             q.timeline,
             pw,
@@ -203,7 +249,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
         )
         sonarIndices().forEach { idx ->
             if (idx !in q.timeline.indices) return@forEach
-            val sx = AXIS_LEFT + idx / (slots - 1).toFloat() * pw
+            val sx = AXIS_LEFT + (idx - viewportStart) / viewportSpan.toFloat() * pw
             val sy = PRICE_TOP + g.points[idx].y
             val dx = x - sx
             val dy = y - sy
@@ -249,6 +295,16 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
         attr {
             height(CHART_HEIGHT)
         }
+        // 详情页控制条只广播意图。这个零尺寸响应式节点负责把意图施加到组件私有视窗，
+        // 连续点击同一个按钮由 command.revision 区分（R1：读取只发生在 attr 内）。
+        View {
+            attr {
+                width(0f); height(0f); opacity(0f); touchEnable(false)
+                val command = viewportCommand()
+                val currentQuote = quote()
+                applyViewportCommand(command, currentQuote)
+            }
+        }
         // Canvas 只负责绘制：touchEnable(false)——① Canvas 的基础 Event 没有
         // touchDown/touchMove/touchUp/touchCancel（它们在 GroupEvent 上）；
         // ② 内容子树挂触摸会吞整条触摸流（RowGestureLayer 实测），手势统一由
@@ -263,11 +319,10 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
             val q = quote()
             val progress = drawProgress()
             val phase = if (reduceMotion) 0f else motionPhase()
-            val scrubIndex = state.scrubIndex
             val points = q.timeline
             val timelineSpec = MarketTimelineSpec.forSymbol(q.symbol)
             val slotCount = timelineSpec.slotCount
-            val slotDenominator = (slotCount - 1).toFloat()
+            val (viewportStart, viewportSpan) = viewportFor(q)
             val plotW = (width - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
             if (
                 cachedTimeline !== points || cachedBaseline != q.previousClose ||
@@ -288,7 +343,7 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                 )
             }
             val geometry = cachedGeometry
-            val slotX: (Int) -> Float = { AXIS_LEFT + it / slotDenominator * plotW }
+            val slotX: (Int) -> Float = { AXIS_LEFT + (it - viewportStart) / viewportSpan.toFloat() * plotW }
 
             // ── 轻网格：不再常驻两侧价格刻度，留出横向空间给价格曲线。──
             if (geometry != null) {
@@ -429,9 +484,8 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                 canvas.setLineDash(emptyList())
 
                 // ── 量能条：每分钟一根，颜色按相对前一分钟（首根对今开） ──
-                val flagsVol = TimeLineCalculator.volumeRisingFlags(points, q.open)
-                val maxVolume = points.maxOf { it.volume }.coerceAtLeast(1.0)
-                val barW = plotW / slotDenominator * 0.62f
+                val (flagsVol, maxVolume) = volumeMetricsFor(q)
+                val barW = plotW / viewportSpan * 0.62f
                 for (i in 0 until visible) {
                     val vol = points[i].volume
                     if (vol <= 0.0) continue
@@ -507,46 +561,6 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     canvas.arc(lastX, lastY, 2.8f, 0f, (2 * PI).toFloat(), false)
                     canvas.fillStyle(tone)
                     canvas.fill()
-                }
-
-                // ── 十字光标：竖虚线 + 价格/均价空心点（圈选拖动态隐藏）──
-                if (scrubIndex in points.indices &&
-                    !(state.selecting && state.selectRange.first != state.selectRange.second)
-                ) {
-                    val x = slotX(scrubIndex)
-                    val priceY = PRICE_TOP + geometry.points[scrubIndex].y
-                    val avgY = PRICE_TOP + geometry.yFor(averages[scrubIndex])
-                    canvas.beginPath()
-                    canvas.moveTo(x, PRICE_TOP)
-                    canvas.lineTo(x, VOL_TOP + VOL_HEIGHT)
-                    canvas.setLineDash(listOf(3f, 3f))
-                    canvas.lineWidth(0.8f)
-                    canvas.strokeStyle(theme.textTertiary)
-                    canvas.stroke()
-                    // 横线：过当前价位的水平虚线（此前缺失，十字只有竖线）
-                    canvas.beginPath()
-                    canvas.moveTo(AXIS_LEFT, priceY)
-                    canvas.lineTo(AXIS_LEFT + plotW, priceY)
-                    canvas.stroke()
-                    canvas.setLineDash(emptyList())
-                    listOf(priceY, avgY).forEach { y ->
-                        canvas.beginPath()
-                        canvas.arc(x, y, 3.2f, 0f, (2 * PI).toFloat(), false)
-                        canvas.fillStyle(theme.marketGlass)
-                        canvas.fill()
-                        canvas.lineWidth(1.4f)
-                        canvas.strokeStyle(tone)
-                        canvas.stroke()
-                    }
-                    // 十字线两端读数：只在交互时出现，替代挤压绘图区的常驻双侧坐标轴。
-                    val pct = (points[scrubIndex].price - q.previousClose) / q.previousClose * 100.0
-                    canvas.font(9f)
-                    canvas.fillStyle(tone)
-                    canvas.textAlign(TextAlign.LEFT)
-                    canvas.fillText(Format.price(points[scrubIndex].price), 3f, priceY + 3f)
-                    canvas.textAlign(TextAlign.RIGHT)
-                    canvas.fillText(axisPercent(pct), width - 3f, priceY + 3f)
-                    canvas.textAlign(TextAlign.LEFT)
                 }
 
                 // ── ④ 异动声呐点：brand 实心点 + 呼吸圆环（复用 pulse 驱动；selected 白心蓝边）──
@@ -660,6 +674,71 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
             }
         }
 
+        // 十字线单独成层：拖动时只清绘这一层，不重复绘制约 240 个价格点、量能柱、
+        // 均价线与旗标。视觉位置直接读组件本地状态，保持与 touchMove 同拍。
+        Canvas({
+            attr {
+                absolutePositionAllZero()
+                height(CHART_HEIGHT)
+                touchEnable(false)
+            }
+        }) { canvas, width, _ ->
+            val q = quote()
+            val scrubIndex = state.scrubIndex
+            val selecting = state.selecting
+            val selectRange = state.selectRange
+            val points = q.timeline
+            if (scrubIndex !in points.indices || q.previousClose <= 0.0 ||
+                (selecting && selectRange.first != selectRange.second)
+            ) return@Canvas
+
+            val timelineSpec = MarketTimelineSpec.forSymbol(q.symbol)
+            val plotW = (width - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
+            val geometry = cachedGeometry ?: TimeLineCalculator.calculateSymmetric(
+                points,
+                plotW,
+                PRICE_HEIGHT,
+                q.previousClose,
+                slots = timelineSpec.slotCount,
+                lotSize = timelineSpec.lotSize,
+            )
+            val (viewportStart, viewportSpan) = viewportFor(q)
+            val x = AXIS_LEFT + (scrubIndex - viewportStart) / viewportSpan.toFloat() * plotW
+            val priceY = PRICE_TOP + geometry.points[scrubIndex].y
+            val avgY = PRICE_TOP + geometry.yFor(averagesFor(q)[scrubIndex])
+            val tone = if (q.rising) theme.rise else theme.fall
+
+            canvas.beginPath()
+            canvas.moveTo(x, PRICE_TOP)
+            canvas.lineTo(x, VOL_TOP + VOL_HEIGHT)
+            canvas.setLineDash(listOf(3f, 3f))
+            canvas.lineWidth(0.8f)
+            canvas.strokeStyle(theme.textTertiary)
+            canvas.stroke()
+            canvas.beginPath()
+            canvas.moveTo(AXIS_LEFT, priceY)
+            canvas.lineTo(AXIS_LEFT + plotW, priceY)
+            canvas.stroke()
+            canvas.setLineDash(emptyList())
+            listOf(priceY, avgY).forEach { y ->
+                canvas.beginPath()
+                canvas.arc(x, y, 3.2f, 0f, (2 * PI).toFloat(), false)
+                canvas.fillStyle(theme.marketGlass)
+                canvas.fill()
+                canvas.lineWidth(1.4f)
+                canvas.strokeStyle(tone)
+                canvas.stroke()
+            }
+            val pct = (points[scrubIndex].price - q.previousClose) / q.previousClose * 100.0
+            canvas.font(9f)
+            canvas.fillStyle(tone)
+            canvas.textAlign(TextAlign.LEFT)
+            canvas.fillText(Format.price(points[scrubIndex].price), 3f, priceY + 3f)
+            canvas.textAlign(TextAlign.RIGHT)
+            canvas.fillText(axisPercent(pct), width - 3f, priceY + 3f)
+            canvas.textAlign(TextAlign.LEFT)
+        }
+
         // ── 手势覆盖层（RowGestureLayer 同款 touch 范式，2026-09-09 重构）──
         // 旧方案 pan 直接挂 Canvas：Android 渲染层 KRCSSGestureDetector 对带 pan 的
         // view 在 DOWN 拍即 requestDisallowInterceptTouchEvent(true)（字节码证实），
@@ -684,8 +763,9 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
                     val q = quote()
                     if (q.timeline.isEmpty()) return -1
                     val plotW = (containerWidth - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
-                    val slots = MarketTimelineSpec.forSymbol(q.symbol).slotCount
-                    return ((x - AXIS_LEFT) / plotW * (slots - 1)).roundToInt().coerceIn(0, q.timeline.size - 1)
+                    val (viewportStart, viewportSpan) = viewportFor(q)
+                    return (viewportStart + (x - AXIS_LEFT) / plotW * viewportSpan)
+                        .roundToInt().coerceIn(0, q.timeline.size - 1)
                 }
 
                 touchDown { e ->
@@ -861,83 +941,6 @@ internal fun ViewContainer<*, *>.DetailTimelineChart(
             }
         }
 
-        // ── 十字光标随值卡（玻璃小卡，z 在 Canvas 上，数据驱动重建） ──
-        vif({ state.scrubIndex >= 0 }) {
-            vbind({ state.scrubIndex to quote().timeline.size }) {
-                val q = quote()
-                val idx = state.scrubIndex
-                if (q.timeline.isNotEmpty() && idx in q.timeline.indices && q.previousClose > 0.0) {
-                    val point = q.timeline[idx]
-                    val plotW = (containerWidth - AXIS_LEFT - AXIS_RIGHT).coerceAtLeast(1f)
-                    val averages = averagesFor(q)
-                    val slots = MarketTimelineSpec.forSymbol(q.symbol).slotCount
-                    val rawX = AXIS_LEFT + idx / (slots - 1).toFloat() * plotW
-                    val cardX = min(max(rawX - TOOLTIP_HALF, 12f), (containerWidth - TOOLTIP_WIDTH - 12f).coerceAtLeast(12f))
-                    // 与 Canvas 共用已缓存的几何；只有浮层先于首帧激活时才补算一次。
-                    val plotGeometry = cachedGeometry ?: TimeLineCalculator.calculateSymmetric(
-                        q.timeline,
-                        plotW,
-                        PRICE_HEIGHT,
-                        q.previousClose,
-                        slots = slots,
-                        lotSize = MarketTimelineSpec.forSymbol(q.symbol).lotSize,
-                    )
-                    val focusY = PRICE_TOP + plotGeometry.points[idx].y
-                    // 数据卡跟随当前焦点上下移动；靠近顶部时翻到焦点下方，避免固定贴顶。
-                    val cardTop = if (focusY - TOOLTIP_HEIGHT - TOOLTIP_GAP >= TOOLTIP_EDGE) {
-                        focusY - TOOLTIP_HEIGHT - TOOLTIP_GAP
-                    } else {
-                        focusY + TOOLTIP_GAP
-                    }.coerceIn(
-                        TOOLTIP_EDGE,
-                        (PRICE_HEIGHT - TOOLTIP_HEIGHT - TOOLTIP_EDGE).coerceAtLeast(TOOLTIP_EDGE),
-                    )
-                    val pct = (point.price - q.previousClose) / q.previousClose * 100.0
-                    val valueColor = when {
-                        point.price > q.previousClose -> theme.rise
-                        point.price < q.previousClose -> theme.fall
-                        else -> theme.textSecondary
-                    }
-                    View {
-                        attr {
-                            absolutePosition(left = cardX, top = cardTop)
-                            width(TOOLTIP_WIDTH)
-                            padding(8f)
-                            borderRadius(10f)
-                            backgroundColor(theme.marketGlass)
-                            border(Border(1f, BorderStyle.SOLID, theme.marketGlassEdge))
-                            boxShadow(BoxShadow(0f, 4f, 14f, theme.textPrimary.opacity(0.10f)))
-                            touchEnable(false)
-                        }
-                        Text {
-                            attr {
-                                text("${point.time} · 量 ${point.volume.roundToInt()}手")
-                                fontSizeScaled(9f)
-                                color(theme.textTertiary)
-                            }
-                        }
-                        Text {
-                            attr {
-                                text("${Format.price(point.price)}  ${Format.percent(pct)}")
-                                marginTop(2f)
-                                fontSizeScaled(11f)
-                                fontWeightSemiBold()
-                                color(valueColor)
-                            }
-                        }
-                        Text {
-                            attr {
-                                text("均价 ${Format.price(averages[idx])}")
-                                marginTop(2f)
-                                fontSizeScaled(9f)
-                                color(theme.textSecondary)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
     }
 }
 
@@ -959,11 +962,7 @@ private const val VOL_TOP = 296f
 private const val VOL_HEIGHT = 70f
 private const val AXIS_LEFT = 0f
 private const val AXIS_RIGHT = 0f
-private const val TOOLTIP_WIDTH = 148f
-private const val TOOLTIP_HALF = TOOLTIP_WIDTH / 2f
-private const val TOOLTIP_HEIGHT = 72f
-private const val TOOLTIP_GAP = 10f
-private const val TOOLTIP_EDGE = 8f
+private const val TIMELINE_MIN_SPAN = 36
 
 /**
  * DetailTimelineChart 内部交互状态容器：把需要驱动 Canvas 重绘的响应式字段
@@ -975,4 +974,7 @@ private class ChartInteractionState {
     var selecting by observable(false)                       // ① 是否处于圈选态
     var selectRange by observable(Pair(-1, -1))              // ① 圈选起止 index（预览带）
     var flagDropProgress by observable(emptyMap<Int, Float>()) // B2 旗标下落进度（index→0..1）
+    var viewportStart by observable(0)
+    var viewportSpan by observable(0)
+    var lastViewportCommand by observable(0)
 }
