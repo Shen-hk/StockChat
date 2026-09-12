@@ -65,6 +65,7 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartHostPort
 import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
 import com.kuikly.stockchat.detail.chart.state.DetailChartState
 import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
+import com.kuikly.stockchat.detail.page.component.DetailHeroSection
 import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
 import com.kuikly.stockchat.detail.ai.state.DetailAiInsightCoordinator
 import com.kuikly.stockchat.detail.ai.state.DetailAiState
@@ -462,123 +463,23 @@ internal class StockDetailPage : BasePager() {
                     }
 
                     // ---- Hero 行情（卡外价格行，直接铺在氛围底上）----
-                    // 2026-09-09 版式：价格 / 涨跌额 / 涨跌胶囊沿基线对齐（alignItemsFlexEnd），
-                    // 胶囊宽度随文本自适应——不再是「大数字旁半悬空的定宽胶囊」。
-                    View {
-                        attr { marginTop(2f) }
-                        View {
-                            attr { flexDirectionRow(); alignItemsFlexEnd() }
-                            TickerText(
-                                text = { page.chartHeaderSnapshot().priceText },
-                                previousText = { page.previousPriceText },
-                                loading = { page.quoteLoading },
-                                fontSize = page.theme.type.display,
-                                width = { 142f },
-                                color = { page.chartHeaderSnapshot().tone },
-                                theme = page.theme,
-                                lift = { page.tickerLift },
-                                directionUp = { page.tickerDirectionUp },
-                                reduceMotion = page.reduceMotion,
-                            )
-                            // 涨跌胶囊：宽度按文本长度自适应（lambda 传入，attr 闭包内随 quote 刷新，R1）
-                            View {
-                                attr {
-                                    marginLeft(8f)
-                                    marginBottom(4f)
-                                    paddingTop(3f); paddingBottom(3f); paddingLeft(9f); paddingRight(9f)
-                                    backgroundColor(page.toneColor())
-                                    borderRadius(page.theme.inputRadius)
-                                    alignItemsCenter(); justifyContentCenter()
-                                }
-                                TickerText(
-                                    text = { Format.percent(page.chartHeaderSnapshot().changePercent) },
-                                    previousText = { page.previousPercentText },
-                                    loading = { page.quoteLoading },
-                                    fontSize = page.theme.type.sm,
-                                    width = { (Format.percent(page.chartHeaderSnapshot().changePercent).length * 6.6f + 6f).coerceAtLeast(50f) },
-                                    color = { page.theme.onBrand },
-                                    theme = page.theme,
-                                    lift = { page.tickerLift },
-                                    directionUp = { page.tickerDirectionUp },
-                                    reduceMotion = page.reduceMotion,
-                                )
-                            }
-                            // 涨跌额（元）：胶囊右侧弱一档的同行事实
-                            Text {
-                                attr {
-                                    text(Format.signed(page.chartHeaderSnapshot().change))
-                                    marginLeft(8f)
-                                    marginBottom(6f)
-                                    fontSize(page.theme.type.sm)
-                                    fontWeightMedium()
-                                    color(page.chartHeaderSnapshot().tone.opacity(0.85f))
-                                }
-                            }
-                        }
-                        // 选中十字线/蜡烛时，这里同步相应时点的交易数据；保持为干净的信息行，
-                        // 不再用一格一块的玻璃底把 Hero 切碎。
-                        vbind({ listOf(page.quote, page.chartMode, page.chartPeriod, page.crosshairIndex, page.selectedKLineIndex) }) {
-                            val snapshot = page.chartHeaderSnapshot()
-                            snapshot.metrics.chunked(4).forEachIndexed { rowIndex, row ->
-                                View {
-                                    attr {
-                                        marginTop(if (rowIndex == 0) 10f else 7f)
-                                        flexDirectionRow()
-                                        alignItemsCenter()
-                                        touchEnable(false)
-                                    }
-                                    row.forEachIndexed { columnIndex, metric ->
-                                        if (columnIndex > 0) {
-                                            View {
-                                                attr {
-                                                    width(0.5f); height(24f)
-                                                    marginRight(7f)
-                                                    backgroundColor(page.theme.divider)
-                                                }
-                                            }
-                                        }
-                                        View {
-                                            attr { flex(1f) }
-                                            Text {
-                                                attr {
-                                                    text(metric.label)
-                                                    fontSizeScaled(10f)
-                                                    color(page.theme.textTertiary)
-                                                }
-                                            }
-                                            Text {
-                                                attr {
-                                                    text(metric.value)
-                                                    marginTop(2f)
-                                                    fontSizeScaled(13f)
-                                                    fontWeightSemiBold()
-                                                    color(metric.valueColor ?: page.theme.textSecondary)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(page.chartHeaderSnapshot().caption)
-                                marginTop(4f)
-                                fontSize(page.theme.type.meta)
-                                color(page.theme.textTertiary)
-                            }
-                        }
-                        vif({ page.watchlistHint.isNotEmpty() }) {
-                            Text {
-                                attr {
-                                    text(page.watchlistHint)
-                                    marginTop(6f)
-                                    fontSize(page.theme.type.meta)
-                                    color(page.theme.term)
-                                }
-                            }
-                        }
-                    }
+                    DetailHeroSection(
+                        theme = page.theme,
+                        reduceMotion = page.reduceMotion,
+                        toneColor = { page.toneColor() },
+                        tickerSnapshot = { page.chartHeaderSnapshot() },
+                        previousPriceText = { page.previousPriceText },
+                        previousPercentText = { page.previousPercentText },
+                        quoteLoading = { page.quoteLoading },
+                        tickerLift = { page.tickerLift },
+                        tickerDirectionUp = { page.tickerDirectionUp },
+                        quote = { page.quote },
+                        chartMode = { page.chartMode },
+                        chartPeriod = { page.chartPeriod },
+                        crosshairIndex = { page.crosshairIndex },
+                        selectedKLineIndex = { page.selectedKLineIndex },
+                        watchlistHint = { page.watchlistHint },
+                    )
 
                     // ---- 新闻弹幕 v2（对齐市场页）：无背板持续流动、屏幕边缘流出。
                     // 交互口径不变：点按 = 落旗 + 展开摘要条（摘要展开即暂停流动，
@@ -2258,7 +2159,7 @@ private fun ViewContainer<*, *>.SectionLabel(
  * 业务数据节头（原型 .sec-head）：标题 + 右侧 brand 提示。
  * E1 为自动置顶（无 FLIP 重放，见 doc 29 §9 有意偏差），提示用陈述文案、不做假按钮。
  */
-private fun ViewContainer<*, *>.TickerText(
+internal fun ViewContainer<*, *>.TickerText(
     // 可变状态一律传 lambda：observable 读取延迟到 attr/vif 闭包内（R1），
     // 行情 tick 时文本/颜色随 attr 重跑刷新，lift 动画才有驱动 key（R2）。
     text: () -> String,
