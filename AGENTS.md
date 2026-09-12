@@ -69,6 +69,26 @@ When debugging a silent Kuikly animation, inspect reactive dependency registrati
 
 ---
 
+## R9 — 本机工具链陷阱（consolidated 2026-09-12，docs/46 轨 A 施工）
+
+- **BSD grep 不支持 `\b` 与 `\|`，而且失败是静默的。** 本机（macOS `/usr/bin/grep`）上
+  `grep -E '\bFoo\b'`、`grep 'a\|b'` 都不按预期工作，典型表现是**返回 0 命中却不报错**。
+  用 `\b` 做的「某符号是否被引用」判断会得到**假阴性**，据此做的可见性判断/搬迁决策会直接编不过。
+  2026-09-12 实例：据此判定「`StockDetailPage` 不调用任何 private helper」，实际调用了 2 个
+  （`SecondaryMetricRow`、`DetailBottomBar`），编译才暴露。
+  → 词边界用 `grep -w`；多选分支用 `grep -E 'a|b'`；拿不准就用 perl。
+- **BWK awk（`/usr/bin/awk`，`awk version 20200816`）把正则字面量当函数实参时，求值为布尔 0/1。**
+  `function cnt(s, pat, t) { gsub(pat, "&", t) }` 配 `cnt($0, /setTimeout[(]/)` 会让 `pat`
+  变成 `0`/`1`，计数彻底错乱且不报任何错。→ 正则内联进 `gsub`，或把模式当字符串传参。
+- **本机进程启动极贵。** 实测 39 次 `grep -c` 要 3.8s，一次 `find` 要 1.4s。
+  批量扫描脚本必须把逻辑合并进**单次 awk**，不要写「逐文件 grep」的循环；
+  否则 `architectureCheck` 跑不进 5s 预算（实测从 16s 降到 1.9s 就是靠这个）。
+- **Kotlin 增量编译认内容哈希，`touch` 不会触发重编译。** 想重看编译警告要
+  `./gradlew <task> --rerun-tasks`。另外本项目编译**不输出** unused import 警告，
+  清理 import 用 `tools/find_unused_imports.pl`（保守检测：注释里出现过就保留；`tools/` 已 gitignore）。
+
+---
+
 # Vibe coding workflow conventions
 
 Conventions for AI-assisted development in this repository (multiple AI sessions may work on the same codebase). Confirmed direction from mentor feedback, 2026-09-07.
