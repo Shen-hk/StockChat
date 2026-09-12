@@ -57,6 +57,11 @@ import com.kuikly.stockchat.chat.entity.state.EntityHostPort
 import com.kuikly.stockchat.chat.entity.state.EntityInteractionCoordinator
 import com.kuikly.stockchat.chat.entity.state.EntityState
 import com.kuikly.stockchat.chat.entity.state.KuiklyEntityScheduler
+import com.kuikly.stockchat.chat.message.state.KuiklyMessageActionScheduler
+import com.kuikly.stockchat.chat.message.state.MessageActionCoordinator
+import com.kuikly.stockchat.chat.message.state.MessageActionEffect
+import com.kuikly.stockchat.chat.message.state.MessageActionFallback
+import com.kuikly.stockchat.chat.message.state.MessageActionState
 import com.kuikly.stockchat.chat.sheet.state.CardSheetCoordinator
 import com.kuikly.stockchat.chat.sheet.state.CardSheetState
 import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
@@ -322,24 +327,18 @@ internal class ChatPage : BasePager() {
     private val ambiguousEntityText: String get() = entityState.ambiguousText
     private val ambiguousAction: EntityAction get() = entityState.ambiguousAction
     // ===== 消息长按操作菜单（复制 / 追问）=====
-    // 双态机（mounted → presented 一拍后翻转，R4/R5），与 Drawer/CardSheet 同款。
-    private var messageActionMounted: Boolean by observable(false)
-    private var messageActionPresented: Boolean by observable(false)
-    private var messageActionX: Float by observable(0f)
-    private var messageActionY: Float by observable(0f)
-    // 用户消息只提供复制；AI 消息追加「追问」。
-    private var messageActionFollowUp: Boolean by observable(false)
-    // 菜单内容不进 observable：只在长按事件里赋值、由点击动作直接读取。
-    private var messageActionText = ""
-    private var messageActionQuote = ""
-    private var messageActionVersion = 0
+    private val messageActionState = MessageActionState()
+    private val messageActionCoordinator by lazy {
+        MessageActionCoordinator(messageActionState, KuiklyMessageActionScheduler(), ::handleMessageActionEffect)
+    }
+    private val messageActionMounted: Boolean get() = messageActionState.mounted
+    private val messageActionPresented: Boolean get() = messageActionState.presented
+    private val messageActionX: Float get() = messageActionState.pageX
+    private val messageActionY: Float get() = messageActionState.pageY
+    private val messageActionFollowUp: Boolean get() = messageActionState.followUpAllowed
     // 每条消息气泡的 selectable 容器 ref（vfor 下必须按 messageId 分键，
     // 单 ref 会被最后挂载的消息覆盖）。生命周期与页面一致，条目级泄漏可忽略。
     private val messageSelectionRefs = mutableMapOf<String, ViewRef<DivView>>()
-    // 当前选择会话的落点（页面绝对坐标），selectEnd 弹菜单时复用定位。
-    private var selectionMessageId = ""
-    private var selectionPageX = 0f
-    private var selectionPageY = 0f
     // ===== 回答完成后的引导语 chips 双态机（R4 两帧入场）=====
     // 流结束 → 挂载一拍后 presented 翻转；重新流式/换会话即重置。
     private var followUpsMounted: Boolean by observable(false)
@@ -686,6 +685,7 @@ internal class ChatPage : BasePager() {
         islandCoordinator.onDestroy()
         entityCoordinator.onDestroy()
         compareCoordinator.onDestroy()
+        messageActionCoordinator.onDestroy()
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
         mediaSheetCoordinator.reset()
@@ -3296,6 +3296,14 @@ internal class ChatPage : BasePager() {
 
     // ===== 消息长按操作菜单（复制 / 追问）=====
 
+    private fun handleMessageActionEffect(effect: MessageActionEffect) {
+        when (effect) {
+            is MessageActionEffect.CollectSelection ->
+                collectSelectionAndShowMenu(effect.pageX, effect.pageY, effect.fallback)
+            is MessageActionEffect.ClearSelection -> clearActiveTextSelection(effect.messageId)
+        }
+    }
+
     /** 提取可复制的纯文本：AI 回复剔除卡片代码块只保留正文，解析失败兜底原文。 */
     private fun messagePlainText(message: ChatMessage): String {
         if (message.role == MessageRole.USER) return message.content
@@ -3323,9 +3331,15 @@ internal class ChatPage : BasePager() {
         pageY: Float,
     ) {
         val message = viewModel.messages.firstOrNull { it.id == messageId } ?: return
-        selectionMessageId = messageId
-        selectionPageX = pageX
-        selectionPageY = pageY
+        messageActionCoordinator.beginSelection(
+            messageId = messageId,
+            pageX = pageX,
+            pageY = pageY,
+            fallback = MessageActionFallback(
+                text = messagePlainText(message),
+                allowFollowUp = message.role != MessageRole.USER,
+            ),
+        )
         val ref = messageSelectionRefs[messageId]
         if (message.streaming || ref == null) {
             showMessageActionMenu(messagePlainText(message), message.role != MessageRole.USER, pageX, pageY)
@@ -3333,34 +3347,25 @@ internal class ChatPage : BasePager() {
         }
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
         ref.view?.createSelection(x, y, SelectionType.WORD)
-        // 长按后不拖手柄的场景：留一拍给渲染层落词，已选上就直接弹菜单；
-        // 若长按点没有文本（空白），回退整条消息菜单。
-        val version = messageActionVersion
-        setTimeout(500) {
-            if (version != messageActionVersion) return@setTimeout
-            collectSelectionAndShowMenu(pageX, pageY, fallbackMessage = message)
-        }
     }
 
     /** selectEnd：手柄拖动结束（或起选定时器到达），取选中文本弹「复制/追问」。 */
     private fun handleTextSelectEnd(messageId: String) {
-        if (messageId != selectionMessageId) return
-        collectSelectionAndShowMenu(selectionPageX, selectionPageY, fallbackMessage = null)
+        val (pageX, pageY) = messageActionCoordinator.selectionAnchorFor(messageId) ?: return
+        collectSelectionAndShowMenu(pageX, pageY, fallback = null)
     }
 
     private fun handleTextSelectCancel(messageId: String) {
         // 点按其他区域退出选择模式：同步收起菜单，保持界面状态一致。
-        if (messageId == selectionMessageId && messageActionPresented) {
+        if (messageActionCoordinator.isCurrentSelection(messageId) && messageActionPresented) {
             dismissMessageActionMenu()
         }
     }
 
-    private fun collectSelectionAndShowMenu(pageX: Float, pageY: Float, fallbackMessage: ChatMessage?) {
-        val ref = messageSelectionRefs[selectionMessageId]
+    private fun collectSelectionAndShowMenu(pageX: Float, pageY: Float, fallback: MessageActionFallback?) {
+        val ref = messageSelectionRefs[messageActionCoordinator.selectedMessageId()]
         if (ref == null) {
-            fallbackMessage?.let {
-                showMessageActionMenu(messagePlainText(it), it.role != MessageRole.USER, pageX, pageY)
-            }
+            fallback?.let { showMessageActionMenu(it.text, it.allowFollowUp, pageX, pageY) }
             return
         }
         ref.view?.getSelection { result ->
@@ -3369,68 +3374,33 @@ internal class ChatPage : BasePager() {
             when {
                 selected.isNotEmpty() ->
                     showMessageActionMenu(selected, allowFollowUp = true, pageX = pageX, pageY = pageY)
-                fallbackMessage != null ->
-                    showMessageActionMenu(
-                        messagePlainText(fallbackMessage),
-                        fallbackMessage.role != MessageRole.USER,
-                        pageX,
-                        pageY,
-                    )
+                fallback != null -> showMessageActionMenu(fallback.text, fallback.allowFollowUp, pageX, pageY)
                 else -> Unit
             }
         }
     }
 
     private fun showMessageActionMenu(text: String, allowFollowUp: Boolean, pageX: Float, pageY: Float) {
-        if (text.isBlank()) return
-        messageActionText = text
-        // 追问预填引文：压缩空白并截断，避免长回复撑爆输入栏。
-        messageActionQuote = text.replace(Regex("\\s+"), " ").trim().let {
-            if (it.length > 60) "${it.take(60)}…" else it
-        }
-        messageActionFollowUp = allowFollowUp
-        messageActionVersion++
-        messageActionX = pageX
-        messageActionY = pageY
-        if (messageActionMounted) {
-            messageActionPresented = true
-        } else {
-            messageActionMounted = true
-            val version = messageActionVersion
-            // vif 新挂载视图首帧不播动画（R4）：挂载一拍后翻 presented。
-            setTimeout(0) {
-                if (version == messageActionVersion && messageActionMounted) messageActionPresented = true
-            }
-        }
+        messageActionCoordinator.show(text, allowFollowUp, pageX, pageY)
     }
 
     private fun dismissMessageActionMenu() {
-        if (!messageActionMounted) return
-        clearActiveTextSelection()
-        messageActionVersion++
-        messageActionPresented = false
-        val version = messageActionVersion
-        setTimeout(220) {
-            // version 已变化 = 期间重新长按打开了菜单，不能卸载。
-            if (version == messageActionVersion && !messageActionPresented) messageActionMounted = false
-        }
+        messageActionCoordinator.dismiss()
     }
 
     /** 清除当前消息上残留的选择手柄与高亮。 */
-    private fun clearActiveTextSelection() {
-        messageSelectionRefs[selectionMessageId]?.view?.clearSelection()
-    }
+    private fun clearActiveTextSelection(messageId: String) = messageSelectionRefs[messageId]?.view?.clearSelection()
 
     private fun copyMessageToPasteboard() {
         val bridge = acquireModule<BridgeModule>(BridgeModule.MODULE_NAME)
-        bridge.copyToPasteboard(messageActionText)
+        bridge.copyToPasteboard(messageActionCoordinator.actionText())
         bridge.toast("已复制")
         dismissMessageActionMenu()
     }
 
     /** 追问：把引文预填进输入栏并聚焦，问句由用户补全（不预填价值判断类文案）。 */
     private fun quoteMessageIntoComposer() {
-        val quote = messageActionQuote
+        val quote = messageActionCoordinator.actionQuote()
         dismissMessageActionMenu()
         if (quote.isEmpty()) return
         val draft = viewModel.inputText.trimEnd()
