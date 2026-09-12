@@ -61,7 +61,10 @@ import com.kuikly.stockchat.chat.composer.state.VoiceInputCoordinator
 import com.kuikly.stockchat.chat.composer.state.VoiceInputEffect
 import com.kuikly.stockchat.chat.composer.state.VoiceInputHostPort
 import com.kuikly.stockchat.chat.composer.state.VoiceInputState
+import com.kuikly.stockchat.chat.composer.component.AtCandidatePanelProps
+import com.kuikly.stockchat.chat.composer.component.ComposerAssistantCandidatePanels
 import com.kuikly.stockchat.chat.composer.component.ComposerCandidateRows
+import com.kuikly.stockchat.chat.composer.component.SlashCommandPanelProps
 import com.kuikly.stockchat.chat.composer.state.KuiklyMediaSheetScheduler
 import com.kuikly.stockchat.chat.composer.state.MAX_COMPOSER_ATTACHMENTS
 import com.kuikly.stockchat.chat.composer.state.MediaSheetCoordinator
@@ -3918,156 +3921,30 @@ internal class ChatPage : BasePager() {
     }
 
     private fun renderAtCandidateRows(container: ViewContainer<*, *>) {
-        val page = this
-        container.View {
-            attr {
-                marginTop(8f)
-                backgroundColor(page.theme.surface)
-                borderRadius(12f)
-                overflow(true)
-            }
-            // R1：面板内容依赖 triggerComposing / atCandidates 两个 observable，
-            // 分支判定必须放进 vif、行列表必须走 vfor——普通 builder 闭包只取首帧
-            // 快照，面板挂载后的列表更新不会重渲染（2026-09-10 真机复现：
-            // @ 面板永远停在「没有可推荐的标的」空态）。
-            vif({ page.triggerComposing }) {
-                View {
-                    attr {
-                        height(ASSISTANT_PANEL_EMPTY_HEIGHT)
-                        alignItemsCenter()
-                        justifyContentCenter()
-                    }
-                    Text { attr { text("输入中…"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
-                }
-            }
-            vif({ !page.triggerComposing && page.atCandidates.isEmpty() }) {
-                View {
-                    attr { height(56f); alignItemsCenter(); justifyContentCenter() }
-                    Text {
-                        attr {
-                            // query 在面板打开期间持续变化，文案放 attr 响应式读取。
-                            val q = page.triggerSession?.query.orEmpty()
-                            text(if (q.isEmpty()) "没有可推荐的标的" else "没有匹配“$q”的标的")
-                            fontSizeScaled(12f)
-                            color(page.theme.textTertiary)
-                        }
-                    }
-                }
-            }
-            vif({ !page.triggerComposing && page.atCandidates.isNotEmpty() }) {
-                Scroller {
-                    attr {
-                        height(assistantPanelHeight(page.atCandidates.size, CANDIDATE_ROW_HEIGHT))
-                        flexDirectionColumn()
-                        padding(4f)
-                    }
-                    vfor({ page.atCandidates }) { candidate ->
-                        val q = page.triggerSession?.query.orEmpty()
-                        View {
-                            attr {
-                                height(CANDIDATE_ROW_HEIGHT)
-                                flexDirectionRow()
-                                alignItemsCenter()
-                                paddingLeft(12f)
-                                paddingRight(12f)
-                                backgroundColor(
-                                    if (page.atCandidates.indexOf(candidate) == page.atHighlight) page.theme.brandSoft
-                                    else Color(0x00000000L, 0f)
-                                )
-                            }
-                            event { click { page.selectAtCandidate(candidate) } }
-                            if (candidate.entry.kind == MentionType.BOARD) {
-                                ComposerCandidateRows.renderBoard(this, candidate, q, page.theme)
-                            } else {
-                                ComposerCandidateRows.renderSecurity(this, candidate, q, page.theme)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        ComposerAssistantCandidatePanels.renderAt(
+            container,
+            AtCandidatePanelProps(
+                theme = theme,
+                composing = { triggerComposing },
+                candidates = { atCandidates },
+                query = { triggerSession?.query.orEmpty() },
+                highlight = { atHighlight },
+                onSelect = ::selectAtCandidate,
+            ),
+        )
     }
 
     private fun renderSlashCommandRows(container: ViewContainer<*, *>) {
-        val page = this
-        container.View {
-            attr {
-                marginTop(8f)
-                backgroundColor(page.theme.surface)
-                borderRadius(12f)
-                overflow(true)
-            }
-            // R1：与 @ 面板同理——分支判定进 vif、命令行走 vfor；普通 builder 闭包
-            // 只取首帧快照，输入 / 命令名过程中的候选更新不会重渲染。
-            vif({ page.slashUnknown.isNotEmpty() }) {
-                View {
-                    attr { padding(10f); flexDirectionColumn() }
-                    Text { attr { text("未识别命令：/${page.slashUnknown}"); fontSizeScaled(12f); color(page.theme.textSecondary) } }
-                    Text { attr { text("将作为普通文本发送"); fontSizeScaled(10f); color(page.theme.textTertiary) } }
-                    val suggestions = CommandRegistry.suggest(page.slashUnknown)
-                    if (suggestions.isNotEmpty()) {
-                        View {
-                            attr { flexDirectionRow(); alignItemsCenter(); marginTop(8f) }
-                            Text { attr { text("你是不是想用"); fontSizeScaled(10f); color(page.theme.textTertiary); marginRight(6f) } }
-                            suggestions.forEach { command ->
-                                View {
-                                    attr {
-                                        height(24f)
-                                        marginRight(6f)
-                                        paddingLeft(8f)
-                                        paddingRight(8f)
-                                        allCenter()
-                                        backgroundColor(page.theme.brandSoft)
-                                        borderRadius(7f)
-                                    }
-                                    Text { attr { text("/${command.name}"); fontSizeScaled(11f); color(page.theme.brand) } }
-                                    event { click { page.selectSlashCommand(command) } }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            vif({ page.slashUnknown.isEmpty() && page.slashCandidates.isEmpty() }) {
-                View {
-                    attr { height(36f); alignItemsCenter(); justifyContentCenter() }
-                    Text { attr { text("输入 / 唤起指令"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
-                }
-            }
-            vif({ page.slashUnknown.isEmpty() && page.slashCandidates.isNotEmpty() }) {
-                Scroller {
-                    attr {
-                        height(assistantPanelHeight(page.slashCandidates.size, COMMAND_ROW_HEIGHT))
-                        flexDirectionColumn()
-                        padding(4f)
-                    }
-                    vfor({ page.slashCandidates }) { command ->
-                        View {
-                            attr {
-                                height(COMMAND_ROW_HEIGHT)
-                                flexDirectionRow()
-                                alignItemsCenter()
-                                padding(10f)
-                                backgroundColor(
-                                    if (page.slashCandidates.indexOf(command) == page.slashHighlight) page.theme.brandSoft
-                                    else Color(0x00000000L, 0f)
-                                )
-                            }
-                            event { click { page.selectSlashCommand(command) } }
-                            View {
-                                attr { width(28f); height(28f); marginRight(10f); alignItemsCenter(); justifyContentCenter(); backgroundColor(page.theme.brandSoft); borderRadius(8f) }
-                                Text { attr { text(command.icon); fontSizeScaled(14f); color(page.theme.brand) } }
-                            }
-                            View {
-                                attr { flex(1f); flexDirectionColumn() }
-                                Text { attr { text("/${command.name}"); fontSizeScaled(13f); color(page.theme.textPrimary) } }
-                                Text { attr { text(command.desc); fontSizeScaled(10f); color(page.theme.textTertiary) } }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        ComposerAssistantCandidatePanels.renderSlash(
+            container,
+            SlashCommandPanelProps(
+                theme = theme,
+                unknown = { slashUnknown },
+                candidates = { slashCandidates },
+                highlight = { slashHighlight },
+                onSelect = ::selectSlashCommand,
+            ),
+        )
     }
 
     private fun renderCommandParams(container: ViewContainer<*, *>) {
