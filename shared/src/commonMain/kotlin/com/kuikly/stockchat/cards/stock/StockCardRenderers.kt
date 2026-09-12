@@ -3,7 +3,7 @@ package com.kuikly.stockchat.cards.stock
 import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.data.lineHeightScaled
 
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity

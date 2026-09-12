@@ -1,6 +1,6 @@
 package com.kuikly.stockchat.chat.session.state
 
-import com.kuikly.stockchat.glass.GlassRenderingMode
+import com.kuikly.stockchat.foundation.design.GlassRenderingMode
 import com.tencent.kuikly.core.reactive.handler.observable
 
 /**

@@ -18,7 +18,7 @@ import com.kuikly.stockchat.data.provider.SourceStamp
 import com.kuikly.stockchat.data.provider.SourceTier
 import com.kuikly.stockchat.data.provider.platformCurrentDate
 import com.kuikly.stockchat.page.components.AppTopBar
-import com.kuikly.stockchat.page.components.SourceStampLine
+import com.kuikly.stockchat.foundation.ui.feedback.SourceStampLine
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.directives.vbind

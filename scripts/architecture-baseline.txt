@@ -51,9 +51,7 @@ page/components/DetailBoardBlocks.kt
 page/components/DetailTimelineChart.kt
 page/components/DivergingBar.kt
 page/components/FeatureTile.kt
-page/components/GeneratedSvgCanvasIcons.kt
 page/components/InsightComponents.kt
-page/components/LineIcons.kt
 page/components/MarketNarrativeAxis.kt
 page/components/NewsMarquee.kt
 page/components/NewsTape.kt

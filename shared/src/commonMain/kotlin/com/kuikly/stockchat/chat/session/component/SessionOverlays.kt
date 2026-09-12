@@ -2,9 +2,9 @@ package com.kuikly.stockchat.chat.session.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.glass.GlassBackdrop
-import com.kuikly.stockchat.glass.GlassRenderer
-import com.kuikly.stockchat.page.components.LineIconClose
+import com.kuikly.stockchat.foundation.ui.surface.GlassBackdrop
+import com.kuikly.stockchat.foundation.design.GlassRenderer
+import com.kuikly.stockchat.foundation.ui.icon.LineIconClose
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle

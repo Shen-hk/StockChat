@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.cards.core
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
-import com.kuikly.stockchat.glass.GlassRenderer
+import com.kuikly.stockchat.foundation.design.GlassRenderer
 
 enum class CardDensity { FULL, COMPACT, MINI }
 

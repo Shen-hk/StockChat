@@ -1,6 +1,8 @@
-package com.kuikly.stockchat.glass
+package com.kuikly.stockchat.foundation.ui.surface
 
 import com.kuikly.stockchat.cards.theme.GlassMaterial
+import com.kuikly.stockchat.foundation.design.GlassRenderer
+import com.kuikly.stockchat.foundation.design.GlassRenderingMode
 import com.tencent.kuikly.core.base.Attr
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border

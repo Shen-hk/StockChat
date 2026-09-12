@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.cards.components
+package com.kuikly.stockchat.cards.component
 
 import com.kuikly.stockchat.data.fontSizeScaled
 

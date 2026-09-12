@@ -2,7 +2,7 @@ package com.kuikly.stockchat.chat.session
 
 import com.kuikly.stockchat.chat.session.state.PlainSessionChromeState
 import com.kuikly.stockchat.chat.session.state.SessionChromeCoordinator
-import com.kuikly.stockchat.glass.GlassRenderingMode
+import com.kuikly.stockchat.foundation.design.GlassRenderingMode
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

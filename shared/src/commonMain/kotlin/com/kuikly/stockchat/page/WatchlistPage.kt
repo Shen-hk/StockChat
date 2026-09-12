@@ -5,7 +5,7 @@ import com.kuikly.stockchat.data.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
@@ -35,10 +35,10 @@ import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.AppTopBarAction
 import com.kuikly.stockchat.page.components.DivergingBar
 import com.kuikly.stockchat.page.components.FeatureTile
-import com.kuikly.stockchat.page.components.LineIconBarChart
-import com.kuikly.stockchat.page.components.LineIconBellRinging
-import com.kuikly.stockchat.page.components.LineIconRadar
-import com.kuikly.stockchat.page.components.LineIconSearch
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBarChart
+import com.kuikly.stockchat.foundation.ui.icon.LineIconBellRinging
+import com.kuikly.stockchat.foundation.ui.icon.LineIconRadar
+import com.kuikly.stockchat.foundation.ui.icon.LineIconSearch
 import com.kuikly.stockchat.page.components.RowGestureLayer
 import com.kuikly.stockchat.page.components.UndoBar
 import com.tencent.kuikly.core.annotations.Page

@@ -25,17 +25,8 @@ data/Appearance.kt | R1 | com.tencent.kuikly.core.views.TextAreaAttr | 同上
 # ---------------------------------------------------------------------------
 chat/compare/component/ChatCompareOverlays.kt | R2 | com.kuikly.stockchat.page.components.ActiveComparePanel | B-2（page.components 归位）
 chat/compare/component/ChatCompareOverlays.kt | R2 | com.kuikly.stockchat.page.components.TermComparePanel | B-2（page.components 归位）
-chat/composer/component/ComposerActionRow.kt | R2 | com.kuikly.stockchat.page.components.LineIconAudioLines | A-2（LineIcons 迁 foundation/ui/icon）后自动消失
-chat/composer/component/ComposerActionRow.kt | R2 | com.kuikly.stockchat.page.components.LineIconPlus | A-2（同上）
-chat/composer/component/ComposerActionRow.kt | R2 | com.kuikly.stockchat.page.components.LineIconStop | A-2（同上）
 chat/composer/component/ComposerChrome.kt | R2 | com.kuikly.stockchat.page.components.ComposerGuideRow | B-2（page.components 归位）
-chat/composer/component/ComposerInputRow.kt | R2 | com.kuikly.stockchat.page.components.LineIconAudioLines | A-2（LineIcons 迁 foundation/ui/icon）后自动消失
-chat/composer/component/ComposerInputRow.kt | R2 | com.kuikly.stockchat.page.components.LineIconKeyboard | A-2（同上）
-chat/composer/component/ComposerInputRow.kt | R2 | com.kuikly.stockchat.page.components.LineIconPlus | A-2（同上）
 chat/composer/component/ComposerInputRow.kt | R2 | com.kuikly.stockchat.page.components.VoiceBar | B-2（VoiceBar 归位）
-chat/session/component/ChatContextOverlays.kt | R2 | com.kuikly.stockchat.page.components.LineIconChevronUp | A-2（LineIcons 迁 foundation/ui/icon）后自动消失
-chat/session/component/SessionOverlays.kt | R2 | com.kuikly.stockchat.page.components.LineIconClose | A-2（同上）
-chat/welcome/component/ChatWelcomeSection.kt | R2 | com.kuikly.stockchat.page.components.LineIconTrendUp | A-2（同上）
 
 # ---------------------------------------------------------------------------
 # R2 — Detail Feature 组件依赖 Page 层（A-3 搬迁 + A-4 收口清账）
@@ -74,9 +65,6 @@ detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.compo
 detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.components.NewsSummaryBar | A-3（同上）
 detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.detail.scoreNewsSentiment | A-3（page/detail → detail/domain）
 detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.FeatureTile | A-2（FeatureTile 确认留原位后改 import 目标）
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.LineIconBarChart | A-2（LineIcons 迁 foundation/ui/icon）后自动消失
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.LineIconCopy | A-2（同上）
-detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.LineIconPin | A-2（同上）
 detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.QuickReasonChips | A-3（随 14 区块迁 detail/page/component）
 detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.formatTapeTime | A-3（同上）
 detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.truncateByWidth | A-3（同上）

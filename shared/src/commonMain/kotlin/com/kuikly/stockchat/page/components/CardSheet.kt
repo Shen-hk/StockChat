@@ -2,7 +2,7 @@ package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.data.fontSizeScaled
 
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardModel
@@ -12,9 +12,9 @@ import com.kuikly.stockchat.cards.core.StockChartCardModel
 import com.kuikly.stockchat.cards.core.StockCompareCardModel
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.cards.theme.StockChatTheme
-import com.kuikly.stockchat.glass.GlassBackdrop
-import com.kuikly.stockchat.glass.GlassRenderer
-import com.kuikly.stockchat.glass.GlassRenderingMode
+import com.kuikly.stockchat.foundation.ui.surface.GlassBackdrop
+import com.kuikly.stockchat.foundation.design.GlassRenderer
+import com.kuikly.stockchat.foundation.design.GlassRenderingMode
 import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Color

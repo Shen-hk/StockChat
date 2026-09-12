@@ -1,15 +1,15 @@
 package com.kuikly.stockchat.chat.session.component
 
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.glass.GlassBackdrop
-import com.kuikly.stockchat.glass.GlassRenderer
-import com.kuikly.stockchat.page.components.LineIconChevronUp
+import com.kuikly.stockchat.foundation.ui.surface.GlassBackdrop
+import com.kuikly.stockchat.foundation.design.GlassRenderer
+import com.kuikly.stockchat.foundation.ui.icon.LineIconChevronUp
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle

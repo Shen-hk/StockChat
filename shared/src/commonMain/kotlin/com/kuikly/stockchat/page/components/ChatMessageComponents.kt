@@ -1,9 +1,13 @@
 package com.kuikly.stockchat.page.components
 
+import com.kuikly.stockchat.foundation.ui.icon.LineIconCopy
+import com.kuikly.stockchat.foundation.ui.icon.LineIconFileText
+import com.kuikly.stockchat.foundation.ui.icon.LineIconRefresh
+import com.kuikly.stockchat.foundation.ui.icon.LineIconShare
 import com.kuikly.stockchat.data.fontSizeScaled
 import com.kuikly.stockchat.data.lineHeightScaled
 
-import com.kuikly.stockchat.cards.components.CardShell
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.CardAssembler
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
