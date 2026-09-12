@@ -81,6 +81,9 @@ import com.kuikly.stockchat.chat.sheet.state.CardSheetCoordinator
 import com.kuikly.stockchat.chat.sheet.state.CardSheetState
 import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
 import com.kuikly.stockchat.chat.sheet.state.KuiklyCardSheetScheduler
+import com.kuikly.stockchat.chat.session.state.FollowUpCoordinator
+import com.kuikly.stockchat.chat.session.state.FollowUpState
+import com.kuikly.stockchat.chat.session.state.KuiklyFollowUpScheduler
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
@@ -349,9 +352,10 @@ internal class ChatPage : BasePager() {
     private val messageSelectionRefs = mutableMapOf<String, ViewRef<DivView>>()
     // ===== 回答完成后的引导语 chips 双态机（R4 两帧入场）=====
     // 流结束 → 挂载一拍后 presented 翻转；重新流式/换会话即重置。
-    private var followUpsMounted: Boolean by observable(false)
-    private var followUpsPresented: Boolean by observable(false)
-    private var followUpsVersion = 0
+    private val followUpState = FollowUpState()
+    private val followUpCoordinator = FollowUpCoordinator(followUpState, KuiklyFollowUpScheduler())
+    private val followUpsMounted: Boolean get() = followUpState.mounted
+    private val followUpsPresented: Boolean get() = followUpState.presented
     // ===== 文字输入态（展开 / 聚焦恢复 / 键盘避让）=====
     private val composerFocusState = ComposerFocusState()
     private val composerFocusCoordinator by lazy {
@@ -702,6 +706,7 @@ internal class ChatPage : BasePager() {
     }
 
     override fun pageWillDestroy() {
+        followUpCoordinator.onDestroy()
         voiceInputCoordinatorInstance?.onDestroy()
         composerFocusCoordinator.onDestroy()
         drawerCoordinator.onDestroy()
@@ -2759,9 +2764,7 @@ internal class ChatPage : BasePager() {
 
     /** 引导语双态机：立即重置（新一轮流式/清屏时调用）。 */
     private fun resetFollowUps() {
-        followUpsVersion++
-        followUpsPresented = false
-        followUpsMounted = false
+        followUpCoordinator.reset()
     }
 
     /**
@@ -2769,17 +2772,7 @@ internal class ChatPage : BasePager() {
      * 淡入+上移。version 使重置/重复触发时过期回调失效。
      */
     private fun scheduleFollowUpsPresentation() {
-        val version = ++followUpsVersion
-        followUpsPresented = false
-        followUpsMounted = false
-        setTimeout(320) {
-            if (version != followUpsVersion || isWillDestroy()) return@setTimeout
-            followUpsMounted = true
-            setTimeout(16) {
-                if (version != followUpsVersion || isWillDestroy()) return@setTimeout
-                followUpsPresented = true
-            }
-        }
+        followUpCoordinator.schedulePresentation()
     }
 
     /**
