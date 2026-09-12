@@ -105,6 +105,7 @@ import com.kuikly.stockchat.chat.session.state.MarketFallbackState
 import com.kuikly.stockchat.chat.session.state.KuiklyMarketFallbackScheduler
 import com.kuikly.stockchat.chat.session.component.ImagePreviewOverlay
 import com.kuikly.stockchat.chat.session.component.MessageActionOverlay
+import com.kuikly.stockchat.chat.session.component.ChatContextOverlays
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
@@ -999,133 +1000,41 @@ internal class ChatPage : BasePager() {
                     onSearch = { page.openPage(Routes.SEARCH) },
                 )
                 }
-                vif({ page.ambiguousSymbols.isNotEmpty() }) {
-                    View {
-                        attr {
-                            marginLeft(12f)
-                            marginRight(12f)
-                            marginBottom(8f)
-                            padding(10f)
-                            backgroundColor(page.theme.brandSoft)
-                            borderRadius(12f)
-                        }
-                        Text {
-                            attr {
-                                text("“${page.ambiguousEntityText}”可能指以下标的")
-                                fontSizeScaled(12f)
-                                fontWeightMedium()
-                                color(page.theme.textPrimary)
-                            }
-                        }
-                        Scroller {
-                            attr { flexDirectionRow(); height(36f); marginTop(7f) }
-                            page.ambiguousSymbols.forEach { symbol ->
-                                val security = Securities.all.firstOrNull { it.symbol == symbol }
-                                View {
-                                    attr {
-                                        height(32f)
-                                        marginRight(7f)
-                                        paddingLeft(10f)
-                                        paddingRight(10f)
-                                        justifyContentCenter()
-                                        borderRadius(9f)
-                                        backgroundColor(page.theme.surface)
-                                    }
-                                    Text { attr { text(security?.name ?: symbol); fontSizeScaled(12f); color(page.theme.brand) } }
-                                    event { click { page.chooseAmbiguousSymbol(symbol) } }
-                                }
-                            }
-                        }
-                    }
-                }
-                vif({ page.peekSymbol.isNotEmpty() }) {
-                    val quote = page.quoteFor(page.peekSymbol)
-                    View {
-                        attr {
-                            marginLeft(12f)
-                            marginRight(12f)
-                            marginBottom(8f)
-                            padding(12f)
-                            flexDirectionRow()
-                            alignItemsCenter()
-                            opacity(if (page.peekVisible) 1f else 0f)
-                            transform(Translate(0f, if (page.peekVisible) 0f else 0.16f))
-                            animate(Animation.easeOut(0.24f), page.peekVisible)
-                        }
-                        GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
-                        View {
-                            attr { flex(1f) }
-                            if (quote == null) Text { attr { text("正在获取 ${page.peekSymbol} 的行情…"); fontSizeScaled(12f); color(page.theme.textTertiary) } }
-                            else CardShell(
-                                StockQuoteCardModel(quote),
-                                CardContext(page.theme, CardDensity.MINI, { page.openStockDetail(it) }, glass = page.glassRenderer),
-                            )
-                        }
-                        View {
-                            attr { padding(9f); borderRadius(9f); backgroundColor(page.theme.surfaceMuted) }
-                            Text { attr { text("收起"); fontSizeScaled(11f); color(page.theme.textSecondary) } }
-                            event { click { page.dismissPeek() } }
-                        }
-                        View {
-                            attr { marginLeft(7f); padding(9f); borderRadius(9f); backgroundColor(page.theme.brand) }
-                            Text { attr { text("看详情"); fontSizeScaled(11f); fontWeightMedium(); color(page.theme.onBrand) } }
-                            event { click { page.openStockDetail(page.peekSymbol) } }
-                        }
-                    }
-                }
-                // 回到顶部悬浮按钮：会话不在顶部时浮现于输入栏右上方，液态玻璃表皮
-                // + ^ 图标；点击平滑滚回顶部（animated，而非闪现）。
-                vif({
-                    page.chatBackToTopMounted &&
-                        page.viewModel.messages.isNotEmpty() &&
-                        page.keyboardHeight == 0f &&
-                        !page.isComposerExpanded()
-                }) {
-                    View {
-                        attr {
-                            absolutePosition(
-                                right = 14f,
-                                // 130f = 输入栏(10+66) + 引导语胶囊块(≈48) 再留 6dp
-                                // 间隙：按钮底边须完全让开输入栏上方的引导语胶囊
-                                // （2026-09-10 用户反馈：二者重叠）。
-                                bottom = 130f + page.pagerData.safeAreaInsets.bottom,
-                            )
-                            size(40f, 40f)
-                            allCenter()
-                            // 圆形轮廓：玻璃 peek 圆角 20f 只作用在 GlassBackdrop 的
-                            // Blur 内层，容器自身不设 borderRadius 时描边与 boxShadow
-                            // 都按方角渲染——阴影呈正方形雏形（2026-09-10 用户反馈）。
-                            borderRadius(20f)
-                            // 玻璃高光描边：GlassBackdrop 不带描边，细 rim 由容器补
-                            // （与 peek 胶囊 resolved.stroke 对齐）。
-                            border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
-                            // 缩放入场时原生阴影会短暂按矩形边界绘制。落稳后才给
-                            // 阴影；透明值用于主动清除上一次挂载留下的 native shadow。
-                            val shadowVisible = page.chatBackToTopShadowVisible
-                            boxShadow(
-                                BoxShadow(
-                                    0f,
-                                    8f,
-                                    22f,
-                                    Color(0x000000, if (shadowVisible) 0.16f else 0f),
-                                ),
-                            )
-                            // 无障碍属性属于 attr 方法，必须写在 attr 块内（写在
-                            // builder 作用域会因解析不到而编译失败）。
-                            accessibility("回到顶部")
-                            accessibilityRole(AccessibilityRole.BUTTON)
-                            accessibilityInfo(clickable = true, longClickable = false)
-                            // R4/R5：mount 周期无条件注册，presented 翻转周期消费。
-                            val presented = page.chatBackToTopPresented
-                            opacity(if (presented) 1f else 0f)
-                            transform(scale = if (presented) Scale(1f, 1f) else Scale(0.5f, 0.5f))
-                            animate(Animation.easeOut(0.22f), page.chatBackToTopPresented)
-                        }
-                        GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
-                        LineIconChevronUp(color = page.theme.textSecondary, size = 18f)
-                        event { click { page.scrollChatToTopAnimated() } }
-                    }
-                }
+                ChatContextOverlays.renderAmbiguity(
+                    this,
+                    theme = page.theme,
+                    symbols = { page.ambiguousSymbols },
+                    entityText = { page.ambiguousEntityText },
+                    displayName = { symbol ->
+                        Securities.all.firstOrNull { it.symbol == symbol }?.name ?: symbol
+                    },
+                    onSelect = page::chooseAmbiguousSymbol,
+                )
+                ChatContextOverlays.renderPeek(
+                    this,
+                    theme = page.theme,
+                    renderer = page.glassRenderer,
+                    symbol = { page.peekSymbol },
+                    visible = { page.peekVisible },
+                    quoteFor = page::quoteFor,
+                    onDismiss = page::dismissPeek,
+                    onOpenStock = page::openStockDetail,
+                )
+                ChatContextOverlays.renderBackToTop(
+                    this,
+                    theme = page.theme,
+                    renderer = page.glassRenderer,
+                    bottomInset = page.pagerData.safeAreaInsets.bottom,
+                    shouldMount = {
+                        page.chatBackToTopMounted &&
+                            page.viewModel.messages.isNotEmpty() &&
+                            page.keyboardHeight == 0f &&
+                            !page.isComposerExpanded()
+                    },
+                    presented = { page.chatBackToTopPresented },
+                    shadowVisible = { page.chatBackToTopShadowVisible },
+                    onClick = page::scrollChatToTopAnimated,
+                )
                 // ===== 长按消息操作菜单（复制 / 追问）=====
                 // 全屏透明手势层（点按任意处关闭）+ 长按落点附近的玻璃胶囊菜单。
                 // 入场与回到顶部按钮同款双态机：mount 周期注册动画，presented
