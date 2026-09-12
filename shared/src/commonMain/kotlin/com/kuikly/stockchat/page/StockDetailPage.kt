@@ -65,6 +65,7 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartHostPort
 import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
 import com.kuikly.stockchat.detail.chart.state.DetailChartState
 import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
+import com.kuikly.stockchat.detail.page.component.DetailAiInsightBlock
 import com.kuikly.stockchat.detail.page.component.DetailChartCard
 import com.kuikly.stockchat.detail.page.component.DetailHeroSection
 import com.kuikly.stockchat.detail.page.component.DetailNewsTicker
@@ -598,60 +599,29 @@ internal class StockDetailPage : BasePager() {
                     }
                     }
 
-                    // ---- AI 一行归因：全页唯一常驻 AI 触点（端侧模板，纯事实） ----
-                    RevealBlock(2, { page.entranceVisible }, page.reduceMotion) {
-                    vbind({ page.quote }) {
-                        View {
-                            attr {
-                                marginTop(page.theme.spacing.md)
-                                paddingLeft(10f)
-                                paddingTop(7f); paddingBottom(7f)
-                                backgroundColor(page.theme.brandSoft)
-                                borderRadius(8f)
-                            }
-                            View {
-                                attr {
-                                    absolutePosition(left = 0f, top = 7f, bottom = 7f)
-                                    width(3f)
-                                    borderRadius(1.5f)
-                                    backgroundColor(page.theme.brand)
-                                }
-                            }
-                            Text {
-                                attr {
-                                    text(page.buildOneLineAttribution())
-                                    fontSizeScaled(11.5f)
-                                    lineHeightScaled(17f)
-                                    color(page.theme.textSecondary)
-                                }
-                            }
-                        }
-                    }
-                    }
-
-                    // ---- AI 解读（原型叙事位：紧贴一行归因，先给解读再看业务数据）----
-                    // 真实化（2026-09-08）：默认走真实 LLM 流式（与聊天页同一套
-                    // API 配置与通路），未配置/失败回退端侧模板并如实标注来源。
-                    // ② 句图联动：点句子 → 端侧按句内时间在走势图点亮真实区间
-                    RevealBlock(3, { page.entranceVisible }, page.reduceMotion) {
-                        AiInsightBlock(
-                            state = { page.aiRemoteState },
-                            remoteText = { page.aiRemoteText },
-                            remoteError = { page.aiRemoteError },
-                            remoteModel = { page.aiRemoteModel },
-                            localSummary = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
-                            revealLimit = { page.aiRevealLimit },
-                            actionLabel = { page.aiActionLabel() },
-                            remoteSentences = { page.currentInsightSentences() },
-                            preparing = { page.aiAwaitingFacts },
-                            breath = { page.livePulse },
-                            reduceMotion = page.reduceMotion,
-                            theme = page.theme,
-                            onAction = { page.toggleAiInsight() },
-                            selectedSentence = { page.selectedSentence },
-                            onPickSentence = { page.pickSentence(it) },
-                        )
-                    }
+                    // ---- AI 一行归因 + AI 解读块 + 句图联动（docs/43 D5 第四组件）----
+                    DetailAiInsightBlock(
+                        theme = page.theme,
+                        reduceMotion = page.reduceMotion,
+                        entranceVisible = { page.entranceVisible },
+                        oneLineAttributionRevealIndex = 2,
+                        insightBlockRevealIndex = 3,
+                        quote = { page.quote },
+                        aiRemoteState = { page.aiRemoteState },
+                        aiRemoteText = { page.aiRemoteText },
+                        aiRemoteError = { page.aiRemoteError },
+                        aiRemoteModel = { page.aiRemoteModel },
+                        aiRevealSource = { if (page.aiRevealSource.isEmpty()) aiSummary else page.aiRevealSource },
+                        aiRevealLimit = { page.aiRevealLimit },
+                        aiAwaitingFacts = { page.aiAwaitingFacts },
+                        livePulse = { page.livePulse },
+                        aiActionLabel = { page.aiActionLabel() },
+                        insightSentences = { page.currentInsightSentences() },
+                        selectedSentence = { page.selectedSentence },
+                        oneLineAttributionText = { page.buildOneLineAttribution() },
+                        onToggleAiInsight = { page.toggleAiInsight() },
+                        onPickSentence = { page.pickSentence(it) },
+                    )
 
                     // 公司介绍 / 公司数据共享同一信息区；公司数据面承接下方事实卡。
                     RevealBlock(4, { page.entranceVisible }, page.reduceMotion) {
@@ -2669,7 +2639,7 @@ private fun ViewContainer<*, *>.DetailBottomAction(
     }
 }
 
-private fun ViewContainer<*, *>.AiInsightBlock(
+internal fun ViewContainer<*, *>.AiInsightBlock(
     state: () -> Int,
     remoteText: () -> String,
     remoteError: () -> String,
