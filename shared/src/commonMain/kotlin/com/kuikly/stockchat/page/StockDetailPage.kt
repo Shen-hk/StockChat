@@ -66,6 +66,7 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
 import com.kuikly.stockchat.detail.chart.state.DetailChartState
 import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
 import com.kuikly.stockchat.detail.page.component.DetailHeroSection
+import com.kuikly.stockchat.detail.page.component.DetailNewsTicker
 import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
 import com.kuikly.stockchat.detail.ai.state.DetailAiInsightCoordinator
 import com.kuikly.stockchat.detail.ai.state.DetailAiState
@@ -481,47 +482,24 @@ internal class StockDetailPage : BasePager() {
                         watchlistHint = { page.watchlistHint },
                     )
 
-                    // ---- 新闻弹幕 v2（对齐市场页）：无背板持续流动、屏幕边缘流出。
-                    // 交互口径不变：点按 = 落旗 + 展开摘要条（摘要展开即暂停流动，
-                    // 收起恢复）；长按 = 先览气泡（先览期间同样暂停）。
-                    NewsMarquee(
+                    // ---- 新闻弹幕 v2 + 摘要条 + 先览 + 快捷理由 chips（docs/43 D5 第二组件）----
+                    DetailNewsTicker(
                         theme = page.theme,
-                        items = { page.newsList },
-                        // B1 情绪点 + 摘要头「利好/利空」：端侧词典打分，涨红跌绿（U2）
-                        sentimentOf = { item -> scoreNewsSentiment(item.title).isPositive },
-                        offset = { page.tapeOffset },
-                        loopWidth = { page.tapeLoopWidth() },
+                        reduceMotion = page.reduceMotion,
+                        newsList = { page.newsList },
+                        tapeOffset = { page.tapeOffset },
+                        tapeLoopWidth = { page.tapeLoopWidth() },
+                        newsSummary = { page.newsSummary },
                         onTapItem = { page.onNewsTapped(it) },
-                        selected = { page.newsSummary },
-                        // B1 长按先览（U5 400ms）：TAPE_PREVIEW 层，松手 700ms 后消失（5s 兜底）；
-                        // pageX/pageY = 触摸点在根 Page 坐标系，气泡锚定所按条目正下方
                         onLongPressItem = { item, pressX, pressY -> page.showTapePreview(item, pressX, pressY) },
                         onLongPressRelease = { page.scheduleTapePreviewDismiss() },
+                        onAskAi = { page.askAboutNews(it) },
+                        onOpenUrl = { target ->
+                            page.detailOverlayCoordinator.closeSummary()
+                            page.openUrl(target.url)
+                        },
+                        isNewsFlagged = { page.isNewsFlagged(it) },
                     )
-
-                    // B2 摘要条（原卡内展开改为弹幕下独立圆角块；交互不变）
-                    vif({ page.newsSummary != null }) {
-                        vbind({ page.newsSummary?.id ?: "" }) {
-                            val news = page.newsSummary
-                            if (news != null) {
-                                View {
-                                    attr { marginTop(8f); borderRadius(12f) }
-                                    NewsSummaryBar(
-                                        theme = page.theme,
-                                        news = news,
-                                        sentiment = scoreNewsSentiment(news.title).isPositive,
-                                        flagged = page.isNewsFlagged(news),
-                                        onToggle = { page.onNewsTapped(news) },
-                                        onAskAi = { page.askAboutNews(it) },
-                                        onOpenUrl = { target ->
-                                            page.detailOverlayCoordinator.closeSummary()
-                                            page.openUrl(target.url)
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
 
                     // ---- 走势主卡（2026-09-08：去掉白色大框，图表直接浮在氛围底上）----
                     // 入场动效：欢迎引导卡同款上滑淡入（RevealBlock，index 0 起阶梯）
