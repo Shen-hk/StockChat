@@ -5,6 +5,13 @@ import com.kuikly.stockchat.data.lineHeightScaled
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.ChatSessionSummary
+import com.kuikly.stockchat.chat.drawer.state.DrawerGestureMotion
+import com.kuikly.stockchat.chat.drawer.state.DrawerGesturePhase
+import com.kuikly.stockchat.chat.island.state.ISLAND_ANIMATION_CLOSE
+import com.kuikly.stockchat.chat.island.state.ISLAND_ANIMATION_DETAIL
+import com.kuikly.stockchat.chat.island.state.ISLAND_ANIMATION_RETURN
+import com.kuikly.stockchat.chat.island.state.IslandGestureMotion
+import com.kuikly.stockchat.chat.island.state.IslandGesturePhase
 import com.kuikly.stockchat.chart.model.TimeLineCalculator
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.data.entity.GlossaryEntry
@@ -33,31 +40,6 @@ import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
-enum class IslandGesturePhase {
-    IDLE,
-    DRAGGING,
-    RETURNING,
-    CLOSING,
-    OPENING_DETAIL,
-}
-
-enum class DrawerGesturePhase {
-    IDLE,
-    DRAGGING,
-    SETTLING,
-}
-
-/**
- * 侧边栏横滑手势运动量。phase 与 offsetX 必须封装在同一个 observable 值里：
- * 归位时一次原子写入（SETTLING + 目标偏移），Kuikly 就能从手指最后一帧
- * 动画到精确端点（灵动岛 IslandGestureMotion 的同款约束）。
- */
-data class DrawerGestureMotion(
-    val phase: DrawerGesturePhase = DrawerGesturePhase.IDLE,
-    /** 面板相对打开位的横向偏移：0 = 全开，-292 = 全关。DRAGGING 时为跟手值，SETTLING 时为目标值。 */
-    val offsetX: Float = 0f,
-)
-
 /** A dense, value-first top-bar state for pages whose Hero has scrolled away. */
 data class AppTopBarMetric(
     val label: String,
@@ -73,24 +55,6 @@ data class AppTopBarAction(
     val onClick: () -> Unit,
     val selected: () -> Boolean = { false },
 )
-
-data class IslandGestureMotion(
-    val phase: IslandGesturePhase = IslandGesturePhase.IDLE,
-    val offsetY: Float = 0f,
-    // A reset can have the same visual values as the current idle state.
-    // Revision still invalidates the reactive layout so native anchors and
-    // transforms are written again after returning from another page.
-    val revision: Int = 0,
-    // A forced/lifecycle reset (page cover racing a timer, returning from a
-    // background page) must land on the idle geometry with no visible tween;
-    // otherwise the card replays its morph from whatever frame was last on
-    // screen the instant it becomes visible again.
-    val snap: Boolean = false,
-)
-
-internal const val ISLAND_ANIMATION_RETURN = "island-gesture-return"
-internal const val ISLAND_ANIMATION_CLOSE = "island-gesture-close"
-internal const val ISLAND_ANIMATION_DETAIL = "island-gesture-detail"
 
 // Chat 顶部三颗收起态胶囊（菜单、标题岛、搜索/新对话）统一按当前视觉尺寸放大 15%。
 // 展开后的行情/术语卡不使用此系数，避免影响卡片的信息密度与手势阈值。

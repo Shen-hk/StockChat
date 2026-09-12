@@ -40,6 +40,12 @@ import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentState
 import com.kuikly.stockchat.chat.composer.state.KuiklyMediaSheetScheduler
 import com.kuikly.stockchat.chat.composer.state.MAX_COMPOSER_ATTACHMENTS
 import com.kuikly.stockchat.chat.composer.state.MediaSheetCoordinator
+import com.kuikly.stockchat.chat.drawer.state.ChatDrawerCoordinator
+import com.kuikly.stockchat.chat.drawer.state.ChatDrawerEffect
+import com.kuikly.stockchat.chat.drawer.state.ChatDrawerState
+import com.kuikly.stockchat.chat.drawer.state.DrawerGestureMotion
+import com.kuikly.stockchat.chat.drawer.state.DrawerGesturePhase
+import com.kuikly.stockchat.chat.drawer.state.KuiklyDrawerScheduler
 import com.kuikly.stockchat.chat.sheet.state.CardSheetCoordinator
 import com.kuikly.stockchat.chat.sheet.state.CardSheetState
 import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
@@ -87,13 +93,12 @@ import com.kuikly.stockchat.chat.welcome.component.WelcomeStarter
 import com.kuikly.stockchat.chat.welcome.component.defaultWelcomeStarters
 import com.kuikly.stockchat.chat.welcome.component.randomWelcomeStarters
 import com.kuikly.stockchat.page.components.ChatTopNav
-import com.kuikly.stockchat.page.components.DrawerGestureMotion
-import com.kuikly.stockchat.page.components.DrawerGesturePhase
-import com.kuikly.stockchat.page.components.IslandGestureMotion
-import com.kuikly.stockchat.page.components.IslandGesturePhase
-import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_CLOSE
-import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_DETAIL
-import com.kuikly.stockchat.page.components.ISLAND_ANIMATION_RETURN
+import com.kuikly.stockchat.chat.island.state.IslandEffect
+import com.kuikly.stockchat.chat.island.state.IslandGestureMotion
+import com.kuikly.stockchat.chat.island.state.IslandHostPort
+import com.kuikly.stockchat.chat.island.state.IslandState
+import com.kuikly.stockchat.chat.island.state.KuiklyIslandScheduler
+import com.kuikly.stockchat.chat.island.state.QuoteIslandCoordinator
 import com.kuikly.stockchat.page.components.LineIconAudioLines
 import com.kuikly.stockchat.page.components.LineIconClose
 import com.kuikly.stockchat.page.components.LineIconFileText
@@ -309,20 +314,21 @@ internal class ChatPage : BasePager() {
     private var followUpsPresented: Boolean by observable(false)
     private var followUpsVersion = 0
     private var keyboardHeight: Float by observable(0f)
-    private var drawerOpen: Boolean by observable(false)
-    // Drawer double-state machine (mirrors sheetMounted/sheetPresented): vif
-    // binds to drawerMounted, the transition animates on drawerPresented.
-    // A vif-created view cannot animate on its own mount, so presented flips
-    // one tick after mount via updateDrawerOpen (animate-binding rule 2026-09-03).
-    private var drawerMounted: Boolean by observable(false)
-    private var drawerPresented: Boolean by observable(false)
-    private var drawerPresentationVersion = 0
-    // 侧边栏横滑手势：phase 与 offsetX 同值原子化，跟手阶段直接落位，
-    // 归位一次原子写入播放收敛动画（灵动岛手势同款模式）。
-    private var drawerGesture: DrawerGestureMotion by observable(DrawerGestureMotion())
-    private var drawerGestureStartX = 0f
-    // 最近一次 move 的单步位移（非 observable）：快速短划（flick）判定的速度代理。
-    private var drawerGestureLastDX = 0f
+    private val drawerState = ChatDrawerState()
+    private val drawerCoordinator by lazy {
+        ChatDrawerCoordinator(drawerState, KuiklyDrawerScheduler()) { effect ->
+            when (effect) {
+                ChatDrawerEffect.BLUR_COMPOSER -> blurComposer()
+                ChatDrawerEffect.HAPTIC_IMPACT ->
+                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+                ChatDrawerEffect.RESET_HISTORY_QUERY -> historySearchQuery = ""
+            }
+        }
+    }
+    private val drawerOpen: Boolean get() = drawerState.open
+    private val drawerMounted: Boolean get() = drawerState.mounted
+    private val drawerPresented: Boolean get() = drawerState.presented
+    private val drawerGesture: DrawerGestureMotion get() = drawerState.motion
     // 原生 fling 侦察（大且快右向横滑 → 开抽屉）回调是否已注册：created 里
     // 注册一次即可（keepCallback），页面可见性由 pageVisible 守卫。
     private var drawerFlingHostRegistered = false
@@ -337,34 +343,38 @@ internal class ChatPage : BasePager() {
     // 打开抽屉时重置，避免上次输入残留下次仍过滤。
     private var historySearchQuery: String by observable("")
     // Dynamic island: the top title capsule morphs into a live quote card.
-    private var islandExpanded: Boolean by observable(false)
-    private var islandSymbol: String by observable("600519.SH")
-    private var islandGestureMotion: IslandGestureMotion by observable(IslandGestureMotion())
-    // 普通行情/术语岛的无操作收起计时。每次岛内点按或手势起始都会换代，
-    // 让前一轮 setTimeout 自然失效；对比 lobby 是持续任务，不走这个计时器。
-    private var islandAutoCollapseVersion = 0
-    private var islandGestureStartY = 0f
-    private var islandMotionRevision = 0
-    private var islandDetailRouteActive = false
-    private var islandDetailRouteResetVersion = 0
-    private var islandMounted: Boolean by observable(true)
+    // 状态机（展开/收敛/自动收起/详情交接/返回复位/对比 lobby）由
+    // QuoteIslandCoordinator 独占；页面只保留自选态、实体拖拽字段与 Effect
+    // 执行（见 chat/island/state）。字段以只读 getter 转发到 islandState 的
+    // observable，保证 DSL 闭包内的读取仍建立反应式依赖（同 Drawer 模式）。
+    private val islandState = IslandState()
+    private val islandCoordinator by lazy {
+        QuoteIslandCoordinator(
+            state = islandState,
+            host = object : IslandHostPort {
+                override fun isPageVisible() = pageVisible
+                override fun pageHeight() = pagerData.pageViewHeight
+                override fun hasCompareCard() = compareCard != null
+            },
+            scheduler = KuiklyIslandScheduler(),
+        ) { effect -> handleIslandEffect(effect) }
+    }
+    private val islandExpanded: Boolean get() = islandState.expanded
+    private val islandSymbol: String get() = islandState.symbol
+    private val islandGestureMotion: IslandGestureMotion get() = islandState.motion
+    private val islandMounted: Boolean get() = islandState.mounted
+    private val islandCompareLeftSymbol: String get() = islandState.compareLeftSymbol
+    private val islandCompareRightSymbol: String get() = islandState.compareRightSymbol
+    private val islandCompareVisible: Boolean get() = islandState.compareVisible
+    private val islandTermKey: String get() = islandState.termKey
+    private val islandTermCompareLeftKey: String get() = islandState.termCompareLeftKey
+    private val islandTermCompareRightKey: String get() = islandState.termCompareRightKey
+    private val islandTermCompareVisible: Boolean get() = islandState.termCompareVisible
     private var islandWatchlisted: Boolean by observable(false)
-    private var islandCompareLeftSymbol: String by observable("")
-    private var islandCompareRightSymbol: String by observable("")
-    private var islandCompareVisible: Boolean by observable(false)
-    // ===== 术语灵动岛（与股票行情岛同体系，内容层分流、对比会话互斥）=====
-    // 非空 = 岛当前承载该术语的讲解卡；长按蓝色术语高亮进入，与行情卡共用
-    // 同一条形变/手势管线（AppChrome.StockIsland 的 termEntry 分支）。
-    private var islandTermKey: String by observable("")
-    private var islandTermCompareLeftKey: String by observable("")
-    private var islandTermCompareRightKey: String by observable("")
-    private var islandTermCompareVisible: Boolean by observable(false)
     // 长按术语的进行中 key（与 pendingLongPressSymbol 平行，互不串扰），
     // 以及长按后部分 bridge 会补发的 click 的抑制词形。
     private var pendingLongPressTermKey: String = ""
     private var suppressNextTermClick: String = ""
-    // 对比会话代数：退出/重建对比时自增，使在途的收起兜底定时器失效。
-    private var compareExperienceVersion = 0
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
@@ -573,16 +583,13 @@ internal class ChatPage : BasePager() {
         // collapsed-frame write. Force the write unconditionally.
         // 交接遮罩期间例外：详情页整页淡入还没完成，全屏玻璃帧是它的底，
         // 提前归位会在淡入的前半段透出聊天页。
-        if (islandDetailRouteActive && !islandHandoffMaskActive) {
-            islandMounted = false
-            forceIslandCollapsedForDetailRoute()
-        }
+        islandCoordinator.onPageDisappear()
     }
 
     override fun pageDidAppear() {
         super.pageDidAppear()
         pageVisible = true
-        if (islandDetailRouteActive) scheduleIslandDetailReturnReset()
+        islandCoordinator.onPageAppear()
         viewModel.refreshConfigStatus()
         islandWatchlisted = watchlistStore.contains(islandSymbol)
         // Preload the island quote so the morph opens with data in place.
@@ -634,6 +641,8 @@ internal class ChatPage : BasePager() {
     }
 
     override fun pageWillDestroy() {
+        drawerCoordinator.onDestroy()
+        islandCoordinator.onDestroy()
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
         mediaSheetCoordinator.reset()
@@ -1759,159 +1768,9 @@ internal class ChatPage : BasePager() {
         }
     }
 
-    /**
-     * Drawer open/close with the CardSheet presentation pattern:
-     * open  = mount now, flip presented next tick so the entrance animates;
-     * close = un-present now (plays the exit), unmount after 280ms guarded by
-     * a version counter so rapid toggles never leave a stale timer behind.
-     */
-    private fun updateDrawerOpen(open: Boolean) {
-        // 展开抽屉前必须先 blur 收键盘：原生键盘 z 序压过所有 Kuikly 视图，
-        // 不收会浮在抽屉面板之上。blurComposer 解除焦点锁，避免意外 blur
-        // 自动恢复把键盘又抢回来。
-        if (open) blurComposer()
-        // 程序化开合终结任何进行中的手势态，避免 SETTLING 分支抢走 transform 控制权
-        // （已是 IDLE 缺省值时等值写入不触发通知，无副作用）。
-        drawerGesture = DrawerGestureMotion()
-        val wasOpen = drawerOpen
-        val version = ++drawerPresentationVersion
-        drawerOpen = open
-        if (open) {
-            drawerMounted = true
-            drawerPresented = false
-            // 重置历史会话搜索词（抽屉 Input 不受控，词存这里）。
-            historySearchQuery = ""
-            setTimeout(0) {
-                if (drawerPresentationVersion == version) drawerPresented = true
-            }
-            // 点按展开：震动在**完全展开那一刻**（easeOut 0.375s + buffer），
-            // version + 状态双守卫，被抢占时静默退出。
-            if (!wasOpen) {
-                setTimeout(395) {
-                    if (version == drawerPresentationVersion && drawerOpen && drawerPresented) {
-                        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-                    }
-                }
-            }
-        } else {
-            drawerPresented = false
-            // 卸载定时随动画时长 +25%：0.28 → 0.35s。
-            setTimeout(350) {
-                if (drawerPresentationVersion == version && !drawerPresented) {
-                    drawerMounted = false
-                }
-            }
-            // 点按收起：震动在**完全收起那一刻**（easeIn 0.275s + buffer）。
-            if (wasOpen) {
-                setTimeout(300) {
-                    if (version == drawerPresentationVersion && !drawerOpen && !drawerPresented) {
-                        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-                    }
-                }
-            }
-        }
-    }
+    private fun updateDrawerOpen(open: Boolean) = drawerCoordinator.setOpen(open)
 
-    /**
-     * 侧边栏横滑手势：开→左拖跟手收起，关→左缘右拖跟手展开。
-     * pageX 为页面坐标——面板自身随 transform 平移，local x 会抵消手指位移
-     * （灵动岛 handle 注释同款坑）。
-     */
-    private fun handleDrawerPan(state: String, x: Float) {
-        when (state) {
-            "start" -> {
-                if (drawerGesture.phase != DrawerGesturePhase.IDLE) return
-                drawerGestureStartX = x
-                drawerGestureLastDX = 0f
-                val base = if (drawerOpen) 0f else -292f
-                if (!drawerOpen) {
-                    // 关→开：先挂载，让面板从指下跟手滑出；同时收键盘
-                    //（原生键盘 z 序压过抽屉，手势展开同样要 blur）。
-                    blurComposer()
-                    drawerMounted = true
-                }
-                drawerGesture = DrawerGestureMotion(DrawerGesturePhase.DRAGGING, base)
-            }
-            "move" -> {
-                if (drawerGesture.phase != DrawerGesturePhase.DRAGGING) return
-                val raw =
-                    if (drawerOpen) x - drawerGestureStartX else -292f + (x - drawerGestureStartX)
-                val next = raw.coerceIn(-292f, 0f)
-                // 单步位移作速度代理：pan 不带 velocity，move 事件帧间隔近似恒定，
-                // 最后一步位移量大 = 手指正在快速滑动（RowGestureLayer 同款约束下的替代方案）。
-                drawerGestureLastDX = next - drawerGesture.offsetX
-                drawerGesture = DrawerGestureMotion(DrawerGesturePhase.DRAGGING, next)
-            }
-            "end", "cancel" -> {
-                if (drawerGesture.phase != DrawerGesturePhase.DRAGGING) return
-                val base = if (drawerOpen) 0f else -292f
-                val travel = drawerGesture.offsetX - base
-                // 快速短划判定（展开方向保留 9dp 速度代理）。收起方向（用户
-                // 决策 2026-09-08）：不再要求速度/半程阈值——只要检测到向左的
-                // 趋势（最后一步向左，或整体位置越过起点向左）松手即直接收回，
-                // 不再出现"没到阈值回弹"的情况。
-                val flickTowardClose = drawerOpen &&
-                    (drawerGestureLastDX < 0f || drawerGesture.offsetX < 0f)
-                val flickTowardOpen = !drawerOpen && drawerGestureLastDX >= 9f
-                when {
-                    // 手势被打断：回原位也要归位（有动画 + 震感）。
-                    state == "cancel" -> settleDrawerGesture(open = drawerOpen)
-                    // 纯误触（完全没往任何方向位移）静默还原，不播动画不震动；
-                    // 收起方向因 flickTowardClose 放宽，任何向左趋势都到不了这里。
-                    kotlin.math.abs(travel) < 8f && !flickTowardClose && !flickTowardOpen ->
-                        cancelDrawerGesture()
-                    else -> {
-                        val progress = (drawerGesture.offsetX + 292f) / 292f
-                        val settleOpen = if (drawerOpen) {
-                            progress >= 0.5f && !flickTowardClose
-                        } else {
-                            progress >= 0.5f || flickTowardOpen
-                        }
-                        settleDrawerGesture(open = settleOpen)
-                    }
-                }
-            }
-        }
-    }
-
-    /** 误触还原：不播收敛动画、不震动。 */
-    private fun cancelDrawerGesture() {
-        drawerGesture = DrawerGestureMotion()
-        if (!drawerOpen) drawerMounted = false // 关态下手势只临时挂载了面板，直接卸载
-    }
-
-    /**
-     * 手势归位：一次原子写入（SETTLING + 目标偏移）让面板从手指最后一帧动画到端点。
-     * 展开先快后慢（easeOut 0.375s），收起先慢后快（easeIn 0.30s）——时长 +25%
-     * （用户决策 2026-09-05）。震动在**松手瞬间**触发（动画终点触发收起时震感太晚）。
-     */
-    private fun settleDrawerGesture(open: Boolean) {
-        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-        drawerGesture = DrawerGestureMotion(
-            DrawerGesturePhase.SETTLING,
-            if (open) 0f else -292f,
-        )
-        val version = ++drawerPresentationVersion
-        drawerOpen = open
-        drawerMounted = true
-        // 面板挂载发生在手势 start，这里无需 setTimeout(0) 预挂载延迟。
-        drawerPresented = open
-        if (!open) {
-            // 卸载定时随动画时长 +25%：0.30 → 0.375s。
-            setTimeout(375) {
-                if (version == drawerPresentationVersion && !drawerPresented) {
-                    drawerMounted = false
-                }
-            }
-        }
-        // 收敛动画结束后回到常规态，后续菜单按钮开合走原 presented 路径。
-        // phase 守卫保证被程序化开合（updateDrawerOpen 清手势态）抢占时静默退出。
-        setTimeout(440) {
-            if (drawerGesture.phase == DrawerGesturePhase.SETTLING) {
-                drawerGesture = DrawerGestureMotion()
-            }
-        }
-    }
+    private fun handleDrawerPan(state: String, x: Float) = drawerCoordinator.onPan(state, x)
 
     /**
      * 注册原生「大且快右向横滑」侦察回调（Android 宿主专有通道，见
@@ -2291,11 +2150,7 @@ internal class ChatPage : BasePager() {
         entityDragName = ""
         peekSymbol = ""
         peekVisible = false
-        islandExpanded = false
-        resetIslandMotion()
-        islandCompareLeftSymbol = ""
-        islandCompareRightSymbol = ""
-        islandCompareVisible = false
+        islandCoordinator.resetForNewSession()
         cardSheetCoordinator.reset()
         expandedCardKey = ""
         focusedCardKey = ""
@@ -3483,9 +3338,7 @@ internal class ChatPage : BasePager() {
             islandCompareLeftSymbol.isEmpty()
         }
 
-    private fun isIslandCompareLobbyVisible(): Boolean =
-        islandCompareVisible &&
-            islandCompareLeftSymbol.isNotEmpty()
+    private fun isIslandCompareLobbyVisible(): Boolean = islandCoordinator.isCompareLobbyVisible()
 
     private fun finishEntityDrag() {
         val entity = draggedEntity
@@ -3730,44 +3583,7 @@ internal class ChatPage : BasePager() {
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
     }
 
-    private fun addDraggedStockToIsland(symbol: String) {
-        resetIslandMotion()
-        // 新对比会话开始：使上一次退出对比留下的收起兜底定时器失效。
-        compareExperienceVersion++
-        compareCandidateKey = ""
-        compareCandidateSymbol = ""
-        // 对比会话互斥：开始股票对比即结束术语对比（槽位、面板与岛内术语态）。
-        islandTermKey = ""
-        islandTermCompareLeftKey = ""
-        islandTermCompareRightKey = ""
-        islandTermCompareVisible = false
-        if (islandCompareLeftSymbol.isEmpty()) {
-            islandCompareLeftSymbol = symbol
-            islandCompareRightSymbol = ""
-            compareCard = null
-            resetCompareInsight()
-        } else if (islandCompareLeftSymbol == symbol || islandCompareRightSymbol == symbol) {
-            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("请选择另一只股票进行对比")
-            islandExpanded = true
-            return
-        } else if (islandCompareRightSymbol.isNotEmpty()) {
-            islandCompareLeftSymbol = islandCompareRightSymbol
-            islandCompareRightSymbol = symbol
-            compareCard = null
-            resetCompareInsight()
-        } else {
-            islandCompareRightSymbol = symbol
-        }
-        requestQuote(symbol)
-        requestQuote(islandCompareLeftSymbol)
-        // The island owns the comparison session from the first drop until the
-        // user explicitly exits it.  Keep the completed two-stock summary open
-        // while the full comparison panel is visible below.
-        islandCompareVisible = true
-        islandExpanded = true
-        syncIslandCompareCard()
-        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-    }
+    private fun addDraggedStockToIsland(symbol: String) = islandCoordinator.addDraggedStock(symbol)
 
     private fun syncIslandCompareCard() {
         val leftSymbol = islandCompareLeftSymbol
@@ -3782,59 +3598,9 @@ internal class ChatPage : BasePager() {
         requestCompareInsightIfNeeded(left, right)
     }
 
-    private fun clearIslandCompare() {
-        if (islandTermCompareLeftKey.isNotEmpty()) {
-            clearIslandTermCompare()
-        } else {
-            clearCompareExperience()
-        }
-    }
+    private fun clearIslandCompare() = islandCoordinator.clearCompare()
 
-    private fun clearCompareExperience() {
-        resetIslandMotion()
-        // Closing comparison is also a hard interaction boundary.  A terminal
-        // long-press event can be lost when the comparison panel mounts under
-        // the releasing finger, so explicitly invalidate every drag field.
-        pendingLongPressSymbol = ""
-        draggedEntity = null
-        entityDragActive = false
-        entityDropTarget = EntityDropTarget.NONE
-        entityDragName = ""
-        islandCompareLeftSymbol = ""
-        islandCompareRightSymbol = ""
-        islandCompareVisible = false
-        compareCard = null
-        compareCandidateKey = ""
-        compareCandidateSymbol = ""
-        resetCompareInsight()
-        islandExpanded = false
-        // 对比 × 详情竞态仲裁（用户决策 2026-09-05）：
-        // 1) 使在途的详情路由复位定时器失效，防止退出对比后旧复位帧与收起
-        //    动画交错，把对比几何重新写回原生层（残留对比样式的根源）；
-        // 2) 收起兜底：若收起写入被动画注册竞争/页面覆盖吃掉，360ms 后以
-        //    snap 强制贴回收起几何（R5 version-guarded fallback 模式）。
-        islandDetailRouteResetVersion++
-        islandDetailRouteActive = false
-        val version = ++compareExperienceVersion
-        setTimeout(360) {
-            if (version == compareExperienceVersion && !islandExpanded && !isIslandCompareLobbyVisible()) {
-                forceIslandCollapsedForDetailRoute()
-            }
-        }
-    }
-
-    private fun openIslandComparePanel() {
-        // 术语对比的「查看对比」：面板由双槽位驱动，无需额外状态。
-        if (islandTermCompareLeftKey.isNotEmpty() && islandTermCompareRightKey.isNotEmpty()) {
-            resetIslandMotion()
-            islandExpanded = true
-            return
-        }
-        if (compareCard == null) return
-        resetIslandMotion()
-        islandCompareVisible = true
-        islandExpanded = true
-    }
+    private fun openIslandComparePanel() = islandCoordinator.openComparePanel(compareCard != null)
 
     private fun addWatchlistFromEntity(symbol: String) {
         val quote = quoteFor(symbol)
@@ -3853,18 +3619,7 @@ internal class ChatPage : BasePager() {
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(message)
     }
 
-    private fun openEntityQuoteIsland(symbol: String) {
-        resetIslandMotion()
-        islandSymbol = symbol
-        islandWatchlisted = watchlistStore.contains(symbol)
-        islandCompareVisible = false
-        // 术语讲解卡与行情卡互斥：打开股票岛时收起术语卡（对比面板不在此清理，
-        // 与股票对比面板在行情卡打开时保留的策略一致）。
-        islandTermKey = ""
-        requestQuote(symbol)
-        islandExpanded = true
-        scheduleIslandAutoCollapse()
-    }
+    private fun openEntityQuoteIsland(symbol: String) = islandCoordinator.openQuoteIsland(symbol)
 
     // ===== 术语灵动岛（与股票行情岛同一手势/形变体系，2026-09-07）=====
 
@@ -3942,46 +3697,10 @@ internal class ChatPage : BasePager() {
         }
     }
 
-    private fun openEntityTermIsland(key: String) {
-        resetIslandMotion()
-        // 股票对比 lobby 隐藏（对比面板/槽位不销毁，与行情卡打开时同策略）。
-        islandCompareVisible = false
-        islandTermKey = key
-        glossaryStore.encounter(key)
-        islandExpanded = true
-        scheduleIslandAutoCollapse()
-    }
+    private fun openEntityTermIsland(key: String) = islandCoordinator.openTermIsland(key)
 
     /** 术语拖入灵动岛：第一只占左槽，第二只占右槽并弹出术语对比面板。 */
-    private fun addDraggedTermToIsland(key: String) {
-        resetIslandMotion()
-        // 对比会话互斥：开始术语对比即结束股票对比（反之亦然）。
-        compareExperienceVersion++
-        islandCompareLeftSymbol = ""
-        islandCompareRightSymbol = ""
-        islandCompareVisible = false
-        compareCard = null
-        resetCompareInsight()
-        compareCandidateKey = ""
-        compareCandidateSymbol = ""
-        if (islandTermCompareLeftKey.isEmpty()) {
-            islandTermCompareLeftKey = key
-            islandTermCompareRightKey = ""
-        } else if (islandTermCompareLeftKey == key || islandTermCompareRightKey == key) {
-            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("请拖入另一个术语进行对比")
-            islandExpanded = true
-            return
-        } else if (islandTermCompareRightKey.isNotEmpty()) {
-            islandTermCompareLeftKey = islandTermCompareRightKey
-            islandTermCompareRightKey = key
-        } else {
-            islandTermCompareRightKey = key
-        }
-        islandTermCompareVisible = true
-        islandExpanded = true
-        syncTermComparePanel()
-        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-    }
+    private fun addDraggedTermToIsland(key: String) = islandCoordinator.addDraggedTerm(key)
 
     private fun syncTermComparePanel() {
         if (!islandTermCompareVisible) return
@@ -3990,34 +3709,9 @@ internal class ChatPage : BasePager() {
         requestTermCompareInsightIfNeeded(left, right)
     }
 
-    private fun isIslandTermCompareLobbyVisible(): Boolean =
-        islandTermCompareVisible && islandTermCompareLeftKey.isNotEmpty()
+    private fun isIslandTermCompareLobbyVisible(): Boolean = islandCoordinator.isTermLobbyVisible()
 
-    private fun clearIslandTermCompare() {
-        clearTermCompareExperience()
-    }
-
-    private fun clearTermCompareExperience() {
-        resetIslandMotion()
-        // 退出对比是硬交互边界：失效全部拖拽字段，防止终态长按事件丢失残留。
-        pendingLongPressTermKey = ""
-        draggedEntity = null
-        entityDragActive = false
-        entityDropTarget = EntityDropTarget.NONE
-        entityDragName = ""
-        islandTermCompareLeftKey = ""
-        islandTermCompareRightKey = ""
-        islandTermCompareVisible = false
-        islandTermKey = ""
-        islandExpanded = false
-        resetCompareInsight()
-        val version = ++compareExperienceVersion
-        setTimeout(360) {
-            if (version == compareExperienceVersion && !islandExpanded && !isIslandTermCompareLobbyVisible()) {
-                forceIslandCollapsedForDetailRoute()
-            }
-        }
-    }
+    private fun clearIslandTermCompare() = islandCoordinator.clearTermCompare()
 
     private fun toggleIslandWatchlist(symbol: String) {
         noteIslandInteraction()
@@ -4144,299 +3838,59 @@ internal class ChatPage : BasePager() {
         expandedCardKey = if (expandedCardKey == cardKey) "" else cardKey
     }
 
-    private var islandAnimating = false
-    // DRAGGING 看门狗修订号：pan 终点事件丢失时自愈用（见 armIslandDragWatchdog）。
-    private var islandDragWatchdogRevision = 0
-    // 容器变换交接：路由触发（160ms 主触发 + 420ms 兜底 + 动画完成事件）
-    // 三路竞争，用幂等门保证只跑一次。
-    private var islandDetailHandoffDone = false
-    // 交接遮罩：原生整页淡入期间 push 会立即触发本页 pageDidDisappear，
-    // 此时全屏玻璃帧还要作淡入的底，不能提前归位。
-    private var islandHandoffMaskActive = false
+    // ===== 灵动岛（状态机在 QuoteIslandCoordinator，见 chat/island/state）=====
+    // Page 只做 Effect adapter：路由、行情、Glossary、触感、Toast，以及
+    // CompareInsight / 实体拖拽字段（尚未迁出的两个域）的清理。
 
-    private fun resetIslandMotion(snap: Boolean = false) {
-        islandGestureMotion = IslandGestureMotion(revision = ++islandMotionRevision, snap = snap)
-        islandAnimating = false
-    }
-
-    /**
-     * DRAGGING 看门狗（用户反馈 2026-09-09「收回后胶囊变高」）：
-     * 岛跟手缩放时手势源视图（卡底把手）自身在重布局，原生侧可能丢弃
-     * end/cancel——motion 永远停在 DRAGGING，胶囊停在中间高度（比收起态
-     * 39.6dp 高），且 IDLE 门把 toggleIsland 与新手势全部挡死，无法恢复。
-     * RETURNING/CLOSING/OPENING_DETAIL 相位都有 timeout 兜底，唯独 DRAGGING
-     * 没有；本看门狗补齐：每次 start/move 重置 800ms 定时器，到点仍处于
-     * DRAGGING（期间无任何事件到达 = 事件流已死）即按与松手一致的阈值
-     * 收敛到确定端点。settle 后相位离开 DRAGGING，正常松手的 end 回调
-     * 晚到也会被相位门挡掉，不会二次触发。
-     */
-    private fun armIslandDragWatchdog() {
-        val revision = ++islandDragWatchdogRevision
-        setTimeout(800) {
-            if (revision == islandDragWatchdogRevision) {
-                if (islandGestureMotion.phase == IslandGesturePhase.DRAGGING) {
-                    val deltaY = islandGestureMotion.offsetY
-                    when {
-                        deltaY <= -16f -> settleIslandClosedFromGesture()
-                        deltaY >= 20f -> openIslandDetailFromGesture(islandSymbol)
-                        else -> settleIslandGestureBack()
-                    }
-                }
+    private fun handleIslandEffect(effect: IslandEffect) {
+        when (effect) {
+            IslandEffect.Haptic ->
+                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+            is IslandEffect.RequestQuote -> requestQuote(effect.symbol)
+            is IslandEffect.OpenStockDetail -> openStockDetail(effect.symbol, islandExpand = true)
+            IslandEffect.OpenGlossary -> openGlossary(islandExpand = true)
+            is IslandEffect.Toast ->
+                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(effect.message)
+            IslandEffect.RefreshWatchlisted ->
+                islandWatchlisted = watchlistStore.contains(islandSymbol)
+            is IslandEffect.EncounterTerm -> glossaryStore.encounter(effect.key)
+            IslandEffect.SyncCompareCard -> syncIslandCompareCard()
+            IslandEffect.SyncTermComparePanel -> syncTermComparePanel()
+            IslandEffect.ResetCompareInsight -> resetCompareInsight()
+            IslandEffect.ClearCompareCard -> compareCard = null
+            IslandEffect.ClearCompareCandidate -> {
+                compareCandidateKey = ""
+                compareCandidateSymbol = ""
+            }
+            IslandEffect.ClearStockDrag -> {
+                pendingLongPressSymbol = ""
+                draggedEntity = null
+                entityDragActive = false
+                entityDropTarget = EntityDropTarget.NONE
+                entityDragName = ""
+            }
+            IslandEffect.ClearTermDrag -> {
+                pendingLongPressTermKey = ""
+                draggedEntity = null
+                entityDragActive = false
+                entityDropTarget = EntityDropTarget.NONE
+                entityDragName = ""
             }
         }
     }
 
-    private fun forceIslandCollapsedForDetailRoute() {
-        islandExpanded = false
-        resetIslandMotion(snap = true)
-    }
+    private fun toggleIsland() = islandCoordinator.toggle()
+    private fun handleIslandGesture(state: String, y: Float) = islandCoordinator.onPan(state, y)
+    private fun completeIslandMotion(animationKey: String) = islandCoordinator.onMotionComplete(animationKey)
+    private fun noteIslandInteraction() = islandCoordinator.noteInteraction()
 
-    private fun remountIslandCollapsedForDetailRoute() {
-        islandMounted = false
-        forceIslandCollapsedForDetailRoute()
-        setTimeout(16) {
-            islandMounted = true
-            forceIslandCollapsedForDetailRoute()
-        }
-    }
+    // ===== 灵动岛状态机已迁至 QuoteIslandCoordinator（chat/island/state）=====
 
-    private fun scheduleIslandDetailReturnReset() {
-        val resetVersion = ++islandDetailRouteResetVersion
-        // 交接早已结束（详情页盖住期间淡入必已完成），清掉可能因渲染暂停
-        // 而延迟的遮罩，避免 pageDidDisappear 的兜底归位被误拦。
-        islandHandoffMaskActive = false
-        remountIslandCollapsedForDetailRoute()
-        val writeCollapsedFrame: () -> Unit = {
-            if (islandDetailRouteActive && resetVersion == islandDetailRouteResetVersion) {
-                forceIslandCollapsedForDetailRoute()
-            }
-        }
-        writeCollapsedFrame()
-        intArrayOf(16, 80, 180, 360).forEach { delay ->
-            setTimeout(delay) { writeCollapsedFrame() }
-        }
-        setTimeout(520) {
-            if (resetVersion == islandDetailRouteResetVersion) {
-                forceIslandCollapsedForDetailRoute()
-                islandMounted = true
-                islandDetailRouteActive = false
-            }
-        }
-    }
 
-    private fun cancelIslandDetailRouteReset() {
-        if (!islandDetailRouteActive) return
-        islandDetailRouteActive = false
-        islandDetailRouteResetVersion++
-        islandHandoffMaskActive = false
-        islandMounted = true
-    }
 
-    private fun toggleIsland() {
-        // A tap can be re-delivered to stacked layers while the morph
-        // re-layouts; ignore toggles until the animation settles.
-        if (islandAnimating || islandGestureMotion.phase != IslandGesturePhase.IDLE) return
-        // 对比 lobby 在场时 expanded() 恒为真，单纯翻转 islandExpanded 会被
-        // compareVisible 架空（点了没反应，还把两个状态拧成不一致）。
-        // 用户决策 2026-09-05：此时点击 = 退出整个对比体验。
-        if (isIslandCompareLobbyVisible()) {
-            clearCompareExperience()
-            return
-        }
-        if (isIslandTermCompareLobbyVisible()) {
-            clearTermCompareExperience()
-            return
-        }
-        cancelIslandDetailRouteReset()
-        invalidateIslandAutoCollapse()
-        islandAnimating = true
-        islandExpanded = !islandExpanded
-        if (islandExpanded && islandCompareLeftSymbol.isNotEmpty() && islandCompareRightSymbol.isEmpty() && compareCard == null) {
-            islandCompareVisible = true
-        }
-        if (islandExpanded) {
-            requestQuote(islandSymbol)
-            scheduleIslandAutoCollapse()
-        }
-        setTimeout(400) { islandAnimating = false }
-    }
 
-    /** 普通展开岛的任意点按/手势会重新开始两秒无操作倒计时。 */
-    private fun noteIslandInteraction() {
-        if (!islandExpanded || isIslandCompareLobbyVisible() || isIslandTermCompareLobbyVisible()) return
-        scheduleIslandAutoCollapse()
-    }
 
-    private fun invalidateIslandAutoCollapse() {
-        islandAutoCollapseVersion++
-    }
 
-    private fun scheduleIslandAutoCollapse() {
-        val version = ++islandAutoCollapseVersion
-        setTimeout(2_000) {
-            if (
-                version != islandAutoCollapseVersion ||
-                !pageVisible ||
-                !islandExpanded ||
-                islandAnimating ||
-                islandGestureMotion.phase != IslandGesturePhase.IDLE ||
-                isIslandCompareLobbyVisible() ||
-                isIslandTermCompareLobbyVisible()
-            ) return@setTimeout
-            // 与点按胶囊收起同一状态翻转，复用既有 0.44s 形变动画。
-            islandAnimating = true
-            islandExpanded = false
-            setTimeout(400) { islandAnimating = false }
-        }
-    }
-
-    private fun handleIslandGesture(state: String, y: Float) {
-        when (state) {
-            "start" -> {
-                noteIslandInteraction()
-                if (
-                    !islandExpanded ||
-                    islandAnimating ||
-                    isIslandCompareLobbyVisible() ||
-                    isIslandTermCompareLobbyVisible()
-                ) return
-                // 死手势接管（同看门狗根因）：end/cancel 丢失后 motion 卡在
-                // DRAGGING，原 IDLE 门会让此后所有手势与点按全部失效。新 pan
-                // 的 start 即证明旧事件流已死，仅对 DRAGGING 残留直接接管；
-                // RETURNING/CLOSING 等 settle 相位仍按原样忽略，等补间完成。
-                if (islandGestureMotion.phase != IslandGesturePhase.IDLE) {
-                    if (islandGestureMotion.phase != IslandGesturePhase.DRAGGING) return
-                    resetIslandMotion()
-                }
-                islandGestureStartY = y
-                islandGestureMotion = islandGestureMotion.copy(
-                    phase = IslandGesturePhase.DRAGGING,
-                    offsetY = 0f,
-                )
-                armIslandDragWatchdog()
-            }
-            "move" -> if (islandGestureMotion.phase == IslandGesturePhase.DRAGGING) {
-                val maxDown = (pagerData.pageViewHeight * 0.42f).coerceAtLeast(180f)
-                islandGestureMotion = islandGestureMotion.copy(
-                    phase = IslandGesturePhase.DRAGGING,
-                    offsetY = (y - islandGestureStartY).coerceIn(-104f, maxDown),
-                )
-                armIslandDragWatchdog()
-            }
-            "end", "cancel" -> {
-                if (islandGestureMotion.phase != IslandGesturePhase.DRAGGING) return
-                val deltaY = (y - islandGestureStartY).coerceIn(
-                    -104f,
-                    (pagerData.pageViewHeight * 0.42f).coerceAtLeast(180f),
-                )
-                when {
-                    // Trigger thresholds kept low so a short flick is enough
-                    // (16dp close / 20dp detail); the pan already streams raw
-                    // pageY so lowering them costs nothing in tracking.
-                    state == "end" && deltaY <= -16f -> settleIslandClosedFromGesture()
-                    state == "end" && deltaY >= 20f -> openIslandDetailFromGesture(islandSymbol)
-                    else -> settleIslandGestureBack()
-                }
-            }
-        }
-    }
-
-    private fun settleIslandGestureBack() {
-        islandGestureMotion = islandGestureMotion.copy(
-            phase = IslandGesturePhase.RETURNING,
-            offsetY = 0f,
-        )
-        // Completion event is authoritative. The timeout is only a renderer
-        // fallback and is phase-gated, so stale callbacks cannot move the card.
-        // 兜底必须 ≥ 系统内最长 morph 时长（0.44s easeOut）：settle 变化消费的是
-        // 上一轮（跟手帧）注册的动画，时长不可控；若在动画在飞时翻转状态，
-        // attr 重跑会消费掉在飞动画而 height 同值跳过不挂新动画——高度冻结在
-        // 翻转时刻的插值点（用户反馈 2026-09-09「收回后胶囊固定在 ~53dp」：
-        // 旧值 280ms / 0.44s ≈ 87% 进度，正好冻在 140→39.6 的 53dp 处）。
-        setTimeout(560) { completeIslandMotion(ISLAND_ANIMATION_RETURN) }
-    }
-
-    private fun settleIslandClosedFromGesture() {
-        islandAnimating = true
-        islandGestureMotion = islandGestureMotion.copy(
-            phase = IslandGesturePhase.CLOSING,
-            offsetY = -104f,
-        )
-        // 同 settleIslandGestureBack：兜底必须盖过最长 morph（0.44s），见上注释。
-        setTimeout(560) { completeIslandMotion(ISLAND_ANIMATION_CLOSE) }
-    }
-
-    private fun openIslandDetailFromGesture(symbol: String) {
-        if (
-            !islandExpanded ||
-            islandGestureMotion.phase != IslandGesturePhase.DRAGGING ||
-            // 术语岛没有 islandSymbol（只有 islandTermKey），下滑去术语表走
-            // 同一条 OPENING_DETAIL 管线——空 symbol 不能提前 return，否则
-            // motion 永远停在 DRAGGING，卡片停留在被拉高的形变态（卡死）。
-            (symbol.isEmpty() && islandTermKey.isEmpty())
-        ) return
-        islandDetailHandoffDone = false
-        islandGestureMotion = islandGestureMotion.copy(
-            phase = IslandGesturePhase.OPENING_DETAIL,
-            offsetY = 0f,
-        )
-        islandAnimating = true
-
-        // 容器变换交接：形变进行到 ~90%（0.18s 形变的 160ms 处）就启动路由，
-        // 原生无动画 push + 整页淡入与剩余形变重叠，详情页在卡片收尾时就已
-        // 开始渐显，消除"全屏白幕等页面启动"的停顿。420ms 是渲染器兜底
-        //（与 160ms 主触发都走 phase-gated + islandDetailHandoffDone 幂等门）。
-        setTimeout(160) { completeIslandMotion(ISLAND_ANIMATION_DETAIL) }
-        setTimeout(420) { completeIslandMotion(ISLAND_ANIMATION_DETAIL) }
-    }
-
-    private fun completeIslandMotion(animationKey: String) {
-        when {
-            animationKey == ISLAND_ANIMATION_RETURN &&
-                islandGestureMotion.phase == IslandGesturePhase.RETURNING -> {
-                resetIslandMotion()
-            }
-            animationKey == ISLAND_ANIMATION_CLOSE &&
-                islandGestureMotion.phase == IslandGesturePhase.CLOSING -> {
-                islandExpanded = false
-                resetIslandMotion()
-            }
-            animationKey == ISLAND_ANIMATION_DETAIL &&
-                islandGestureMotion.phase == IslandGesturePhase.OPENING_DETAIL &&
-                !islandDetailHandoffDone -> {
-                islandDetailHandoffDone = true
-                val symbol = islandSymbol
-                islandDetailRouteActive = true
-                islandDetailRouteResetVersion++
-                // 详情与对比互斥（用户决策 2026-09-05）：进详情路由时清掉灵动岛
-                // 对比会话，避免返回后对比 lobby 借着 compareVisible 复活。
-                // （清态随归位一起延后到交接淡入结束，期间玻璃帧是淡入的底。）
-                // 交接遮罩：无动画 push 会立即触发本页 pageDidDisappear（其中
-                // 会强制归位灵动岛），但全屏玻璃帧还要作原生整页淡入的底，
-                // 先捂住归位，等详情页完全不透明后再原地 snap 归位（用户不可见）。
-                islandHandoffMaskActive = true
-                if (islandTermKey.isNotEmpty()) {
-                    // 术语岛下滑 = 进入术语表：与股票岛进详情页同一条容器变换
-                    // 交接（无动画 push + 页面就地淡入接管玻璃帧）。
-                    openGlossary(islandExpand = true)
-                } else {
-                    openStockDetail(symbol, islandExpand = true)
-                }
-                setTimeout(550) {
-                    islandHandoffMaskActive = false
-                    islandExpanded = false
-                    islandCompareVisible = false
-                    islandCompareLeftSymbol = ""
-                    islandCompareRightSymbol = ""
-                    islandTermKey = ""
-                    islandTermCompareLeftKey = ""
-                    islandTermCompareRightKey = ""
-                    islandTermCompareVisible = false
-                    remountIslandCollapsedForDetailRoute()
-                }
-            }
-        }
-    }
 
     private fun toggleDataMode() {
         // 2026-09-08：数据模式只剩"实时"一档（模拟分支已摘除），此开关保留为空操作
@@ -5646,9 +5100,7 @@ internal class ChatPage : BasePager() {
         deepContextVersion++
     }
 
-    private fun clearCompare() {
-        clearCompareExperience()
-    }
+    private fun clearCompare() = islandCoordinator.clearCompare()
 
     private fun openCardSheet(model: CardModel, deferInteraction: Boolean = false) {
         cardSheetCoordinator.open(model, deferInteraction)
