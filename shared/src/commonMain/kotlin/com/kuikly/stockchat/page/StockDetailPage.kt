@@ -619,7 +619,7 @@ internal class StockDetailPage : BasePager() {
                         }
                         // 左侧切换周期，右侧操作视窗；中间保留弹性空白，互不拥挤。
                         View {
-                            attr { flexDirectionRow(); alignItemsCenter(); marginTop(-10f); marginBottom(7f) }
+                            attr { flexDirectionRow(); alignItemsCenter();  marginBottom(7f) }
                             ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
                                 page.chartMode = m
                                 page.chartPeriod = p
