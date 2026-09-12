@@ -509,11 +509,8 @@ internal class ChatPage : BasePager() {
     private val recentMentions = mutableListOf<String>()
     // ===== @ 候选实时化（规范 10 §4.2 S5 / P5）=====
     // 远端搜索建议池：会话内累积，rank 时并入打分；Observable 以驱动候选行重渲染。
-    private var remoteEntries: ObservableList<CatalogEntry> by observableList()
-    private var remoteSearchGeneration = 0
+    private val remoteEntries: ObservableList<CatalogEntry> get() = composerAssistantState.remoteEntries as ObservableList<CatalogEntry>
     // 候选涨跌回填：面板活跃代数 + 已请求 symbol 去重（行情快照走 QuoteRepository 缓存）。
-    private var atQuoteGeneration = 0
-    private val atQuoteRequested = mutableSetOf<String>()
     // 参数面板重渲染 key（R1）：ConditionView 的 creator 只在条件翻转时构建一次内容，
     // 参数态下打字/点选导致的 args 变化必须靠 vfor 的 collection 操作整帧重建面板
     // （2026-09-10 真机复现：参数面板在打字期间完全冻结）。bump = clear+add 产生
@@ -3631,29 +3628,25 @@ internal class ChatPage : BasePager() {
      */
     private fun scheduleRemoteSearch(query: String) {
         if (query.length < 2) return
-        val generation = ++remoteSearchGeneration
+        val generation = composerAssistantCoordinator.nextRemoteSearchGeneration()
         val panelActive = {
             val session = triggerSession
             (session != null && session.type == '@' && session.query == query) ||
                 (session == null && paramCommand != null)
         }
         setTimeout(REMOTE_SEARCH_DEBOUNCE_MS) {
-            if (generation != remoteSearchGeneration) return@setTimeout
+            if (!composerAssistantCoordinator.isCurrentRemoteSearch(generation)) return@setTimeout
             if (!panelActive()) return@setTimeout
             dependencies.securitySearchProvider.searchSecurities(query) { securities ->
                 // Provider 回调在后台线程：setTimeout(0) 跳回主线程再碰 observable（线程铁律）。
                 setTimeout(0) {
-                    if (generation != remoteSearchGeneration) return@setTimeout
+                    if (!composerAssistantCoordinator.isCurrentRemoteSearch(generation)) return@setTimeout
                     if (!panelActive()) return@setTimeout
-                    var added = false
-                    securities.forEach { security ->
-                        val symbol = security.symbol
-                        if (symbol.isBlank() || ComposerCatalog.find(symbol) != null) return@forEach
-                        if (remoteEntries.any { it.symbol == symbol }) return@forEach
-                        if (remoteEntries.size >= REMOTE_ENTRY_POOL_LIMIT) remoteEntries.clear()
-                        remoteEntries.add(security.toCatalogEntry())
-                        added = true
-                    }
+                    val added = composerAssistantCoordinator.mergeRemoteEntries(
+                        entries = securities.map { it.toCatalogEntry() },
+                        limit = REMOTE_ENTRY_POOL_LIMIT,
+                        isLocalSymbol = { ComposerCatalog.find(it) != null },
+                    )
                     if (!added) return@setTimeout
                     if (triggerSession != null && triggerSession?.type == '@' && triggerSession?.query == query) {
                         refreshAtCandidates(query)
@@ -3698,11 +3691,11 @@ internal class ChatPage : BasePager() {
         candidates: List<AtCandidate> = atCandidates.toList(),
         isPanelActive: () -> Boolean = { triggerSession?.query == query },
     ) {
-        val generation = ++atQuoteGeneration
+        val generation = composerAssistantCoordinator.nextQuoteGeneration()
         candidates.take(PANEL_QUOTE_FETCH_LIMIT).forEach { candidate ->
             val entry = candidate.entry
             if (entry.kind == MentionType.BOARD || entry.chgPct != null) return@forEach
-            if (!atQuoteRequested.add(entry.symbol)) return@forEach
+            if (!composerAssistantCoordinator.markQuoteRequested(entry.symbol)) return@forEach
             quoteRepository.snapshotForContext(entry.symbol) { result ->
                 val quote = result.quote ?: return@snapshotForContext
                 val pct = if (quote.price > 0.0 && quote.previousClose > 0.0) {
@@ -3711,7 +3704,7 @@ internal class ChatPage : BasePager() {
                     null
                 }
                 setTimeout(0) {
-                    if (generation != atQuoteGeneration) return@setTimeout
+                    if (!composerAssistantCoordinator.isCurrentQuoteGeneration(generation)) return@setTimeout
                     if (!isPanelActive()) return@setTimeout
                     applyChgPct(entry.symbol, pct)
                 }
@@ -3721,21 +3714,7 @@ internal class ChatPage : BasePager() {
 
     /** 把涨跌写回候选列表与远端池（列表整体重建以触发 Observable 重渲染）。 */
     private fun applyChgPct(symbol: String, pct: Float?) {
-        if (pct == null) return
-        if (atCandidates.any { it.entry.symbol == symbol && it.entry.chgPct == null }) {
-            val updated = atCandidates.map { c ->
-                if (c.entry.symbol == symbol) c.copy(entry = c.entry.copy(chgPct = pct)) else c
-            }
-            atCandidates.clear()
-            atCandidates.addAll(updated)
-        }
-        val poolIndex = remoteEntries.indexOfFirst { it.symbol == symbol }
-        if (poolIndex >= 0) {
-            val pool = remoteEntries.toMutableList()
-            pool[poolIndex] = pool[poolIndex].copy(chgPct = pct)
-            remoteEntries.clear()
-            remoteEntries.addAll(pool)
-        }
+        if (!composerAssistantCoordinator.applyChgPct(symbol, pct)) return
         // 参数态候选行由面板整帧重建渲染，行情到达后 bump 一次让涨跌立即可见。
         if (triggerSession == null && paramCommand != null) bumpParamPanelRenderKey()
     }

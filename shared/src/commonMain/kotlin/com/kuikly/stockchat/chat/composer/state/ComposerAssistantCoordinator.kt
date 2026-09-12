@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.chat.composer.state
 
 import com.kuikly.stockchat.composer.AtCandidate
+import com.kuikly.stockchat.composer.CatalogEntry
 import com.kuikly.stockchat.composer.SlashCommand
 import com.kuikly.stockchat.composer.TriggerSession
 import com.tencent.kuikly.core.reactive.collection.ObservableList
@@ -22,6 +23,10 @@ internal interface ComposerAssistantStatePort {
     val atCandidates: MutableList<AtCandidate>
     val slashCandidates: MutableList<SlashCommand>
     val paramPanelRenderKey: MutableList<Int>
+    val remoteEntries: MutableList<CatalogEntry>
+    var remoteSearchGeneration: Int
+    var quoteGeneration: Int
+    val requestedQuoteSymbols: MutableSet<String>
 }
 
 internal class ComposerAssistantState : ComposerAssistantStatePort {
@@ -36,9 +41,14 @@ internal class ComposerAssistantState : ComposerAssistantStatePort {
     private var observableAtCandidates: ObservableList<AtCandidate> by observableList()
     private var observableSlashCandidates: ObservableList<SlashCommand> by observableList()
     private var observableParamRenderKey: ObservableList<Int> by observableList()
+    private var observableRemoteEntries: ObservableList<CatalogEntry> by observableList()
     override val atCandidates: MutableList<AtCandidate> get() = observableAtCandidates
     override val slashCandidates: MutableList<SlashCommand> get() = observableSlashCandidates
     override val paramPanelRenderKey: MutableList<Int> get() = observableParamRenderKey
+    override val remoteEntries: MutableList<CatalogEntry> get() = observableRemoteEntries
+    override var remoteSearchGeneration = 0
+    override var quoteGeneration = 0
+    override val requestedQuoteSymbols = mutableSetOf<String>()
 }
 
 internal class PlainComposerAssistantState : ComposerAssistantStatePort {
@@ -53,6 +63,10 @@ internal class PlainComposerAssistantState : ComposerAssistantStatePort {
     override val atCandidates = mutableListOf<AtCandidate>()
     override val slashCandidates = mutableListOf<SlashCommand>()
     override val paramPanelRenderKey = mutableListOf<Int>()
+    override val remoteEntries = mutableListOf<CatalogEntry>()
+    override var remoteSearchGeneration = 0
+    override var quoteGeneration = 0
+    override val requestedQuoteSymbols = mutableSetOf<String>()
 }
 
 /** Owns panel reset and candidate replacement so no stale highlight survives a panel switch. */
@@ -97,5 +111,46 @@ internal class ComposerAssistantCoordinator(val state: ComposerAssistantStatePor
     fun bumpParamRenderKey() {
         state.paramPanelRenderKey.clear()
         state.paramPanelRenderKey.add(0)
+    }
+
+    fun nextRemoteSearchGeneration(): Int = ++state.remoteSearchGeneration
+
+    fun isCurrentRemoteSearch(generation: Int): Boolean = generation == state.remoteSearchGeneration
+
+    fun mergeRemoteEntries(entries: List<CatalogEntry>, limit: Int, isLocalSymbol: (String) -> Boolean): Boolean {
+        var added = false
+        entries.forEach { entry ->
+            if (entry.symbol.isBlank() || isLocalSymbol(entry.symbol)) return@forEach
+            if (state.remoteEntries.any { it.symbol == entry.symbol }) return@forEach
+            if (state.remoteEntries.size >= limit) state.remoteEntries.clear()
+            state.remoteEntries.add(entry)
+            added = true
+        }
+        return added
+    }
+
+    fun nextQuoteGeneration(): Int = ++state.quoteGeneration
+
+    fun isCurrentQuoteGeneration(generation: Int): Boolean = generation == state.quoteGeneration
+
+    fun markQuoteRequested(symbol: String): Boolean = state.requestedQuoteSymbols.add(symbol)
+
+    fun applyChgPct(symbol: String, pct: Float?): Boolean {
+        if (pct == null) return false
+        if (state.atCandidates.any { it.entry.symbol == symbol && it.entry.chgPct == null }) {
+            val updated = state.atCandidates.map { candidate ->
+                if (candidate.entry.symbol == symbol) candidate.copy(entry = candidate.entry.copy(chgPct = pct)) else candidate
+            }
+            state.atCandidates.clear()
+            state.atCandidates.addAll(updated)
+        }
+        val remoteIndex = state.remoteEntries.indexOfFirst { it.symbol == symbol }
+        if (remoteIndex >= 0) {
+            val updated = state.remoteEntries.toMutableList()
+            updated[remoteIndex] = updated[remoteIndex].copy(chgPct = pct)
+            state.remoteEntries.clear()
+            state.remoteEntries.addAll(updated)
+        }
+        return true
     }
 }
