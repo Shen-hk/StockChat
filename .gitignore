@@ -87,3 +87,8 @@ Kotlin-js-store
 ohosApp/build-profile.json5
 # HAP 打包时由 runOhosApp.ps1 从 shared/src/commonMain/assets 镜像出来的产物
 /ohosApp/entry/src/main/resources/rawfile/
+
+# 2026-09-12 追加：验证 / 调试产物（一次性截图、日志、冒烟报告、脚本工具）不入库。
+# 注：outputs/ 下仍有 7 个历史文档已在版本库中，gitignore 不影响已跟踪文件。
+/outputs/
+/tools/
