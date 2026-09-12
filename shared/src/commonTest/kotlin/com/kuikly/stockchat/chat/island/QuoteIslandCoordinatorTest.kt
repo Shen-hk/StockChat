@@ -106,6 +106,24 @@ class QuoteIslandCoordinatorTest {
         assertTrue(f.state.expanded)
     }
 
+    @Test
+    fun resetForNewSessionClearsTermIslandAndTermCompareSlots() {
+        val f = fixture()
+        f.coordinator.openTermIsland("pe_ratio")
+        f.coordinator.addDraggedTerm("pe_ratio")
+        f.coordinator.addDraggedTerm("pb_ratio")
+        assertTrue(f.coordinator.isTermLobbyVisible())
+
+        f.coordinator.resetForNewSession()
+
+        assertFalse(f.state.expanded)
+        assertEquals("", f.state.termKey)
+        assertEquals("", f.state.termCompareLeftKey)
+        assertEquals("", f.state.termCompareRightKey)
+        assertFalse(f.state.termCompareVisible)
+        assertFalse(f.coordinator.isTermLobbyVisible())
+    }
+
     /**
      * 回归守护（2026-09-12「进入对比态后岛样式不切换」）：
      * `isCompareLobbyVisible()` / `isTermLobbyVisible()` 是 DSL 在 attr {} 闭包里直接调用的

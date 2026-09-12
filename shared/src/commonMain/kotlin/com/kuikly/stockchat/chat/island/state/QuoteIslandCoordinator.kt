@@ -499,13 +499,17 @@ internal class QuoteIslandCoordinator(
         }
     }
 
-    /** 会话级 UI 复位（新对话/清空）：岛收起、运动归位、对比槽清空。 */
+    /** 会话级 UI 复位（新对话/清空）：岛收起、运动归位、股票和术语对比槽均清空。 */
     fun resetForNewSession() {
         setExpanded(false)
         resetMotion()
         setCompareLeftSymbol("")
         setCompareRightSymbol("")
         setCompareVisible(false)
+        setTermKey("")
+        setTermCompareLeftKey("")
+        setTermCompareRightKey("")
+        setTermCompareVisible(false)
     }
 
     fun onDestroy() {

@@ -46,6 +46,12 @@ import com.kuikly.stockchat.chat.drawer.state.ChatDrawerState
 import com.kuikly.stockchat.chat.drawer.state.DrawerGestureMotion
 import com.kuikly.stockchat.chat.drawer.state.DrawerGesturePhase
 import com.kuikly.stockchat.chat.drawer.state.KuiklyDrawerScheduler
+import com.kuikly.stockchat.chat.entity.state.EntityAction
+import com.kuikly.stockchat.chat.entity.state.EntityEffect
+import com.kuikly.stockchat.chat.entity.state.EntityHostPort
+import com.kuikly.stockchat.chat.entity.state.EntityInteractionCoordinator
+import com.kuikly.stockchat.chat.entity.state.EntityState
+import com.kuikly.stockchat.chat.entity.state.KuiklyEntityScheduler
 import com.kuikly.stockchat.chat.sheet.state.CardSheetCoordinator
 import com.kuikly.stockchat.chat.sheet.state.CardSheetState
 import com.kuikly.stockchat.chat.sheet.state.ChatSheetLevel
@@ -265,30 +271,51 @@ internal class ChatPage : BasePager() {
             log = { message -> KLog.i(COMPOSER_LOG_TAG, message) },
         )
     }
-    private var peekSymbol: String by observable("")
-    private var peekVisible: Boolean by observable(false)
+    // ===== 实体交互状态层（长按 / 拖拽 / 投放 / 二义实体 / 行情预览）=====
+    // 页面只保留：拖拽浮层渲染、纯查询（isIslandFirstCompareDrop）、Effect 执行。
+    private val entityState = EntityState()
+    private val entityCoordinator by lazy {
+        EntityInteractionCoordinator(
+            entityState,
+            object : EntityHostPort {
+                override fun pageWidth() = pagerData.pageViewWidth
+                override fun pageHeight() = pagerData.pageViewHeight
+                override fun statusBarHeight() = pagerData.statusBarHeight
+                override fun safeAreaBottom() = pagerData.safeAreaInsets.bottom
+                override fun keyboardHeight() = this@ChatPage.keyboardHeight
+                override fun isIslandExpanded(): Boolean =
+                    islandExpanded ||
+                        islandCompareLeftSymbol.isNotEmpty() ||
+                        islandTermKey.isNotEmpty() ||
+                        islandTermCompareLeftKey.isNotEmpty()
+                override fun displayName(symbol: String, fallback: String) =
+                    entityDisplayName(symbol, fallback)
+                override fun termName(key: String) = Glossary.byKey(key)?.term
+            },
+            KuiklyEntityScheduler(),
+            ::handleEntityEffect,
+        )
+    }
     // 已发送图片的全屏预览。路径非空即挂载，关闭时清空以释放 Image 子树。
     private var imagePreviewPath: String by observable("")
-    // Symbol whose long press was recognised but whose gesture has not ended.
-    // It also suppresses the click some bridges emit after the terminal touch.
-    private var pendingLongPressSymbol: String = ""
-    private var draggedEntity: EntitySpan? = null
-    private var entityDragActive: Boolean by observable(false)
-    private var entityDragX: Float by observable(0f)
-    private var entityDragY: Float by observable(0f)
-    private var entityDragStartX = 0f
-    private var entityDragStartY = 0f
-    private var entityDragName: String by observable("")
-    private var entityDropTarget: EntityDropTarget by observable(EntityDropTarget.NONE)
+
+    private val peekSymbol: String get() = entityState.peekSymbol
+    private val peekVisible: Boolean get() = entityState.peekVisible
+    private val draggedEntity: EntitySpan? get() = entityState.draggedEntity
+    private val entityDragActive: Boolean get() = entityState.dragActive
+    private val entityDragX: Float get() = entityState.dragX
+    private val entityDragY: Float get() = entityState.dragY
+    private val entityDragName: String get() = entityState.dragName
+    private val entityDropTarget: EntityDropTarget get() = entityState.dropTarget
     // Sheet interaction is gated independently so its fading layer cannot
     // accept late taps while it is being dismissed.
     private val cardSheetState = CardSheetState()
     private val cardSheetCoordinator by lazy {
         CardSheetCoordinator(cardSheetState, KuiklyCardSheetScheduler())
     }
-    private var ambiguousSymbols: ObservableList<String> by observableList()
-    private var ambiguousEntityText: String by observable("")
-    private var ambiguousAction: EntityAction by observable(EntityAction.PREVIEW)
+    private val ambiguousSymbols: List<String> get() = entityState.ambiguousSymbols
+    private val ambiguousEntityText: String get() = entityState.ambiguousText
+    private val ambiguousAction: EntityAction get() = entityState.ambiguousAction
     // ===== 消息长按操作菜单（复制 / 追问）=====
     // 双态机（mounted → presented 一拍后翻转，R4/R5），与 Drawer/CardSheet 同款。
     private var messageActionMounted: Boolean by observable(false)
@@ -371,10 +398,6 @@ internal class ChatPage : BasePager() {
     private val islandTermCompareRightKey: String get() = islandState.termCompareRightKey
     private val islandTermCompareVisible: Boolean get() = islandState.termCompareVisible
     private var islandWatchlisted: Boolean by observable(false)
-    // 长按术语的进行中 key（与 pendingLongPressSymbol 平行，互不串扰），
-    // 以及长按后部分 bridge 会补发的 click 的抑制词形。
-    private var pendingLongPressTermKey: String = ""
-    private var suppressNextTermClick: String = ""
     // Page data is injected after construction; use the safe fallback until created().
     private var glassMode: GlassRenderingMode by observable(GlassRenderingMode.SIMPLIFIED)
     private var glassModeManuallySelected = false
@@ -489,8 +512,6 @@ internal class ChatPage : BasePager() {
     // full-screen scrim would swallow that gesture's terminal touch event.
     private var drilledKeys: ObservableList<String> by observableList()
     private var subThreads: ObservableList<SubThreadState> by observableList()
-    private var suppressNextStockClickSymbol = ""
-    private var peekVersion = 0
     // 回到顶部悬浮按钮：mounted/presented 双态机（同 drawer 模式，R4——vif 挂载
     // 的视图首帧不播动画，挂载后一拍再翻 presented）；version 使过期回调失效。
     private var chatBackToTopMounted: Boolean by observable(false)
@@ -643,6 +664,7 @@ internal class ChatPage : BasePager() {
     override fun pageWillDestroy() {
         drawerCoordinator.onDestroy()
         islandCoordinator.onDestroy()
+        entityCoordinator.onDestroy()
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
         mediaSheetCoordinator.reset()
@@ -776,9 +798,7 @@ internal class ChatPage : BasePager() {
                                 onCardStock = page::openStockDetail,
                                 onTerm = {
                                     // 长按术语后部分 bridge 会补发 click，抑制之。
-                                    if (it == page.suppressNextTermClick) {
-                                        page.suppressNextTermClick = ""
-                                    } else {
+                                    if (!page.consumeTermClickSuppression(it)) {
                                         // 用户卡在术语上主动点高亮 = 一次真实「遇到」（doc 24 §6.3）。
                                         Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
                                         page.viewModel.send("$it 是什么意思")
@@ -2141,15 +2161,7 @@ internal class ChatPage : BasePager() {
     }
 
     private fun resetSessionUiState() {
-        ambiguousSymbols.clear()
-        ambiguousEntityText = ""
-        pendingLongPressSymbol = ""
-        draggedEntity = null
-        entityDragActive = false
-        entityDropTarget = EntityDropTarget.NONE
-        entityDragName = ""
-        peekSymbol = ""
-        peekVisible = false
+        entityCoordinator.resetForNewSession()
         islandCoordinator.resetForNewSession()
         cardSheetCoordinator.reset()
         expandedCardKey = ""
@@ -2161,7 +2173,6 @@ internal class ChatPage : BasePager() {
         resetCompareInsight()
         drilledKeys.clear()
         subThreads.clear()
-        suppressNextStockClickSymbol = ""
         requestedSymbols.clear()
         quoteStates.clear()
         deepContextNotes.clear()
@@ -3157,30 +3168,30 @@ internal class ChatPage : BasePager() {
         }
     }
 
-    private fun showQuote(symbol: String) {
-        val version = ++peekVersion
-        ambiguousSymbols.clear()
-        ambiguousEntityText = ""
-        peekSymbol = symbol
-        peekVisible = false
-        requestQuote(symbol)
-        setTimeout(16) {
-            if (peekVersion == version && peekSymbol == symbol) peekVisible = true
-        }
-    }
+    private fun showQuote(symbol: String) = entityCoordinator.showQuote(symbol)
 
-    private fun dismissPeek() {
-        val version = ++peekVersion
-        peekVisible = false
-        setTimeout(180) {
-            if (peekVersion == version && !peekVisible) peekSymbol = ""
-        }
-    }
+    private fun dismissPeek() = entityCoordinator.dismissPeek()
 
-    private fun schedulePeekDismissal() {
-        val version = peekVersion
-        setTimeout(1500) {
-            if (peekVersion == version && peekVisible) dismissPeek()
+    private fun schedulePeekDismissal() = entityCoordinator.schedulePeekDismissal()
+
+    /** 长按术语后 bridge 补发的 click：命中抑制词形则消耗并返回 true（不再触发提问）。 */
+    private fun consumeTermClickSuppression(token: String) =
+        entityCoordinator.consumeTermClickSuppression(token)
+
+    // ===== 实体交互 Effect 执行（页面侧：路由 / 行情 / 岛协作 / 输入栏注入 / 触感 / 埋点）=====
+
+    private fun handleEntityEffect(effect: EntityEffect) {
+        when (effect) {
+            EntityEffect.Haptic -> acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
+            is EntityEffect.Track -> trackComposerEvent(effect.event, *effect.params.toList().toTypedArray())
+            is EntityEffect.RequestQuote -> requestQuote(effect.symbol)
+            is EntityEffect.OpenStockDetail -> openStockDetail(effect.symbol)
+            is EntityEffect.OpenStockIsland -> openEntityQuoteIsland(effect.symbol)
+            is EntityEffect.OpenTermIsland -> openEntityTermIsland(effect.key)
+            is EntityEffect.AddStockToIsland -> addDraggedStockToIsland(effect.symbol)
+            is EntityEffect.AddTermToIsland -> addDraggedTermToIsland(effect.key)
+            is EntityEffect.InjectStockMention -> insertDraggedMention(effect.symbol)
+            is EntityEffect.InjectQuestion -> injectQuestion(effect.text)
         }
     }
 
@@ -3238,101 +3249,23 @@ internal class ChatPage : BasePager() {
         }
     }
 
-    private fun handleStockEntityClick(entity: EntitySpan) {
-        if (suppressNextStockClickSymbol == entity.target) {
-            suppressNextStockClickSymbol = ""
-            return
-        }
-        handleStockEntity(entity, EntityAction.DETAIL)
-    }
+    private fun handleStockEntityClick(entity: EntitySpan) = entityCoordinator.onStockClick(entity)
 
-    private fun handleStockEntityLongPress(entity: EntitySpan, params: LongPressParams) {
-        when (params.state) {
-            "start" -> {
-                if (params.isCancel || pendingLongPressSymbol == entity.target) return
-                pendingLongPressSymbol = entity.target
-                suppressNextStockClickSymbol = entity.target
-                draggedEntity = entity
-                entityDragName = entityDisplayName(entity.target, entity.text)
-                entityDragStartX = params.pageX
-                entityDragStartY = params.pageY
-                entityDragX = params.pageX
-                entityDragY = params.pageY
-                entityDragActive = false
-                entityDropTarget = EntityDropTarget.NONE
-                // A stationary long press remains the quote-preview gesture.
-                openEntityQuoteIsland(entity.target)
-                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-                trackComposerEvent("entity_hold_preview", "symbol" to entity.target)
-                return
-            }
-            "move" -> {
-                if (pendingLongPressSymbol != entity.target) return
-                if (!entityDragActive && EntityDropResolver.hasExceededDragThreshold(
-                        entityDragStartX,
-                        entityDragStartY,
-                        params.pageX,
-                        params.pageY,
-                    )
-                ) {
-                    entityDragActive = true
-                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-                    trackComposerEvent("entity_drag_start", "symbol" to entity.target)
-                }
-                if (entityDragActive) updateEntityDragPosition(params.pageX, params.pageY)
-                if (params.isCancel) {
-                    if (entityDragActive) finishEntityDrag() else finishEntityHold(entity.target)
-                }
-                return
-            }
-            "end" -> {
-                if (pendingLongPressSymbol != entity.target) return
-                if (entityDragActive) {
-                    updateEntityDragPosition(params.pageX, params.pageY)
-                    finishEntityDrag()
-                } else {
-                    finishEntityHold(entity.target)
-                }
-                return
-            }
-            else -> if (params.isCancel && pendingLongPressSymbol == entity.target) {
-                if (entityDragActive) finishEntityDrag() else finishEntityHold(entity.target)
-                return
-            }
-        }
-    }
-
-    private fun finishEntityHold(symbol: String) {
-        draggedEntity = null
-        entityDragActive = false
-        entityDropTarget = EntityDropTarget.NONE
-        entityDragName = ""
-        pendingLongPressSymbol = ""
-        finishStockLongPress(symbol)
-    }
-
-    private fun updateEntityDragPosition(pageX: Float, pageY: Float) {
-        entityDragX = pageX
-        entityDragY = pageY
-        entityDropTarget = EntityDropResolver.resolve(
-            pageX = pageX,
-            pageY = pageY,
-            pageWidth = pagerData.pageViewWidth,
-            pageHeight = pagerData.pageViewHeight,
-            statusBarHeight = pagerData.statusBarHeight,
-            safeAreaBottom = pagerData.safeAreaInsets.bottom,
-            keyboardHeight = keyboardHeight,
-            islandExpanded = islandExpanded ||
-                islandCompareLeftSymbol.isNotEmpty() ||
-                islandTermKey.isNotEmpty() ||
-                islandTermCompareLeftKey.isNotEmpty(),
+    private fun handleStockEntityLongPress(entity: EntitySpan, params: LongPressParams) =
+        entityCoordinator.onStockLongPress(
+            entity = entity,
+            phase = params.state,
+            isCancel = params.isCancel,
+            pageX = params.pageX,
+            pageY = params.pageY,
         )
-    }
 
     private fun isIslandFirstCompareDrop(): Boolean =
         // 首槽判定跟随被拖实体类型，而非槽位残留态：术语对比面板开着时再拖
         // 一只股票进岛，应按股票槽位判定而不是被旧术语槽架空（反之亦然）。
-        if (draggedEntity?.type == EntityType.TERM) {
+        // 保留在页面：它同时读岛状态 observable（islandCompareLeftSymbol /
+        // islandTermCompareLeftKey），DSL 会在 attr 内调用，必须保持反应式读取。
+        if (entityState.draggedEntity?.type == EntityType.TERM) {
             islandTermCompareLeftKey.isEmpty()
         } else {
             islandCompareLeftSymbol.isEmpty()
@@ -3340,48 +3273,8 @@ internal class ChatPage : BasePager() {
 
     private fun isIslandCompareLobbyVisible(): Boolean = islandCoordinator.isCompareLobbyVisible()
 
-    private fun finishEntityDrag() {
-        val entity = draggedEntity
-        val target = entityDropTarget
-        val symbol = entity?.target ?: pendingLongPressSymbol
-        draggedEntity = null
-        entityDragActive = false
-        entityDropTarget = EntityDropTarget.NONE
-        entityDragName = ""
-        pendingLongPressSymbol = ""
-
-        if (entity != null) {
-            if (entity.type == EntityType.TERM) {
-                when (target) {
-                    // 术语没有 @ 提及形态：拖到输入框 = 注入「X 是什么意思」问句。
-                    EntityDropTarget.COMPOSER -> injectTermQuestion(entity)
-                    EntityDropTarget.ISLAND -> addDraggedTermToIsland(entity.target)
-                    EntityDropTarget.NONE -> Unit
-                }
-            } else {
-                when (target) {
-                    EntityDropTarget.COMPOSER -> handleStockEntity(entity, EntityAction.MENTION)
-                    EntityDropTarget.ISLAND -> handleStockEntity(entity, EntityAction.COMPARE)
-                    EntityDropTarget.NONE -> Unit
-                }
-            }
-            if (target != EntityDropTarget.NONE) {
-                trackComposerEvent("entity_drag_drop", "symbol" to entity.target, "target" to target.name.lowercase())
-            }
-        }
-        finishStockLongPress(symbol)
-
-    }
-
-    private fun finishStockLongPress(symbol: String) {
-        // The island is outside the releasing finger's hit area, so no deferred
-        // mount is needed. Keep only the short click-suppression guard.
-        setTimeout(400) {
-            if (suppressNextStockClickSymbol == symbol) {
-                suppressNextStockClickSymbol = ""
-            }
-        }
-    }
+    // 拖拽收敛（finishEntityDrag / finishStockLongPress / finishEntityHold）已在
+    // EntityInteractionCoordinator 内实现：页面不再持有 pendingLongPressSymbol 等守卫字段。
 
     // ===== 消息长按操作菜单（复制 / 追问）=====
 
@@ -3527,38 +3420,11 @@ internal class ChatPage : BasePager() {
         expandComposer(requestFocus = true)
     }
 
-    private fun handleStockEntity(entity: EntitySpan, action: EntityAction) {
-        if (entity.candidates.size == 1) performEntityAction(entity.target, action)
-        else {
-            ambiguousEntityText = entity.text
-            ambiguousAction = action
-            ambiguousSymbols.clear()
-            ambiguousSymbols.addAll(entity.candidates)
-        }
-    }
-
-    private fun chooseAmbiguousSymbol(symbol: String) = performEntityAction(symbol, ambiguousAction)
-
-    private fun performEntityAction(symbol: String, action: EntityAction) {
-        when (action) {
-            EntityAction.DETAIL -> openStockDetail(symbol)
-            EntityAction.PREVIEW -> showQuote(symbol)
-            EntityAction.ISLAND -> openEntityQuoteIsland(symbol)
-            EntityAction.MENTION -> insertDraggedMention(symbol)
-            EntityAction.COMPARE -> addDraggedStockToIsland(symbol)
-        }
-    }
+    private fun chooseAmbiguousSymbol(symbol: String) = entityCoordinator.chooseAmbiguous(symbol)
 
     private fun entityDisplayName(symbol: String, fallback: String = symbol): String =
         quoteFor(symbol)?.name ?: ComposerCatalog.find(symbol)?.name ?:
         Securities.all.firstOrNull { it.symbol == symbol }?.name ?: fallback
-
-    /** 术语拖到输入框：注入「X 是什么意思」问句（术语没有 @ 提及形态）。 */
-    private fun injectTermQuestion(entity: EntitySpan) {
-        val name = Glossary.byKey(entity.target)?.term ?: entity.text
-        injectQuestion("$name 是什么意思")
-        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-    }
 
     private fun insertDraggedMention(symbol: String) {
         val entry = ComposerCatalog.find(symbol)
@@ -3624,78 +3490,14 @@ internal class ChatPage : BasePager() {
     // ===== 术语灵动岛（与股票行情岛同一手势/形变体系，2026-09-07）=====
 
     /** 长按蓝色术语高亮：原地展开术语讲解卡；拖拽跟手与股票实体共用一套字段。 */
-    private fun handleTermEntityLongPress(entity: EntitySpan, params: LongPressParams) {
-        when (params.state) {
-            "start" -> {
-                if (params.isCancel || pendingLongPressTermKey == entity.target) return
-                pendingLongPressTermKey = entity.target
-                suppressNextTermClick = entity.text
-                draggedEntity = entity
-                entityDragName = Glossary.byKey(entity.target)?.term ?: entity.text
-                entityDragStartX = params.pageX
-                entityDragStartY = params.pageY
-                entityDragX = params.pageX
-                entityDragY = params.pageY
-                entityDragActive = false
-                entityDropTarget = EntityDropTarget.NONE
-                // 静止长按 = 术语讲解预览。长按展开讲解与点击高亮一样算一次
-                // 真实「遇到」（doc 24 §6.3：用户真实撞上术语才算）。
-                openEntityTermIsland(entity.target)
-                acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-                trackComposerEvent("term_hold_preview", "term" to entity.target)
-                return
-            }
-            "move" -> {
-                if (pendingLongPressTermKey != entity.target) return
-                if (!entityDragActive && EntityDropResolver.hasExceededDragThreshold(
-                        entityDragStartX,
-                        entityDragStartY,
-                        params.pageX,
-                        params.pageY,
-                    )
-                ) {
-                    entityDragActive = true
-                    acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).hapticImpact()
-                    trackComposerEvent("term_drag_start", "term" to entity.target)
-                }
-                if (entityDragActive) updateEntityDragPosition(params.pageX, params.pageY)
-                if (params.isCancel) {
-                    if (entityDragActive) finishEntityDrag() else finishTermHold(entity.target)
-                }
-                return
-            }
-            "end" -> {
-                if (pendingLongPressTermKey != entity.target) return
-                if (entityDragActive) {
-                    updateEntityDragPosition(params.pageX, params.pageY)
-                    finishEntityDrag()
-                } else {
-                    finishTermHold(entity.target)
-                }
-                return
-            }
-            else -> if (params.isCancel && pendingLongPressTermKey == entity.target) {
-                if (entityDragActive) finishEntityDrag() else finishTermHold(entity.target)
-                return
-            }
-        }
-    }
-
-    private fun finishTermHold(key: String) {
-        draggedEntity = null
-        entityDragActive = false
-        entityDropTarget = EntityDropTarget.NONE
-        entityDragName = ""
-        pendingLongPressTermKey = ""
-        // 与 finishStockLongPress 同款：岛在释放手指的命中区之外，只需清理
-        // 长按补发 click 的抑制词形。
-        val suppressed = suppressNextTermClick
-        setTimeout(400) {
-            if (suppressNextTermClick == suppressed) {
-                suppressNextTermClick = ""
-            }
-        }
-    }
+    private fun handleTermEntityLongPress(entity: EntitySpan, params: LongPressParams) =
+        entityCoordinator.onTermLongPress(
+            entity = entity,
+            phase = params.state,
+            isCancel = params.isCancel,
+            pageX = params.pageX,
+            pageY = params.pageY,
+        )
 
     private fun openEntityTermIsland(key: String) = islandCoordinator.openTermIsland(key)
 
@@ -3840,7 +3642,7 @@ internal class ChatPage : BasePager() {
 
     // ===== 灵动岛（状态机在 QuoteIslandCoordinator，见 chat/island/state）=====
     // Page 只做 Effect adapter：路由、行情、Glossary、触感、Toast，以及
-    // CompareInsight / 实体拖拽字段（尚未迁出的两个域）的清理。
+    // CompareInsight（尚未迁出的域）与实体拖拽残留（转发 EntityInteractionCoordinator）的清理。
 
     private fun handleIslandEffect(effect: IslandEffect) {
         when (effect) {
@@ -3862,20 +3664,8 @@ internal class ChatPage : BasePager() {
                 compareCandidateKey = ""
                 compareCandidateSymbol = ""
             }
-            IslandEffect.ClearStockDrag -> {
-                pendingLongPressSymbol = ""
-                draggedEntity = null
-                entityDragActive = false
-                entityDropTarget = EntityDropTarget.NONE
-                entityDragName = ""
-            }
-            IslandEffect.ClearTermDrag -> {
-                pendingLongPressTermKey = ""
-                draggedEntity = null
-                entityDragActive = false
-                entityDropTarget = EntityDropTarget.NONE
-                entityDragName = ""
-            }
+            IslandEffect.ClearStockDrag -> entityCoordinator.clearStockDragResidue()
+            IslandEffect.ClearTermDrag -> entityCoordinator.clearTermDragResidue()
         }
     }
 
@@ -3883,14 +3673,6 @@ internal class ChatPage : BasePager() {
     private fun handleIslandGesture(state: String, y: Float) = islandCoordinator.onPan(state, y)
     private fun completeIslandMotion(animationKey: String) = islandCoordinator.onMotionComplete(animationKey)
     private fun noteIslandInteraction() = islandCoordinator.noteInteraction()
-
-    // ===== 灵动岛状态机已迁至 QuoteIslandCoordinator（chat/island/state）=====
-
-
-
-
-
-
 
     private fun toggleDataMode() {
         // 2026-09-08：数据模式只剩"实时"一档（模拟分支已摘除），此开关保留为空操作
@@ -5334,8 +5116,6 @@ internal class ChatPage : BasePager() {
     }
 
 }
-
-private enum class EntityAction { DETAIL, PREVIEW, ISLAND, MENTION, COMPARE }
 
 private enum class CompareInsightState { IDLE, LOADING, READY, ERROR }
 
