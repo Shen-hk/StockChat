@@ -65,6 +65,7 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartHostPort
 import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
 import com.kuikly.stockchat.detail.chart.state.DetailChartState
 import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
+import com.kuikly.stockchat.detail.page.component.DetailChartCard
 import com.kuikly.stockchat.detail.page.component.DetailHeroSection
 import com.kuikly.stockchat.detail.page.component.DetailNewsTicker
 import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
@@ -501,246 +502,64 @@ internal class StockDetailPage : BasePager() {
                         isNewsFlagged = { page.isNewsFlagged(it) },
                     )
 
-                    // ---- 走势主卡（2026-09-08：去掉白色大框，图表直接浮在氛围底上）----
-                    // 入场动效：欢迎引导卡同款上滑淡入（RevealBlock，index 0 起阶梯）
-                    RevealBlock(0, { page.entranceVisible }, page.reduceMotion) {
-                    View {
-                        attr {
-                            marginTop(-3f)
-                        }
-                        // 左侧切换周期，右侧操作视窗；中间保留弹性空白，互不拥挤。
-                        View {
-                            attr { flexDirectionRow(); alignItemsCenter();  marginBottom(7f) }
-                            ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
-                                page.chartMode = m
-                                page.chartPeriod = p
-                                page.detailChartCoordinator.resetChartSelection()
-                            }
-                            View { attr { flex(1f) } }
-                            ChartViewportControls(page.theme) { action -> page.detailChartCoordinator.issueViewportCommand(action) }
-                        }
-                        // 图例固定在工具栏下一行，不再漂浮压住高低点和价格曲线。
-                        View {
-                            attr { alignSelfFlexEnd(); marginBottom(6f); touchEnable(false) }
-                            ChartLegend(page.theme, { page.toneColor() })
-                        }
-                        // 图表区加载骨架（chartDataLoading=分时尚未到位时的空白期治理，
-                        // 2026-09-10）：波形占位随 livePulse 呼吸，替代 396dp 空白图表。
-                        vif({ page.chartDataLoading }) {
-                            ChartLoadingSkeleton(page.theme, { page.livePulse }, page.reduceMotion)
-                        }
-                        // 分时主体（自绘）与 K 线互斥切换；分段控件缩小后悬浮图左上（见下方 overlay）
-                            vif({ page.chartMode == StockChartMode.TIMELINE && !page.chartDataLoading }) {
-                                DetailTimelineChart(
-                                    theme = page.theme,
-                                    quote = { page.quote },
-                                    crosshairIndex = { page.crosshairIndex },
-                                    drawProgress = { page.drawProgress },
-                                    motionPhase = { page.sonarDrift },
-                                    reduceMotion = page.reduceMotion,
-                                    // 图表不再被卡片内边距二次挤压：横向直接吃满详情页
-                                    // 可用宽度，十字线信息也在绘图区内浮现。
-                                    containerWidth = page.pagerData.pageViewWidth - 28f,
-                                    // ⑤ 恢复 scrub 即清空预填（只预填不发送）
-                                    onScrub = { page.detailChartCoordinator.onScrub(it) },
-                                    // ④ 异动声呐
-                                    sonarIndices = { page.sonarPoints.map { p -> p.index } },
-                                    selectedSonarIndex = { page.selectedSonarIndex },
-                                    onSonarTap = { page.detailChartCoordinator.tapSonar(it) },
-                                    // B2 新闻旗标（图侧）
-                                    flags = { page.chartFlags },
-                                    // ② 句图联动 / B2 区间高亮带（同容器，后者覆盖前者）
-                                    band = { page.bandRange },
-                                    // ① 圈选即问
-                                    onCircleSelect = { s, e -> page.detailChartCoordinator.onCircleSelected(s, e) },
-                                    onSelectStateChange = { selecting ->
-                                        page.detailChartCoordinator.setCircleSelecting(selecting)
-                                    },
-                                    // ⑤ 十字线停顿 600ms 预填
-                                    onScrubPause = { page.detailChartCoordinator.onScrubPause(it) },
-                                    // ⑤ 松手离开 scrub：2s 后清预填（chart 侧 revision 去抖）
-                                    onScrubLeave = { page.detailChartCoordinator.clearPrefill() },
-                                    // 长按进/出 scrub：锁/解锁外层 Scroller 滚动
-                                    onScrubActive = { page.detailChartCoordinator.setInteractionActive(it) },
-                                    // U1 点空白（非声呐轻点）：关闭图表气泡并清其区间带
-                                    onBlankTap = { page.closeChartBubble() },
-                                    viewportCommand = { page.chartViewportCommand },
-                                )
-                            }
-                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.DAY && !page.chartDataLoading }) {
-                                KLineChart(
-                                    container = this,
-                                    model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY),
-                                    context = ctx,
-                                    selectedIndex = { page.selectedKLineIndex },
-                                    onSelectIndex = { page.detailChartCoordinator.selectKLineIndex(it) },
-                                    chartHeight = 396f,
-                                    // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
-                                    // 与分时图 scrub 锁共用同一开关
-                                    onZoomActive = { page.detailChartCoordinator.setInteractionActive(it) },
-                                    onCrosshairActive = { page.detailChartCoordinator.setInteractionActive(it) },
-                                    viewportCommand = { page.chartViewportCommand },
-                                )
-                            }
-                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.WEEK && !page.chartDataLoading }) {
-                                KLineChart(
-                                    container = this,
-                                    model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK),
-                                    context = ctx,
-                                    selectedIndex = { page.selectedKLineIndex },
-                                    onSelectIndex = { page.detailChartCoordinator.selectKLineIndex(it) },
-                                    chartHeight = 396f,
-                                    // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
-                                    // 与分时图 scrub 锁共用同一开关
-                                    onZoomActive = { page.detailChartCoordinator.setInteractionActive(it) },
-                                    onCrosshairActive = { page.detailChartCoordinator.setInteractionActive(it) },
-                                    viewportCommand = { page.chartViewportCommand },
-                                )
-                            }
-                            vif({ page.chartMode == StockChartMode.K_LINE && page.chartPeriod == StockChartPeriod.MONTH && !page.chartDataLoading }) {
-                                KLineChart(
-                                    container = this,
-                                    model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH),
-                                    context = ctx,
-                                    selectedIndex = { page.selectedKLineIndex },
-                                    onSelectIndex = { page.detailChartCoordinator.selectKLineIndex(it) },
-                                    chartHeight = 396f,
-                                    // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
-                                    // 与分时图 scrub 锁共用同一开关
-                                    onZoomActive = { page.detailChartCoordinator.setInteractionActive(it) },
-                                    onCrosshairActive = { page.detailChartCoordinator.setInteractionActive(it) },
-                                    viewportCommand = { page.chartViewportCommand },
-                                )
-                            }
-                        // ① 圈选态 hint（vif + 两帧入场，R4）：进入圈选时出现、松手消失
-                        vif({ page.circleSelecting && page.circleHintPresented }) {
-                            Text {
-                                attr {
-                                    absolutePosition(left = 16f, top = 46f)
-                                    text("圈选中：松手生成这段走势的解读")
-                                    fontSizeScaled(10f)
-                                    fontWeightMedium()
-                                    color(page.theme.brand)
-                                    opacity(if (page.circleHintPresented) 1f else 0f)
-                                    if (!page.reduceMotion) {
-                                        animate(Animation.easeOut(0.18f), page.circleHintPresented)
-                                    }
-                                    touchEnable(false)
-                                }
-                            }
-                        }
-                        // ④/① 就地气泡（doc 29 U1/U2/U3）：唯一就地回应容器——白底 brand
-                        // 描边圆角 14，「AI · 端侧规则」来源标注，R4 两帧上浮淡入
-                        vif({ page.detailOverlayCoordinator.active() == DetailOverlay.CHART_BUBBLE && page.chartBubble.isNotEmpty() }) {
-                            View {
-                                attr {
-                                    absolutePosition(left = 16f, right = 16f, bottom = 12f)
-                                    padding(12f)
-                                    borderRadius(14f)
-                                    backgroundColor(page.theme.surface)
-                                    border(Border(1.2f, BorderStyle.SOLID, page.theme.brand.opacity(0.6f)))
-                                    boxShadow(BoxShadow(0f, 6f, 18f, page.theme.brand.opacity(0.14f)))
-                                    opacity(if (page.chartBubblePresented) 1f else 0f)
-                                    if (!page.reduceMotion) {
-                                        transform(Translate(0f, if (page.chartBubblePresented) 0f else 0.08f))
-                                        animate(Animation.easeOut(0.22f), page.chartBubblePresented)
-                                    }
-                                }
-                                View {
-                                    attr { flexDirectionRow(); alignItemsCenter() }
-                                    Text {
-                                        attr {
-                                            text(page.chartBubbleSourceLabel())
-                                            fontSizeScaled(9f)
-                                            fontWeightSemiBold()
-                                            color(page.theme.brand)
-                                            flex(1f)
-                                        }
-                                    }
-                                    Text {
-                                        attr {
-                                            text("×")
-                                            fontSizeScaled(12f)
-                                            color(page.theme.textTertiary)
-                                        }
-                                    }
-                                    event { click { page.closeChartBubble() } }
-                                }
-                                Text {
-                                    attr {
-                                        text(page.chartBubble)
-                                        marginTop(6f)
-                                        fontSizeScaled(11.5f)
-                                        lineHeightScaled(17f)
-                                        color(page.theme.textPrimary)
-                                    }
-                                }
-                                // ① 圈选 AI 解读：流式段落（打字机逐字），对照图就地阅读
-                                vif({ page.circleAiState == 1 && page.circleAiText.isBlank() }) {
-                                    Text {
-                                        attr {
-                                            text("正在生成区间解读…")
-                                            marginTop(4f)
-                                            fontSizeScaled(11f)
-                                            color(page.theme.textTertiary)
-                                        }
-                                    }
-                                }
-                                vif({ page.circleAiText.isNotBlank() }) {
-                                    Text {
-                                        attr {
-                                            text(page.circleAiText)
-                                            marginTop(4f)
-                                            fontSizeScaled(11.5f)
-                                            lineHeightScaled(17f)
-                                            color(page.theme.textPrimary)
-                                        }
-                                    }
-                                }
-                                vif({ page.circleAiState == 4 }) {
-                                    Text {
-                                        attr {
-                                            text("AI 调用失败：${page.circleAiError} · 以上为端侧统计")
-                                            marginTop(4f)
-                                            fontSizeScaled(10f)
-                                            lineHeightScaled(14f)
-                                            color(page.theme.textTertiary)
-                                        }
-                                    }
-                                }
-                                View {
-                                    attr {
-                                        marginTop(8f)
-                                        alignSelfFlexStart()
-                                        height(28f)
-                                        paddingLeft(12f)
-                                        paddingRight(12f)
-                                        allCenter()
-                                        borderRadius(14f)
-                                        backgroundColor(page.theme.brandSoft)
-                                    }
-                                    Text {
-                                        attr {
-                                            text("去对话深聊 ›")
-                                            fontSizeScaled(11f)
-                                            fontWeightSemiBold()
-                                            color(page.theme.brand)
-                                        }
-                                    }
-                                    event {
-                                        click {
-                                            page.openChatWithQuestion(
-                                                page.chipStore.promptFragment() +
-                                                    "「${page.chartBubble}」帮我从资金面和消息面深聊${page.quote.name}这段走势。",
-                                                focusSymbol = page.symbol,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    }
+                    // ---- 走势主卡（K线/分时 + 圈选 hint + 图表气泡）----
+                    DetailChartCard(
+                        theme = page.theme,
+                        reduceMotion = page.reduceMotion,
+                        entranceVisible = { page.entranceVisible },
+                        revealIndex = 0,
+                        ctx = ctx,
+                        containerWidth = page.pagerData.pageViewWidth - 28f,
+                        chartMode = { page.chartMode },
+                        chartPeriod = { page.chartPeriod },
+                        quote = { page.quote },
+                        crosshairIndex = { page.crosshairIndex },
+                        drawProgress = { page.drawProgress },
+                        sonarDrift = { page.sonarDrift },
+                        chartDataLoading = { page.chartDataLoading },
+                        livePulse = { page.livePulse },
+                        chartViewportCommand = { page.chartViewportCommand },
+                        selectedKLineIndex = { page.selectedKLineIndex },
+                        sonarPoints = { page.sonarPoints },
+                        selectedSonarIndex = { page.selectedSonarIndex },
+                        chartFlags = { page.chartFlags },
+                        bandRange = { page.bandRange },
+                        circleSelecting = { page.circleSelecting },
+                        circleHintPresented = { page.circleHintPresented },
+                        chartBubble = { page.chartBubble },
+                        chartBubblePresented = { page.chartBubblePresented },
+                        circleAiState = { page.circleAiState },
+                        circleAiText = { page.circleAiText },
+                        circleAiError = { page.circleAiError },
+                        chartBubbleSourceLabel = { page.chartBubbleSourceLabel() },
+                        bubbleOverlayActive = { page.detailOverlayCoordinator.active() == DetailOverlay.CHART_BUBBLE },
+                        onChangeModePeriod = { m, p ->
+                            page.chartMode = m
+                            page.chartPeriod = p
+                            page.detailChartCoordinator.resetChartSelection()
+                        },
+                        onIssueViewportCommand = { page.detailChartCoordinator.issueViewportCommand(it) },
+                        onSelectKLineIndex = { page.detailChartCoordinator.selectKLineIndex(it) },
+                        onScrub = { page.detailChartCoordinator.onScrub(it) },
+                        onScrubPause = { page.detailChartCoordinator.onScrubPause(it) },
+                        onScrubLeave = { page.detailChartCoordinator.clearPrefill() },
+                        onScrubActive = { page.detailChartCoordinator.setInteractionActive(it) },
+                        onZoomActive = { page.detailChartCoordinator.setInteractionActive(it) },
+                        onCrosshairActive = { page.detailChartCoordinator.setInteractionActive(it) },
+                        onTapSonar = { page.detailChartCoordinator.tapSonar(it) },
+                        onCircleSelect = { s, e -> page.detailChartCoordinator.onCircleSelected(s, e) },
+                        onSelectStateChange = { page.detailChartCoordinator.setCircleSelecting(it) },
+                        onBlankTap = { page.closeChartBubble() },
+                        onCloseChartBubble = { page.closeChartBubble() },
+                        onOpenChatFromBubble = {
+                            page.openChatWithQuestion(
+                                page.chipStore.promptFragment() +
+                                    "「${page.chartBubble}」帮我从资金面和消息面深聊${page.quote.name}这段走势。",
+                                focusSymbol = page.symbol,
+                            )
+                        },
+                        toneColor = { page.toneColor() },
+                    )
 
                     // ---- 次级指标：与顶部重复的换手率不再单独做胶囊；保留资金、估值与规模。 ----
                     RevealBlock(1, { page.entranceVisible }, page.reduceMotion) {
@@ -2236,7 +2055,7 @@ private fun ViewContainer<*, *>.FocusHairline(
 }
 
 /** 走势卡头图例：价格（实色）/ 均价（虚线）/ 昨收（虚线弱化）。 */
-private fun ViewContainer<*, *>.ChartLegend(theme: StockChatTheme, tone: () -> Color) {
+internal fun ViewContainer<*, *>.ChartLegend(theme: StockChatTheme, tone: () -> Color) {
     View {
         attr { flexDirectionRow(); alignItemsCenter(); touchEnable(false) }
         LegendItem(theme, tone, "价格", dashed = false)
@@ -2488,7 +2307,7 @@ private fun ViewContainer<*, *>.BusinessCardSlot(
     }
 }
 
-private fun ViewContainer<*, *>.RevealBlock(
+internal fun ViewContainer<*, *>.RevealBlock(
     index: Int,
     visible: () -> Boolean,
     reduceMotion: Boolean,
@@ -2518,7 +2337,7 @@ private fun ViewContainer<*, *>.RevealBlock(
 }
 
 // 图表导航：单独占一行，留出足够的触控面积，也不会遮住高低点与图例。
-private fun ViewContainer<*, *>.ChartSegment(
+internal fun ViewContainer<*, *>.ChartSegment(
     theme: StockChatTheme,
     chartMode: () -> StockChartMode,
     chartPeriod: () -> StockChartPeriod,
@@ -2583,7 +2402,7 @@ private fun ViewContainer<*, *>.ChartSegment(
 }
 
 /** Shared, visible viewport controls for 分时 / 日K / 周K / 月K. */
-private fun ViewContainer<*, *>.ChartViewportControls(
+internal fun ViewContainer<*, *>.ChartViewportControls(
     theme: StockChatTheme,
     onAction: (ChartViewportAction) -> Unit,
 ) {
@@ -3066,7 +2885,7 @@ private fun ViewContainer<*, *>.AiInsightPlaceholder(
  * 明暗呼吸（复用 AI 占位骨架范式：R2/R5 每次 attr 重跑重注册，下一拍消费）。
  * reduceMotion 恒全亮静态。
  */
-private fun ViewContainer<*, *>.ChartLoadingSkeleton(
+internal fun ViewContainer<*, *>.ChartLoadingSkeleton(
     theme: StockChatTheme,
     breath: () -> Boolean = { false },
     reduceMotion: Boolean = false,
