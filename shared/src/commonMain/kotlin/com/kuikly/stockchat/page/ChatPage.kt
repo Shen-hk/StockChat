@@ -53,6 +53,7 @@ import com.kuikly.stockchat.chat.composer.state.VoiceInputCoordinator
 import com.kuikly.stockchat.chat.composer.state.VoiceInputEffect
 import com.kuikly.stockchat.chat.composer.state.VoiceInputHostPort
 import com.kuikly.stockchat.chat.composer.state.VoiceInputState
+import com.kuikly.stockchat.chat.composer.component.ComposerCandidateRows
 import com.kuikly.stockchat.chat.composer.state.KuiklyMediaSheetScheduler
 import com.kuikly.stockchat.chat.composer.state.MAX_COMPOSER_ATTACHMENTS
 import com.kuikly.stockchat.chat.composer.state.MediaSheetCoordinator
@@ -4112,147 +4113,15 @@ internal class ChatPage : BasePager() {
                             }
                             event { click { page.selectAtCandidate(candidate) } }
                             if (candidate.entry.kind == MentionType.BOARD) {
-                                page.renderBoardCandidateRow(this, candidate, q)
+                                ComposerCandidateRows.renderBoard(this, candidate, q, page.theme)
                             } else {
-                                page.renderSecurityCandidateRow(this, candidate, q)
+                                ComposerCandidateRows.renderSecurity(this, candidate, q, page.theme)
                             }
                         }
                     }
                 }
             }
         }
-    }
-
-    /**
-     * 个股/指数候选行：名称（匹配段高亮）· 代码 · 市场 · 涨跌幅 · 来源。
-     * 单行横排而非两行堆叠，信息密度对齐 HTML 原型，也避免行内出现大片空白。
-     */
-    private fun renderSecurityCandidateRow(row: ViewContainer<*, *>, candidate: AtCandidate, query: String) {
-        val page = this
-        val entry = candidate.entry
-        row.View {
-            attr { flex(1f); flexDirectionRow(); alignItemsCenter(); marginRight(8f) }
-            val (pre, hit, suf) = page.splitHighlight(entry.name, query)
-            if (pre.isNotEmpty()) {
-                row.Text { attr { text(pre); fontSizeScaled(14f); color(page.theme.textPrimary) } }
-            }
-            if (hit.isNotEmpty()) {
-                row.Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(page.theme.brand) } }
-            }
-            if (suf.isNotEmpty()) {
-                row.Text { attr { text(suf); fontSizeScaled(14f); color(page.theme.textPrimary) } }
-            }
-        }
-        row.Text {
-            attr {
-                text(entry.symbol)
-                fontSizeScaled(11f)
-                color(page.theme.textTertiary)
-                width(74f)
-                textAlignRight()
-                marginRight(6f)
-            }
-        }
-        row.View {
-            attr {
-                width(38f); height(16f); marginRight(6f)
-                alignItemsCenter(); justifyContentCenter()
-                backgroundColor(page.theme.surfaceMuted); borderRadius(4f)
-            }
-            row.Text { attr { text(entry.market); fontSizeScaled(9f); color(page.theme.textSecondary) } }
-        }
-        // 涨跌幅右对齐定宽：红涨绿跌（中国习惯），无涨跌的板块走另一分支。
-        row.Text {
-            attr {
-                text(page.formatChgPct(entry.chgPct))
-                fontSizeScaled(12f)
-                fontWeightSemiBold()
-                color(page.chgColor(entry.chgPct))
-                width(48f)
-                textAlignRight()
-                marginRight(6f)
-            }
-        }
-        row.View {
-            attr {
-                width(32f); height(16f)
-                alignItemsCenter(); justifyContentCenter()
-                backgroundColor(page.theme.surfaceMuted); borderRadius(4f)
-            }
-            row.Text { attr { text(candidate.source); fontSizeScaled(9f); color(page.theme.textSecondary) } }
-        }
-    }
-
-    /** 板块聚合行：板块无涨跌，用成分数量补位，避免右端空一大块。 */
-    private fun renderBoardCandidateRow(row: ViewContainer<*, *>, candidate: AtCandidate, query: String) {
-        val page = this
-        val entry = candidate.entry
-        row.View {
-            attr { flex(1f); flexDirectionRow(); alignItemsCenter(); marginRight(8f) }
-            val (pre, hit, suf) = page.splitHighlight(entry.name, query)
-            if (pre.isNotEmpty()) {
-                row.Text { attr { text(pre); fontSizeScaled(14f); color(page.theme.brand) } }
-            }
-            if (hit.isNotEmpty()) {
-                row.Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(page.theme.brand) } }
-            }
-            if (suf.isNotEmpty()) {
-                row.Text { attr { text(suf); fontSizeScaled(14f); color(page.theme.brand) } }
-            }
-        }
-        row.Text {
-            attr {
-                text("共 ${entry.boardCount} 只")
-                fontSizeScaled(11f)
-                color(page.theme.textTertiary)
-                marginRight(6f)
-            }
-        }
-        row.View {
-            attr {
-                paddingLeft(5f); paddingRight(5f); height(16f); marginRight(6f)
-                alignItemsCenter(); justifyContentCenter()
-                backgroundColor(page.theme.brandSoft); borderRadius(4f)
-            }
-            row.Text { attr { text("板块"); fontSizeScaled(9f); color(page.theme.brand) } }
-        }
-        row.View {
-            attr {
-                paddingLeft(5f); paddingRight(5f); height(16f)
-                alignItemsCenter(); justifyContentCenter()
-                backgroundColor(page.theme.surfaceMuted); borderRadius(4f)
-            }
-            row.Text { attr { text(candidate.source); fontSizeScaled(9f); color(page.theme.textSecondary) } }
-        }
-    }
-
-    /** 把名称按 query 切成「前缀 / 命中段 / 后缀」，命中段单独着色加粗。 */
-    private fun splitHighlight(name: String, query: String): Triple<String, String, String> {
-        if (query.isEmpty()) return Triple(name, "", "")
-        val i = name.indexOf(query, ignoreCase = true)
-        if (i < 0) return Triple(name, "", "")
-        return Triple(
-            name.substring(0, i),
-            name.substring(i, i + query.length),
-            name.substring(i + query.length),
-        )
-    }
-
-    /** 涨跌幅格式化：+2.8% / -4.1% / --（无涨跌）。手写取整避免 Float 直转的长尾小数。 */
-    private fun formatChgPct(pct: Float?): String {
-        if (pct == null) return "--"
-        val sign = if (pct >= 0f) "+" else "−"
-        val abs = if (pct >= 0f) pct else -pct
-        val int = abs.toInt()
-        val dec = ((abs - int) * 10).toInt()
-        return "$sign$int.$dec%"
-    }
-
-    private fun chgColor(pct: Float?): Color = when {
-        pct == null -> theme.textTertiary
-        pct > 0f -> theme.rise
-        pct < 0f -> theme.fall
-        else -> theme.textSecondary
     }
 
     private fun renderSlashCommandRows(container: ViewContainer<*, *>) {
@@ -4470,9 +4339,9 @@ internal class ChatPage : BasePager() {
                         }
                         event { click { page.selectParamSecurityCandidate(candidate) } }
                         if (candidate.entry.kind == MentionType.BOARD) {
-                            page.renderBoardCandidateRow(this, candidate, query)
+                            ComposerCandidateRows.renderBoard(this, candidate, query, page.theme)
                         } else {
-                            page.renderSecurityCandidateRow(this, candidate, query)
+                            ComposerCandidateRows.renderSecurity(this, candidate, query, page.theme)
                         }
                     }
                 }
