@@ -84,6 +84,9 @@ import com.kuikly.stockchat.chat.sheet.state.KuiklyCardSheetScheduler
 import com.kuikly.stockchat.chat.session.state.FollowUpCoordinator
 import com.kuikly.stockchat.chat.session.state.FollowUpState
 import com.kuikly.stockchat.chat.session.state.KuiklyFollowUpScheduler
+import com.kuikly.stockchat.chat.session.state.BackToTopCoordinator
+import com.kuikly.stockchat.chat.session.state.BackToTopState
+import com.kuikly.stockchat.chat.session.state.KuiklyBackToTopScheduler
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
@@ -558,14 +561,17 @@ internal class ChatPage : BasePager() {
     private val subThreads get() = cardInteractionState.subThreads
     // 回到顶部悬浮按钮：mounted/presented 双态机（同 drawer 模式，R4——vif 挂载
     // 的视图首帧不播动画，挂载后一拍再翻 presented）；version 使过期回调失效。
-    private var chatBackToTopMounted: Boolean by observable(false)
-    private var chatBackToTopPresented: Boolean by observable(false)
+    private val backToTopState = BackToTopState()
+    private val backToTopCoordinator = BackToTopCoordinator(
+        backToTopState,
+        KuiklyBackToTopScheduler(),
+    ) { chatScrollerRef?.view?.setContentOffset(0f, 0f, true) }
+    private val chatBackToTopMounted: Boolean get() = backToTopState.mounted
+    private val chatBackToTopPresented: Boolean get() = backToTopState.presented
     // 入场缩放结束后才落投影，避免原生在缩放首帧按未裁切矩形绘制阴影。
-    private var chatBackToTopShadowVisible: Boolean by observable(false)
-    private var chatBackToTopVersion = 0
+    private val chatBackToTopShadowVisible: Boolean get() = backToTopState.shadowVisible
     // 程序化动画回顶进行中：暂停按钮显隐判定，避免动画过程中的中间 scroll
     // 事件（offsetY 仍很大）把按钮又弹出来。
-    private var chatTopScrollAnimationVersion = 0
     private val quoteRepository get() = dependencies.quoteRepository
     private val watchlistStore get() = dependencies.watchlistStore
     private val alertStore get() = dependencies.alertStore
@@ -707,6 +713,7 @@ internal class ChatPage : BasePager() {
 
     override fun pageWillDestroy() {
         followUpCoordinator.onDestroy()
+        backToTopCoordinator.onDestroy()
         voiceInputCoordinatorInstance?.onDestroy()
         composerFocusCoordinator.onDestroy()
         drawerCoordinator.onDestroy()
@@ -2859,10 +2866,7 @@ internal class ChatPage : BasePager() {
         }
         // 回到顶部按钮显隐：所有 scroll 事件都判定（含惯性滚动），仅程序化
         // 动画回顶期间挂起，避免动画中间帧（offsetY 仍很大）把按钮弹回来。
-        if (chatTopScrollAnimationVersion == 0) {
-            val away = params.offsetY > params.viewHeight * 0.25f
-            if (away != chatBackToTopMounted) setChatBackToTopVisible(away)
-        }
+        backToTopCoordinator.onScroll(params.offsetY, params.viewHeight)
         if (!params.isDragging) return
         chatScrollCoordinator.onUserScroll(
             isAtBottom = params.offsetY >= params.contentHeight - params.viewHeight - 80f,
@@ -2873,40 +2877,12 @@ internal class ChatPage : BasePager() {
      * 回到顶部按钮双态机：进入 = 先挂载、一拍后呈现（vif 挂载的首帧不播动画，
      * R4）；退出 = 先收起、动画结束后卸载。version 使过期回调失效。
      */
-    private fun setChatBackToTopVisible(visible: Boolean) {
-        val version = ++chatBackToTopVersion
-        if (visible) {
-            chatBackToTopShadowVisible = false
-            chatBackToTopMounted = true
-            setTimeout(16) {
-                if (chatBackToTopVersion == version) chatBackToTopPresented = true
-            }
-            // presented 的 0.22s 缩放完成后，再让圆形按钮生成投影。
-            setTimeout(240) {
-                if (chatBackToTopVersion == version && chatBackToTopPresented) {
-                    chatBackToTopShadowVisible = true
-                }
-            }
-        } else {
-            chatBackToTopPresented = false
-            chatBackToTopShadowVisible = false
-            setTimeout(240) {
-                if (chatBackToTopVersion == version) chatBackToTopMounted = false
-            }
-        }
-    }
-
     /**
      * 平滑滚回顶部：animated=true 走系统滚动动画（区别于 resetChatScrollToTop
      * 的 animated=false 闪现）。动画期间暂停按钮显隐判定，结束后兜底解锁。
      */
     private fun scrollChatToTopAnimated() {
-        val version = ++chatTopScrollAnimationVersion
-        setChatBackToTopVisible(false)
-        chatScrollerRef?.view?.setContentOffset(0f, 0f, true)
-        setTimeout(900) {
-            if (chatTopScrollAnimationVersion == version) chatTopScrollAnimationVersion = 0
-        }
+        backToTopCoordinator.scrollToTopAnimated()
     }
 
     private fun keepChatAtBottomTemporarily() {
