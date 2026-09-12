@@ -176,3 +176,12 @@ configure<KuiklyConfig> {
         // addSplitPage("route","home")
     }
 }
+
+// 架构门禁（见 docs/architecture/package-rules.md）
+// 全仓库共用一份脚本，工作目录必须是仓库根，否则找不到 scripts/。
+tasks.register<Exec>("architectureCheck") {
+    group = "verification"
+    description = "扫描 commonMain 的 package/import，阻止新增反向依赖"
+    workingDir = rootProject.projectDir
+    commandLine("bash", "scripts/check_architecture.sh")
+}
