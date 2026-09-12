@@ -60,6 +60,11 @@ import com.kuikly.stockchat.detail.quote.state.DetailInsightPort
 import com.kuikly.stockchat.detail.quote.state.DetailNewsPort
 import com.kuikly.stockchat.detail.quote.state.DetailQuotePort
 import com.kuikly.stockchat.detail.quote.state.KuiklyDetailDataScheduler
+import com.kuikly.stockchat.detail.chart.state.DetailChartEffect
+import com.kuikly.stockchat.detail.chart.state.DetailChartHostPort
+import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
+import com.kuikly.stockchat.detail.chart.state.DetailChartState
+import com.kuikly.stockchat.detail.chart.state.KuiklyDetailChartScheduler
 // doc 29 集成：共享基建 + 板块组件（事件回调经这些基建接线）
 import com.kuikly.stockchat.page.detail.AnchorIndex
 import com.kuikly.stockchat.page.detail.AnomalyPoint
@@ -214,9 +219,8 @@ internal class StockDetailPage : BasePager() {
     // 占位（此前这段时间显示端侧模板文字，随后跳骨架，观感又慢又割裂）。
     private var aiAwaitingFacts: Boolean by observable(false)
     private var expandedAttributionKey: String by observable("")
-    private var selectedKLineIndex: Int by observable(-1)
-    private var chartViewportCommand: ChartViewportCommand by observable(ChartViewportCommand())
-    private var chartViewportRevision = 0
+    private val selectedKLineIndex: Int get() = detailChartState.selectedKLineIndex
+    private val chartViewportCommand: ChartViewportCommand get() = detailChartState.chartViewportCommand
     private var livePulseVersion = 0
     private var aiRevealVersion = 0
     private var tickerLiftVersion = 0
@@ -225,14 +229,12 @@ internal class StockDetailPage : BasePager() {
     private var sonarDrift: Float by observable(0f)
     private var sonarDriftVersion = 0
     // ---- doc 26 新增状态：氛围/自绘分时/新闻弹幕 ----
-    private var crosshairIndex: Int by observable(-1)
+    private val crosshairIndex: Int get() = detailChartState.crosshairIndex
     private var drawProgress: Float by observable(0f)
     private var drawVersion = 0
     // 长按十字线 scrub 期间锁外层 Scroller 滚动（DetailTimelineChart onScrubActive 驱动，
     // WatchlistPage 拖拽排序同款机制）；普通上下滚动不进 scrub、永不锁
-    private var chartScrubLock: Boolean by observable(false)
-    /** 非响应式镜像：动画节拍器读取它，交互期间暂停背景 Canvas 动画重绘。 */
-    private var chartInteractionActive = false
+    private val chartScrubLock: Boolean get() = detailChartState.chartScrubLock
     private var newsSummary: NewsItem? by observable(null)
     // ---- 弹幕 v2（对齐市场页）：页侧持有节拍——setTimeout 链 33ms 步进 offset
     // （≈30dp/s）。点按即停：摘要条展开（newsSummary）或长按先览（tapePreview）
@@ -248,16 +250,29 @@ internal class StockDetailPage : BasePager() {
     // ---- doc 29 集成状态：基建 + 13 个交互（U1 全部经 overlayArbiter 仲裁） ----
     private val overlayArbiter = OverlayArbiter()
     private val chipStore = ContextChipStore()
-    private var sonarPoints: List<AnomalyPoint> by observable(emptyList())      // ④ 异动声呐
-    private var selectedSonarIndex: Int by observable(-1)                       // ④ 选中声呐点
-    private var chartBubble: String by observable("")                           // ④/① 就地气泡文案
-    private var chartBubblePresented: Boolean by observable(false)              // ④/① 气泡两帧入场（R4）
-    private var circleSelecting: Boolean by observable(false)                   // ① 圈选态 hint
-    private var circleHintPresented: Boolean by observable(false)               // ① hint 两帧入场（R4）
-    private var prefillQuestion: String by observable("")                       // ⑤ scrub 停顿预填
-    private var chartFlags: List<ChartFlag> by observable(emptyList())          // B2 图侧新闻旗标
-    private var bandRange: Triple<Int, Int, Boolean>? by observable(null)       // ②/B2 区间高亮带 (start,end,fromSentence)
-    private var selectedSentence: Int by observable(-1)                         // ② 选中的解读句
+    // 图表交互域（Wave 2 第 2 刀，见 docs/39 §9 / docs/43 D2）：唯一 owner 是
+    // DetailChartInteractionCoordinator（十字线/圈选/声呐/气泡/视口/预填/旗标/
+    // 区间带）。字段以只读 getter 转发到 detailChartState 的 observable，DSL
+    // 闭包内读取仍建立反应式依赖（同 D1 quote 模式）。overlay 仲裁、圈选 AI
+    // 流、selectedSentence 联动仍在本页处理，见 handleDetailChartEffect。
+    private val detailChartState = DetailChartState()
+    private val detailChartCoordinator by lazy {
+        DetailChartInteractionCoordinator(
+            state = detailChartState,
+            host = DetailChartHostPort { detailTimelineSeries(detailDataState.quote) },
+            scheduler = KuiklyDetailChartScheduler(),
+        ) { effect -> handleDetailChartEffect(effect) }
+    }
+    private val sonarPoints: List<AnomalyPoint> get() = detailChartState.sonarPoints      // ④ 异动声呐
+    private val selectedSonarIndex: Int get() = detailChartState.selectedSonarIndex       // ④ 选中声呐点
+    private val chartBubble: String get() = detailChartState.chartBubble                  // ④/① 就地气泡文案
+    private val chartBubblePresented: Boolean get() = detailChartState.chartBubblePresented // ④/① 气泡两帧入场（R4）
+    private val circleSelecting: Boolean get() = detailChartState.circleSelecting         // ① 圈选态 hint
+    private val circleHintPresented: Boolean get() = detailChartState.circleHintPresented // ① hint 两帧入场（R4）
+    private val prefillQuestion: String get() = detailChartState.prefillQuestion          // ⑤ scrub 停顿预填
+    private val chartFlags: List<ChartFlag> get() = detailChartState.chartFlags           // B2 图侧新闻旗标
+    private val bandRange: Triple<Int, Int, Boolean>? get() = detailChartState.bandRange  // ②/B2 区间高亮带 (start,end,fromSentence)
+    private var selectedSentence: Int by observable(-1)                                   // ② 选中的解读句
     // ---- ① 圈选即问 · AI 区间解读（2026-09-09）：圈选松手 → 端侧统计立即入气泡，
     // 随后流式生成 AI 解读追加在气泡内（用户结合图看）。状态机与 aiRemote* 同构：
     // 0 端侧 / 1 thinking / 2 streaming / 3 done / 4 失败（回退端侧统计并如实标注）。
@@ -376,6 +391,7 @@ internal class StockDetailPage : BasePager() {
 
     override fun pageWillDestroy() {
         detailDataCoordinator.onDestroy()
+        detailChartCoordinator.onDestroy()
         super.pageWillDestroy()
     }
 
@@ -607,11 +623,10 @@ internal class StockDetailPage : BasePager() {
                             ChartSegment(page.theme, { page.chartMode }, { page.chartPeriod }, page.reduceMotion) { m, p ->
                                 page.chartMode = m
                                 page.chartPeriod = p
-                                page.selectedKLineIndex = -1
-                                page.crosshairIndex = -1
+                                page.detailChartCoordinator.resetChartSelection()
                             }
                             View { attr { flex(1f) } }
-                            ChartViewportControls(page.theme) { action -> page.issueChartViewportCommand(action) }
+                            ChartViewportControls(page.theme) { action -> page.detailChartCoordinator.issueViewportCommand(action) }
                         }
                         // 图例固定在工具栏下一行，不再漂浮压住高低点和价格曲线。
                         View {
@@ -636,33 +651,26 @@ internal class StockDetailPage : BasePager() {
                                     // 可用宽度，十字线信息也在绘图区内浮现。
                                     containerWidth = page.pagerData.pageViewWidth - 28f,
                                     // ⑤ 恢复 scrub 即清空预填（只预填不发送）
-                                    onScrub = {
-                                        page.crosshairIndex = it
-                                        page.prefillQuestion = ""
-                                    },
+                                    onScrub = { page.detailChartCoordinator.onScrub(it) },
                                     // ④ 异动声呐
                                     sonarIndices = { page.sonarPoints.map { p -> p.index } },
                                     selectedSonarIndex = { page.selectedSonarIndex },
-                                    onSonarTap = { page.tapSonar(it) },
+                                    onSonarTap = { page.detailChartCoordinator.tapSonar(it) },
                                     // B2 新闻旗标（图侧）
                                     flags = { page.chartFlags },
                                     // ② 句图联动 / B2 区间高亮带（同容器，后者覆盖前者）
                                     band = { page.bandRange },
                                     // ① 圈选即问
-                                    onCircleSelect = { s, e -> page.onCircleSelected(s, e) },
+                                    onCircleSelect = { s, e -> page.detailChartCoordinator.onCircleSelected(s, e) },
                                     onSelectStateChange = { selecting ->
-                                        page.circleSelecting = selecting
-                                        if (selecting) {
-                                            page.circleHintPresented = false
-                                            setTimeout(0) { page.circleHintPresented = true }
-                                        }
+                                        page.detailChartCoordinator.setCircleSelecting(selecting)
                                     },
                                     // ⑤ 十字线停顿 600ms 预填
-                                    onScrubPause = { page.makePrefill(it) },
+                                    onScrubPause = { page.detailChartCoordinator.onScrubPause(it) },
                                     // ⑤ 松手离开 scrub：2s 后清预填（chart 侧 revision 去抖）
-                                    onScrubLeave = { page.prefillQuestion = "" },
+                                    onScrubLeave = { page.detailChartCoordinator.clearPrefill() },
                                     // 长按进/出 scrub：锁/解锁外层 Scroller 滚动
-                                    onScrubActive = { page.setChartInteractionActive(it) },
+                                    onScrubActive = { page.detailChartCoordinator.setInteractionActive(it) },
                                     // U1 点空白（非声呐轻点）：关闭图表气泡并清其区间带
                                     onBlankTap = { page.closeChartBubble() },
                                     viewportCommand = { page.chartViewportCommand },
@@ -674,12 +682,12 @@ internal class StockDetailPage : BasePager() {
                                     model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.DAY),
                                     context = ctx,
                                     selectedIndex = { page.selectedKLineIndex },
-                                    onSelectIndex = { page.selectedKLineIndex = it },
+                                    onSelectIndex = { page.detailChartCoordinator.selectKLineIndex(it) },
                                     chartHeight = 396f,
                                     // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
                                     // 与分时图 scrub 锁共用同一开关
-                                    onZoomActive = { page.setChartInteractionActive(it) },
-                                    onCrosshairActive = { page.setChartInteractionActive(it) },
+                                    onZoomActive = { page.detailChartCoordinator.setInteractionActive(it) },
+                                    onCrosshairActive = { page.detailChartCoordinator.setInteractionActive(it) },
                                     viewportCommand = { page.chartViewportCommand },
                                 )
                             }
@@ -689,12 +697,12 @@ internal class StockDetailPage : BasePager() {
                                     model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.WEEK),
                                     context = ctx,
                                     selectedIndex = { page.selectedKLineIndex },
-                                    onSelectIndex = { page.selectedKLineIndex = it },
+                                    onSelectIndex = { page.detailChartCoordinator.selectKLineIndex(it) },
                                     chartHeight = 396f,
                                     // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
                                     // 与分时图 scrub 锁共用同一开关
-                                    onZoomActive = { page.setChartInteractionActive(it) },
-                                    onCrosshairActive = { page.setChartInteractionActive(it) },
+                                    onZoomActive = { page.detailChartCoordinator.setInteractionActive(it) },
+                                    onCrosshairActive = { page.detailChartCoordinator.setInteractionActive(it) },
                                     viewportCommand = { page.chartViewportCommand },
                                 )
                             }
@@ -704,12 +712,12 @@ internal class StockDetailPage : BasePager() {
                                     model = StockChartCardModel(page.quote, StockChartMode.K_LINE, StockChartPeriod.MONTH),
                                     context = ctx,
                                     selectedIndex = { page.selectedKLineIndex },
-                                    onSelectIndex = { page.selectedKLineIndex = it },
+                                    onSelectIndex = { page.detailChartCoordinator.selectKLineIndex(it) },
                                     chartHeight = 396f,
                                     // 捏合缩放期间锁外层 Scroller（两指会被原生滚动接管），
                                     // 与分时图 scrub 锁共用同一开关
-                                    onZoomActive = { page.setChartInteractionActive(it) },
-                                    onCrosshairActive = { page.setChartInteractionActive(it) },
+                                    onZoomActive = { page.detailChartCoordinator.setInteractionActive(it) },
+                                    onCrosshairActive = { page.detailChartCoordinator.setInteractionActive(it) },
                                     viewportCommand = { page.chartViewportCommand },
                                 )
                             }
@@ -1459,28 +1467,10 @@ internal class StockDetailPage : BasePager() {
     }
 
     // ───────────── doc 29 集成：交互回调与数据派生 ─────────────
-
-    /** ④ 声呐点轻点：就地气泡（U1 经仲裁器）+ 选中态 + 相关区间高亮带（doc §4.4）。 */
-    private fun tapSonar(index: Int) {
-        val point = sonarPoints.firstOrNull { it.index == index } ?: return
-        selectedSonarIndex = index
-        bandRange = Triple(
-            (index - 10).coerceAtLeast(0),
-            (index + 10).coerceAtMost(AnchorIndex.INDEX_COUNT - 1),
-            false,
-        )
-        showChartBubble(point.label)
-    }
-
-    /** ④/① 就地气泡统一入口：仲裁器切换 + R4 两帧入场翻转。 */
-    private fun showChartBubble(text: String) {
-        chartBubble = text
-        // 新气泡内容一律重置上一段圈选 AI 流（generation 失效使旧回调全部 no-op）
-        resetCircleAiStream()
-        overlayArbiter.request(DetailOverlay.CHART_BUBBLE)
-        chartBubblePresented = false
-        setTimeout(0) { chartBubblePresented = true }
-    }
+    // 图表交互状态机（tapSonar/showChartBubble/onCircleSelected/makePrefill/
+    // setChartInteractionActive/issueChartViewportCommand）已迁入
+    // DetailChartInteractionCoordinator（detail/chart/state）；本页只保留跨域
+    // 编排：overlay 仲裁、圈选 AI 流、selectedSentence 联动、toast。
 
     /** ① 中断圈选 AI 流并回到端侧态（generation 失效 + 停 provider + 停打字机）。 */
     private fun resetCircleAiStream() {
@@ -1500,37 +1490,26 @@ internal class StockDetailPage : BasePager() {
     private fun closeChartBubble() {
         if (overlayArbiter.active == DetailOverlay.CHART_BUBBLE) {
             overlayArbiter.close()
-            bandRange = null
+            detailChartCoordinator.clearBandRange()
             // 关气泡即中断圈选 AI 流（气泡已不可见，流完也无处展示）
             resetCircleAiStream()
         }
     }
 
     /**
-     * ① 圈选松手：端侧统计（区间起止价、涨跌幅、极值，纯事实）立即入气泡，
-     * 随后流式生成 AI 区间解读追加展示——用户正对照图看，解读就地呈现。
+     * DetailChartInteractionCoordinator 的下游副作用（docs/43 D2）：overlay
+     * 仲裁（D4 地盘）与圈选 AI 解读（D3 地盘）仍是本页地盘，本函数承接。
      */
-    private fun onCircleSelected(start: Int, end: Int) {
-        val series = detailTimelineSeries(quote)
-        if (series.size < 2) return
-        val lo = minOf(start, end).coerceIn(0, series.lastIndex)
-        val hi = maxOf(start, end).coerceIn(0, series.lastIndex)
-        if (hi - lo < 3) {
-            toastHint("区间太短（不足 3 个点），松手前多拖一段")
-            return
+    private fun handleDetailChartEffect(effect: DetailChartEffect) {
+        when (effect) {
+            is DetailChartEffect.ChartBubbleShown -> {
+                // 新气泡内容一律重置上一段圈选 AI 流（generation 失效使旧回调全部 no-op）
+                resetCircleAiStream()
+                overlayArbiter.request(DetailOverlay.CHART_BUBBLE)
+            }
+            is DetailChartEffect.CircleSelectionCommitted -> requestCircleAi(effect.lo, effect.hi)
+            is DetailChartEffect.CircleSelectionRejected -> toastHint(effect.message)
         }
-        val p0 = series[lo]
-        val p1 = series[hi]
-        val pct = if (p0 != 0.0) (p1 - p0) / p0 * 100.0 else 0.0
-        val seg = series.subList(lo, hi + 1)
-        // ① 松手后保留区间带高亮（brand 12%），随气泡关闭一起清除
-        bandRange = Triple(lo, hi, false)
-        showChartBubble(
-            "${AnchorIndex.indexToTimeLabel(lo)}–${AnchorIndex.indexToTimeLabel(hi)} " +
-                "区间${if (pct >= 0) "上行" else "下行"} ${Format.percent(pct)}，" +
-                "区间极值 ${Format.price(seg.min())}–${Format.price(seg.max())}",
-        )
-        requestCircleAi(lo, hi)
     }
 
     /** ① 气泡来源行：圈选 AI 流式期间如实标注状态（与 AI 解读块同一「真 AI/端侧」分界）。 */
@@ -1675,20 +1654,6 @@ internal class StockDetailPage : BasePager() {
         }
     }
 
-    /** ⑤ scrub 停顿 600ms：只预填不发送；恢复滑动（onScrub）即清空；松手 2s 后清除。 */
-    private fun makePrefill(index: Int) {
-        val series = detailTimelineSeries(quote)
-        if (index !in series.indices) return
-        val base = series.getOrNull((index - 4).coerceAtLeast(0)) ?: return
-        val pct = if (base != 0.0) (series[index] - base) / base * 100.0 else 0.0
-        // 措辞按走势方向模板生成（doc §4.6 验收：涨/跌/横盘三模板），均为可陈述事实问法
-        prefillQuestion = when {
-            pct > 0.15 -> "${AnchorIndex.indexToTimeLabel(index)} 前后这波涨是怎么回事？"
-            pct < -0.15 -> "${AnchorIndex.indexToTimeLabel(index)} 前后这波跌是怎么回事？"
-            else -> "${AnchorIndex.indexToTimeLabel(index)} 前后这段横盘是怎么回事？"
-        }
-    }
-
     /** ③ 指标长按抓取：chip 直接入上下文（降级路径），去重由 chipStore 负责。 */
     private fun grabMetric(label: String, value: String) {
         val added = chipStore.add(ContextChip(label, label, value))
@@ -1736,18 +1701,14 @@ internal class StockDetailPage : BasePager() {
                 label = Format.percent(pct)
             }
         }
-        chartFlags = chartFlags.filterNot { it.index == idx } + ChartFlag(idx, isPositive, label, dropped = true)
-        bandRange = Triple(idx, (idx + 12).coerceAtMost(AnchorIndex.INDEX_COUNT - 1), false)
+        detailChartCoordinator.applyNewsFlag(idx, isPositive, label)
     }
 
     /** B2 收旗：移除该条旗标与高亮带（未落过旗则无操作）。 */
     private fun removeNewsFlag(item: NewsItem) {
         if (item.id !in droppedNewsIds) return
         droppedNewsIds.remove(item.id)
-        newsFlagIndex(item)?.let { idx ->
-            chartFlags = chartFlags.filterNot { it.index == idx }
-            if (bandRange?.first == idx) bandRange = null
-        }
+        newsFlagIndex(item)?.let { idx -> detailChartCoordinator.removeFlagAt(idx) }
     }
 
     /** 摘要条事实行用：该条是否已落旗。 */
@@ -1860,28 +1821,30 @@ internal class StockDetailPage : BasePager() {
     private fun pickSentence(index: Int) {
         if (selectedSentence == index) {
             selectedSentence = -1
-            bandRange = null
+            detailChartCoordinator.clearBandRange()
             return
         }
         val sentences = currentInsightSentences()
         val sentence = sentences.getOrNull(index)
         if (sentence == null) {
             selectedSentence = -1
-            bandRange = null
+            detailChartCoordinator.clearBandRange()
             return
         }
         selectedSentence = index
         val anchor = computeSentenceAnchor(sentence)
-        bandRange = if (anchor != null) {
-            Triple(anchor.first, anchor.second, true)
-        } else {
-            // 近似定位：该句占当日时间轴的 1/n 等分（n = 句子总数）
-            val n = AnchorIndex.INDEX_COUNT
-            val start = (index * n / sentences.size).coerceIn(0, n - 2)
-            val end = ((index + 1) * n / sentences.size).coerceAtMost(n - 1).coerceAtLeast(start + 1)
-            toastHint("这句没引用具体时间，按句子顺序近似圈出对应时段")
-            Triple(start, end, true)
-        }
+        detailChartCoordinator.setBandRange(
+            if (anchor != null) {
+                Triple(anchor.first, anchor.second, true)
+            } else {
+                // 近似定位：该句占当日时间轴的 1/n 等分（n = 句子总数）
+                val n = AnchorIndex.INDEX_COUNT
+                val start = (index * n / sentences.size).coerceIn(0, n - 2)
+                val end = ((index + 1) * n / sentences.size).coerceAtMost(n - 1).coerceAtLeast(start + 1)
+                toastHint("这句没引用具体时间，按句子顺序近似圈出对应时段")
+                Triple(start, end, true)
+            },
+        )
     }
 
     /** 当前解读文本（远程 AI 优先，未请求/失败回退端侧模板）按句切分。 */
@@ -2001,7 +1964,7 @@ internal class StockDetailPage : BasePager() {
                 tickerDirectionUp = next.price >= old.price
                 // doc 29 ④ 异动声呐：分时到达后跑一次端侧检测（成交量暂不参与确认，见已知简化）。
                 // 同屏 ≤3 点（doc §4.4 呼吸预算，U4），超出的按 |涨跌幅| 降序舍弃。
-                sonarPoints = detectAnomalies(detailTimelineSeries(next), null).take(3)
+                detailChartCoordinator.applySonarPoints(detectAnomalies(detailTimelineSeries(next), null).take(3))
                 // 分时首次到达后择机启动真实 AI 解读（等 800ms 让资金流/财报尽量落位）；
                 // 只在分时"新到"时调度一次，不再随快照/K线回调重复 setTimeout。
                 if (effect.timelineJustArrived) setTimeout(800) { maybeStartAiInsight() }
@@ -2013,7 +1976,7 @@ internal class StockDetailPage : BasePager() {
                 maybeStartAiInsight()
             }
             is DetailDataEffect.PrefetchApplied -> {
-                sonarPoints = detectAnomalies(detailTimelineSeries(effect.quote), null).take(3)
+                detailChartCoordinator.applySonarPoints(detectAnomalies(detailTimelineSeries(effect.quote), null).take(3))
             }
         }
     }
@@ -2048,12 +2011,6 @@ internal class StockDetailPage : BasePager() {
         setTimeout(0) { tick() }
     }
 
-    /** 图表接管手势时锁页面滚动，并暂停与交互无关的背景逐帧动画。 */
-    private fun setChartInteractionActive(active: Boolean) {
-        chartInteractionActive = active
-        chartScrubLock = active
-    }
-
     /** 图表连续运动相位（实时点呼吸 + 声呐漂移）；reduceMotion 下恒 0。 */
     private fun startSonarDrift() {
         if (reduceMotion) {
@@ -2064,7 +2021,7 @@ internal class StockDetailPage : BasePager() {
         fun tick() {
             if (version != sonarDriftVersion) return
             // 手势期间十字线优先：不写 observable，避免底图与轻量十字线层争抢帧预算。
-            if (!chartInteractionActive) sonarDrift = (sonarDrift + 0.00534f) % 1f
+            if (!detailChartCoordinator.isInteractionActive()) sonarDrift = (sonarDrift + 0.00534f) % 1f
             setTimeout(16) { tick() }
         }
         setTimeout(0) { tick() }
@@ -2194,7 +2151,7 @@ internal class StockDetailPage : BasePager() {
         aiRemoteModel = config.model
         aiRemoteState = 1
         selectedSentence = -1
-        bandRange = null
+        detailChartCoordinator.clearBandRange()
         val provider = aiChatDependencies.aiProviderFactory(config)
         aiRemoteProvider = provider
         // 线程纪律：provider 回调全部来自 Dispatchers.Default 后台线程。
@@ -2337,11 +2294,6 @@ internal class StockDetailPage : BasePager() {
             amplitudePercent = amplitudePercent(),
         ),
     )
-
-    private fun issueChartViewportCommand(action: ChartViewportAction) {
-        chartViewportRevision += 1
-        chartViewportCommand = ChartViewportCommand(action, chartViewportRevision)
-    }
 
     // doc 29 ③：「问 AI」默认问句（有停顿预填时优先用预填）
     private fun askAiQuestion(): String = "帮我解读一下${quote.name}今天的走势。"
