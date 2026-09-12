@@ -7,7 +7,7 @@ import com.kuikly.stockchat.detail.chart.state.DetailChartInteractionCoordinator
 import com.kuikly.stockchat.detail.chart.state.DetailChartScheduledTask
 import com.kuikly.stockchat.detail.chart.state.DetailChartScheduler
 import com.kuikly.stockchat.detail.chart.state.PlainDetailChartState
-import com.kuikly.stockchat.page.detail.AnomalyPoint
+import com.kuikly.stockchat.detail.domain.AnomalyPoint
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

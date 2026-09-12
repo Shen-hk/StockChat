@@ -1,25 +1,59 @@
-# 架构门禁豁免清单（doc 46 A-1）
-# 格式：相对路径 | 规则编号 | 原因 | 预计清除的工作包
-# 规则编号：R1 data 层依赖 UI/响应式 · R2 component 层依赖 Store/Provider · R3 state 层依赖 page.*/平台实现
-#           R4 shared/foundation 依赖 Feature · R5 Page 新增 setTimeout/Provider/by observable · R6 page/components 新增文件
-# 纪律：禁止整目录豁免；每一条都要写清原因与由哪个工作包清除；债务清掉后必须删掉对应行。
+# StockChat 架构门禁白名单（既有债务）
 #
-# ── R3 ─────────────────────────────────────────────
-detail/ai/state/AiInsightPrompts.kt | R3 | prompt 组装函数反向依赖 page.detail 的 AnchorIndex / detailTimelineSeries | A-4
-detail/chart/state/DetailChartInteractionCoordinator.kt | R3 | 图表交互状态反向依赖 page.components.ChartFlag 与 page.detail 模型 | A-4
-detail/chart/state/DetailChartUiState.kt | R3 | 同上（UI 状态持有 page 侧类型） | A-4
-detail/overlay/state/DetailOverlayCoordinator.kt | R3 | 浮层状态持有 page.detail.DetailOverlay | A-3/A-4
-detail/overlay/state/DetailOverlayUiState.kt | R3 | 同上 | A-3/A-4
-# ── R6 ─────────────────────────────────────────────
-page/components/AtmosphereBackdrop.kt | R6 | 氛围背景层 | 未纳入本轮 27 人日（doc 45 §12.3）
-page/components/CardSheet.kt | R6 | 通用卡面板，被 AppTopBar/CardGallery 等复用 | A-2 之后的共享组件盘点
-page/components/DetailBoardBlocks.kt | R6 | 详情页看板块 | A-3/A-4 Detail 组件归档
-page/components/DetailTimelineChart.kt | R6 | 详情页分时图（touch 流 scrub） | A-3/A-4 Detail 组件归档
-page/components/DivergingBar.kt | R6 | 市场页发散条 | A-5 P1-Market 纵切
-page/components/InsightComponents.kt | R6 | 通用解读组件（SourceStampLine 已于 A-2 迁出） | B-2/P1-Market 复用处稳定后
-page/components/MarketNarrativeAxis.kt | R6 | 市场页叙事轴 | A-5 P1-Market 纵切
-page/components/NewsMarquee.kt | R6 | Market 与 Detail 复用的弹幕/走马灯，接口未稳定 | A-4/A-5 复用处稳定后
-page/components/NewsTape.kt | R6 | 同上 | A-4/A-5 复用处稳定后
-page/components/RowGestureLayer.kt | R6 | 行手势层，服务自选/列表 | B-4 或后续列表工作包
-page/components/SegmentBar.kt | R6 | 分段控件，主要服务 Glossary | P1-Glossary/Alert（doc 47 §11）
-page/components/UndoBar.kt | R6 | 5s 撤销条，主要服务 Watchlist | B-4 迁 watchlist/component
+# 格式：<相对路径> | <规则号> | <被豁免的 import 符号> | <原因 / 预计删除的工作包>
+#   相对路径 = 相对 shared/src/commonMain/kotlin/com/kuikly/stockchat/
+#
+# 匹配粒度 = 文件 × 规则 × 符号，三级精确匹配：同一文件的同一规则下，
+# 只要新增一个「不在下表」的符号，门禁依然失败。因此本文件只登记既有债务，
+# 不构成对新代码的豁免。
+#
+# 禁止写通配符、禁止整目录豁免。每条都必须写清「谁在什么时候删掉它」；
+# 没有删除计划的条目等于把技术债永久化，评审时会被打回。
+#
+# 规则全文与依赖方向图见 docs/architecture/package-rules.md。
+
+# ---------------------------------------------------------------------------
+# R1 — data 层不得依赖 UI / 响应式 / 平台导航
+# ---------------------------------------------------------------------------
+data/Appearance.kt | R1 | com.tencent.kuikly.core.views.InputAttr | 字号档映射需引用输入控件属性类型；清账需先有 P2 平台抽象层（本轮不做）
+data/Appearance.kt | R1 | com.tencent.kuikly.core.views.TextAttr | 同上
+data/Appearance.kt | R1 | com.tencent.kuikly.core.views.TextAreaAttr | 同上
+
+# ---------------------------------------------------------------------------
+# R2 — component 不得依赖 Page 层 / 数据访问层
+#   （轨 B 的文件域：A 轨只登记，不动；由 B-2 拆 AppChrome 与 page.components 归位时处理）
+# ---------------------------------------------------------------------------
+chat/compare/component/ChatCompareOverlays.kt | R2 | com.kuikly.stockchat.page.components.ActiveComparePanel | B-2（page.components 归位）
+chat/compare/component/ChatCompareOverlays.kt | R2 | com.kuikly.stockchat.page.components.TermComparePanel | B-2（page.components 归位）
+chat/composer/component/ComposerChrome.kt | R2 | com.kuikly.stockchat.page.components.ComposerGuideRow | B-2（page.components 归位）
+chat/composer/component/ComposerInputRow.kt | R2 | com.kuikly.stockchat.page.components.VoiceBar | B-2（VoiceBar 归位）
+
+# ---------------------------------------------------------------------------
+# R2 — Detail Feature 组件依赖 Page 层（A-3 搬迁 + A-4 收口清账）
+# ---------------------------------------------------------------------------
+detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.components.NewsMarquee | A-3（NewsMarquee 归 detail 或保持原位，见任务书 §6）
+detail/page/component/DetailNewsTicker.kt | R2 | com.kuikly.stockchat.page.components.NewsSummaryBar | A-3（同上）
+detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.FeatureTile | A-2（FeatureTile 确认留原位后改 import 目标）
+detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.formatTapeTime | A-3（同上）
+detail/page/component/DetailOverlays.kt | R2 | com.kuikly.stockchat.page.components.truncateByWidth | A-3（同上）
+detail/page/component/DetailBoardBlocks.kt | R2 | com.kuikly.stockchat.page.components.RowGesture | A-3 引入（该文件迁出 page.components 后失去同包可见性）；A-4 收口：RowGestureLayer 有 Watchlist + Detail 两个真实消费方，届时应上移 foundation/ui/gesture
+
+# ---------------------------------------------------------------------------
+# R2 — page/components/ 内部文件依赖 Page 层（A-3 搬迁清账）
+# ---------------------------------------------------------------------------
+page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyGeometry | 轨 B（B-1 的 risk 纵切）
+page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyLayer | 轨 B（同上）
+page/components/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.StarLayout | 轨 B（同上）
+
+# ---------------------------------------------------------------------------
+# R3 — state 层不得依赖 UI / 具体平台实现（A-3 解 5 个文件的锚点）
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# R2 — 合并（轨A线 × 轨B线）后新暴露：RiskSkyChart 随 B-2 迁入 component/，
+#      但它依赖的星图几何/布局仍在 page/risk/；B-3 会把 StarLayout/SkyGeometry/SkyLayer
+#      迁到 risk/domain/，届时删除以下三条。
+# ---------------------------------------------------------------------------
+risk/sky/component/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyGeometry | B-3（StarLayout 迁 risk/domain 后随迁）
+risk/sky/component/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.SkyLayer | 同上
+risk/sky/component/RiskSkyChart.kt | R2 | com.kuikly.stockchat.page.risk.StarLayout | 同上

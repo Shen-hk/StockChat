@@ -2,7 +2,7 @@ package com.kuikly.stockchat.detail.overlay.state
 
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.DisclosureItem
-import com.kuikly.stockchat.page.detail.DetailOverlay
+import com.kuikly.stockchat.detail.domain.DetailOverlay
 import com.tencent.kuikly.core.reactive.handler.observable
 
 /**

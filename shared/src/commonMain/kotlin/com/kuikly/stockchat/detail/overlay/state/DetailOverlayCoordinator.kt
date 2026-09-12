@@ -2,7 +2,7 @@ package com.kuikly.stockchat.detail.overlay.state
 
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.DisclosureItem
-import com.kuikly.stockchat.page.detail.DetailOverlay
+import com.kuikly.stockchat.detail.domain.DetailOverlay
 
 /**
  * Detail 页 overlay 仲裁域的唯一 owner（Wave 2 第 4 刀，见 docs/39 §9 /

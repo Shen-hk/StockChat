@@ -4,7 +4,7 @@ import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.page.components.NewsMarquee
 import com.kuikly.stockchat.page.components.NewsSummaryBar
-import com.kuikly.stockchat.page.detail.scoreNewsSentiment
+import com.kuikly.stockchat.detail.domain.scoreNewsSentiment
 import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind

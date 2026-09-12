@@ -7,7 +7,7 @@ import com.kuikly.stockchat.detail.overlay.state.DetailOverlayCoordinator
 import com.kuikly.stockchat.detail.overlay.state.DetailOverlayScheduler
 import com.kuikly.stockchat.detail.overlay.state.DetailOverlayScheduledTask
 import com.kuikly.stockchat.detail.overlay.state.PlainDetailOverlayState
-import com.kuikly.stockchat.page.detail.DetailOverlay
+import com.kuikly.stockchat.detail.domain.DetailOverlay
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

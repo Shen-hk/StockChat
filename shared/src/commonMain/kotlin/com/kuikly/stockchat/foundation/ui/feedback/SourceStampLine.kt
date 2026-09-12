@@ -9,18 +9,24 @@ import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
 /**
- * 数据来源披露行（tier 徽标 + 来源 + 截至时间）。
+ * 统一的信息来源披露行。
  *
- * 2026-09-12（doc 46 A-2）合并：此前 page/components/InsightComponents.kt 与
- * cards/components/SourceStampLine.kt 各有一份实现**逐字节相同**的拷贝
- * （SourceStampLine / CardSourceStampLine）。此处合并为唯一入口，Card 侧与
- * Insight 侧都调它；实现体照抄原样，对外零视觉差异。
+ * 本文件是 `page.components.SourceStampLine` 与 `cards.components.CardSourceStampLine`
+ * 的**合并结果**（docs/46 A-2）。两套实现的渲染逻辑逐字相同，仅可见性不同，
+ * 因此合并后对外只保留一个 [SourceStampLine]，Card 与 Insight 都调它。
+ *
+ * 行为与合并前完全一致：OFFLINE 档位用 muted 底色、tier 标签转 tertiary 色，
+ * 其余档位用品牌蓝 10% 底色；`asOf` 为空时回落为「待更新」。
  */
 fun ViewContainer<*, *>.SourceStampLine(stamp: SourceStamp, theme: StockChatTheme) {
     View {
         attr { marginTop(9f); flexDirectionRow(); alignItemsCenter(); flexWrapWrap() }
         View {
-            attr { paddingLeft(7f); paddingRight(7f); paddingTop(3f); paddingBottom(3f); borderRadius(7f); backgroundColor(if (stamp.mode.name == "OFFLINE") theme.surfaceMuted else Color(0xFF2F6BFF, 0.10f)) }
+            attr {
+                paddingLeft(7f); paddingRight(7f); paddingTop(3f); paddingBottom(3f)
+                borderRadius(7f)
+                backgroundColor(if (stamp.mode.name == "OFFLINE") theme.surfaceMuted else Color(0xFF2F6BFF, 0.10f))
+            }
             Text { attr { text(stamp.tier.label); fontSizeScaled(9f); color(if (stamp.mode.name == "OFFLINE") theme.textTertiary else theme.brand) } }
         }
         Text { attr { text("${stamp.source} · 截至 ${stamp.asOf.ifEmpty { "待更新" }}"); marginLeft(7f); fontSizeScaled(9f); color(theme.textTertiary) } }

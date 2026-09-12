@@ -39,9 +39,9 @@ import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.data.provider.timeLabelOf
 import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.kuikly.stockchat.foundation.ui.chrome.AppTopBarAction
+import com.kuikly.stockchat.foundation.ui.chrome.AppTopBarMetric
 import com.kuikly.stockchat.foundation.ui.icon.LineIconCalendar
 import com.kuikly.stockchat.foundation.ui.icon.LineIconRefresh
-import com.kuikly.stockchat.foundation.ui.chrome.AppTopBarMetric
 import com.kuikly.stockchat.page.components.AtmosphereBackdrop
 import com.kuikly.stockchat.page.components.MarketNarrativeAxis
 import com.kuikly.stockchat.page.components.NewsMarquee

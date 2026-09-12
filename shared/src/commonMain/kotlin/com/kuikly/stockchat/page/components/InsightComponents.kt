@@ -5,11 +5,11 @@ import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.provider.SourceStamp
+import com.kuikly.stockchat.foundation.ui.feedback.SourceStampLine
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
-import com.kuikly.stockchat.foundation.ui.feedback.SourceStampLine
 
 fun ViewContainer<*, *>.InsightSectionTitle(title: String, subtitle: String, theme: StockChatTheme) {
     View {

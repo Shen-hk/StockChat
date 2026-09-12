@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.detail
+package com.kuikly.stockchat.detail.domain
 
 import kotlin.math.abs
 

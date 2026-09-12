@@ -2,10 +2,7 @@ package com.kuikly.stockchat.detail.page.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.provider.Quote
-import com.kuikly.stockchat.page.AttributionForecastWorkbench
-import com.kuikly.stockchat.page.RevealBlock
-import com.kuikly.stockchat.page.SectionLabel
-import com.kuikly.stockchat.page.detail.FactorSpec
+import com.kuikly.stockchat.detail.domain.FactorSpec
 import com.tencent.kuikly.core.base.ViewContainer
 
 /**

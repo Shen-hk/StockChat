@@ -1,8 +1,8 @@
 package com.kuikly.stockchat.detail.chart.state
 
 import com.kuikly.stockchat.chart.model.ChartViewportCommand
-import com.kuikly.stockchat.page.components.ChartFlag
-import com.kuikly.stockchat.page.detail.AnomalyPoint
+import com.kuikly.stockchat.detail.page.component.ChartFlag
+import com.kuikly.stockchat.detail.domain.AnomalyPoint
 import com.tencent.kuikly.core.reactive.handler.observable
 
 /**

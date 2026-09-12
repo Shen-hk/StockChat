@@ -277,7 +277,7 @@ class DetailAiInsightCoordinatorTest {
             NewsItem(id = "1", title = "公告一", source = "交易所", time = "2026-09-12 10:00:00", url = ""),
             NewsItem(id = "2", title = "公告二", source = "交易所", time = "2026-09-12 11:00:00", url = ""),
         )
-        val series = com.kuikly.stockchat.page.components.detailTimelineSeries(quote)
+        val series = com.kuikly.stockchat.detail.page.component.detailTimelineSeries(quote)
         val prompt = com.kuikly.stockchat.detail.ai.state.buildAiInsightPrompt(quote, insight, news, series)
         // 锁定的端侧片段：现价/昨收/开盘/区间最高最低/资讯标题/硬性要求 1-3
         assertTrue(prompt.contains("贵州茅台（600519.SH）"))
@@ -300,7 +300,7 @@ class DetailAiInsightCoordinatorTest {
             override fun insight(): StockInsightBundle = OfflineMarketInsightProvider().stock(quote.symbol)
             override fun newsList(): List<NewsItem> = emptyList()
             override fun timelineSeries(): List<Double> =
-                com.kuikly.stockchat.page.components.detailTimelineSeries(quote)
+                com.kuikly.stockchat.detail.page.component.detailTimelineSeries(quote)
             override fun loadConfig(): AiConfig = AiConfig(model = "test-model")
             override fun configValidationError(config: AiConfig): String? = configError
             override fun createProvider(config: AiConfig): AiProvider = provider

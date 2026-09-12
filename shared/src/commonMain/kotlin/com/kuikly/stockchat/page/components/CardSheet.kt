@@ -2,7 +2,7 @@ package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 
-import com.kuikly.stockchat.shared.cards.component.CardShell
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardModel

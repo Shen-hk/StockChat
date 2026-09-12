@@ -1,6 +1,6 @@
 package com.kuikly.stockchat.chat.session.component
 
-import com.kuikly.stockchat.shared.cards.component.CardShell
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
 import com.kuikly.stockchat.cards.core.StockQuoteCardModel

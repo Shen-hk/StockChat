@@ -1,6 +1,6 @@
 package com.kuikly.stockchat.detail
 
-import com.kuikly.stockchat.page.detail.AnchorIndex
+import com.kuikly.stockchat.detail.domain.AnchorIndex
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull

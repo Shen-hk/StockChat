@@ -3,9 +3,9 @@ package com.kuikly.stockchat.detail.chart.state
 import com.kuikly.stockchat.chart.model.ChartViewportAction
 import com.kuikly.stockchat.chart.model.ChartViewportCommand
 import com.kuikly.stockchat.common.Format
-import com.kuikly.stockchat.page.components.ChartFlag
-import com.kuikly.stockchat.page.detail.AnchorIndex
-import com.kuikly.stockchat.page.detail.AnomalyPoint
+import com.kuikly.stockchat.detail.page.component.ChartFlag
+import com.kuikly.stockchat.detail.domain.AnchorIndex
+import com.kuikly.stockchat.detail.domain.AnomalyPoint
 
 /**
  * Detail 页图表交互域的唯一 owner（Wave 2 第 2 刀，见 docs/39 §9 / docs/43 D2）：

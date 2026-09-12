@@ -6,8 +6,8 @@ import com.kuikly.stockchat.data.provider.MarketTimelineSpec
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.StockInsightBundle
-import com.kuikly.stockchat.page.detail.AnchorIndex
-import com.kuikly.stockchat.page.components.detailTimelineSeries
+import com.kuikly.stockchat.detail.domain.AnchorIndex
+import com.kuikly.stockchat.detail.page.component.detailTimelineSeries
 
 /**
  * AI 解读 prompt 的端侧事实槽位算法（docs/43 D3：产品不可变行为，逐字不能改）。

@@ -1,42 +1,50 @@
 # docs/architecture
 
-四层架构整改的**规则与闸门**。规则正文见 [`package-rules.md`](./package-rules.md)。
+四层架构的**门禁**与规则文档。规则全文见 [`package-rules.md`](./package-rules.md)。
 
 ## 怎么跑
 
 ```bash
-./gradlew architectureCheck          # 推荐：与其它 Gradle 任务同一入口
-bash scripts/check_architecture.sh   # 等价（约 4s；Windows Git Bash 下已做单进程优化）
+./gradlew architectureCheck
 ```
 
-通过时输出：
+通过时输出一行摘要；失败时打印违规文件的规则号、相对路径与具体 import，退出码非零。
+
+只想看当前所有命中（含已登记的债务）：
+
+```bash
+bash scripts/check_architecture.sh --list
+```
+
+脚本是纯 `find` + `awk`，零第三方依赖、可离线跑，单次约 2 秒。
+
+## 它拦什么
+
+6 条规则（R1–R6），核心是**依赖只能自上而下**：
+`Page → Component → State → Data`，以及 `shared` / `foundation` 不得反向依赖任何 Feature。
+另外 R5 / R6 对 `page/*Page.kt` 的 Timer/Provider/observable 计数和 `page/components/` 的文件数设了**不许变差**的上限。
+
+细节与正反例见 [`package-rules.md`](./package-rules.md)。
+
+## 命中之后怎么办
+
+1. **优先改设计**，别让依赖方向倒挂 —— 把被依赖的类型下沉到 Feature 自己的 `domain`，或改成「只读 accessor + Actions」。
+2. **确属历史债务**，才写进 `scripts/architecture-allowlist.txt`：
 
 ```text
-architectureCheck: OK -- 6 条规则全部通过（既有债务豁免 25 条）
+<相对路径> | <规则号> | <被豁免的 import 符号> | <原因 / 预计删除的工作包>
 ```
 
-失败时逐条打印 `[规则] 相对路径:行号: 命中的 import`，并以非零退出码结束构建。
+粒度是**文件 × 规则 × 符号**，所以同一文件新增一个违规符号仍会被拦。
+禁止通配符、禁止整目录豁免；每行都要写清谁在什么时候删掉它。
 
-## 三个文件各管什么
+## 什么时候要重新生成基线
 
-| 文件 | 作用 | 谁改 |
-|---|---|---|
-| `scripts/check_architecture.sh` | 门禁实现（find + 单次 awk，零第三方依赖） | 只在新增规则时改 |
-| `scripts/architecture-allowlist.txt` | **既有债务豁免**：`路径 \| 规则 \| 原因 \| 预计清除的工作包` | 每个工作包清掉债务后**删行** |
-| `scripts/architecture-baseline.txt` | **R5 计数基线**（Page 的 setTimeout / Provider 构造 / by observable） | 计数下降时**下调**以收紧 |
+R5 / R6 的基线快照在 `scripts/architecture-baseline.txt`，只在**指标确实下降**后重新生成：
 
-## 加白名单的正确姿势
-
-```text
-# ✅ 逐文件逐条，写清原因与清除它的工作包
-detail/chart/state/DetailChartUiState.kt | R3 | 图表 UI 状态持有 page.components.ChartFlag | A-4
-
-# ❌ 禁止整目录豁免、禁止不写原因
-detail/chart/state/* | R3
+```bash
+bash scripts/check_architecture.sh --baseline
 ```
 
-## 实现注记（别踩）
-
-- 规则写在 awk 里而不是逐文件 grep：Git Bash（Windows）每次 spawn grep 约 200–500ms，逐文件逐规则会跑到分钟级；单进程扫描实测 4s。
-- **不要**为了复用而引入 `mktemp` 临时文件：Git Bash 下 `mktemp` 返回 Windows 风格路径，退出时 `rm` 会走 safe-delete 垫片并失败重试，实测白白多花约 15s。
-- 规则命中行号取自 awk 的 `FNR`，即**文件内真实行号**，可直接跳转。
+生成后连同对应的重构一起提交，并检查 diff 里只有下降、没有上升。
+**不要**为了让门禁通过而单独跑一次 `--baseline` —— 那正是这套门禁要防的事。

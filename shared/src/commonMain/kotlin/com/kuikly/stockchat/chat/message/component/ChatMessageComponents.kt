@@ -1,9 +1,12 @@
 package com.kuikly.stockchat.chat.message.component
 
+import com.kuikly.stockchat.cards.component.CardShell
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 import com.kuikly.stockchat.foundation.ui.lineHeightScaled
-
-import com.kuikly.stockchat.shared.cards.component.CardShell
+import com.kuikly.stockchat.foundation.ui.icon.LineIconCopy
+import com.kuikly.stockchat.foundation.ui.icon.LineIconFileText
+import com.kuikly.stockchat.foundation.ui.icon.LineIconRefresh
+import com.kuikly.stockchat.foundation.ui.icon.LineIconShare
 import com.kuikly.stockchat.cards.core.CardAssembler
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CardDensity
@@ -45,10 +48,6 @@ import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.SelectableOption
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
-import com.kuikly.stockchat.foundation.ui.icon.LineIconCopy
-import com.kuikly.stockchat.foundation.ui.icon.LineIconFileText
-import com.kuikly.stockchat.foundation.ui.icon.LineIconRefresh
-import com.kuikly.stockchat.foundation.ui.icon.LineIconShare
 
 internal data class ChatMessageRenderState(
     val repairingCardKey: String,

@@ -1,4 +1,4 @@
-package com.kuikly.stockchat.page.components
+package com.kuikly.stockchat.detail.page.component
 
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 

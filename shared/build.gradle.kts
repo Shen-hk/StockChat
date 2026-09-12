@@ -177,11 +177,11 @@ configure<KuiklyConfig> {
     }
 }
 
-// 架构门禁（doc 46 A-1）：把「反向依赖」从口头约定变成会失败的构建。
-// 规则见 docs/architecture/package-rules.md；历史债务豁免在 scripts/architecture-allowlist.txt。
+// 架构门禁（见 docs/architecture/package-rules.md）
+// 全仓库共用一份脚本，工作目录必须是仓库根，否则找不到 scripts/。
 tasks.register<Exec>("architectureCheck") {
     group = "verification"
-    description = "扫描 commonMain 的 import 与页面级计数，阻止新增反向依赖 / 新增 page/components 文件"
-    workingDir(rootProject.projectDir)
+    description = "扫描 commonMain 的 package/import，阻止新增反向依赖"
+    workingDir = rootProject.projectDir
     commandLine("bash", "scripts/check_architecture.sh")
 }
