@@ -93,6 +93,8 @@ import com.kuikly.stockchat.chat.session.state.ImagePreviewCoordinator
 import com.kuikly.stockchat.chat.session.state.ImagePreviewState
 import com.kuikly.stockchat.chat.session.state.SessionChromeCoordinator
 import com.kuikly.stockchat.chat.session.state.SessionChromeState
+import com.kuikly.stockchat.chat.session.component.ImagePreviewOverlay
+import com.kuikly.stockchat.chat.session.component.MessageActionOverlay
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
@@ -1114,64 +1116,10 @@ internal class ChatPage : BasePager() {
                 // 翻转周期消费（R4/R5）。菜单内容（followUp 分支）在挂载帧读取
                 // 一次即可，不参与挂载后的响应式变化。
                 vif({ page.messageActionMounted }) {
-                    View {
-                        attr {
-                            absolutePosition(left = 0f, top = 0f)
-                            size(page.pagerData.pageViewWidth, page.pagerData.pageViewHeight)
-                        }
-                        event { click { page.dismissMessageActionMenu() } }
-                    }
-                    View {
-                        attr {
-                            val menuWidth = if (page.messageActionFollowUp) 174f else 96f
-                            absolutePosition(
-                                left = (page.messageActionX - 20f).coerceIn(
-                                    12f,
-                                    (page.pagerData.pageViewWidth - menuWidth - 12f).coerceAtLeast(12f),
-                                ),
-                                // 近底部翻到手指上方，避免被输入栏遮住。
-                                top = if (page.messageActionY + 150f > page.pagerData.pageViewHeight - 160f) {
-                                    page.messageActionY - 96f
-                                } else {
-                                    page.messageActionY + 14f
-                                },
-                            )
-                            height(44f)
-                            borderRadius(14f)
-                            boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, 0.16f)))
-                            border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
-                            opacity(if (page.messageActionPresented) 1f else 0f)
-                            transform(scale = if (page.messageActionPresented) Scale(1f, 1f) else Scale(0.9f, 0.9f))
-                            animate(Animation.easeOut(0.2f), page.messageActionPresented)
-                        }
-                        GlassBackdrop(page.theme.glass.peek, page.glassRenderer)
-                        View {
-                            attr {
-                                flexDirectionRow()
-                                alignItemsCenter()
-                                height(44f)
-                                paddingLeft(5f)
-                                paddingRight(5f)
-                            }
-                            View {
-                                attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
-                                Text { attr { text("复制"); fontSizeScaled(13f); color(page.theme.textPrimary) } }
-                                event { click { page.copyMessageToPasteboard() } }
-                            }
-                            if (page.messageActionFollowUp) {
-                                View {
-                                    attr { width(1f); height(18f); backgroundColor(page.theme.textTertiary.opacity(0.25f)) }
-                                }
-                                View {
-                                    attr { height(34f); paddingLeft(14f); paddingRight(14f); allCenter() }
-                                    Text {
-                                        attr { text("追问"); fontSizeScaled(13f); fontWeightMedium(); color(page.theme.brand) }
-                                    }
-                                    event { click { page.quoteMessageIntoComposer() } }
-                                }
-                            }
-                        }
-                    }
+                    MessageActionOverlay(page.theme, page.glassRenderer, page.pagerData.pageViewWidth, page.pagerData.pageViewHeight,
+                        presented = { page.messageActionPresented }, pageX = { page.messageActionX }, pageY = { page.messageActionY },
+                        followUpAllowed = { page.messageActionFollowUp }, onDismiss = page::dismissMessageActionMenu,
+                        onCopy = page::copyMessageToPasteboard, onFollowUp = page::quoteMessageIntoComposer)
                 }
                 val composerSheetMaterial = page.theme.glass.sheet
                 val composerGlassRenderer = page.glassRenderer
@@ -1610,39 +1558,8 @@ internal class ChatPage : BasePager() {
             // 已发送图片预览：置于主内容之后，因此会压住列表和输入栏；点击遮罩或右上角
             // 关闭均只清理预览状态，不会影响消息和附件数据。
             vif({ page.imagePreviewPath.isNotEmpty() }) {
-                View {
-                    attr {
-                        absolutePosition(top = 0f, left = 0f, right = 0f, bottom = 0f)
-                        backgroundColor(Color(0xD9000000))
-                        allCenter()
-                        touchEnable(true)
-                    }
-                    event { click { page.closeImagePreview() } }
-                    Image {
-                        attr {
-                            src("file://" + page.imagePreviewPath)
-                            width((page.pagerData.pageViewWidth - 32f).coerceAtLeast(120f))
-                            height((page.pagerData.pageViewHeight - page.pagerData.statusBarHeight - 80f).coerceAtLeast(120f))
-                            // 预览使用 contain：保持原始宽高比，完整落在可视区域内，
-                            // 横图/长图仅留黑边，不做 cover 裁剪或 stretch 拉伸。
-                            resizeContain()
-                            borderRadius(12f)
-                        }
-                        // 图片本体吞掉点击，避免用户检查细节时意外关闭。
-                        event { click { } }
-                    }
-                    View {
-                        attr {
-                            absolutePosition(top = page.pagerData.statusBarHeight + 12f, right = 16f)
-                            size(36f, 36f)
-                            allCenter()
-                            borderRadius(18f)
-                            backgroundColor(Color(0x66000000))
-                        }
-                        LineIconClose(color = Color(0xFFFFFFFF), size = 16f)
-                        event { click { page.closeImagePreview() } }
-                    }
-                }
+                ImagePreviewOverlay({ page.imagePreviewPath }, page.pagerData.pageViewWidth, page.pagerData.pageViewHeight,
+                    page.pagerData.statusBarHeight, page::closeImagePreview)
             }
             vif({ page.compareCard != null }) {
                 // 对比结果弹窗 + 蒙层（用户决策 2026-09-05，二轮修正）：整个块
