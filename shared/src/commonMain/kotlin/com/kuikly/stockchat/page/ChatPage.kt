@@ -42,6 +42,10 @@ import com.kuikly.stockchat.chat.scroll.state.ChatScrollState
 import com.kuikly.stockchat.chat.scroll.state.KuiklyChatScrollScheduler
 import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentCoordinator
 import com.kuikly.stockchat.chat.composer.state.ComposerAttachmentState
+import com.kuikly.stockchat.chat.composer.state.ComposerFocusCoordinator
+import com.kuikly.stockchat.chat.composer.state.ComposerFocusEffect
+import com.kuikly.stockchat.chat.composer.state.ComposerFocusState
+import com.kuikly.stockchat.chat.composer.state.KuiklyComposerFocusScheduler
 import com.kuikly.stockchat.chat.composer.state.KuiklyMediaSheetScheduler
 import com.kuikly.stockchat.chat.composer.state.MAX_COMPOSER_ATTACHMENTS
 import com.kuikly.stockchat.chat.composer.state.MediaSheetCoordinator
@@ -224,7 +228,6 @@ internal class ChatPage : BasePager() {
         // 玻璃表皮，避免原生 Blur 覆盖层遮住 EditText 光标。
         const val COMPOSER_ISOLATION_TEST = false
         // 意外 blur 自动恢复的连续尝试上限。
-        const val COMPOSER_BLUR_RECOVER_MAX_ATTEMPTS = 3
         // 滚动声波条数：新采样从右缘进入、历史整体左移（60ms/格），
         // 40 条 × (3+3) ≈ 240dp，铺满中段波形区。
         const val VOICE_AMP_BARS = 56
@@ -344,7 +347,19 @@ internal class ChatPage : BasePager() {
     private var followUpsMounted: Boolean by observable(false)
     private var followUpsPresented: Boolean by observable(false)
     private var followUpsVersion = 0
-    private var keyboardHeight: Float by observable(0f)
+    // ===== 文字输入态（展开 / 聚焦恢复 / 键盘避让）=====
+    private val composerFocusState = ComposerFocusState()
+    private val composerFocusCoordinator by lazy {
+        ComposerFocusCoordinator(
+            state = composerFocusState,
+            scheduler = KuiklyComposerFocusScheduler(),
+            onEffect = ::handleComposerFocusEffect,
+            log = { message -> KLog.i(COMPOSER_LOG_TAG, message) },
+        )
+    }
+    private val composerExpanded: Boolean get() = composerFocusState.expanded
+    private val keyboardHeight: Float get() = composerFocusState.keyboardHeight
+    private val keyboardVisible: Boolean get() = composerFocusState.keyboardVisible
     private val drawerState = ChatDrawerState()
     private val drawerCoordinator by lazy {
         ChatDrawerCoordinator(drawerState, KuiklyDrawerScheduler()) { effect ->
@@ -484,27 +499,6 @@ internal class ChatPage : BasePager() {
     // Composer state machine (规范见 docs/09-输入栏默认态与输入态转换规范_v1.0.md).
     // 默认态 → 输入态由点击/聚焦/开面板触发；输入态是"粘"的：收起键盘不再回退，
     // 只有"键盘已收起时点击非输入栏区域"这一次点击才回到默认态。
-    private var composerExpanded: Boolean by observable(false)
-    // Kuikly Android 在输入框首次聚焦所触发的 Composer 展开布局提交期间，会让
-    // RecyclerView 内的 EditText 短暂 clearFocus。恢复请求带版本号：任何用户主动
-    // blur/collapse 都会使旧请求失效，防止延迟回调把焦点从其他区域抢回来。
-    private var composerFocusRequestVersion = 0
-    private var composerKeyboardLayoutVersion = 0
-    private var composerFocusRecoveryPending = false
-    // 用户进入文字输入态后锁住真实原生焦点。只有业务明确调用 blurComposer 才解锁；
-    // RecyclerView/键盘避让布局造成的 inputBlur 都视为意外失焦并自动恢复。
-    private var composerFocusLocked = false
-    private var composerUnexpectedBlurVersion = 0
-    // 意外 blur 自动恢复的预算机制。真机（HyperOS）上存在「refocus 成功 →
-    // showSoftInput 被客户端取消（ImeTracker: onCancelled at
-    // PHASE_CLIENT_APPLY_ANIMATION）→ 约 2ms 后焦点又被清掉」的场景，若无限制
-    // 地 96ms 重试会形成约 5Hz 的 focus/blur 死循环：键盘收起即弹出、光标跳闪、
-    // InputConnection 被反复打断导致退格失效。预算只在拿到「焦点真正稳定」的
-    // 证据时清零：一次 grant 后在稳定窗口内未被 blur 打断（见 inputFocus），
-    // 或键盘真实弹出，或用户开始输入。
-    private var composerBlurRecoverAttempts = 0
-    // 键盘当前是否在屏上，由 TextArea 的 keyboardHeightChange 上报。
-    private var keyboardVisible: Boolean by observable(false)
     // Voice input is the composer's third state (docs/11): hold to record,
     // release to transcribe/send, slide up to cancel.
     private var voiceState: VoiceState by observable(VoiceState.IDLE)
@@ -681,6 +675,7 @@ internal class ChatPage : BasePager() {
     }
 
     override fun pageWillDestroy() {
+        composerFocusCoordinator.onDestroy()
         drawerCoordinator.onDestroy()
         islandCoordinator.onDestroy()
         entityCoordinator.onDestroy()
@@ -2245,131 +2240,41 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    private fun handleComposerFocusEffect(effect: ComposerFocusEffect) {
+        when (effect) {
+            ComposerFocusEffect.FocusInput -> inputRef?.view?.focus()
+            ComposerFocusEffect.BlurInput -> inputRef?.view?.blur()
+            ComposerFocusEffect.LeaveVoiceInputMode -> voiceInputMode = false
+            ComposerFocusEffect.CancelVoiceSession -> cancelVoiceSession()
+            ComposerFocusEffect.ClearActiveCommand -> clearActiveCommand()
+            ComposerFocusEffect.CloseAssistantPanel -> closeAssistantPanel()
+            is ComposerFocusEffect.ScheduleChromePresentation ->
+                scheduleComposerChromePresentation(effect.expanded)
+        }
+    }
+
     /** 默认态 → 输入态。requestFocus 为真时同时把键盘拉起来。 */
     private fun expandComposer(requestFocus: Boolean = false) {
-        val wasExpanded = composerExpanded
-        KLog.i(COMPOSER_LOG_TAG, "expandComposer requestFocus=$requestFocus wasExpanded=$wasExpanded ref=${inputRef?.view != null}")
-        // Kuikly observable 的同值赋值仍可能触发一次 render/layout commit；而
-        // EditText 的 focus 回调会再次进入这里。状态转换必须幂等，否则恢复焦点
-        // 后的第二次同值提交仍会把原生焦点清掉。
-        if (!composerExpanded) {
-            composerExpanded = true
-            // 进入文字输入即退出语音模式：键盘图标切回声波图标。
-            voiceInputMode = false
-            // 展开态图标经两帧翻转错峰入场（R4）。
-            scheduleComposerChromePresentation(true)
-        }
-        if (voiceState != VoiceState.IDLE) cancelVoiceSession()
-        if (requestFocus) {
-            composerFocusLocked = true
-            if (wasExpanded) inputRef?.view?.focus() else scheduleComposerFocusAfterExpansion()
-        }
+        composerFocusCoordinator.expand(requestFocus, voiceState != VoiceState.IDLE)
     }
 
-    /**
-     * Android 首次聚焦会同时触发输入栏展开和键盘避让布局。真正会 clearFocus 的
-     * 是 keyboardHeight 写入后的那次 RecyclerView commit，固定等 64ms 仍可能早于
-     * 键盘动画结束。这里先登记一次性恢复请求；正常路径由 keyboardHeightChange
-     * 在最终布局后执行，500ms 仅作为不回调该事件的平台兜底。
-     */
-    private fun scheduleComposerFocusAfterExpansion() {
-        val requestVersion = ++composerFocusRequestVersion
-        composerFocusRecoveryPending = true
-        KLog.i(COMPOSER_LOG_TAG, "scheduleFocusRecovery version=$requestVersion")
-        setTimeout(500) {
-            recoverComposerFocus(requestVersion, "fallback")
-        }
-    }
-
-    private fun scheduleComposerFocusAfterKeyboardLayout(duration: Float) {
-        if (!composerFocusRecoveryPending || !composerExpanded) return
-        val requestVersion = composerFocusRequestVersion
-        val layoutVersion = ++composerKeyboardLayoutVersion
-        val delayMs = (duration * 1000f).toInt().coerceIn(0, 400) + 48
-        setTimeout(delayMs) {
-            if (layoutVersion != composerKeyboardLayoutVersion) return@setTimeout
-            recoverComposerFocus(requestVersion, "keyboardLayout")
-        }
-    }
-
-    private fun recoverComposerFocus(requestVersion: Int, source: String) {
-        if (
-            requestVersion != composerFocusRequestVersion ||
-            !composerFocusRecoveryPending ||
-            !composerExpanded
-        ) return
-        composerFocusRecoveryPending = false
-        KLog.i(COMPOSER_LOG_TAG, "runFocusRecovery source=$source version=$requestVersion ref=${inputRef?.view != null}")
-        inputRef?.view?.focus()
-    }
-
-    private fun recoverUnexpectedComposerBlur() {
-        if (
-            !composerFocusLocked ||
-            !composerExpanded ||
-            voiceState != VoiceState.IDLE
-        ) return
-        // 预算检查：连续恢复次数用尽前不再自动 refocus，防止 focus/blur 死循环。
-        // 预算由一次未被 blur 打断的稳定焦点会话重置（见 inputFocus），不能用
-        // 墙钟时间判断：commonMain 在各运行端没有统一、可靠的单调时钟。
-        if (composerBlurRecoverAttempts >= COMPOSER_BLUR_RECOVER_MAX_ATTEMPTS) {
-            KLog.i(COMPOSER_LOG_TAG, "blurRecoverBudgetExhausted attempts=$composerBlurRecoverAttempts")
-            return
-        }
-        val blurVersion = ++composerUnexpectedBlurVersion
-        val requestVersion = composerFocusRequestVersion
-        setTimeout(96) {
-            if (
-                blurVersion != composerUnexpectedBlurVersion ||
-                requestVersion != composerFocusRequestVersion ||
-                !composerFocusLocked ||
-                !composerExpanded ||
-                voiceState != VoiceState.IDLE
-            ) return@setTimeout
-            composerBlurRecoverAttempts++
-            KLog.i(COMPOSER_LOG_TAG, "recoverUnexpectedBlur version=$blurVersion attempts=$composerBlurRecoverAttempts")
-            inputRef?.view?.focus()
-        }
-    }
-
-    private fun blurComposer() {
-        composerFocusLocked = false
-        composerUnexpectedBlurVersion++
-        composerFocusRequestVersion++
-        composerKeyboardLayoutVersion++
-        composerFocusRecoveryPending = false
-        inputRef?.view?.blur()
-    }
+    private fun blurComposer() = composerFocusCoordinator.blur()
 
     /** 输入态 → 默认态。草稿会留在输入框里，只是收起辅助区。 */
     private fun collapseComposer() {
         KLog.i(COMPOSER_LOG_TAG, "collapseComposer draftLen=${viewModel.inputText.length}")
-        composerFocusRequestVersion++
-        composerKeyboardLayoutVersion++
-        composerFocusRecoveryPending = false
-        composerFocusLocked = false
-        composerUnexpectedBlurVersion++
-        composerBlurRecoverAttempts = 0
-        composerExpanded = false
-        // 折叠态图标此刻挂载：先保持 presented=true 让它们落到隐藏态并注册
-        // 入场动画，翻转回 false 后对称回放（R4/R5）。
-        scheduleComposerChromePresentation(false)
-        clearActiveCommand()
-        closeAssistantPanel()
-        cancelVoiceSession()
+        composerFocusCoordinator.collapse()
     }
 
     /** Reads observable state inside each vif predicate so Kuikly can re-render it. */
-    private fun isComposerExpanded(): Boolean =
-        composerExpanded || keyboardVisible || keyboardHeight > 0f || voiceState != VoiceState.IDLE
+    private fun isComposerExpanded(): Boolean = composerFocusCoordinator.isExpanded(voiceState != VoiceState.IDLE)
 
     /**
      * 输入栏的"视觉展开"态：与 [isComposerExpanded] 的唯一区别是排除录音态。
      * 语音模式下按住说话发生在折叠栏上（豆包式），录音期间折叠图标必须保持
      * 挂载、展开态图标行不得插入，否则中段布局会在按住瞬间跳高。
      */
-    private fun isComposerVisuallyExpanded(): Boolean =
-        composerExpanded || keyboardVisible || keyboardHeight > 0f
+    private fun isComposerVisuallyExpanded(): Boolean = composerFocusCoordinator.isVisuallyExpanded()
 
     /**
      * 点击非输入栏区域收起输入栏。草稿保留，但不应阻止回到折叠态。
@@ -2442,7 +2347,7 @@ internal class ChatPage : BasePager() {
         if (!voiceInputMode) {
             // 语音模式下录音发生在折叠栏，不再强制展开（豆包式）。此分支仅为
             // 兜底保留：录音入口现全部位于语音模式中段按钮上。
-            composerExpanded = true
+            composerFocusCoordinator.setExpandedFromVoice(expanded = true)
             // 从折叠态长按语音时展开态图标为新挂载，同样走两帧入场（R4）。
             if (!voiceSourceExpanded) scheduleComposerChromePresentation(true)
         }
@@ -2575,18 +2480,18 @@ internal class ChatPage : BasePager() {
             // 语音模式：录音全程发生在折叠栏，收尾保持折叠 + 语音模式即可
             // （松手发送后停留在"按住说话"，与豆包一致）。presented 本就是
             // false，无需 chrome 翻转。
-            composerExpanded = false
+            composerFocusCoordinator.setExpandedFromVoice(expanded = false)
             voiceSourceExpanded = false
             return
         }
         if (!voiceSourceExpanded && viewModel.inputText.isBlank()) {
-            composerExpanded = false
+            composerFocusCoordinator.setExpandedFromVoice(expanded = false)
             // 语音收起路径不走 collapseComposer，必须在这里补两帧翻转：此刻
             // presented 仍是录音展开时的 true，折叠态图标以隐藏态挂载并注册了
             // 入场动画，缺了这次翻转它们会永远停在 opacity 0（R4/R5）。
             scheduleComposerChromePresentation(false)
         } else {
-            composerExpanded = true
+            composerFocusCoordinator.setExpandedFromVoice(expanded = true)
         }
         voiceSourceExpanded = false
     }
@@ -2869,7 +2774,9 @@ internal class ChatPage : BasePager() {
                 // 只恢复输入态布局；不再触发 focus()/blur() 或焦点恢复定时器。
                 // 原生 TextArea 因而持续拥有系统管理的正常输入光标。
                 inputFocus {
-                    if (!this@ChatPage.composerExpanded) this@ChatPage.expandComposer()
+                    this@ChatPage.composerFocusCoordinator.onInputFocus(
+                        voiceBusy = this@ChatPage.voiceState != VoiceState.IDLE,
+                    )
                 }
                 textDidChange(isSyncEdit = true) {
                     KLog.d(COMPOSER_LOG_TAG, "EV textDidChange len=${it.text.length}")
@@ -2877,13 +2784,7 @@ internal class ChatPage : BasePager() {
                 }
                 keyboardHeightChange {
                     KLog.i(COMPOSER_LOG_TAG, "EV keyboardHeightChange h=${it.height} dur=${it.duration}")
-                    this@ChatPage.keyboardHeight = it.height
-                    this@ChatPage.keyboardVisible = it.height > 0f
-                    if (it.height > 0f) {
-                        // 键盘真实弹出 = 焦点会话稳定，重置意外 blur 恢复预算。
-                        this@ChatPage.composerBlurRecoverAttempts = 0
-                        this@ChatPage.scheduleComposerFocusAfterKeyboardLayout(it.duration)
-                    }
+                    this@ChatPage.composerFocusCoordinator.onKeyboardHeightChanged(it.height, it.duration)
                     this@ChatPage.scheduleScrollChatToBottom(animated = false)
                 }
                 inputReturn {
