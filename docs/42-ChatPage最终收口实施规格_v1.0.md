@@ -19,6 +19,19 @@
 6. **DSL 物理归档**：Composer、Message action、Compare overlay、Session chrome 从 `ChatPage` 迁入 feature component；无行为改动。
 7. **门禁与收尾**：增加 package/import warning 检查；Android/H5 手测并以独立提交收尾。
 
+## 2026-09-12 已完成批次
+
+- `abf05ca`：实体长按/拖拽/二义实体/行情预览状态机。
+- `b0e5cf6`：股票与术语对比解读的候选、卡片与流式会话。
+- `98e257a`：消息文本选择及复制/引用菜单的两拍呈现状态机。
+- `1947a7a`：文字 Composer 展开、键盘避让后的焦点恢复。
+- `d727fe3`：语音按住录制、上滑取消、转写、错误和布局恢复。
+- `dcb2c8b`：卡片展开/焦点/修复锁、钻取与解读子线程；`SubThreadState` 回归 chat 域。
+- `cce2da2`：@/命令参数共用的证券与板块候选行 DSL 组件。
+
+当前 `ChatPage` 已不再持有以上领域的 Timer、revision 或流式状态；余下最大边界是
+Composer assistant 的触发/远端检索/参数面板状态，以及会话 chrome 的小状态域。
+
 ## 不变行为
 
 - Compare 解读的 pairKey/revision、逐字输出、错误重试与术语/股票互斥保持不变。
