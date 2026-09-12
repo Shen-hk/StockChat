@@ -8,8 +8,8 @@ import com.kuikly.stockchat.cards.stock.KLineChart
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chart.model.ChartViewportAction
 import com.kuikly.stockchat.chart.model.ChartViewportCommand
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.page.ChartLegend
 import com.kuikly.stockchat.page.ChartLoadingSkeleton

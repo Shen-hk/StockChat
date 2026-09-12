@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
@@ -23,7 +23,8 @@ import com.kuikly.stockchat.cards.stock.StockCardRenderers
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.config.DataSourceConfig
 import com.kuikly.stockchat.data.mock.MockDataBank
 import com.kuikly.stockchat.data.provider.Quote
@@ -71,7 +72,7 @@ internal class CardGalleryPage : BasePager() {
             return
         }
         // 真实模式：QuoteRepository 三级链，数据未返回前用 Quote.placeholder 占位（价格 0）。
-        val dependencies = MarketDependencies.forPager(pagerId)
+        val dependencies = MarketFeatureGraph.forPager(pagerId)
         dependencies.quoteRepository.load("600519.SH") { liveQuote = it.quote ?: Quote.placeholder("600519.SH", "贵州茅台") }
         dependencies.quoteRepository.load("000858.SZ") { liveCompare = it.quote ?: Quote.placeholder("000858.SZ", "五粮液") }
     }

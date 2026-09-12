@@ -1,7 +1,6 @@
 package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.config.AiConfig
-import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.timer.setTimeout
@@ -23,11 +22,11 @@ interface AiProvider {
  * 原名 DeepSeekAiProvider，2026-09-11 起更名为 [OpenAiCompatAiProvider]。
  */
 class OpenAiCompatAiProvider(
-    override val pagerId: String,
     private val config: AiConfig,
-) : AiProvider, PagerScope {
+    private val scheduler: PlatformScheduler,
+    private val client: PlatformHttpClient = createPlatformHttpClient(),
+) : AiProvider {
     private var generation = 0
-    private val client = createPlatformHttpClient()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var activeRequest: Job? = null
 
@@ -161,7 +160,7 @@ class OpenAiCompatAiProvider(
     }
 
     private fun dispatchToUi(requestGeneration: Int, block: () -> Unit) {
-        setTimeout(0) {
+        scheduler.schedule(0) {
             if (requestGeneration == generation) block()
         }
     }
@@ -247,7 +246,7 @@ internal data class OpenAiCompatRequestProfile(
     }
 }
 
-class MockAiProvider(override val pagerId: String) : AiProvider, PagerScope {
+class MockAiProvider(private val scheduler: PlatformScheduler) : AiProvider {
     private var generation = 0
 
     override fun ask(messages: List<AiChatMessage>, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) {
@@ -256,11 +255,11 @@ class MockAiProvider(override val pagerId: String) : AiProvider, PagerScope {
         val answer = answerFor(question)
         val chunks = answer.chunked(10)
         chunks.forEachIndexed { index, chunk ->
-            this.setTimeout(120 + index * 28) {
+            scheduler.schedule((120 + index * 28).toLong()) {
                 if (current == generation) onDelta(chunk)
             }
         }
-        this.setTimeout(121 + chunks.size * 28) {
+        scheduler.schedule((121 + chunks.size * 28).toLong()) {
             if (current == generation) onDone()
         }
     }

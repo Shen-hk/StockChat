@@ -1,6 +1,6 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -9,7 +9,8 @@ import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openStockDetail
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.provider.HotspotSnapshot
 import com.kuikly.stockchat.data.provider.LimitUpStock
 import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
@@ -31,7 +32,7 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.HOTSPOTS, supportInLocal = true)
 internal class HotspotPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private var sectors: ObservableList<SectorRank> by observableList()
     private var limitUps: ObservableList<LimitUpStock> by observableList()
     // 必须 observable：created() 先给离线快照、再看远端结果覆盖。此前是普通 var，

@@ -2,7 +2,6 @@ package com.kuikly.stockchat.data
 
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.storage.KeyValueStorage
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -42,11 +41,6 @@ class WatchlistStore(
     private val preferences: KeyValueStorage,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
 ) {
-    constructor(
-        pagerId: String,
-        nowMillis: () -> Long = ::platformCurrentTimeMillis,
-    ) : this(PagerKeyValueStorage(pagerId), nowMillis)
-
     fun list(): List<WatchlistItem> = readRows()
 
     fun symbols(): List<String> = readRows().map { it.symbol }

@@ -6,7 +6,7 @@ import com.tencent.kmm.network.service.VBTransportService
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-internal actual fun createPlatformHttpClient(): PlatformHttpClient = OhosPlatformHttpClient
+actual fun createPlatformHttpClient(): PlatformHttpClient = OhosPlatformHttpClient
 
 private object OhosPlatformHttpClient : PlatformHttpClient {
     override suspend fun get(url: String, headers: Map<String, String>): PlatformHttpResponse =

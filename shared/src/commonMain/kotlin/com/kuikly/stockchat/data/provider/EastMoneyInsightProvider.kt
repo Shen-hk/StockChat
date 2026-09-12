@@ -2,10 +2,8 @@ package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.entity.Security
 import com.kuikly.stockchat.data.provider.NewsItem
-import com.tencent.kuikly.core.base.PagerScope
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
-import com.tencent.kuikly.core.timer.setTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -405,9 +403,9 @@ object EastMoneyInsightParser {
 }
 
 class EastMoneyInsightProvider(
-    override val pagerId: String,
-) : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, SecuritySearchProvider, IndustryProvider, StockNewsProvider, RatingSpectrumProvider, PagerScope {
-    private val client = createPlatformHttpClient()
+    private val scheduler: PlatformScheduler,
+    private val client: PlatformHttpClient = createPlatformHttpClient(),
+) : FundFlowProvider, FundamentalProvider, DisclosureProvider, MarketOverviewProvider, SecuritySearchProvider, IndustryProvider, StockNewsProvider, RatingSpectrumProvider {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val throttle = Mutex()
     private var lastRequestAt = 0L
@@ -584,7 +582,7 @@ class EastMoneyInsightProvider(
     }
 
     private fun deliver(block: () -> Unit) {
-        setTimeout(0) { block() }
+        scheduler.schedule(0) { block() }
     }
 
     private fun secId(symbol: String): String {

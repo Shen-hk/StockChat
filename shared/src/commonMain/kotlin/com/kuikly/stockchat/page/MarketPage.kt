@@ -1,11 +1,12 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.AiChatMessage
+import com.kuikly.stockchat.app.assembly.ChatFeatureGraph
 import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.common.Format
@@ -16,7 +17,8 @@ import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.common.openUrl
 import com.kuikly.stockchat.data.provider.AiProvider
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.provider.HotspotSnapshot
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.MarketIndex
@@ -101,7 +103,7 @@ import kotlin.math.roundToInt
 @Page(Routes.MARKET, supportInLocal = true)
 internal class MarketPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
     // 真实模式首帧先明确“连接中”，不能让演示数据短暂伪装成实时行情。
     private var overview: MarketOverview by observable(
@@ -163,7 +165,7 @@ internal class MarketPage : BasePager() {
     // 流式平滑器（复用聊天页）：网络回调在后台线程触发，observable 只能主线程写，
     // 与 StockDetailPage 同一处修复（后台直写曾造成闪退与流式内容不刷新）。
     private var activeAiTypewriter: TypewriterSmoother? = null
-    private val aiDependencies by lazy { ChatDependencies.forPager(pagerId) }
+    private val aiDependencies by lazy { ChatFeatureGraph.forPager(pagerId) }
 
     // ------------------------------------------------------------------
     // 新闻弹幕（J1 v2）：页侧持有节拍——setTimeout 链 33ms 步进 offset（≈30dp/s），

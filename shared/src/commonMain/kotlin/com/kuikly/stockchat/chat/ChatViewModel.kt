@@ -14,7 +14,7 @@ import com.tencent.kuikly.core.timer.setTimeout
 
 class ChatViewModel(
     override val pagerId: String,
-    private val dependencies: ChatDependencies = ChatDependencies.forPager(pagerId),
+    private val dependencies: ChatDependencies,
 ) : PagerScope {
     var messages: ObservableList<ChatMessage> by observableList()
     var sessionSummaries: ObservableList<ChatSessionSummary> by observableList()
@@ -80,7 +80,7 @@ class ChatViewModel(
             return
         }
         if (payload.text.startsWith("回归：")) {
-            streamWithProvider(MockAiProvider(pagerId), assistantId, payload)
+            streamWithProvider(MockAiProvider(dependencies.platformScheduler), assistantId, payload)
             return
         }
         val config = configStore.load()
@@ -288,7 +288,7 @@ class ChatViewModel(
         }
         val question = previousUserQuestion(messageIndex)
         val provider = if (question.startsWith("回归：")) {
-            MockAiProvider(pagerId)
+            MockAiProvider(dependencies.platformScheduler)
         } else {
             val config = configStore.load()
             val configError = config.validationError()

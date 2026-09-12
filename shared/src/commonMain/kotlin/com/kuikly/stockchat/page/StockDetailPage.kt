@@ -1,12 +1,13 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.core.AttributionCardModel
 import com.kuikly.stockchat.chat.AiChatMessage
+import com.kuikly.stockchat.app.assembly.ChatFeatureGraph
 import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.TypewriterSmoother
 import com.kuikly.stockchat.data.provider.AiProvider
@@ -40,7 +41,8 @@ import com.kuikly.stockchat.common.openChatWithQuestion
 import com.kuikly.stockchat.common.openUrl
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.MarketDataPrefs
 import com.kuikly.stockchat.data.MarketDataSource
 import com.kuikly.stockchat.data.provider.MarketTimelineSpec
@@ -155,7 +157,7 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.STOCK_DETAIL, supportInLocal = true)
 internal class StockDetailPage : BasePager() {
     private var symbol = "600519.SH"
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private val quoteRepository get() = dependencies.quoteRepository
     private val watchlistStore get() = dependencies.watchlistStore
     // Page instances are constructed before Kuikly assigns pagerId. Do not
@@ -322,7 +324,7 @@ internal class StockDetailPage : BasePager() {
     private val chartFlags: List<ChartFlag> get() = detailChartState.chartFlags           // B2 图侧新闻旗标
     private val bandRange: Triple<Int, Int, Boolean>? get() = detailChartState.bandRange  // ②/B2 区间高亮带 (start,end,fromSentence)
     private var selectedSentence: Int by observable(-1)                                   // ② 选中的解读句
-    private val aiChatDependencies by lazy { ChatDependencies.forPager(pagerId) }
+    private val aiChatDependencies by lazy { ChatFeatureGraph.forPager(pagerId) }
     // ② 句图联动锚点（真实化，2026-09-08）：不再写死槽位。点句时从句子内容
     // 端侧推导——优先解析句内 HH:MM 映射分时索引（LLM 只负责引用时间，坐标
     // 由 AnchorIndex 计算），无时间词时按当日真实分时（最高/最低/开盘时刻）回退。

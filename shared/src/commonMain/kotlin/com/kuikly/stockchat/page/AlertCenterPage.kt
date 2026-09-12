@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
@@ -16,7 +16,8 @@ import com.kuikly.stockchat.data.AlertInboxBuilder
 import com.kuikly.stockchat.data.AlertKind
 import com.kuikly.stockchat.data.AlertMessage
 import com.kuikly.stockchat.data.AlertRule
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.WatchlistItem
 import com.kuikly.stockchat.data.provider.MarketCalendarEvent
 import com.kuikly.stockchat.data.provider.Quote
@@ -68,7 +69,7 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.ALERTS, supportInLocal = true)
 internal class AlertCenterPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
 
     /** 渲染层列表：vfor 只接受 ObservableList，筛选结果落到这份拷贝（照抄 WatchlistPage）。 */

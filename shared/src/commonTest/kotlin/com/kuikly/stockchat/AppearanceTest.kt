@@ -2,11 +2,11 @@ package com.kuikly.stockchat
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.cards.theme.TypeTokens
-import com.kuikly.stockchat.data.FontScale
-import com.kuikly.stockchat.data.FontScaleRuntime
-import com.kuikly.stockchat.data.ThemeMode
-import com.kuikly.stockchat.data.resolveStockChatTheme
-import com.kuikly.stockchat.data.scaled
+import com.kuikly.stockchat.foundation.design.FontScale
+import com.kuikly.stockchat.foundation.ui.FontScaleRuntime
+import com.kuikly.stockchat.foundation.design.ThemeMode
+import com.kuikly.stockchat.foundation.design.resolveStockChatTheme
+import com.kuikly.stockchat.foundation.design.scaled
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals

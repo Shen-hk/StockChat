@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page.components
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
-import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Translate

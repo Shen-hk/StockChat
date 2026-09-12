@@ -1,7 +1,6 @@
 package com.kuikly.stockchat.data.config
 
 import com.kuikly.stockchat.data.storage.KeyValueStorage
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
 data class AiConfig(
@@ -36,8 +35,6 @@ data class AiConfig(
 class AiConfigStore(
     private val preferences: KeyValueStorage,
 ) {
-    constructor(pagerId: String) : this(PagerKeyValueStorage(pagerId))
-
     fun load(): AiConfig {
         val raw = preferences.getString(STORAGE_KEY)
         if (raw.isEmpty()) return AiConfig()

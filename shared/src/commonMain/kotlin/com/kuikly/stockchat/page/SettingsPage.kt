@@ -1,17 +1,17 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openPage
-import com.kuikly.stockchat.data.AppearancePrefs
-import com.kuikly.stockchat.data.FontScale
+import com.kuikly.stockchat.foundation.design.AppearancePrefs
+import com.kuikly.stockchat.foundation.design.FontScale
 import com.kuikly.stockchat.data.MarketDataPrefs
 import com.kuikly.stockchat.data.MarketDataSource
-import com.kuikly.stockchat.data.ThemeMode
+import com.kuikly.stockchat.foundation.design.ThemeMode
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border

@@ -2,7 +2,6 @@ package com.kuikly.stockchat.data
 
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.storage.KeyValueStorage
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -29,11 +28,6 @@ class RiskSnapshotStore(
     private val preferences: KeyValueStorage,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
 ) {
-    constructor(
-        pagerId: String,
-        nowMillis: () -> Long = ::platformCurrentTimeMillis,
-    ) : this(PagerKeyValueStorage(pagerId), nowMillis)
-
     fun all(): List<RiskSnapshot> = readAll()
 
     /**

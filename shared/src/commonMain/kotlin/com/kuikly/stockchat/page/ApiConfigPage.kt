@@ -1,17 +1,16 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
+import com.kuikly.stockchat.app.assembly.ChatFeatureGraph
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.data.config.AiConfig
-import com.kuikly.stockchat.data.config.AiConfigStore
 import com.kuikly.stockchat.data.config.ModelPreset
 import com.kuikly.stockchat.data.config.ModelPresets
-import com.kuikly.stockchat.data.provider.OpenAiCompatAiProvider
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Border
@@ -47,7 +46,7 @@ internal class ApiConfigPage : BasePager() {
     private var apiKeyKeyboardHeight: Float by observable(0f)
     private var apiKeyKeyboardLayoutVersion = 0
     private var configScrollerRef: ViewRef<ScrollerView<*, *>>? = null
-    private val configStore by lazy { AiConfigStore(pagerId) }
+    private val configStore by lazy { ChatFeatureGraph.aiConfigStore(pagerId) }
     private val theme: StockChatTheme get() = appTheme()
 
     override fun viewDidLoad() {
@@ -300,7 +299,7 @@ internal class ApiConfigPage : BasePager() {
         }
         testing = true
         showStatus(false, "正在连接 API…")
-        OpenAiCompatAiProvider(pagerId, config).testConnection { success, message ->
+        ChatFeatureGraph.connectionTestProvider(pagerId, config).testConnection { success, message ->
             testing = false
             showStatus(success, message)
         }

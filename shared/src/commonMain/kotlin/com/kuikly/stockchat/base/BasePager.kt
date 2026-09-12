@@ -6,11 +6,11 @@ import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.reactive.handler.*
 import com.kuikly.stockchat.cards.theme.StockChatTheme
-import com.kuikly.stockchat.data.AppearancePrefs
-import com.kuikly.stockchat.data.FontScale
-import com.kuikly.stockchat.data.FontScaleRuntime
-import com.kuikly.stockchat.data.ThemeMode
-import com.kuikly.stockchat.data.resolveStockChatTheme
+import com.kuikly.stockchat.foundation.design.AppearancePrefs
+import com.kuikly.stockchat.foundation.design.FontScale
+import com.kuikly.stockchat.foundation.ui.FontScaleRuntime
+import com.kuikly.stockchat.foundation.design.ThemeMode
+import com.kuikly.stockchat.foundation.design.resolveStockChatTheme
 import com.kuikly.stockchat.glass.GlassRenderer
 
 internal abstract class BasePager : Pager() {

@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -13,7 +13,8 @@ import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.GlossaryEntry
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.entity.Security
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.InsightSectionTitle
@@ -53,7 +54,7 @@ internal class GlobalSearchPage : BasePager() {
 
     override fun created() {
         super.created()
-        dependencies = MarketDependencies.forPager(pagerId)
+        dependencies = MarketFeatureGraph.forPager(pagerId)
         tabs.clear()
         (listOf(ALL_TAB) + Securities.categories).forEach(tabs::add)
         search("")

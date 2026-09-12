@@ -1,12 +1,13 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.AiChatMessage
+import com.kuikly.stockchat.app.assembly.ChatFeatureGraph
 import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatThinkingProfile
 import com.kuikly.stockchat.chat.MessageRole
@@ -19,7 +20,8 @@ import com.kuikly.stockchat.common.openPage
 import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.AlertKind
 import com.kuikly.stockchat.data.AlertMessage
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.RiskSnapshot
 import com.kuikly.stockchat.data.provider.CalendarEventKind
 import com.kuikly.stockchat.data.provider.LimitUpStock
@@ -30,7 +32,7 @@ import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.provider.quoteLabel
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
+import com.kuikly.stockchat.app.platform.KuiklyKeyValueStorage
 import com.kuikly.stockchat.page.components.AppTopBar
 import com.kuikly.stockchat.page.components.RiskSkyChart
 import com.kuikly.stockchat.page.risk.SkyLayer
@@ -97,7 +99,7 @@ private enum class SkyViewMode(val label: String) {
 @Page(Routes.RISK, supportInLocal = true)
 internal class RiskMapPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private val watchlistStore get() = dependencies.watchlistStore
     private val quoteRepository get() = dependencies.quoteRepository
     private val insightRepository get() = dependencies.insightRepository
@@ -167,9 +169,9 @@ internal class RiskMapPage : BasePager() {
     private var skyAiGeneration = 0
     private var skyAiProvider: AiProvider? = null
     private var skyAiTypewriter: TypewriterSmoother? = null
-    private val skyAiDependencies by lazy { ChatDependencies.forPager(pagerId) }
+    private val skyAiDependencies by lazy { ChatFeatureGraph.forPager(pagerId) }
 
-    private val skyStorage by lazy { PagerKeyValueStorage(pagerId) }
+    private val skyStorage by lazy { KuiklyKeyValueStorage(pagerId) }
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
 
     /** 相关性矩阵选中的配对 "symA|symB"；空 = 未选中。 */

@@ -1,7 +1,5 @@
 package com.kuikly.stockchat.data.provider
 
-import com.tencent.kuikly.core.base.PagerScope
-import com.tencent.kuikly.core.module.NetworkModule
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -169,9 +167,8 @@ object TencentQuoteParser {
     private fun JSONArray.number(index: Int): Double = text(index).toDoubleOrNull() ?: 0.0
 }
 
-class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerScope {
+class TencentQuoteProvider(private val json: QuoteJsonClient) : QuoteProvider {
     override val mode: DataMode = DataMode.ONLINE
-    private val network: NetworkModule get() = getPager().acquireModule(NetworkModule.MODULE_NAME)
 
     override fun snapshot(symbol: String, onResult: (Quote?) -> Unit) {
         val code = TencentQuoteParser.remoteCode(symbol)
@@ -211,7 +208,7 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
             return
         }
         val url = "${KLINE_HOSTS[hostIndex]}/appstock/app/fqkline/get?param=$code,${interval.requestPeriod},,,$count,qfq"
-        network.requestGet(url, JSONObject()) { data, success, _, _ ->
+        json.requestGet(url, JSONObject()) { data, success, _ ->
             if (success && data.optJSONObject("data")?.optJSONObject(code) != null) {
                 onResult(data)
             } else {
@@ -226,7 +223,7 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
             return
         }
         val url = "${KLINE_HOSTS[hostIndex]}/appstock/app/minute/query?code=$code"
-        network.requestGet(url, JSONObject()) { data, success, _, _ ->
+        json.requestGet(url, JSONObject()) { data, success, _ ->
             if (success && data.optJSONObject("data")?.optJSONObject(code) != null) {
                 onResult(data)
             } else {
@@ -250,8 +247,8 @@ class TencentQuoteProvider(override val pagerId: String) : QuoteProvider, PagerS
  * breadth and sectors; when it is unavailable this provider prevents the
  * market page from degrading into a completely empty screen.
  */
-class TencentIndexOverviewProvider(pagerId: String) : MarketOverviewProvider {
-    private val quotes = TencentQuoteProvider(pagerId)
+class TencentIndexOverviewProvider(json: QuoteJsonClient) : MarketOverviewProvider {
+    private val quotes = TencentQuoteProvider(json)
 
     override fun overview(onResult: (MarketOverview?) -> Unit) {
         val symbols = listOf(
@@ -304,8 +301,8 @@ class TencentIndexOverviewProvider(pagerId: String) : MarketOverviewProvider {
  * 行情降级链：在线 → 会话内缓存 → 终点。
  * 真实模式（DataSourceConfig.USE_REAL_MARKET_DATA = true）终点为空；模拟模式终点回落 MockQuoteProvider（原状态）。
  */
-class FallbackQuoteProvider(pagerId: String) : QuoteProvider {
-    private val online = TencentQuoteProvider(pagerId)
+class FallbackQuoteProvider(json: QuoteJsonClient) : QuoteProvider {
+    private val online = TencentQuoteProvider(json)
     private val offline: QuoteProvider? =
         if (com.kuikly.stockchat.data.config.DataSourceConfig.USE_REAL_MARKET_DATA) null else com.kuikly.stockchat.data.mock.MockQuoteProvider()
     private val cache = mutableMapOf<String, Quote>()

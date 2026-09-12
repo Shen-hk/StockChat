@@ -2,7 +2,6 @@ package com.kuikly.stockchat.data
 
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.storage.KeyValueStorage
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -55,11 +54,6 @@ class GlossaryStore(
     private val preferences: KeyValueStorage,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
 ) {
-    constructor(
-        pagerId: String,
-        nowMillis: () -> Long = ::platformCurrentTimeMillis,
-    ) : this(PagerKeyValueStorage(pagerId), nowMillis)
-
     private val cache: MutableMap<String, GlossaryEncounter> by lazy { readAll().toMutableMap() }
 
     fun get(key: String): GlossaryEncounter? = cache[key]

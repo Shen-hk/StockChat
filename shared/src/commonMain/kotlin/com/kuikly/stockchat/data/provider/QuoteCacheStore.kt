@@ -1,7 +1,6 @@
 package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.storage.KeyValueStorage
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -32,8 +31,6 @@ data class StoredKLines(
 class SharedPreferencesQuoteCacheStore(
     private val preferences: KeyValueStorage,
 ) : QuoteCacheStore {
-    constructor(pagerId: String) : this(PagerKeyValueStorage(pagerId))
-
     init {
         migrateFromLargeSeriesCache()
     }

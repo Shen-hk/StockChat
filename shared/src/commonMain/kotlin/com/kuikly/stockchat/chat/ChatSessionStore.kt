@@ -2,7 +2,6 @@ package com.kuikly.stockchat.chat
 
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.storage.KeyValueStorage
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -11,11 +10,6 @@ class ChatSessionStore(
     private val preferences: KeyValueStorage,
     private val nowMillis: () -> Long = ::platformCurrentTimeMillis,
 ) {
-    constructor(
-        pagerId: String,
-        nowMillis: () -> Long = ::platformCurrentTimeMillis,
-    ) : this(PagerKeyValueStorage(pagerId), nowMillis)
-
     fun activeSessionId(): String {
         ensureMigrated()
         val activeId = preferences.getString(ACTIVE_SESSION_KEY)

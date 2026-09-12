@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
@@ -23,12 +23,12 @@ import com.kuikly.stockchat.common.openStockDetail
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistItem
 import com.kuikly.stockchat.data.WatchlistStore
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.entity.Security
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.QuotePrefetchStore
-import com.kuikly.stockchat.data.provider.TencentQuoteProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.page.components.AppTopBar
@@ -91,7 +91,7 @@ internal class WatchlistPage : BasePager() {
     private data class DragMotion(val dy: Float, val target: Int)
 
     private val theme: StockChatTheme get() = appTheme()
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private val watchlistStore get() = dependencies.watchlistStore
     private val quoteRepository get() = dependencies.quoteRepository
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
@@ -185,7 +185,7 @@ internal class WatchlistPage : BasePager() {
         // 详情页预取（2026-09-10 空白期治理）：自选标的行情预热进全局预取缓存，
         // 点进详情页 created() 直接命中整页秒开（60s 新鲜窗口内不重复请求；
         // warm 内部自带去重与单次 8 标的上限，防请求风暴）。
-        QuotePrefetchStore.warm(watchlistStore.list().map { it.symbol }, TencentQuoteProvider(pagerId))
+        QuotePrefetchStore.warm(watchlistStore.list().map { it.symbol }, MarketFeatureGraph.prefetchTarget(pagerId))
     }
 
     override fun body(): ViewBuilder {

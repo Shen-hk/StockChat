@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -9,7 +9,8 @@ import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openStockDetail
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.config.DataSourceConfig
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.MarketCalendarEvent
@@ -33,7 +34,7 @@ import com.tencent.kuikly.core.views.View
 @Page(Routes.CALENDAR, supportInLocal = true)
 internal class MarketCalendarPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private var events: ObservableList<MarketCalendarEvent> by observableList()
 
     /** 空态溯源戳：真实模式如实标注「未接入」，模拟模式沿用演示数据戳。 */

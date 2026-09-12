@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.chat.session.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
-import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 import com.kuikly.stockchat.glass.GlassBackdrop
 import com.kuikly.stockchat.glass.GlassRenderer
 import com.kuikly.stockchat.page.components.LineIconClose

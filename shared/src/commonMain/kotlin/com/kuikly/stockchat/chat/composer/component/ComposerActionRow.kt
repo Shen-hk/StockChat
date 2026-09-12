@@ -2,7 +2,7 @@ package com.kuikly.stockchat.chat.composer.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.chat.StreamState
-import com.kuikly.stockchat.data.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 import com.kuikly.stockchat.page.components.LineIconAudioLines
 import com.kuikly.stockchat.page.components.LineIconPlus
 import com.kuikly.stockchat.page.components.LineIconStop

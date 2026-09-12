@@ -12,7 +12,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.utils.io.readUTF8Line
 
-internal actual fun createPlatformHttpClient(): PlatformHttpClient = KtorPlatformHttpClient(HttpClient(OkHttp))
+actual fun createPlatformHttpClient(): PlatformHttpClient = KtorPlatformHttpClient(HttpClient(OkHttp))
 
 internal class KtorPlatformHttpClient(private val client: HttpClient) : PlatformHttpClient {
     override suspend fun get(url: String, headers: Map<String, String>): PlatformHttpResponse {

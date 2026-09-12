@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.BridgeModule
@@ -26,6 +26,8 @@ import com.kuikly.stockchat.glass.GlassRenderer
 import com.kuikly.stockchat.glass.GlassRenderingMode
 import com.kuikly.stockchat.glass.applyGlassSurfaceSkin
 import com.kuikly.stockchat.chat.ChatMessage
+import com.kuikly.stockchat.app.assembly.ChatFeatureGraph
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatViewModel
 import com.kuikly.stockchat.chat.MessageRole
@@ -129,9 +131,8 @@ import com.kuikly.stockchat.data.MarketDataSource
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.QuotePrefetchStore
-import com.kuikly.stockchat.data.provider.TencentQuoteProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
-import com.kuikly.stockchat.data.storage.PagerKeyValueStorage
+import com.kuikly.stockchat.app.platform.KuiklyKeyValueStorage
 import com.kuikly.stockchat.chat.welcome.data.WelcomeStarterStore
 import com.kuikly.stockchat.chat.welcome.state.ChatWelcomeCoordinator
 import com.kuikly.stockchat.chat.welcome.state.ChatWelcomeEffect
@@ -273,13 +274,13 @@ internal class ChatPage : BasePager() {
         // setContentOffset 请求会静默无效，减 1px 规避浮点精度导致的误判。
         const val CHAT_SCROLL_HAIR_WIDTH = 1f
     }
-    private val dependencies by lazy { ChatDependencies.forPager(pagerId) }
+    private val dependencies by lazy { ChatFeatureGraph.forPager(pagerId) }
     private val viewModel by lazy { ChatViewModel(pagerId, dependencies) }
     // Welcome is a self-contained vertical slice: storage/data, state/timing,
     // component and this page-level platform-effect adapter.
     private val welcomeStarterStore by lazy {
         WelcomeStarterStore(
-            PagerKeyValueStorage(pagerId),
+            KuiklyKeyValueStorage(pagerId),
             defaultWelcomeStarters().map { it.kind.name }.toSet(),
         )
     }
@@ -722,7 +723,7 @@ internal class ChatPage : BasePager() {
         // 详情页预取（2026-09-10 空白期治理）：进应用后把自选标的行情预热进全局
         // 预取缓存，点进详情页时 created() 直接命中整页秒开（60s 新鲜窗口内不重复
         // 请求；点按瞬间 openStockDetail 还有一次单标的兜底预热）。
-        QuotePrefetchStore.warm(watchlistStore.symbols(), TencentQuoteProvider(pagerId))
+        QuotePrefetchStore.warm(watchlistStore.symbols(), MarketFeatureGraph.prefetchTarget(pagerId))
         startAlertPolling()
         chatScrollCoordinator.onAppear()
         welcomeCoordinator.onAppear(

@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
-import com.kuikly.stockchat.data.fontSizeScaled
-import com.kuikly.stockchat.data.lineHeightScaled
+import com.kuikly.stockchat.foundation.ui.fontSizeScaled
+import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.base.setTimeout
@@ -16,7 +16,8 @@ import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.data.GlossaryEncounter
 import com.kuikly.stockchat.data.GlossaryStore
-import com.kuikly.stockchat.data.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketDependencies
+import com.kuikly.stockchat.app.assembly.MarketFeatureGraph
 import com.kuikly.stockchat.data.entity.Glossary
 import com.kuikly.stockchat.data.entity.GlossaryCategory
 import com.kuikly.stockchat.data.entity.GlossaryEntry
@@ -68,7 +69,7 @@ import kotlin.math.roundToInt
 @Page(Routes.GLOSSARY, supportInLocal = true)
 internal class GlossaryPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
-    private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
+    private val dependencies by lazy { MarketFeatureGraph.forPager(pagerId) }
     private val glossaryStore: GlossaryStore get() = dependencies.glossaryStore
 
     /** "map" = 知识地图首页；"list" = 完整词表二级页（搜索 + 分类浏览）。 */
