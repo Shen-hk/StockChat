@@ -92,3 +92,9 @@ ohosApp/build-profile.json5
 # 注：outputs/ 下仍有 7 个历史文档已在版本库中，gitignore 不影响已跟踪文件。
 /outputs/
 /tools/
+
+# 会话验证产物（2026-09-12 合并后清理）
+.finesse/
+wb-*.png
+vb-*.png
+v1*.png
