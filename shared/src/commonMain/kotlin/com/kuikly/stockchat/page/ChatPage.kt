@@ -96,6 +96,9 @@ import com.kuikly.stockchat.chat.session.state.ImagePreviewCoordinator
 import com.kuikly.stockchat.chat.session.state.ImagePreviewState
 import com.kuikly.stockchat.chat.session.state.SessionChromeCoordinator
 import com.kuikly.stockchat.chat.session.state.SessionChromeState
+import com.kuikly.stockchat.chat.session.state.MarketFallbackCoordinator
+import com.kuikly.stockchat.chat.session.state.MarketFallbackState
+import com.kuikly.stockchat.chat.session.state.KuiklyMarketFallbackScheduler
 import com.kuikly.stockchat.chat.session.component.ImagePreviewOverlay
 import com.kuikly.stockchat.chat.session.component.MessageActionOverlay
 import com.kuikly.stockchat.common.Format
@@ -405,8 +408,9 @@ internal class ChatPage : BasePager() {
     private var pageVisible = false
     // 真实行情在页面级等待窗口内没有任何回调时，征询用户是否切换到本地 Mock。
     // 定时器由 PagerScope.setTimeout 调度，离页后 pageVisible 守卫保证不写 UI。
-    private var marketFallbackPromptSymbol: String by observable("")
-    private val pendingRealQuoteSymbols = mutableSetOf<String>()
+    private val marketFallbackState = MarketFallbackState()
+    private val marketFallbackCoordinator = MarketFallbackCoordinator(marketFallbackState, KuiklyMarketFallbackScheduler())
+    private val marketFallbackPromptSymbol: String get() = marketFallbackState.promptSymbol
     // 2026-09-08：行情数据模式只有"实时"一档（模拟分支已整体摘除），旧
     // liveDataMode 开关随之移除；顶部岛上的"实时"角标为常显。
     // 抽屉历史会话搜索词：drawer 的 Input 不受控，页面侧只存词 + 供 vbind 过滤；
@@ -678,6 +682,7 @@ internal class ChatPage : BasePager() {
         super.pageDidDisappear()
         pageVisible = false
         alertPollGeneration++
+        marketFallbackCoordinator.onDisappear()
         chatScrollCoordinator.onDisappear()
         mediaSheetCoordinator.reset()
         // Coordinator cancels and version-guards every welcome callback here;
@@ -757,6 +762,7 @@ internal class ChatPage : BasePager() {
         compareCoordinator.onDestroy()
         composerAssistantCoordinator.onDestroy()
         composerVisualCoordinator.onDestroy()
+        marketFallbackCoordinator.onDestroy()
         messageActionCoordinator.onDestroy()
         welcomeCoordinator.onDestroy()
         chatScrollCoordinator.onDestroy()
@@ -3227,16 +3233,7 @@ internal class ChatPage : BasePager() {
         if (!firstRequest) return
         val isRealSource = selectedMarketDataSource() == MarketDataSource.REAL
         if (isRealSource) {
-            pendingRealQuoteSymbols += symbol
-            setTimeout(1_800) {
-                if (
-                    !pageVisible ||
-                    isWillDestroy() ||
-                    symbol !in pendingRealQuoteSymbols ||
-                    marketFallbackPromptSymbol.isNotEmpty()
-                ) return@setTimeout
-                marketFallbackPromptSymbol = symbol
-            }
+            marketFallbackCoordinator.onRealQuoteRequested(symbol)
         }
         // 与详情页同一条 QuoteRepository 链路（在线→缓存→离线）：不再按数据源开关
         // 短路到 MockQuoteProvider——那会让聊天卡片永远拿 48 点演示分时（索引对齐
@@ -3244,8 +3241,7 @@ internal class ChatPage : BasePager() {
         // 的却是腾讯整日分时。开关只控制离线降级终点（mock 模式=MockDataBank，
         // 真实模式=空态），在线优先与两个页面保持一致。
         quoteRepository.load(symbol) { result ->
-            pendingRealQuoteSymbols.remove(symbol)
-            if (marketFallbackPromptSymbol == symbol) marketFallbackPromptSymbol = ""
+            marketFallbackCoordinator.onQuoteResolved(symbol)
             // 行情的超时兜底可在页面已被 push 覆盖或销毁后才回调。此时再触发
             // ObservableList 重渲染会调用已解绑的 native bridge，Android 会直接
             // 抛出 AssertionError。丢弃本轮结果，并允许下次 pageDidAppear 重试。
@@ -3266,16 +3262,13 @@ internal class ChatPage : BasePager() {
     )
 
     private fun dismissMarketFallbackPrompt() {
-        pendingRealQuoteSymbols.remove(marketFallbackPromptSymbol)
-        marketFallbackPromptSymbol = ""
+        marketFallbackCoordinator.dismissPrompt()
     }
 
     private fun switchPromptedQuoteToMock() {
-        val symbol = marketFallbackPromptSymbol
+        val symbol = marketFallbackCoordinator.takePromptSymbol()
         acquireModule<SharedPreferencesModule>(SharedPreferencesModule.MODULE_NAME)
             .setString(MarketDataPrefs.KEY_SOURCE, MarketDataSource.MOCK.id)
-        pendingRealQuoteSymbols.remove(symbol)
-        marketFallbackPromptSymbol = ""
         requestedSymbols.remove(symbol)
         if (symbol.isNotEmpty()) requestQuote(symbol)
     }
