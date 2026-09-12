@@ -24,6 +24,8 @@ import com.kuikly.stockchat.data.provider.platformCurrentDate
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.AppTopBarAction
+import com.kuikly.stockchat.page.components.LineIconChecks
 import com.kuikly.stockchat.page.components.InsightSectionTitle
 import com.tencent.kuikly.core.annotations.Page
 import com.tencent.kuikly.core.base.Animation
@@ -256,7 +258,7 @@ internal class AlertCenterPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
                 actions = listOf(
-                    { "全部已读" } to { page.markAllReadNow() },
+                    AppTopBarAction(icon = { color, size, _ -> LineIconChecks(color, size) }, onClick = { page.markAllReadNow() }),
                 ),
             )
             }

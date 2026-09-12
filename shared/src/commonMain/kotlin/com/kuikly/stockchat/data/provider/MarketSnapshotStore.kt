@@ -61,12 +61,11 @@ class MarketSnapshotStore {
     fun clear() = framesByMinute.clear()
 
     /**
-     * 每分钟第一帧入库（3s 轮询按分钟节流，doc 33 §7.1）；超出封顶后丢最旧的上午帧。
+     * 每分钟保留最新一帧（轮询按分钟归档，doc 33 §7.1）；超出封顶后丢最旧的上午帧。
      * [minuteOfDay] 由页侧传平台当前时刻的「时×60+分」；不在交易时段的帧不记录。
      */
     fun record(overview: MarketOverview, minuteOfDay: Int) {
         val minute = tradingMinuteOf(minuteOfDay / 60, minuteOfDay % 60) ?: return
-        if (framesByMinute.containsKey(minute)) return
         framesByMinute[minute] = MarketSnapshotFrame(minute, overview)
         if (framesByMinute.size > MAX_FRAMES) {
             framesByMinute.keys.minOrNull()?.let(framesByMinute::remove)

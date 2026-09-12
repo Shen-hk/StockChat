@@ -238,29 +238,36 @@ internal fun ViewContainer<*, *>.RiskSkyChart(
                 }
             }
 
-            // ── 2. 牵连连线 + r 值（仅 LINK 层）──
-            if (ly == SkyLayer.LINK) {
+            // ── 2. 牵连连线 + r 值 ──
+            // 抱团层也保留极淡的关系线，让用户一打开就能看见「组」之间的
+            // 牵连；切到牵连层再显示强度和 r 值。否则默认层看起来只有一个圈。
+            if (cors.isNotEmpty()) {
                 canvas.font(8.5f)
                 for (i in g.stars.indices) {
                     val a = g.stars[i]
                     for (j in i + 1 until g.stars.size) {
                         val b = g.stars[j]
                         val r = StarLayout.lookupCorrelation(cors, a.symbol, b.symbol) ?: continue
-                        val width = StarLayout.linkWidthDp(r)
-                        if (width <= 0f) continue
+                        val strong = StarLayout.linkWidthDp(r) > 0f
+                        if (ly == SkyLayer.LINK && !strong) continue
+                        val width = if (strong) StarLayout.linkWidthDp(r) else 0.55f
                         canvas.beginPath()
                         canvas.moveTo(x(a), y(a))
                         canvas.lineTo(x(b), y(b))
                         canvas.lineWidth(width)
                         canvas.lineCapRound()
-                        canvas.strokeStyle(theme.brand.opacity(0.22f + (abs(r).toFloat() - 0.5f) * 0.5f))
+                        val baseAlpha = if (ly == SkyLayer.LINK) 0.22f else 0.09f
+                        val strengthAlpha = if (strong) (abs(r).toFloat() * 0.22f) else 0f
+                        canvas.strokeStyle(theme.brand.opacity(baseAlpha + strengthAlpha))
                         canvas.stroke()
-                        // r 值小字（线中点上方），负相关带负号
-                        canvas.textAlign(TextAlign.CENTER)
-                        canvas.fillStyle(theme.textTertiary)
-                        val label = (if (r < 0) "-" else "") + Format.decimal(abs(r), 2)
-                        canvas.fillText(label, (x(a) + x(b)) / 2f, (y(a) + y(b)) / 2f - 5f)
-                        canvas.textAlign(TextAlign.LEFT)
+                        if (ly == SkyLayer.LINK && strong) {
+                            // r 值小字（线中点上方），负相关带负号
+                            canvas.textAlign(TextAlign.CENTER)
+                            canvas.fillStyle(theme.textTertiary)
+                            val label = (if (r < 0) "-" else "") + Format.decimal(abs(r), 2)
+                            canvas.fillText(label, (x(a) + x(b)) / 2f, (y(a) + y(b)) / 2f - 5f)
+                            canvas.textAlign(TextAlign.LEFT)
+                        }
                     }
                 }
             }

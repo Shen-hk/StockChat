@@ -54,10 +54,10 @@ class MarketSnapshotStoreTest {
     }
 
     @Test
-    fun recordThrottlesToOneFramePerMinute() {
+    fun recordKeepsLatestFrameForEachMinute() {
         val store = MarketSnapshotStore()
         store.record(overview(1000, 1000), 9 * 60 + 30)
-        store.record(overview(1100, 900), 9 * 60 + 30) // 同分钟：节流丢弃
+        store.record(overview(1100, 900), 9 * 60 + 30) // 同分钟：更新为最新真实快照
         store.record(overview(1200, 800), 9 * 60 + 31)
         store.record(overview(1200, 800), 12 * 60 + 30) // 午休：不入库
 
@@ -65,7 +65,7 @@ class MarketSnapshotStoreTest {
         assertEquals(2, frames.size)
         assertEquals(0, frames.first().minute)
         assertEquals(1, frames.last().minute)
-        assertEquals(1000, frames.first().overview.risingCount) // 同分钟首帧优先，后续节流丢弃
+        assertEquals(1100, frames.first().overview.risingCount)
     }
 
     @Test

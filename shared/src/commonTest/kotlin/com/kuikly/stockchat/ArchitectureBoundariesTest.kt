@@ -3,6 +3,7 @@ package com.kuikly.stockchat
 import com.kuikly.stockchat.chat.ChatMessage
 import com.kuikly.stockchat.chat.ChatSessionStore
 import com.kuikly.stockchat.chat.MessageRole
+import com.kuikly.stockchat.chat.MessageAttachment
 import com.kuikly.stockchat.data.WatchlistAddResult
 import com.kuikly.stockchat.data.WatchlistStore
 import com.kuikly.stockchat.data.config.AiConfig
@@ -63,6 +64,32 @@ class ArchitectureBoundariesTest {
         assertTrue(reader.hasSessions())
         assertEquals(listOf("贵州茅台最近怎么样", "这里是解释"), restored.map { it.content })
         assertEquals("贵州茅台最近怎么样", reader.listSummaries().single().title)
+    }
+
+    @Test
+    fun chatSessionRestoresAttachmentMetadata() {
+        val storage = InMemoryKeyValueStorage()
+        val writer = ChatSessionStore(storage, nowMillis = { 1_000L })
+        val sessionId = writer.startSession()
+        writer.save(
+            sessionId,
+            listOf(
+                ChatMessage(
+                    "test", "m1", MessageRole.USER, "请分析附件",
+                    attachments = listOf(
+                        MessageAttachment("a1", "/private/media/chart.png", "图表.png", true),
+                        MessageAttachment("a2", "/private/media/report.pdf", "研报.pdf", false),
+                    ),
+                ),
+            ),
+        )
+
+        val attachments = ChatSessionStore(storage, nowMillis = { 1_500L })
+            .load(sessionId)
+            .single()
+            .attachments
+        assertEquals(listOf("/private/media/chart.png", "/private/media/report.pdf"), attachments.map { it.path })
+        assertEquals(listOf(true, false), attachments.map { it.isImage })
     }
 
     @Test

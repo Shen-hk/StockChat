@@ -1,6 +1,7 @@
 package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.entity.Security
+import com.kuikly.stockchat.data.config.DataSourceConfig
 
 /** Traceability carried by every non-quote conclusion shown to the user. */
 data class SourceStamp(
@@ -279,17 +280,28 @@ class FallbackMarketOverviewProvider(
     override fun overview(onResult: (MarketOverview?) -> Unit) {
         var primaryDelivered = false
         var fallbackValue: MarketOverview? = null
+        var primaryFinished = false
+        var fallbackFinished = false
+        var unavailableDelivered = false
+        fun deliverUnavailableIfNeeded() {
+            if (primaryFinished && fallbackFinished && !primaryDelivered && fallbackValue == null && !unavailableDelivered) {
+                unavailableDelivered = true
+                onResult(null)
+            }
+        }
         fallback.overview { value ->
             fallbackValue = value
+            fallbackFinished = true
             if (!primaryDelivered && value != null) onResult(value)
+            deliverUnavailableIfNeeded()
         }
         primary.overview { value ->
+            primaryFinished = true
             if (value != null && (value.indices.isNotEmpty() || value.sectors.isNotEmpty())) {
                 primaryDelivered = true
                 onResult(value)
-            } else if (fallbackValue == null) {
-                // The fallback request is still in flight; it will deliver its result directly.
             }
+            deliverUnavailableIfNeeded()
         }
     }
 
@@ -304,7 +316,7 @@ interface IndustryProvider {
     fun industries(symbols: List<String>, onResult: (Map<String, String>) -> Unit)
 }
 
-/** Page-scoped real -> memory cache -> deterministic demo fallback. */
+/** Page-scoped real -> memory cache -> empty state in real mode (demo only in mock mode). */
 class MarketInsightRepository(
     private val onlineFundFlow: FundFlowProvider,
     private val onlineFundamentals: FundamentalProvider,
@@ -356,8 +368,17 @@ class MarketInsightRepository(
         // figures visible without implying that a network refresh succeeded.
         overviewCache?.let { cached -> onResult(cached.copy(stamp = cached.stamp.copy(mode = DataMode.CACHE))) }
         onlineMarket.overview { value ->
-            val resolved = value ?: overviewCache ?: fallback.overviewValue()
-            overviewCache = resolved
+            val resolved = value ?: overviewCache ?: if (DataSourceConfig.USE_REAL_MARKET_DATA) {
+                // 真实模式不能用演示行情补洞，否则页面会把不可验证的数据画成实时走势。
+                MarketOverview(
+                    indices = emptyList(), risingCount = 0, fallingCount = 0, flatCount = 0,
+                    limitUpCount = 0, limitDownCount = 0, sectors = emptyList(),
+                    stamp = SourceStamp("行情服务暂不可用", "--", SourceTier.MARKET_DATA, DataMode.OFFLINE),
+                )
+            } else {
+                fallback.overviewValue()
+            }
+            if (value != null) overviewCache = value
             onResult(resolved)
         }
     }

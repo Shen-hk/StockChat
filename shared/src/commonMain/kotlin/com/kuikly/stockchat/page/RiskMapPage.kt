@@ -264,7 +264,7 @@ internal class RiskMapPage : BasePager() {
                                     color(page.theme.brand)
                                 }
                             }
-                            event { click { page.closePage() } }
+                            event { click { page.openPage(Routes.SEARCH) } }
                         }
                     }
                 }
@@ -802,7 +802,8 @@ internal class RiskMapPage : BasePager() {
 
     /** 行情/事实就绪后自动请求一次（用户「底下直接有详细解读」）；失败可手动重试。 */
     private fun maybeStartSkyAi() {
-        if (skyAiRequested || rows.isEmpty()) return
+        // 等至少一条真实行情到位再请求，避免页面首帧用空快照把一次请求机会消耗掉。
+        if (skyAiRequested || rows.isEmpty() || rows.none { it.quote != null }) return
         skyAiRequested = true
         requestSkyAi()
     }
@@ -1011,8 +1012,10 @@ internal class RiskMapPage : BasePager() {
                     event { click { page.toggleSkyAi() } }
                 }
             }
-            when (page.skyAiState) {
-                1 -> Text {
+            // 状态必须放在 vif 中：普通 builder 只执行一次，流式状态/正文变化会被冻
+            // 在首帧（R1/R7）。Text 的正文仍在 attr 中读取，保证每个增量都能刷新。
+            vif({ page.skyAiState == 1 }) {
+                Text {
                     attr {
                         text("正在调用 AI（${page.skyAiModel}）· 流式生成中…")
                         marginTop(6f)
@@ -1021,7 +1024,9 @@ internal class RiskMapPage : BasePager() {
                         color(page.theme.textTertiary)
                     }
                 }
-                2, 3 -> Text {
+            }
+            vif({ page.skyAiState == 2 || page.skyAiState == 3 }) {
+                Text {
                     attr {
                         text(page.skyAiText)
                         marginTop(6f)
@@ -1030,7 +1035,9 @@ internal class RiskMapPage : BasePager() {
                         color(page.theme.textPrimary)
                     }
                 }
-                4 -> View {
+            }
+            vif({ page.skyAiState == 4 }) {
+                View {
                     attr { marginTop(6f) }
                     Text {
                         attr {
@@ -1051,7 +1058,9 @@ internal class RiskMapPage : BasePager() {
                         }
                     }
                 }
-                else -> Text {
+            }
+            vif({ page.skyAiState == 0 }) {
+                Text {
                     attr {
                         text(
                             if (page.skyAiError.isNotEmpty()) page.skyAiError
@@ -1064,7 +1073,7 @@ internal class RiskMapPage : BasePager() {
                     }
                 }
             }
-            if (page.skyAiState == 0) {
+            vif({ page.skyAiState == 0 }) {
                 Text {
                     attr {
                         text(page.skyAiLocalSummary())
@@ -2040,6 +2049,7 @@ internal class RiskMapPage : BasePager() {
             )
         },
         skyContainerWidth(),
+        correlations,
     )
 
     /** 重算两两相关系数与波动倍率（行情/日K/指数到达后调用）。 */
@@ -2265,13 +2275,18 @@ internal class RiskMapPage : BasePager() {
                     rows[index] = rows[index].copy(quote = quote)
                 }
                 dataModeLabel = result.mode.quoteLabel()
+                // 行情是异步到达的；相关系数/波动/AI 事实槽位必须随新行情重算。
+                refreshSkyData()
             }
         }
         if (items.isEmpty()) return
 
         // 大盘基准（波动暴露的分母）。
         quoteRepository.load(INDEX_SYMBOL) { result ->
-            result.quote?.let { indexQuote = it }
+            result.quote?.let {
+                indexQuote = it
+                refreshSkyData()
+            }
         }
 
         // 行业归属：一次批量请求；失败降级为空表，不阻塞其他维度。

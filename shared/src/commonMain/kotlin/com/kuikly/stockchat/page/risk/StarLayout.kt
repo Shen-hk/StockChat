@@ -124,13 +124,44 @@ object StarLayout {
      * 确定性布局：同行业聚团 → 团按成员数降序（稳定）→ 团按画布宽度逐行排布 →
      * 团内成员从正上方起顺时针均匀圆周分布。首团固定在第一行，同输入恒同输出。
      */
-    fun layout(members: List<StarMemberIn>, width: Float): SkyGeometry {
+    fun layout(
+        members: List<StarMemberIn>,
+        width: Float,
+        correlations: Map<String, Double> = emptyMap(),
+    ): SkyGeometry {
         if (members.isEmpty() || width <= 0f) {
             return SkyGeometry(emptyList(), emptyList(), MIN_HEIGHT)
         }
-        // 分组：保留首次出现顺序，再按数量降序稳定排序（与 industryStats 口径一致）。
-        val grouped = members.groupBy { it.industry.ifBlank { "未分类" } }
-            .map { (name, list) -> name to list }
+        // 有行业数据时按行业抱团；行情接口暂时没有行业归属时，按真实相关系数
+        // 的连通分量分组，避免所有股票都落进一个「未分类」大圈。
+        val normalized = members.map { it.industry.ifBlank { "未分类" } }
+        val hasIndustry = normalized.any { it != "未分类" }
+        val grouped = if (hasIndustry || correlations.isEmpty()) {
+            members.groupBy { it.industry.ifBlank { "未分类" } }
+                .map { (name, list) -> name to list }
+        } else {
+            val remaining = members.toMutableList()
+            val result = ArrayList<Pair<String, List<StarMemberIn>>>()
+            var correlationGroup = 1
+            while (remaining.isNotEmpty()) {
+                val seed = remaining.removeAt(0)
+                val component = ArrayList<StarMemberIn>().apply { add(seed) }
+                var cursor = 0
+                while (cursor < component.size) {
+                    val current = component[cursor++]
+                    val connected = remaining.filter { other ->
+                        lookupCorrelation(correlations, current.symbol, other.symbol)
+                            ?.let { abs(it) >= LINK_MIN_R } == true
+                    }
+                    component.addAll(connected)
+                    remaining.removeAll(connected.toSet())
+                }
+                val label = if (component.size > 1) "相关组 $correlationGroup" else "未分类"
+                if (component.size > 1) correlationGroup++
+                result += label to component
+            }
+            result
+        }
             .sortedByDescending { it.second.size }
 
         val clusterBounds = grouped.map { (name, list) -> Triple(name, list, clusterRadius(list.size)) }

@@ -32,9 +32,12 @@ import com.kuikly.stockchat.data.provider.TencentQuoteProvider
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.AppTopBarAction
 import com.kuikly.stockchat.page.components.DivergingBar
 import com.kuikly.stockchat.page.components.FeatureTile
 import com.kuikly.stockchat.page.components.LineIconBarChart
+import com.kuikly.stockchat.page.components.LineIconBellRinging
+import com.kuikly.stockchat.page.components.LineIconRadar
 import com.kuikly.stockchat.page.components.LineIconSearch
 import com.kuikly.stockchat.page.components.RowGestureLayer
 import com.kuikly.stockchat.page.components.UndoBar
@@ -85,6 +88,8 @@ import kotlin.math.roundToInt
  */
 @Page(Routes.WATCHLIST, supportInLocal = true)
 internal class WatchlistPage : BasePager() {
+    private data class DragMotion(val dy: Float, val target: Int)
+
     private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val watchlistStore get() = dependencies.watchlistStore
@@ -98,18 +103,11 @@ internal class WatchlistPage : BasePager() {
     private var hint: String by observable("")
     private var lastRemoved: WatchlistItem? = null
     private var dataModeLabel: String by observable("")
-    private var activeGroup: String by observable("")
+    /** 分组 Tab：all = 全部，空串 = 未分组，其余为具体分组。 */
+    private var activeGroup: String by observable("all")
 
     /** 状态筛选："" = 全部，"movers" = 仅异动行。分组筛选在 [activeGroup]。 */
     private var statusFilter: String by observable("")
-
-    /**
-     * z3 异动上浮行（同屏唯一）。必须落在 observable 上并**在行 attr 内读取**——
-     * 若像 v1 那样在 vfor 子构建闭包读 `rows` 推导（[heroSymbol] 快照），行情逐只
-     * 到达时只有内容变了的行会重建，旧 hero 行不重建 → 玻璃残留多行、且没有任何
-     * 可驱动的变化。每次行情落定后经 [refreshHero] 重算（值不变不通知）。
-     */
-    private var heroSymbol: String by observable("")
 
     /** 搜索浮层开关：常驻搜索框下沉到 z5 后，这是唯一入口。 */
     private var searchOpen: Boolean by observable(false)
@@ -135,22 +133,18 @@ internal class WatchlistPage : BasePager() {
     // Delete+Insert 直接重挂在新槽位。松手后没有任何收尾动画，卡片跟手到哪就
     // 落在哪（2026-09-09 去掉 settle 回弹两拍：松手后再播一段位移动画被实测
     // 感知为「从原位置移到落点」的闪现）。
-    // ⚠️ R5 陷阱：cancelDragSession **不复位** dragFrom/dragTo/dragDy——让位行每拍
-    // 恒注册 animate(key=dragTo)，若落数据同批把 dragTo 复位（N→0），落位帧会命中
-    // 这枚「直播 spring」，让位行的 transform 归零被动画化：布局已瞬时就位、位移又
-    // 从 ±槽距 滑向 0，肉眼可见的二次移动。这些状态在 beginDragLift 全量重播种，
-    // 留着无害（所有读取都以 dragSymbol 非空为门）。
+    // dragFrom 保留为会话起点；dragMotion 携带当前目标槽位，避免位移与让位状态
+    // 分两次通知，原生列表不会在两个中间态之间来回合成。
     // （左滑动作行 2026-09-09 移除：实测不实用，置顶/移除归口长按菜单。）
     /** 拖拽会话中的行；空 = 无会话。 */
     private var dragSymbol: String by observable("")
-    /** 跟手位移（dp，自拿起点起算，向下为正）。每帧写、只被被拖行的 attr 读取。 */
-    private var dragDy: Float by observable(0f)
+    /** 跟手位移与目标槽位的原子快照，避免一次 move 触发两轮不一致的渲染。 */
+    private var dragMotion: DragMotion by observable(DragMotion(0f, 0))
     /**
      * 拿起时/当前目标槽位（displayList 索引，仅无过滤会话可用）。
      * 会话结束后故意不复位（R5 陷阱见上），由 beginDragLift 重播种。
      */
     private var dragFrom: Int by observable(0)
-    private var dragTo: Int by observable(0)
     /** 拖拽会话期间行情到达被挂起的 displayList 重建（vfor 重建会换视图丢 touchUp）。 */
     private var dragRefreshPending: Boolean = false
 
@@ -236,17 +230,18 @@ internal class WatchlistPage : BasePager() {
                     attr { marginTop(12f); flexDirectionRow(); alignItemsCenter() }
                     WatchlistFilterChip(
                         label = "全部 ${page.rows.size}",
-                        selected = page.statusFilter.isEmpty(),
+                        selected = { page.statusFilter.isEmpty() && page.activeGroup == "all" },
                         theme = page.theme,
                         compact = false,
                     ) {
                         page.statusFilter = ""
+                        page.activeGroup = "all"
                         page.refreshDisplay()
                     }
                     vif({ page.aggregate().moverCount > 0 }) {
                         WatchlistFilterChip(
                             label = "异动 ${page.aggregate().moverCount}",
-                            selected = page.statusFilter == FILTER_MOVERS,
+                            selected = { page.statusFilter == FILTER_MOVERS },
                             theme = page.theme,
                             compact = false,
                         ) {
@@ -260,11 +255,11 @@ internal class WatchlistPage : BasePager() {
                     listOf("core" to "核心观察", "research" to "待研究", "" to "未分组").forEach { (id, label) ->
                         WatchlistFilterChip(
                             label = label,
-                            selected = page.activeGroup == id,
+                            selected = { page.activeGroup == id },
                             theme = page.theme,
                             compact = true,
                         ) {
-                            page.activeGroup = if (page.activeGroup == id) "" else id
+                            page.activeGroup = id
                             page.reload()
                         }
                     }                }
@@ -331,10 +326,8 @@ internal class WatchlistPage : BasePager() {
                 vfor({ page.displayList }) { row ->
                     // 主题捕获在构建作用域：theme 读取的是 observable(nightModel)（见
                     // BasePager.isNightMode），若在 attr 里读到会覆盖动画 key（R2 高危
-                    // 陷阱，MarketPage 同款处理）。vfor 行内还要读 heroSymbol 驱动动效。
+                    // 陷阱，MarketPage 同款处理）。
                     val rowTheme = page.theme
-                    val heroGlass = rowTheme.marketGlass
-                    val rowIndex = page.displayList.indexOfFirst { it.symbol == row.symbol }
                     // ── 外层：拖拽会话层。跟手位移 / 让位位移 / 层级与投影。
                     // 与内层动画分视图隔离，避免多驱动共键（R3）。──
                     View {
@@ -342,57 +335,35 @@ internal class WatchlistPage : BasePager() {
                             marginTop(10f)
                             if (page.dragSymbol == row.symbol) {
                                 zIndex(30, useOutline = false)
-                                boxShadow(BoxShadow(0f, 10f, 28f, Color(0x000000, 0.20f)))
+                                // 阴影和大比例缩放会放大原生合成器的脏矩形；拖拽每帧
+                                // 更新 transform 时容易看到上一帧残影，层级已经足够表达抬起。
+                                boxShadow(BoxShadow(0f, 4f, 10f, Color(0x000000, 0.10f)))
                                 // 跟手位移直出，不注册动画（每帧写会跟动画互相拖拽）；
                                 // 松手由 applyDragOrder 同帧落数据并清 transform，无收尾动画。
-                                transform(translate = Translate(0f, 0f, offsetY = page.dragDy))
+                                transform(translate = Translate(0f, 0f, offsetY = page.dragMotion.dy))
                             } else {
-                                // 让位行：补上被拖行腾出的槽位。动画恒注册（key=dragTo），
-                                // 首个让位也走 spring（R5：本拍注册、下拍同 key 变化消费）。
+                                // attr 是增量应用：不显式复位会保留拿起拍的 zIndex/阴影。
+                                // 向上重排时该 View 通常被 vfor 复用，于是看起来卡片仍悬浮。
+                                zIndex(0, useOutline = false)
+                                boxShadow(BoxShadow(0f, 0f, 0f, Color(0x000000, 0f)))
+                                // 让位行索引必须在 attr 内实时读取。vfor 对未变行会复用
+                                // 原 View；在构建闭包缓存 index 会让上一次排序后的索引残留。
+                                val currentIndex = page.displayList.indexOfFirst { it.symbol == row.symbol }
                                 transform(
-                                    translate = Translate(0f, 0f, offsetY = page.rowSlotShift(rowIndex)),
+                                    translate = Translate(0f, 0f, offsetY = page.rowSlotShift(currentIndex)),
                                 )
-                                if (!page.reduceMotion) {
-                                    animate(Animation.springEaseOut(0.26f, 0.85f, 0.18f), page.dragTo)
-                                }
                             }
                         }
-                        // ── 中层：拿起缩放（「松动」手感）。驱动 key 固定 dragSymbol，
-                        // 与内层 hero 动画互斥不共键；拿起消费一次 spring，松手落位走
-                        // remount（Delete+Insert），新视图首帧直出 scale 1，无动画。──
+                        // ── 中层：拿起缩放（「松动」手感）。拖拽态结束时必须直接归零，
+                        // 不能注册 dragSymbol spring；否则松手落位后还会延迟播放回落动画，
+                        // 视觉上像股票悬浮在落点上方。──
                         View {
                             attr {
                                 val lifted = page.dragSymbol == row.symbol
-                                val liftScale = if (lifted) 1.045f else 1f
+                                val liftScale = if (lifted) 1.02f else 1f
                                 transform(scale = Scale(liftScale, liftScale))
-                                if (!page.reduceMotion) {
-                                    animate(Animation.springEaseOut(0.20f, 0.90f, 0.20f), page.dragSymbol)
-                                }
                             }
                             View {
-                                attr {
-                                    // z3 异动上浮行（M-2，doc 24 §8）：最异常的一行垫玻璃浮起。
-                                    // heroSymbol 是 observable，读取发生在 attr 内（R1），行随
-                                    // 行情落定即时重算（[refreshHero]），旧 hero 行同步下沉。
-                                    val isHero = page.heroSymbol == row.symbol
-                                    if (isHero) {
-                                        // 玻璃垫片：内容层必须不透明（遮住动作层），所以玻璃做成
-                                        // 行外 4dp 的垫圈——视觉上是行浮在玻璃上，层次不失真。
-                                        padding(4f)
-                                        borderRadius(18f)
-                                        backgroundColor(heroGlass)
-                                        boxShadow(BoxShadow(0f, 6f, 18f, Color(0x000000, 0.10f)))
-                                    }
-                                    if (!page.reduceMotion) {
-                                        transform(
-                                            scale = Scale(if (isHero) 1.012f else 1f, if (isHero) 1.012f else 1f),
-                                            translate = Translate(0f, 0f, offsetY = if (isHero) -1.5f else 0f),
-                                        )
-                                        // animate 恒定注册（R5）。isHero/glass 等其它读取在前，
-                                        // heroSymbol 在 animate 实参位置做最后一次读取（R2）。
-                                        animate(Animation.springEaseOut(0.32f, 0.82f, 0.16f), page.heroSymbol)
-                                    }
-                                }
                                 RowGestureLayer(
                                     onTapContent = { page.openRowDetail(row.symbol) },
                                     onLongPressContent = { page.beginDragLift(row.symbol) },
@@ -513,6 +484,7 @@ internal class WatchlistPage : BasePager() {
                     }
                 }
             }
+            }
 
             AppTopBar(
                 title = "我的小空间",
@@ -523,9 +495,9 @@ internal class WatchlistPage : BasePager() {
                 backLabel = "返回",
                 onBack = { page.closePage() },
                 actions = listOf(
-                    { "预警" } to { page.openPage(Routes.ALERTS) },
-                    { "风险" } to { page.openPage(Routes.RISK) },
-                    { "搜索" } to { page.searchOpen = true },
+                    AppTopBarAction(icon = { color, size, _ -> LineIconBellRinging(color, size) }, onClick = { page.openPage(Routes.ALERTS) }),
+                    AppTopBarAction(icon = { color, size, _ -> LineIconRadar(color, size) }, onClick = { page.openPage(Routes.RISK) }),
+                    AppTopBarAction(icon = { color, size, _ -> LineIconSearch(color, size) }, onClick = { page.searchOpen = true }),
                 ),
             )
 
@@ -616,6 +588,7 @@ internal class WatchlistPage : BasePager() {
                         zIndex(40, useOutline = false)
                         backgroundColor(Color(0x000000, 0.42f))
                         justifyContentFlexEnd()
+                        paddingBottom(page.pagerData.safeAreaInsets.bottom)
                     }
                     event { click { page.menuSymbol = "" } }
                     View {
@@ -733,6 +706,7 @@ internal class WatchlistPage : BasePager() {
                         zIndex(45, useOutline = false)
                         backgroundColor(Color(0x000000, 0.42f))
                         justifyContentFlexEnd()
+                        paddingBottom(page.pagerData.safeAreaInsets.bottom)
                     }
                     event { click { page.reasonEditSymbol = "" } }
                     View {
@@ -851,7 +825,6 @@ internal class WatchlistPage : BasePager() {
                     }
                 }
                 }
-            }
 
             // 撤销条压在最上层：移除从长按菜单触发，撤销入口落在拇指可达的底部，
             // 沿用顶部 hint 等于没有撤销。
@@ -1208,28 +1181,13 @@ internal class WatchlistPage : BasePager() {
     // ── 筛选与行 ──
 
     private fun displayRows(): List<WatchlistRow> = rows.filter { row ->
-        val groupOk = activeGroup.isEmpty() || row.groupId == activeGroup
+        val groupOk = activeGroup == "all" || row.groupId == activeGroup
         val statusOk = statusFilter.isEmpty() || (
             statusFilter == FILTER_MOVERS &&
                 row.quote != null &&
                 abs(row.quote.changePercent) >= 3.0
             )
         groupOk && statusOk
-    }
-
-    /**
-     * z3 异动行重算：取 |涨跌幅| 最大的异动行；行情平静（无异动）时清空 → 无 z3。
-     * 在数据回调里调用（不在构建闭包里），只在该行真正变化时写 observable——
-     * ObservableProperties 对同值写入会 early-return，不会产生多余的刷新/打断动画。
-     */
-    private fun refreshHero() {
-        val next = rows
-            .mapNotNull { row -> row.quote?.let { row.symbol to abs(it.changePercent) } }
-            .filter { it.second >= 3.0 }
-            .maxByOrNull { it.second }
-            ?.first
-            ?: ""
-        if (next != heroSymbol) heroSymbol = next
     }
 
     /** FR-W9：>STALE_DAYS 天没点开过的行（从未点开按加入时间计，0 时间戳不计）。 */
@@ -1257,14 +1215,16 @@ internal class WatchlistPage : BasePager() {
     // ── 长按拖拽排序：状态机 ──
 
     /**
-     * 让位行位移：被拖行从 [dragFrom] 挪到 [dragTo]，两行之间的行各补一个槽位
+     * 让位行位移：被拖行从 [dragFrom] 挪到当前目标槽位，两行之间的行各补一个槽位
      * （±[ROW_SLOT]）。仅无过滤会话（displayList == store 顺序）下成立。
      */
     private fun rowSlotShift(index: Int): Float {
-        if (dragSymbol.isEmpty() || dragFrom == dragTo) return 0f
+        if (dragSymbol.isEmpty()) return 0f
+        val target = dragMotion.target
+        if (dragFrom == target) return 0f
         return when {
-            dragTo > dragFrom && index > dragFrom && index <= dragTo -> -ROW_SLOT
-            dragTo < dragFrom && index < dragFrom && index >= dragTo -> ROW_SLOT
+            target > dragFrom && index > dragFrom && index <= target -> -ROW_SLOT
+            target < dragFrom && index < dragFrom && index >= target -> ROW_SLOT
             else -> 0f
         }
     }
@@ -1272,24 +1232,25 @@ internal class WatchlistPage : BasePager() {
     /** 长按拿起：锁列表滚动 + 记录槽位。过滤视图下排序口径混乱，退回直接开菜单。 */
     private fun beginDragLift(symbol: String) {
         if (dragSymbol.isNotEmpty()) return
-        if (statusFilter.isNotEmpty() || activeGroup.isNotEmpty()) {
+        if (statusFilter.isNotEmpty() || activeGroup != "all") {
             menuSymbol = symbol
             return
         }
         val index = displayList.indexOfFirst { it.symbol == symbol }
         if (index < 0) return
         dragFrom = index
-        dragTo = index
-        dragDy = 0f
+        dragMotion = DragMotion(0f, index)
         dragSymbol = symbol
     }
 
     /** 跟手：写实时位移，并按槽距判定目标槽位（越过相邻行中点即让位）。 */
     private fun dragMove(dy: Float) {
         if (dragSymbol.isEmpty()) return
-        dragDy = dy
         val target = (dragFrom + (dy / ROW_SLOT).roundToInt()).coerceIn(0, displayList.lastIndex)
-        if (target != dragTo) dragTo = target
+        if (dy == dragMotion.dy && target == dragMotion.target) return
+        // 一个 observable 写入同时携带位移和目标，避免先画新位移/旧让位、再画
+        // 旧位移/新让位的中间帧；这正是跨槽快速拖动时抖动和残影的高发路径。
+        dragMotion = DragMotion(dy, target)
     }
 
     /**
@@ -1317,9 +1278,16 @@ internal class WatchlistPage : BasePager() {
      */
     private fun applyDragOrder(symbol: String) {
         val from = dragFrom
-        val to = dragTo
-        cancelDragSession()
-        if (to == from) return
+        val to = dragMotion.target
+        // 行情回调若在拖拽期间到达，不能在落位前先 flush；否则会先绘制旧槽位，
+        // 下一帧才移动数据，松手时就会出现卡片悬浮/二次落位。
+        dragRefreshPending = false
+        cancelDragSession(flushPending = false)
+        if (to == from) {
+            // 本次没有跨槽，但可能有行情刷新被拖拽会话挂起，仍需补回列表。
+            refreshDisplay()
+            return
+        }
         watchlistStore.moveToIndex(symbol, to)
         val rowsIdx = rows.indexOfFirst { it.symbol == symbol }
         if (rowsIdx >= 0) {
@@ -1333,15 +1301,13 @@ internal class WatchlistPage : BasePager() {
 
     /**
      * 结束会话：清拖拽态（滚动解锁），并补一次被挂起的 displayList 重建。
-     * ⚠️ 只清 dragSymbol / dragDy，**不复位 dragFrom / dragTo**（R5 陷阱，见字段区
-     * 注释）：让位行恒注册 animate(key=dragTo)，落数据同批复位 dragTo 会让落位帧的
-     * transform 归零被 spring 动画化（布局已就位 + 位移回放 = 松手闪现）。
-     * 残留值以 dragSymbol 非空为读取门，beginDragLift 会全量重播种。
+     * dragMotion 的目标槽位在结束时保留到本轮渲染完成，避免清理状态时产生
+     * 一个额外的让位中间帧；下一次 beginDragLift 会重新播种。
      */
-    private fun cancelDragSession() {
+    private fun cancelDragSession(flushPending: Boolean = true) {
         dragSymbol = ""
-        dragDy = 0f
-        if (dragRefreshPending) {
+        dragMotion = DragMotion(0f, dragMotion.target)
+        if (flushPending && dragRefreshPending) {
             dragRefreshPending = false
             refreshDisplay()
         }
@@ -1493,8 +1459,6 @@ internal class WatchlistPage : BasePager() {
         // vfor 整列视图重挂载 = 肉眼可见的整体刷新（行情每次到达都会闪）。
         // diffUpdate 按 Myers diff 只对内容变化的行 Delete+Insert，其余 Keep 复用视图。
         displayList.diffUpdate(displayRows()) { a, b -> a == b }
-        // z3 hero 随每次行情落定重算（值不变不通知；见 [refreshHero]）。
-        refreshHero()
         // doc 30：行情/列表任一落定后重建收件箱与速览（builder 纯函数，量级小）。
         rebuildInbox()
     }
@@ -1587,7 +1551,7 @@ private fun groupTint(groupId: String, theme: StockChatTheme): Color = when (gro
 /** 筛选 chip。分组行用 [compact] 弱化——它是第二行，不该和状态筛选抢视觉重量。 */
 private fun ViewContainer<*, *>.WatchlistFilterChip(
     label: String,
-    selected: Boolean,
+    selected: () -> Boolean,
     theme: StockChatTheme,
     compact: Boolean,
     onClick: () -> Unit,
@@ -1600,13 +1564,13 @@ private fun ViewContainer<*, *>.WatchlistFilterChip(
             height(if (compact) 26f else 30f)
             allCenter()
             borderRadius(if (compact) 8f else 9f)
-            backgroundColor(if (selected) theme.brandSoft else theme.surfaceMuted)
+            backgroundColor(if (selected()) theme.brandSoft else theme.surfaceMuted)
         }
         Text {
             attr {
                 text(label)
                 fontSizeScaled(if (compact) 10.5f else 11f)
-                color(if (selected) theme.brand else theme.textSecondary)
+                color(if (selected()) theme.brand else theme.textSecondary)
             }
         }
         event { click { onClick() } }

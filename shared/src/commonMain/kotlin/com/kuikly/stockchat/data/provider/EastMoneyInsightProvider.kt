@@ -135,10 +135,11 @@ object EastMoneyInsightParser {
         )
     }
 
-    fun parseAnnouncements(root: JSONObject): List<DisclosureItem> = root.rows("data", "list").map { row ->
+    fun parseAnnouncements(root: JSONObject, fallbackCode: String = ""): List<DisclosureItem> = root.rows("data", "list").map { row ->
         val id = row.optString("art_code")
         val title = row.optString("title_ch").ifEmpty { row.optString("title") }
         val date = row.date("notice_date").ifEmpty { row.date("display_time") }
+        val code = row.optString("stock_code").ifEmpty { fallbackCode }
         DisclosureItem(
             id = id,
             kind = DisclosureKind.ANNOUNCEMENT,
@@ -147,7 +148,7 @@ object EastMoneyInsightParser {
             date = date,
             summary = summarizeTitle(title),
             riskLabel = riskLabel(title),
-            url = if (id.isEmpty()) "" else "https://data.eastmoney.com/notices/detail/600519/$id.html",
+            url = if (id.isEmpty() || code.isEmpty()) "" else "https://data.eastmoney.com/notices/detail/$code/$id.html",
             stamp = exchangeStamp(date),
         )
     }
@@ -213,7 +214,7 @@ object EastMoneyInsightParser {
         val cleaned = content.replace(Regex("\\s+"), " ").trim()
         val summary = cleaned
             .substringAfter("重要提示", cleaned)
-            .take(300)
+            .take(900)
             .trim()
             .ifEmpty { item.summary }
         return item.copy(summary = summary, riskLabel = riskLabel("${item.title} $summary"))
@@ -454,10 +455,22 @@ class EastMoneyInsightProvider(
         scope.launch {
             val code = symbol.substringBefore('.')
             val annRoot = request("https://np-anotice-stock.eastmoney.com/api/security/ann?sr=-1&page_size=6&page_index=1&ann_type=A&client_source=web&stock_list=$code")
-            var announcements = annRoot?.let(EastMoneyInsightParser::parseAnnouncements).orEmpty()
-            announcements.firstOrNull()?.let { first ->
-                val content = request("https://np-cnotice-stock.eastmoney.com/api/content/ann?art_code=${first.id}&client_source=web&page_index=1")
-                announcements = listOf(EastMoneyInsightParser.withAnnouncementContent(first, content)) + announcements.drop(1)
+            var announcements = annRoot?.let { EastMoneyInsightParser.parseAnnouncements(it, code) }.orEmpty()
+            // 列表接口只给标题；长按详情必须有可读的公告正文，不用标题摘要冒充文章。
+            // 只补前 3 条（详情页展示上限），避免后台无节制拉取历史公告。
+            if (announcements.isNotEmpty()) {
+                val hydrated = mutableListOf<DisclosureItem>()
+                var index = 0
+                while (index < announcements.size) {
+                    val item = announcements[index]
+                    val resolved = if (index < 3 && item.id.isNotEmpty()) {
+                        val content = request("https://np-cnotice-stock.eastmoney.com/api/content/ann?art_code=${item.id}&client_source=web&page_index=1")
+                        EastMoneyInsightParser.withAnnouncementContent(item, content)
+                    } else item
+                    hydrated += resolved
+                    index++
+                }
+                announcements = hydrated
             }
             val reportsRoot = request("https://reportapi.eastmoney.com/report/list?pageSize=5&pageNo=1&qType=0&beginTime=2024-01-01&endTime=${platformCurrentDate()}&code=$code")
             val reports = reportsRoot?.let(EastMoneyInsightParser::parseReports).orEmpty()

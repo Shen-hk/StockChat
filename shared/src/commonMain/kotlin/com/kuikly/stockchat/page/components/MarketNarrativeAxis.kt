@@ -53,8 +53,10 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
     // 触摸命中与绘制的共用宽度（页侧由 pagerData.pageViewWidth 减横向 padding 得出，
     // RiskSkyTimeBrush 同款——touch 参数里没有 viewWidth）
     containerWidth: Float,
-    // 0..240 分钟的度量序列（红盘率或指数涨跌幅）；空序列 = 冷启动无帧，只画空轨道
+    // 已真实采集的度量序列；空序列 = 冷启动无帧，只画空轨道
     series: () -> List<Double>,
+    // 与 series 一一对应的交易分钟。禁止把稀疏真实帧补成虚构的整日分钟线。
+    seriesMinutes: () -> List<Int>,
     // 分钟成交密度 0..1（累计成交额逐分钟差分归一化）
     density: () -> List<Float>,
     // 多空分界值（红盘率口径 = 50；指数口径 = 0 即昨收）
@@ -107,12 +109,13 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
                 // 轻点（未拖动）优先命中事件钉：钉子是「直达时刻」的按钮。
                 if (!moved) {
                     val s = series()
-                    if (s.size > NarrativeAxisLayout.MINUTES) {
+                    if (s.isNotEmpty()) {
                         val (d0, d1) = domain()
                         val hit = events().firstOrNull { event ->
                             val minute = event.minute.coerceIn(0, NarrativeAxisLayout.MINUTES)
                             val px = NarrativeAxisLayout.xFor(minute, containerWidth)
-                            val py = valueY(s[minute], d0, d1)
+                            val sampleIndex = seriesMinutes().indexOf(minute)
+                            val py = if (sampleIndex >= 0) valueY(s[sampleIndex], d0, d1) else (NarrativeAxisLayout.PLOT_TOP + NarrativeAxisLayout.PLOT_BOT) / 2f
                             val dx = params.x - px
                             val dy = params.y - py
                             dx * dx + dy * dy <= NarrativeAxisLayout.PIN_HIT * NarrativeAxisLayout.PIN_HIT
@@ -142,6 +145,7 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
             }
         }) { canvas, _, _ ->
             val s = series()
+            val minutes = seriesMinutes()
             val dens = density()
             val base = baseValue()
             val (d0, d1) = domain()
@@ -202,11 +206,11 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
                     var j = i
                     while (j < s.size - 1 && (s[j] >= base) == (s[j + 1] >= base)) j++
                     canvas.beginPath()
-                    canvas.moveTo(layout.xFor(i, containerWidth), baseY)
+                    canvas.moveTo(layout.xFor(minutes.getOrElse(i) { 0 }, containerWidth), baseY)
                     for (t in i..j.coerceAtMost(s.size - 1)) {
-                        canvas.lineTo(layout.xFor(t, containerWidth), valueY(s[t], d0, d1))
+                        canvas.lineTo(layout.xFor(minutes.getOrElse(t) { 0 }, containerWidth), valueY(s[t], d0, d1))
                     }
-                    canvas.lineTo(layout.xFor(j.coerceAtMost(s.size - 1), containerWidth), baseY)
+                    canvas.lineTo(layout.xFor(minutes.getOrElse(j.coerceAtMost(s.size - 1)) { 0 }, containerWidth), baseY)
                     canvas.closePath()
                     canvas.fillStyle(if (s[i] >= base) theme.rise.opacity(0.20f) else theme.fall.opacity(0.20f))
                     canvas.fill()
@@ -216,7 +220,7 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
                 // 主线
                 canvas.beginPath()
                 for (t in s.indices) {
-                    val x = layout.xFor(t.coerceAtMost(layout.MINUTES), containerWidth)
+                    val x = layout.xFor(minutes.getOrElse(t) { 0 }.coerceIn(0, layout.MINUTES), containerWidth)
                     val y = valueY(s[t], d0, d1)
                     if (t == 0) canvas.moveTo(x, y) else canvas.lineTo(x, y)
                 }
@@ -237,7 +241,8 @@ internal fun ViewContainer<*, *>.MarketNarrativeAxis(
                 canvas.lineWidth(0.8f)
                 canvas.strokeStyle(theme.brand.opacity(0.28f))
                 canvas.stroke()
-                val py = if (full.size > minute) valueY(full[minute], d0, d1) else (layout.PLOT_TOP + layout.PLOT_BOT) / 2f
+                val sampleIndex = seriesMinutes().indexOf(minute)
+                val py = if (sampleIndex >= 0) valueY(full[sampleIndex], d0, d1) else (layout.PLOT_TOP + layout.PLOT_BOT) / 2f
                 canvas.beginPath()
                 canvas.arc(px, py, layout.PIN_RADIUS, 0f, (2 * PI).toFloat(), false)
                 canvas.fillStyle(theme.brand)

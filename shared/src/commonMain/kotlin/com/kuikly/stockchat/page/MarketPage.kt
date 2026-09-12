@@ -18,16 +18,17 @@ import com.kuikly.stockchat.common.openUrl
 import com.kuikly.stockchat.data.provider.AiProvider
 import com.kuikly.stockchat.data.MarketDependencies
 import com.kuikly.stockchat.data.provider.HotspotSnapshot
+import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.MarketIndex
 import com.kuikly.stockchat.data.provider.MarketOverview
 import com.kuikly.stockchat.data.provider.MarketSnapshotFrame
 import com.kuikly.stockchat.data.provider.MarketSnapshotStore
-import com.kuikly.stockchat.data.provider.MarketDemoDaySynthesizer
 import com.kuikly.stockchat.data.provider.MarketEvent
 import com.kuikly.stockchat.data.provider.MarketEventDetector
 import com.kuikly.stockchat.data.provider.NewsItem
 import com.kuikly.stockchat.data.provider.OfflineMarketInsightProvider
 import com.kuikly.stockchat.data.provider.SectorRank
+import com.kuikly.stockchat.data.provider.SourceStamp
 import com.kuikly.stockchat.data.provider.SourceTier
 import com.kuikly.stockchat.data.provider.platformCurrentHour
 import com.kuikly.stockchat.data.provider.platformCurrentMinuteOfDay
@@ -35,6 +36,9 @@ import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.data.provider.quoteLabel
 import com.kuikly.stockchat.data.provider.timeLabelOf
 import com.kuikly.stockchat.page.components.AppTopBar
+import com.kuikly.stockchat.page.components.AppTopBarAction
+import com.kuikly.stockchat.page.components.LineIconCalendar
+import com.kuikly.stockchat.page.components.LineIconRefresh
 import com.kuikly.stockchat.page.components.AppTopBarMetric
 import com.kuikly.stockchat.page.components.AtmosphereBackdrop
 import com.kuikly.stockchat.page.components.MarketNarrativeAxis
@@ -58,7 +62,6 @@ import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.handler.observable
 import com.tencent.kuikly.core.timer.setTimeout
-import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
@@ -100,7 +103,14 @@ internal class MarketPage : BasePager() {
     private val theme: StockChatTheme get() = appTheme()
     private val dependencies by lazy { MarketDependencies.forPager(pagerId) }
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
-    private var overview: MarketOverview by observable(OfflineMarketInsightProvider().overviewValue())
+    // 真实模式首帧先明确“连接中”，不能让演示数据短暂伪装成实时行情。
+    private var overview: MarketOverview by observable(
+        MarketOverview(
+            indices = emptyList(), risingCount = 0, fallingCount = 0, flatCount = 0,
+            limitUpCount = 0, limitDownCount = 0, sectors = emptyList(),
+            stamp = SourceStamp("正在连接行情服务", "--", SourceTier.MARKET_DATA, DataMode.OFFLINE),
+        ),
+    )
     private var refreshing: Boolean by observable(false)
     /** 0 = no flash; 1/2/3 = the three phases of one tick sequence. */
     private var tickPhase: Int by observable(0)
@@ -122,6 +132,8 @@ internal class MarketPage : BasePager() {
     private var breadthEntered: Boolean by observable(false)
     /** 量能三柱从基线生长（spec 22 §3.2）。 */
     private var volumeEntered: Boolean by observable(false)
+    /** 市场页主区块按阶段淡入，避免首次进入时所有信息同时砸入视野。 */
+    private var marketEntrancePhase: Int by observable(0)
 
     // ------------------------------------------------------------------
     // 时间机器（doc 36 ①②）：快照环 + scrub 状态 + 事件（③④共用）
@@ -135,8 +147,8 @@ internal class MarketPage : BasePager() {
     private var axisMetric: Int by observable(0)
     /** 0 宽度情绪 / 1 量能资金 / 2 板块竞速 / 3 连板梯队。 */
     private var activeSlice: Int by observable(0)
-    private var tempDetailOpen: Boolean by observable(false)
     private var scrubTweenGeneration = 0
+    private var liveRefreshGeneration = 0
     /** 端侧事件检测缓存（ingest 时重算，draw/卡片共用，避免每帧重跑 O(n²)）。 */
     private var cachedEvents: List<MarketEvent> = emptyList()
     private var marketNews: List<NewsItem> = emptyList()
@@ -188,29 +200,25 @@ internal class MarketPage : BasePager() {
         if (motionEnabled()) {
             setTimeout(1) {
                 heroEntered = true
-                ladderEntered = true
-                stripEntered = true
-                breadthEntered = true
-                volumeEntered = true
+                marketEntrancePhase = 1
             }
+            setTimeout(75) { stripEntered = true; marketEntrancePhase = 2 }
+            setTimeout(150) { marketEntrancePhase = 3 }
+            setTimeout(225) { marketEntrancePhase = 4 }
+            setTimeout(300) { breadthEntered = true; volumeEntered = true; marketEntrancePhase = 5 }
+            setTimeout(375) { ladderEntered = true; marketEntrancePhase = 6 }
         }
-        ingestOverview(overview)
         refreshOverview()
+        scheduleLiveRefresh()
         dependencies.insightRepository.loadHotspots { hotspots = it }
     }
 
     /**
-     * 快照入库（doc 36 §7 降级链）：真实模式逐分钟节流记录真实轮询帧；
-     * DEMO 模式用演示快照锚定合成整日 241 帧，让时间机器在演示态完整可玩
-     * （真实模式绝不合成——不冒充）。冷启动无帧时叙事轴退化为空轨道。
+     * 快照入库：只记录在线行情的真实轮询帧。冷启动或数据源不可用时叙事轴保持空轨道，
+     * 绝不合成演示日内曲线，也不以缓存/离线值伪造新的时间点。
      */
     private fun ingestOverview(data: MarketOverview) {
-        if (data.stamp.tier == SourceTier.DEMO) {
-            if (snapshotStore.all().size < MarketDemoDaySynthesizer.FRAMES) {
-                snapshotStore.clear()
-                MarketDemoDaySynthesizer.synthesize(data).forEach(snapshotStore::put)
-            }
-        } else {
+        if (data.stamp.tier != SourceTier.DEMO && data.stamp.mode == DataMode.ONLINE) {
             snapshotStore.record(data, platformCurrentMinuteOfDay())
         }
         snapshotFrames = snapshotStore.all()
@@ -241,22 +249,12 @@ internal class MarketPage : BasePager() {
             ?: frame.redPct
     }
 
-    /** 度量序列补全为 0..240 稠密数组（帧稀疏时按 last-known 填充）。 */
+    /** 仅返回真实采集点；绘制端按对应交易分钟定位，避免补出不存在的历史走势。 */
     private fun axisSeries(): List<Double> {
-        val frames = snapshotFrames
-        if (frames.isEmpty()) return emptyList()
-        val out = DoubleArray(241)
-        var fi = 0
-        var current = metricValueAt(frames.first())
-        for (m in 0..240) {
-            while (fi < frames.size && frames[fi].minute <= m) {
-                current = metricValueAt(frames[fi])
-                fi++
-            }
-            out[m] = current
-        }
-        return out.toList()
+        return snapshotFrames.map(::metricValueAt)
     }
+
+    private fun axisMinutes(): List<Int> = snapshotFrames.map { it.minute }
 
     /** 分钟成交密度：累计成交额逐分钟差分 → 归一化（B 站高能进度条的语言）。 */
     private fun axisDensity(): List<Float> {
@@ -276,23 +274,6 @@ internal class MarketPage : BasePager() {
         for (m in 1..240) diff[m] = (cumulative[m] - cumulative[m - 1]).coerceAtLeast(0.0)
         val maxDiff = diff.max().takeIf { it > 0.0 } ?: return emptyList()
         return diff.map { (it / maxDiff).toFloat() }
-    }
-
-    /** 温度日内轨迹（moodScore 与市场温度同源同公式）。 */
-    private fun temperatureSeries(): List<Double> {
-        val frames = snapshotFrames
-        if (frames.isEmpty()) return emptyList()
-        val out = DoubleArray(241)
-        var fi = 0
-        var current = frames.first().overview.moodScore.toDouble()
-        for (m in 0..240) {
-            while (fi < frames.size && frames[fi].minute <= m) {
-                current = frames[fi].overview.moodScore.toDouble()
-                fi++
-            }
-            out[m] = current
-        }
-        return out.toList()
     }
 
     private fun axisBaseValue(): Double = if (axisMetric == 0) 50.0 else 0.0
@@ -340,8 +321,23 @@ internal class MarketPage : BasePager() {
     /** 拖动中直接切帧（N1）：拖动手势会打断进行中的跳帧补间。 */
     private fun onAxisScrub(minute: Int) {
         scrubTweenGeneration++
-        scrubMinute = minute
-        replayChipVisible = minute in 0..239
+        // 只允许回放实际入库的帧；拖到未采集区间时停在该位置之前最近的真实快照。
+        val sampledMinute = snapshotFrames.lastOrNull { it.minute <= minute }?.minute ?: -1
+        scrubMinute = sampledMinute
+        replayChipVisible = sampledMinute in 0..239
+    }
+
+    /** 交易时段每 15 秒拉取一次；以回调完成后再排下一轮，避免慢网请求重叠。 */
+    private fun scheduleLiveRefresh() {
+        val generation = ++liveRefreshGeneration
+        fun next() {
+            setTimeout(15_000) {
+                if (generation != liveRefreshGeneration) return@setTimeout
+                if (!refreshing && marketPhase().live) refreshOverview()
+                next()
+            }
+        }
+        next()
     }
 
     /** 板块竞速（⑤）：Top5 + 相对 30 分钟前的位次变动（只在回放态显箭头）。 */
@@ -827,32 +823,6 @@ internal class MarketPage : BasePager() {
                     }
                 }
 
-                // ⑥ · 透明温度计：徽章 + 日内轨迹 + 分量拆解（公式全透明可点开）。
-                View { attr { marginTop(2f); marginLeft(4f); marginRight(10f); flexDirectionRow(); alignItemsCenter(); paddingLeft(11f); paddingRight(11f); paddingTop(9f); paddingBottom(9f); borderRadius(13f); backgroundColor(theme.surface); boxShadow(BoxShadow(0f, 2f, 8f, theme.textPrimary.opacity(0.05f))) }
-                    View {
-                        attr {
-                            width(44f); height(44f); borderRadius(12f); allCenter()
-                            backgroundColor(page.tempBadgeBackground())
-                            // animate last：驱动键 = scrubMinute（回放帧直切徽章配色）
-                            animate(Animation.easeOut(0.18f), page.scrubMinute)
-                        }
-                        Text { attr { text("${page.displayOverview().moodScore}°"); fontSizeScaled(17f); lineHeightScaled(19f); fontWeightBold(); color(page.tempBadgeForeground()) } }
-                        Text { attr { text("市场温度"); fontSizeScaled(7.5f); color(page.tempBadgeForeground().opacity(0.72f)) } }
-                    }
-                    View { attr { flex(1f); marginLeft(10f) }
-                        Text { attr { text(page.temperatureSummary()); fontSizeScaled(10.5f); lineHeightScaled(15f); color(theme.textSecondary) } }
-                        Text { attr { text(if (page.tempDetailOpen) "收起构成 ∧" else "点开看构成 ∨"); marginTop(3f); fontSizeScaled(9.5f); fontWeightSemiBold(); color(theme.brand) } }
-                    }
-                    TemperatureSpark(theme, series = { page.temperatureSeries() }, scrubMinute = { page.scrubMinute })
-                    event { click { page.tempDetailOpen = !page.tempDetailOpen } }
-                }
-                vif({ page.tempDetailOpen }) {
-                    View { attr { marginTop(8f); marginLeft(4f); marginRight(10f); padding(10f); borderRadius(9f); backgroundColor(theme.surfaceMuted) }
-                        Text { attr { text(page.temperatureFormulaText()); fontSizeScaled(10f); lineHeightScaled(17f); color(theme.textSecondary) } }
-                        Text { attr { text("只描述「今天热不热」，不预测「明天涨不涨」。公式端侧透明，与黑箱温度计划界。"); marginTop(5f); fontSizeScaled(9.5f); color(theme.textTertiary) } }
-                    }
-                }
-
                 // C · z1 secondary index cards under a z3 main glass card（J2：点按跳既有详情页）。
                 Text { attr { text("指数带"); marginTop(14f); fontSizeScaled(17f); fontWeightBold(); color(theme.textPrimary) } }
                 Text { attr { text("点位、方向与当日区间 · 点按进入大盘详情页"); marginTop(3f); fontSizeScaled(10f); color(theme.textTertiary) } }
@@ -955,9 +925,85 @@ internal class MarketPage : BasePager() {
                     }
                 }
 
+                // 标题、说明与板块涨跌数据收在同一容器，作为指数带的连续下一段。
+                View {
+                    attr {
+                        marginTop(14f); padding(13f); borderRadius(16f); backgroundColor(theme.surface)
+                        boxShadow(BoxShadow(0f, 2f, 8f, theme.textPrimary.opacity(0.05f)))
+                        val entered = page.marketEntrancePhase >= 3 || !page.motionEnabled()
+                        opacity(if (entered) 1f else 0f)
+                        if (page.motionEnabled()) {
+                            transform(translate = Translate(0f, 0f, 0f, if (entered) 0f else 12f))
+                            animate(Animation.easeOut(0.28f), page.marketEntrancePhase)
+                        }
+                    }
+                    Text { attr { text("板块行情"); fontSizeScaled(17f); fontWeightBold(); color(theme.textPrimary) } }
+                    Text { attr { text("实时涨跌 · 上涨/下跌家数"); marginTop(3f); fontSizeScaled(10f); color(theme.textTertiary) } }
+                    vbind({ page.displayOverview() }) {
+                        val sectors = page.displayOverview().sectors.sortedByDescending { it.changePercent }.take(6)
+                        if (sectors.isEmpty()) {
+                            Text { attr { text("板块行情暂未接入"); marginTop(9f); fontSizeScaled(11f); color(theme.textTertiary) } }
+                        } else {
+                            View { attr { marginTop(10f); flexDirectionRow(); flexWrapWrap() }
+                                sectors.forEachIndexed { index, sector ->
+                                    View {
+                                        attr {
+                                            width((page.pagerData.pageViewWidth - 28f - 26f) / 2f - 4f); marginBottom(8f)
+                                            if (index % 2 == 1) marginLeft(8f)
+                                            padding(11f); borderRadius(13f); backgroundColor(theme.surfaceMuted)
+                                            border(Border(1f, BorderStyle.SOLID, page.changeColor(sector.changePercent).opacity(0.18f)))
+                                        }
+                                        View { attr { flexDirectionRow(); alignItemsCenter() }
+                                            Text { attr { text(sector.name); flex(1f); fontSizeScaled(11.5f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                                            Text { attr { text(Format.percent(sector.changePercent)); fontSizeScaled(11.5f); fontWeightBold(); color(page.changeColor(sector.changePercent)) } }
+                                        }
+                                        Text { attr { text("上涨 ${sector.risingCount} · 下跌 ${sector.fallingCount}"); marginTop(5f); fontSizeScaled(9.5f); color(theme.textTertiary) } }
+                                        event { click { page.showSectorPeek(sector.code) } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 数据切换前置到叙事轴上方，切换结果紧跟在时间轴后呈现。
+                View { attr {
+                    marginTop(18f); padding(3f); flexDirectionRow(); borderRadius(15f); backgroundColor(theme.surfaceMuted)
+                    val entered = page.marketEntrancePhase >= 4 || !page.motionEnabled()
+                    opacity(if (entered) 1f else 0f)
+                    if (page.motionEnabled()) {
+                        transform(translate = Translate(0f, 0f, 0f, if (entered) 0f else 10f))
+                        animate(Animation.easeOut(0.24f), page.marketEntrancePhase)
+                    }
+                }
+                    listOf("宽度情绪", "量能资金", "板块竞速", "连板梯队").forEachIndexed { index, label ->
+                        View {
+                            attr {
+                                flex(1f); height(30f); allCenter(); borderRadius(12f)
+                                val selected = page.activeSlice == index
+                                backgroundColor(if (selected) theme.surface else theme.surfaceMuted)
+                                if (page.motionEnabled()) {
+                                    transform(scale = Scale(if (selected) 1f else 0.96f, if (selected) 1f else 0.96f))
+                                    animate(Animation.easeOut(0.18f), page.activeSlice)
+                                }
+                            }
+                            Text { attr { text(label); fontSizeScaled(10.5f); fontWeightMedium(); color(if (page.activeSlice == index) theme.textPrimary else theme.textTertiary) } }
+                            event { click { page.activeSlice = index } }
+                        }
+                    }
+                }
+
                 // ① · 今日叙事轴：全页唯一主视觉 + 时间机器 scrub（②）。
                 MarketSectionTitle("今日叙事轴", "多空宽度 · 事件钉 · 拖动回放整页", theme)
-                View { attr { padding(10f); paddingRight(12f); borderRadius(18f); backgroundColor(theme.marketGlass); border(Border(1f, BorderStyle.SOLID, theme.marketGlassEdge)); boxShadow(BoxShadow(0f, 9f, 22f, theme.textPrimary.opacity(0.08f))) }
+                View { attr {
+                    padding(10f); paddingRight(12f); borderRadius(18f); backgroundColor(theme.marketGlass); border(Border(1f, BorderStyle.SOLID, theme.marketGlassEdge)); boxShadow(BoxShadow(0f, 9f, 22f, theme.textPrimary.opacity(0.08f)))
+                    val entered = page.marketEntrancePhase >= 5 || !page.motionEnabled()
+                    opacity(if (entered) 1f else 0f)
+                    if (page.motionEnabled()) {
+                        transform(translate = Translate(0f, 0f, 0f, if (entered) 0f else 12f))
+                        animate(Animation.easeOut(0.28f), page.marketEntrancePhase)
+                    }
+                }
                     View { attr { paddingLeft(4f); paddingBottom(2f); flexDirectionRow(); alignItemsCenter() }
                         Text { attr { text(page.axisMetricLabel()); fontSizeScaled(11.5f); fontWeightBold(); color(theme.textPrimary); flex(1f) } }
                         Text { attr { text("拖动 = 整页回放"); fontSizeScaled(9.5f); fontWeightSemiBold(); color(theme.brand) } }
@@ -975,6 +1021,7 @@ internal class MarketPage : BasePager() {
                         height = 150f,
                         containerWidth = page.pagerData.pageViewWidth - 28f - 24f,
                         series = { page.axisSeries() },
+                        seriesMinutes = { page.axisMinutes() },
                         density = { page.axisDensity() },
                         baseValue = { page.axisBaseValue() },
                         events = { page.cachedEvents },
@@ -985,30 +1032,6 @@ internal class MarketPage : BasePager() {
                         onTapPin = { event -> page.scrubTo(event.minute) },
                     )
                     Text { attr { text(if (page.scrubMinute >= 0) "正在看 ${timeLabelOf(page.scrubMinute)} 的市场 · 松手停在该帧 · 点钉子直达" else "拖动任意位置，整页回放到那一刻"); marginTop(4f); fontSizeScaled(10f); color(theme.brand) } }
-                }
-
-                // ③ · 关键时刻：端侧事件检测（L2 事件才上钉），点卡跳帧。
-                vif({ page.cachedEvents.isNotEmpty() }) {
-                    MarketSectionTitle("关键时刻", "端侧事件检测 · 点卡跳帧", theme)
-                        Scroller {
-                        attr { flexDirectionRow(); height(96f); showScrollerIndicator(false) }
-                        // key 只挂帧数：scrub 变化由卡片 border 的 attr 响应式读就地更新，
-                        // 拖动中不再整排销毁重建（拖动流畅性）。
-                        vbind({ page.snapshotFrames.size }) {
-                            page.cachedEvents.forEach { event ->
-                                View {
-                                    attr {
-                                        width(172f); marginRight(8f); padding(11f); paddingTop(9f); paddingBottom(9f); borderRadius(14f)
-                                        backgroundColor(theme.surface); boxShadow(BoxShadow(0f, 2f, 8f, theme.textPrimary.opacity(0.05f)))
-                                        border(Border(if (abs(page.scrubMinute - event.minute) <= 6) 1.5f else 0f, BorderStyle.SOLID, theme.brand))
-                                    }
-                                    Text { attr { text("${event.timeLabel} · ${event.title}"); fontSizeScaled(11f); fontWeightBold(); color(theme.brand) } }
-                                    Text { attr { text(event.fact); marginTop(5f); fontSizeScaled(10f); lineHeightScaled(15f); color(theme.textSecondary) } }
-                                    event { click { page.scrubTo(event.minute) } }
-                                }
-                            }
-                        }
-                    }
                 }
 
                 // B · AI 复盘卡（doc 36 ④ 可导航版）：时间锚点由端侧事件检测生成，
@@ -1100,25 +1123,6 @@ internal class MarketPage : BasePager() {
                             Text { attr { text("AI 生成 · 仅供参考，不构成投资建议 · 锚点由端侧规则生成"); flex(1f); fontSizeScaled(9.5f); color(theme.textTertiary) } }
                             Text { attr { text("追问 ›"); fontSizeScaled(11f); fontWeightSemiBold(); color(theme.brand) }
                                 event { click { page.openChatWithQuestion(page.aiFollowUpQuestion()) } } }
-                        }
-                    }
-                }
-
-                // ---------- 第二层 · 数据切片层（4 选 1，替代九区块纵向流） ----------
-                View { attr { marginTop(22f); padding(3f); flexDirectionRow(); borderRadius(15f); backgroundColor(theme.surfaceMuted) }
-                    listOf("宽度情绪", "量能资金", "板块竞速", "连板梯队").forEachIndexed { index, label ->
-                        View {
-                            attr {
-                                flex(1f); height(30f); allCenter(); borderRadius(12f)
-                                val selected = page.activeSlice == index
-                                backgroundColor(if (selected) theme.surface else theme.surfaceMuted)
-                                if (page.motionEnabled()) {
-                                    transform(scale = Scale(if (selected) 1f else 0.96f, if (selected) 1f else 0.96f))
-                                    animate(Animation.easeOut(0.18f), page.activeSlice)
-                                }
-                            }
-                            Text { attr { text(label); fontSizeScaled(10.5f); fontWeightMedium(); color(if (page.activeSlice == index) theme.textPrimary else theme.textTertiary) } }
-                            event { click { page.activeSlice = index } }
                         }
                     }
                 }
@@ -1548,8 +1552,8 @@ internal class MarketPage : BasePager() {
                     }
                 },
                 actions = listOf(
-                    { "刷新" } to { page.refreshOverview() },
-                    { "日历" } to { page.openPage(Routes.CALENDAR) },
+                    AppTopBarAction(icon = { color, size, _ -> LineIconRefresh(color, size) }, onClick = { page.refreshOverview() }),
+                    AppTopBarAction(icon = { color, size, _ -> LineIconCalendar(color, size) }, onClick = { page.openPage(Routes.CALENDAR) }),
                 ),
             )
         }
@@ -1626,91 +1630,6 @@ internal class MarketPage : BasePager() {
     private fun marketPhase(): MarketPhase = when (platformCurrentHour().coerceIn(0, 23)) { in 0..8 -> MarketPhase("盘前准备", false, "开盘前数据不代表成交结果"); 9 -> MarketPhase("集合竞价", true, "竞价阶段可能出现虚假大单，需以连续交易为准"); in 10..11 -> MarketPhase("早盘连续交易", true, null); 12 -> MarketPhase("午间休市", false, "休市期间行情静止，并非数据故障"); in 13..14 -> MarketPhase("午后连续交易", true, null); 15 -> MarketPhase("收盘集合 / 复盘", false, "收盘数据正在汇总"); in 16..18 -> MarketPhase("盘后静默期", false, "盘后数据可能陆续修订"); else -> MarketPhase("非交易时段", false, "显示最近一个交易日数据") }
     private data class MarketPhase(val label: String, val live: Boolean, val notice: String?)
     private data class MarketPeek(val title: String, val primary: String, val detail: String)
-
-    // ⑥ 透明温度计：徽章配色与分量拆解文案（公式与 moodScore 同源）。
-    private fun tempBadgeBackground(): Color {
-        val score = displayOverview().moodScore
-        return when {
-            score < 42 -> theme.fallSoft
-            score >= 55 -> theme.riseSoft
-            else -> theme.surfaceMuted
-        }
-    }
-
-    private fun tempBadgeForeground(): Color {
-        val score = displayOverview().moodScore
-        return when {
-            score < 42 -> theme.fall
-            score >= 55 -> theme.rise
-            else -> theme.textSecondary
-        }
-    }
-
-    private fun temperatureSummary(): String {
-        val data = displayOverview()
-        return "市场温度 ${data.moodScore}° · ${moodLabel(data.moodScore)}，${temperatureDriver(data)}"
-    }
-
-    private fun temperatureDriver(data: MarketOverview): String {
-        val breadth = if (data.risingCount + data.fallingCount == 0) 50.0 else data.risingCount * 100.0 / (data.risingCount + data.fallingCount)
-        return when {
-            breadth >= 55 -> "宽度偏暖贡献为正"
-            breadth <= 45 -> "宽度偏冷拖累为主"
-            else -> "宽度中性，涨跌结构分化"
-        }
-    }
-
-    private fun temperatureFormulaText(): String {
-        val data = displayOverview()
-        val total = data.risingCount + data.fallingCount
-        val breadth = if (total == 0) 50.0 else data.risingCount * 100.0 / total
-        val net = (data.limitUpCount - data.limitDownCount).coerceIn(-50, 50)
-        return "温度 = 红盘率 × 0.7 + 涨停净热度 × 0.3。" +
-            "当前：红盘率 ${Format.decimal(breadth, 1)}% → ${Format.decimal(breadth * 0.7, 1)}；" +
-            "涨停净热度 $net → ${Format.decimal((50 + net) * 0.3, 1)}；" +
-            "合计 ${data.moodScore}°（帧 ${displayOverview().stamp.asOf}）。"
-    }
-}
-
-/** 温度日内轨迹 mini 曲线（⑥）：纯 Canvas 折线 + 游标，随帧同步。 */
-private fun ViewContainer<*, *>.TemperatureSpark(
-    theme: StockChatTheme,
-    series: () -> List<Double>,
-    scrubMinute: () -> Int,
-) {
-    val w = 88f
-    val h = 30f
-    Canvas({
-        attr {
-            width(w)
-            height(h)
-            marginLeft(8f)
-        }
-    }) { canvas, _, _ ->
-        val s = series()
-        if (s.size < 2) return@Canvas
-        val d0 = (s.min() - 2).coerceAtMost(0.0)
-        val d1 = (s.max() + 2).coerceAtLeast(100.0)
-        val span = (d1 - d0).coerceAtLeast(1e-6)
-        fun y(v: Double): Float = (h - 4f - ((v - d0) / span * (h - 10f)).toFloat())
-        canvas.beginPath()
-        for (t in s.indices) {
-            val x = 4f + t.toFloat() / 240f * (w - 8f)
-            if (t == 0) canvas.moveTo(x, y(s[t])) else canvas.lineTo(x, y(s[t]))
-        }
-        canvas.lineWidth(1.2f)
-        canvas.lineCapRound()
-        canvas.strokeStyle(theme.textTertiary)
-        canvas.stroke()
-        val scrub = scrubMinute()
-        if (scrub in 0..240 && s.size > scrub) {
-            val cx = 4f + scrub.toFloat() / 240f * (w - 8f)
-            canvas.beginPath()
-            canvas.arc(cx, y(s[scrub]), 2.6f, 0f, (2 * kotlin.math.PI).toFloat(), false)
-            canvas.fillStyle(theme.brand)
-            canvas.fill()
-        }
-    }
 }
 
 private fun ViewContainer<*, *>.MarketPill(text: String, color: Color) {
