@@ -46,6 +46,11 @@ import com.kuikly.stockchat.chat.composer.state.ComposerFocusCoordinator
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusEffect
 import com.kuikly.stockchat.chat.composer.state.ComposerFocusState
 import com.kuikly.stockchat.chat.composer.state.KuiklyComposerFocusScheduler
+import com.kuikly.stockchat.chat.composer.state.KuiklyVoiceInputScheduler
+import com.kuikly.stockchat.chat.composer.state.VoiceInputCoordinator
+import com.kuikly.stockchat.chat.composer.state.VoiceInputEffect
+import com.kuikly.stockchat.chat.composer.state.VoiceInputHostPort
+import com.kuikly.stockchat.chat.composer.state.VoiceInputState
 import com.kuikly.stockchat.chat.composer.state.KuiklyMediaSheetScheduler
 import com.kuikly.stockchat.chat.composer.state.MAX_COMPOSER_ATTACHMENTS
 import com.kuikly.stockchat.chat.composer.state.MediaSheetCoordinator
@@ -131,8 +136,6 @@ import com.kuikly.stockchat.page.components.LineIconPhoto
 import com.kuikly.stockchat.page.components.LineIconStop
 import com.kuikly.stockchat.page.components.VoiceBar
 import com.kuikly.stockchat.voice.NativeBridgeVoiceRecorder
-import com.kuikly.stockchat.voice.VoiceError
-import com.kuikly.stockchat.voice.VoiceRecorder
 import com.kuikly.stockchat.voice.VoiceState
 import com.kuikly.stockchat.protocol.AiResponseLexer
 import com.kuikly.stockchat.protocol.BrokenCardBlock
@@ -228,9 +231,6 @@ internal class ChatPage : BasePager() {
         // 玻璃表皮，避免原生 Blur 覆盖层遮住 EditText 光标。
         const val COMPOSER_ISOLATION_TEST = false
         // 意外 blur 自动恢复的连续尝试上限。
-        // 滚动声波条数：新采样从右缘进入、历史整体左移（60ms/格），
-        // 40 条 × (3+3) ≈ 240dp，铺满中段波形区。
-        const val VOICE_AMP_BARS = 56
         // 贴底目标偏移量的安全余量：native 侧对超出 contentH-viewH 的
         // setContentOffset 请求会静默无效，减 1px 规避浮点精度导致的误判。
         const val CHAT_SCROLL_HAIR_WIDTH = 1f
@@ -500,24 +500,27 @@ internal class ChatPage : BasePager() {
     // 默认态 → 输入态由点击/聚焦/开面板触发；输入态是"粘"的：收起键盘不再回退，
     // 只有"键盘已收起时点击非输入栏区域"这一次点击才回到默认态。
     // Voice input is the composer's third state (docs/11): hold to record,
-    // release to transcribe/send, slide up to cancel.
-    private var voiceState: VoiceState by observable(VoiceState.IDLE)
-    private var voiceCancelArmed: Boolean by observable(false)
-    private var voiceElapsedSec: Float by observable(0f)
-    // 滚动声波历史：初始全 0（空白），录音开始后新采样从右缘进入、
-    // 向左生长——视觉上"声波从后面长出来"，而不是一开始就有基线条。
-    private var voiceAmps: FloatArray by observable(FloatArray(VOICE_AMP_BARS) { 0f })
-    private var voiceMicFill: Float by observable(0f)
-    // 语音模式（豆包式交互，2026-09-06）：折叠栏右侧图标在"声波/键盘"间切换；
-    // 开启后中间文本区整体变成"按住说话"按钮，录音不再强制展开输入栏。
-    private var voiceInputMode: Boolean by observable(false)
-    private var voiceTouchDownPageY = 0f
-    private var voiceSourceExpanded = false
-    private var voiceClockTimer: Timer? = null
-    private var voiceSessionVersion = 0
-    private val voiceRecorder: VoiceRecorder by lazy {
-        NativeBridgeVoiceRecorder(acquireModule(BridgeModule.MODULE_NAME))
-    }
+    // release to transcribe/send, slide up to cancel. Its timing and recorder
+    // callbacks live in VoiceInputCoordinator; this page exposes reactive getters to DSL.
+    private val voiceInputState = VoiceInputState()
+    private var voiceInputCoordinatorInstance: VoiceInputCoordinator? = null
+    private val voiceInputCoordinator: VoiceInputCoordinator
+        get() = voiceInputCoordinatorInstance ?: VoiceInputCoordinator(
+            state = voiceInputState,
+            recorder = NativeBridgeVoiceRecorder(acquireModule(BridgeModule.MODULE_NAME)),
+            scheduler = KuiklyVoiceInputScheduler(),
+            host = object : VoiceInputHostPort {
+                override fun inputTextIsBlank() = viewModel.inputText.isBlank()
+                override fun isAnswerStreaming() = viewModel.streamState == StreamState.STREAMING
+            },
+            onEffect = ::handleVoiceInputEffect,
+        ).also { voiceInputCoordinatorInstance = it }
+    private val voiceState: VoiceState get() = voiceInputState.state
+    private val voiceCancelArmed: Boolean get() = voiceInputState.cancelArmed
+    private val voiceElapsedSec: Float get() = voiceInputState.elapsedSeconds
+    private val voiceAmps: FloatArray get() = voiceInputState.amplitudes
+    private val voiceMicFill: Float get() = voiceInputState.micFill
+    private val voiceInputMode: Boolean get() = voiceInputState.inputMode
     private var expandedCardKey: String by observable("")
     private var focusedCardKey: String by observable("")
     private var repairingCardKey: String by observable("")
@@ -675,6 +678,7 @@ internal class ChatPage : BasePager() {
     }
 
     override fun pageWillDestroy() {
+        voiceInputCoordinatorInstance?.onDestroy()
         composerFocusCoordinator.onDestroy()
         drawerCoordinator.onDestroy()
         islandCoordinator.onDestroy()
@@ -2244,7 +2248,7 @@ internal class ChatPage : BasePager() {
         when (effect) {
             ComposerFocusEffect.FocusInput -> inputRef?.view?.focus()
             ComposerFocusEffect.BlurInput -> inputRef?.view?.blur()
-            ComposerFocusEffect.LeaveVoiceInputMode -> voiceInputMode = false
+            ComposerFocusEffect.LeaveVoiceInputMode -> voiceInputCoordinator.leaveInputModeForText()
             ComposerFocusEffect.CancelVoiceSession -> cancelVoiceSession()
             ComposerFocusEffect.ClearActiveCommand -> clearActiveCommand()
             ComposerFocusEffect.CloseAssistantPanel -> closeAssistantPanel()
@@ -2300,10 +2304,8 @@ internal class ChatPage : BasePager() {
      * 只在折叠态可达（图标仅折叠态挂载），录音中不可切。
      */
     private fun toggleVoiceInputMode() {
-        if (voiceState != VoiceState.IDLE) return
-        voiceInputMode = !voiceInputMode
+        voiceInputCoordinator.toggleInputMode()
         KLog.i(COMPOSER_LOG_TAG, "toggleVoiceInputMode -> $voiceInputMode")
-        if (voiceInputMode) blurComposer()
     }
 
     /**
@@ -2311,189 +2313,38 @@ internal class ChatPage : BasePager() {
      * collapseComposer 内部会补 presented false 翻转（R4），折叠图标正常入场。
      */
     private fun enterVoiceModeFromExpanded() {
-        if (voiceState != VoiceState.IDLE) return
-        voiceInputMode = true
         KLog.i(COMPOSER_LOG_TAG, "enterVoiceModeFromExpanded")
-        // 先 blur 收键盘再折叠：否则键盘仍挂着（keyboardHeight>0），
-        // isComposerVisuallyExpanded 保持 true，输入栏看起来没有收起。
-        blurComposer()
-        collapseComposer()
+        voiceInputCoordinator.enterInputModeFromExpanded()
     }
 
     private fun handleVoiceTouchDown(pageY: Float) {
-        if (voiceState != VoiceState.IDLE) return
-        voiceSourceExpanded = isComposerExpanded()
-        voiceTouchDownPageY = pageY
-        startVoiceSession()
+        voiceInputCoordinator.onTouchDown(pageY, composerExpanded = isComposerExpanded())
     }
 
-    private fun handleVoiceTouchMove(pageY: Float) {
-        if (voiceState != VoiceState.RECORDING) return
-        voiceCancelArmed = (voiceTouchDownPageY - pageY) >= 60f
-    }
+    private fun handleVoiceTouchMove(pageY: Float) = voiceInputCoordinator.onTouchMove(pageY)
 
-    private fun handleVoiceTouchUp() {
-        if (voiceState != VoiceState.RECORDING) return
-        when {
-            voiceCancelArmed -> cancelVoiceSession()
-            voiceElapsedSec < 0.8f -> abortTooShortVoiceSession()
-            else -> finishVoiceSession()
+    private fun handleVoiceTouchUp() = voiceInputCoordinator.onTouchUp()
+
+    private fun startVoiceSession() = voiceInputCoordinator.startSession()
+
+    private fun finishVoiceSession() = voiceInputCoordinator.finishSession()
+
+    private fun cancelVoiceSession() = voiceInputCoordinator.cancelSession()
+
+    private fun handleVoiceInputEffect(effect: VoiceInputEffect) {
+        when (effect) {
+            VoiceInputEffect.BlurComposer -> blurComposer()
+            VoiceInputEffect.CloseAssistantPanel -> closeAssistantPanel()
+            VoiceInputEffect.ClearCommandValidation -> commandValidationMessage = ""
+            VoiceInputEffect.CollapseTextComposer -> collapseComposer()
+            is VoiceInputEffect.SetTextComposerExpanded -> composerFocusCoordinator.setExpandedFromVoice(
+                expanded = effect.expanded,
+                scheduleChrome = effect.scheduleChrome,
+            )
+            is VoiceInputEffect.Toast -> acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(effect.message)
+            is VoiceInputEffect.SendTranscript -> viewModel.send(effect.transcript)
+            VoiceInputEffect.KeepChatAtBottom -> keepChatAtBottomTemporarily()
         }
-    }
-
-    private fun startVoiceSession() {
-        val version = ++voiceSessionVersion
-        blurComposer()
-        if (!voiceInputMode) {
-            // 语音模式下录音发生在折叠栏，不再强制展开（豆包式）。此分支仅为
-            // 兜底保留：录音入口现全部位于语音模式中段按钮上。
-            composerFocusCoordinator.setExpandedFromVoice(expanded = true)
-            // 从折叠态长按语音时展开态图标为新挂载，同样走两帧入场（R4）。
-            if (!voiceSourceExpanded) scheduleComposerChromePresentation(true)
-        }
-        closeAssistantPanel()
-        commandValidationMessage = ""
-        voiceCancelArmed = false
-        voiceElapsedSec = 0f
-        voiceAmps = FloatArray(VOICE_AMP_BARS) { 0f }
-        voiceMicFill = 0.02f
-        voiceState = VoiceState.RECORDING
-        startVoiceClock(version)
-        voiceRecorder.start(
-            onAmplitude = { rms ->
-                if (voiceSessionVersion == version && voiceState == VoiceState.RECORDING) {
-                    updateVoiceAmplitude(rms)
-                }
-            },
-            onTranscript = { transcript ->
-                if (voiceSessionVersion == version && voiceState == VoiceState.TRANSCRIBING) {
-                    onTranscriptReady(transcript)
-                }
-            },
-            onError = { error ->
-                if (voiceSessionVersion == version) handleVoiceRecorderError(error)
-            },
-        )
-    }
-
-    private fun startVoiceClock(version: Int) {
-        voiceClockTimer?.cancel()
-        val timer = Timer()
-        voiceClockTimer = timer
-        timer.schedule(100, 100) {
-            if (voiceSessionVersion != version || voiceState != VoiceState.RECORDING) return@schedule
-            val next = (voiceElapsedSec + 0.1f).coerceAtMost(60f)
-            voiceElapsedSec = next
-            if (next >= 60f) finishVoiceSession()
-        }
-    }
-
-    private fun updateVoiceAmplitude(rms: Float) {
-        val amp = (rms.coerceIn(0f, 1f) * 2.5f).coerceIn(0f, 1f)
-        val shaped = amp.toDouble().pow(0.6).toFloat()
-        val prevFill = voiceMicFill
-        val fillRate = if (shaped > prevFill) 0.6f else 0.25f
-        voiceMicFill = prevFill + (shaped - prevFill) * fillRate
-
-        // 滚动声波（豆包式）：新采样从右缘进入，历史样本整体左移一格
-        // （节奏由桥接层上报频率决定，安卓侧 ~35ms/格），绘制上即"声波
-        // 从右向左走过"。无 4f 基线：静音样本高度为 0（空白），只有真实
-        // 声音才长出条目；新入条目做非对称平滑防抖。
-        val previous = voiceAmps
-        val next = FloatArray(previous.size)
-        for (i in 0 until next.size - 1) next[i] = previous[i + 1]
-        val target = 28f * shaped
-        val last = previous.getOrNull(next.size - 1) ?: 0f
-        next[next.size - 1] = (last + (target - last) * 0.6f).coerceIn(0f, 26f)
-        voiceAmps = next
-    }
-
-    private fun finishVoiceSession() {
-        if (voiceState != VoiceState.RECORDING) return
-        voiceClockTimer?.cancel()
-        voiceClockTimer = null
-        voiceCancelArmed = false
-        voiceState = VoiceState.TRANSCRIBING
-        voiceAmps = FloatArray(VOICE_AMP_BARS) { 0f }
-        voiceMicFill = 0f
-        voiceRecorder.stop()
-    }
-
-    private fun onTranscriptReady(transcript: String) {
-        if (voiceState != VoiceState.TRANSCRIBING) return
-        if (transcript.isBlank()) {
-            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("没听清，请再说一次")
-            restoreAfterVoiceSession()
-            return
-        }
-        if (viewModel.streamState == StreamState.STREAMING) {
-            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("当前回答未结束，请稍后再试")
-            restoreAfterVoiceSession()
-            return
-        }
-        viewModel.send(transcript)
-        restoreAfterVoiceSession()
-        keepChatAtBottomTemporarily()
-    }
-
-    private fun abortTooShortVoiceSession() {
-        voiceRecorder.cancel()
-        stopVoiceUi()
-        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("说话时间太短")
-        restoreAfterVoiceSession()
-    }
-
-    private fun cancelVoiceSession() {
-        if (voiceState == VoiceState.IDLE) return
-        voiceRecorder.cancel()
-        stopVoiceUi()
-        restoreAfterVoiceSession()
-    }
-
-    private fun handleVoiceRecorderError(error: VoiceError) {
-        stopVoiceUi()
-        restoreAfterVoiceSession()
-        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(
-            when (error) {
-                VoiceError.PERMISSION_DENIED -> "需要麦克风权限才能语音提问"
-                VoiceError.MIC_OCCUPIED -> "麦克风被占用，请稍后再试"
-                VoiceError.NO_MATCH -> "没听清，请再说一次"
-                VoiceError.UNAVAILABLE -> "当前平台暂不支持语音提问"
-            },
-        )
-    }
-
-    private fun stopVoiceUi() {
-        voiceSessionVersion++
-        voiceClockTimer?.cancel()
-        voiceClockTimer = null
-        voiceState = VoiceState.IDLE
-        voiceCancelArmed = false
-        voiceElapsedSec = 0f
-        voiceAmps = FloatArray(VOICE_AMP_BARS) { 0f }
-        voiceMicFill = 0f
-    }
-
-    private fun restoreAfterVoiceSession() {
-        stopVoiceUi()
-        if (voiceInputMode) {
-            // 语音模式：录音全程发生在折叠栏，收尾保持折叠 + 语音模式即可
-            // （松手发送后停留在"按住说话"，与豆包一致）。presented 本就是
-            // false，无需 chrome 翻转。
-            composerFocusCoordinator.setExpandedFromVoice(expanded = false)
-            voiceSourceExpanded = false
-            return
-        }
-        if (!voiceSourceExpanded && viewModel.inputText.isBlank()) {
-            composerFocusCoordinator.setExpandedFromVoice(expanded = false)
-            // 语音收起路径不走 collapseComposer，必须在这里补两帧翻转：此刻
-            // presented 仍是录音展开时的 true，折叠态图标以隐藏态挂载并注册了
-            // 入场动画，缺了这次翻转它们会永远停在 opacity 0（R4/R5）。
-            scheduleComposerChromePresentation(false)
-        } else {
-            composerFocusCoordinator.setExpandedFromVoice(expanded = true)
-        }
-        voiceSourceExpanded = false
     }
 
     /** 渐变描边流动：20fps 推进相位，一圈约 5s；幂等，页面出现时启动。 */
