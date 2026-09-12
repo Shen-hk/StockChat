@@ -69,6 +69,9 @@ import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
 import com.kuikly.stockchat.detail.ai.state.DetailAiInsightCoordinator
 import com.kuikly.stockchat.detail.ai.state.DetailAiState
 import com.kuikly.stockchat.detail.ai.state.KuiklyDetailAiScheduler
+import com.kuikly.stockchat.detail.overlay.state.DetailOverlayCoordinator
+import com.kuikly.stockchat.detail.overlay.state.DetailOverlayState
+import com.kuikly.stockchat.detail.overlay.state.KuiklyDetailOverlayScheduler
 import com.kuikly.stockchat.data.config.AiConfig
 // doc 29 集成：共享基建 + 板块组件（事件回调经这些基建接线）
 import com.kuikly.stockchat.page.detail.AnchorIndex
@@ -83,7 +86,6 @@ import com.kuikly.stockchat.page.detail.DetailChartHeaderResolver
 import com.kuikly.stockchat.page.detail.DetailMetric
 import com.kuikly.stockchat.page.detail.DetailOverlay
 import com.kuikly.stockchat.page.detail.Materiality
-import com.kuikly.stockchat.page.detail.OverlayArbiter
 import com.kuikly.stockchat.page.detail.RelevanceAnchor
 import com.kuikly.stockchat.page.detail.detectAnomalies
 import com.kuikly.stockchat.page.detail.materialityOf
@@ -255,7 +257,6 @@ internal class StockDetailPage : BasePager() {
     // 长按十字线 scrub 期间锁外层 Scroller 滚动（DetailTimelineChart onScrubActive 驱动，
     // WatchlistPage 拖拽排序同款机制）；普通上下滚动不进 scrub、永不锁
     private val chartScrubLock: Boolean get() = detailChartState.chartScrubLock
-    private var newsSummary: NewsItem? by observable(null)
     // ---- 弹幕 v2（对齐市场页）：页侧持有节拍——setTimeout 链 33ms 步进 offset
     // （≈30dp/s）。点按即停：摘要条展开（newsSummary）或长按先览（tapePreview）
     // 期间暂停步进，收起/松手后恢复；reduceMotion 不流动。交互口径不变。
@@ -267,9 +268,30 @@ internal class StockDetailPage : BasePager() {
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
     private val theme: StockChatTheme get() = appTheme()
 
-    // ---- doc 29 集成状态：基建 + 13 个交互（U1 全部经 overlayArbiter 仲裁） ----
-    private val overlayArbiter = OverlayArbiter()
+    // ---- doc 29 集成状态：基建 + 13 个交互（U1 全部经 detailOverlayCoordinator 仲裁） ----
     private val chipStore = ContextChipStore()
+    // overlay 仲裁域（Wave 2 第 4 刀，见 docs/39 §9 / docs/43 D4）：唯一 owner 是
+    // DetailOverlayCoordinator，承接原 OverlayArbiter 的 U1「开新的先关旧的、点
+    // 空白全关」仲裁语义并收编新闻摘要 / 披露 peek / 弹幕先览 / 理由 chips 四类
+    // 载荷。字段以只读 getter 转发到 detailOverlayState 的 observable，DSL
+    // 闭包内读取仍建立反应式依赖。tapePreviewVersion 镜像由 Coordinator 私有
+    // 持有。DetailOverlay 枚举仍在 page.detail 包（跨多处 vif 条件引用）。
+    private val detailOverlayState = DetailOverlayState()
+    private val detailOverlayCoordinator by lazy {
+        DetailOverlayCoordinator(
+            state = detailOverlayState,
+            scheduler = KuiklyDetailOverlayScheduler(),
+            reduceMotion = reduceMotion,
+        )
+    }
+    private val newsSummary: NewsItem? get() = detailOverlayState.newsSummary
+    private val tapePreview: NewsItem? get() = detailOverlayState.tapePreview
+    private val tapePreviewAnchorX: Float get() = detailOverlayState.tapePreviewAnchorX
+    private val tapePreviewAnchorY: Float get() = detailOverlayState.tapePreviewAnchorY
+    private val disclosurePeek: DisclosureItem? get() = detailOverlayState.disclosurePeek
+    private val disclosurePeekVisible: Boolean get() = detailOverlayState.disclosurePeekVisible
+    private val reasonChipsVisible: Boolean get() = detailOverlayState.reasonChipsVisible
+    private var hintVersion = 0                                                 // watchlistHint toast 计时 revision
     // 图表交互域（Wave 2 第 2 刀，见 docs/39 §9 / docs/43 D2）：唯一 owner 是
     // DetailChartInteractionCoordinator（十字线/圈选/声呐/气泡/视口/预填/旗标/
     // 区间带）。字段以只读 getter 转发到 detailChartState 的 observable，DSL
@@ -294,16 +316,6 @@ internal class StockDetailPage : BasePager() {
     private val bandRange: Triple<Int, Int, Boolean>? get() = detailChartState.bandRange  // ②/B2 区间高亮带 (start,end,fromSentence)
     private var selectedSentence: Int by observable(-1)                                   // ② 选中的解读句
     private val aiChatDependencies by lazy { ChatDependencies.forPager(pagerId) }
-    private var tapePreview: NewsItem? by observable(null)                      // B1 长按先览
-    private var tapePreviewAnchorX = 0f                                         // B1 气泡锚点（长按 pageX）
-    private var tapePreviewAnchorY = 0f                                         // B1 气泡锚点（长按 pageY）
-    private var tapePreviewVersion = 0                                          // B1 先览消失计时 revision
-    private var reasonChipsVisible: Boolean by observable(false)                // H1 快捷理由 chips
-    private var hintVersion = 0                                                 // watchlistHint toast 计时 revision
-    // F1 公告/研报长按预览（2026-09-09，对齐 MarketPage peek 范式）：peek 挂载、
-    // peekVisible 过渡，两拍翻转保证淡入动画成立；点蒙层/「关闭」收回。
-    private var disclosurePeek: DisclosureItem? by observable(null)
-    private var disclosurePeekVisible: Boolean by observable(false)
     // ② 句图联动锚点（真实化，2026-09-08）：不再写死槽位。点句时从句子内容
     // 端侧推导——优先解析句内 HH:MM 映射分时索引（LLM 只负责引用时间，坐标
     // 由 AnchorIndex 计算），无时间词时按当日真实分时（最高/最低/开盘时刻）回退。
@@ -392,6 +404,7 @@ internal class StockDetailPage : BasePager() {
         detailDataCoordinator.onDestroy()
         detailChartCoordinator.onDestroy()
         detailAiCoordinator.onDestroy()
+        detailOverlayCoordinator.onDestroy()
         super.pageWillDestroy()
     }
 
@@ -600,8 +613,7 @@ internal class StockDetailPage : BasePager() {
                                         onToggle = { page.onNewsTapped(news) },
                                         onAskAi = { page.askAboutNews(it) },
                                         onOpenUrl = { target ->
-                                            page.newsSummary = null
-                                            page.overlayArbiter.close()
+                                            page.detailOverlayCoordinator.closeSummary()
                                             page.openUrl(target.url)
                                         },
                                     )
@@ -740,7 +752,7 @@ internal class StockDetailPage : BasePager() {
                         }
                         // ④/① 就地气泡（doc 29 U1/U2/U3）：唯一就地回应容器——白底 brand
                         // 描边圆角 14，「AI · 端侧规则」来源标注，R4 两帧上浮淡入
-                        vif({ page.overlayArbiter.active == DetailOverlay.CHART_BUBBLE && page.chartBubble.isNotEmpty() }) {
+                        vif({ page.detailOverlayCoordinator.active() == DetailOverlay.CHART_BUBBLE && page.chartBubble.isNotEmpty() }) {
                             View {
                                 attr {
                                     absolutePosition(left = 16f, right = 16f, bottom = 12f)
@@ -1028,7 +1040,7 @@ internal class StockDetailPage : BasePager() {
                                     // 2026-09-09 修复：原为具名 onPeek + 尾随 lambda 混用（编译错误），
                                     // 改为全具名；尾随 lambda 原本意图即 onExplain
                                     onExplain = { title -> page.toastHint(materialityOf(title).rule) },
-                                    onPeek = { item -> page.showDisclosurePeek(item) },
+                                    onPeek = { item -> page.detailOverlayCoordinator.showDisclosurePeek(item) },
                                 )
                             }
 
@@ -1095,20 +1107,20 @@ internal class StockDetailPage : BasePager() {
                             ),
                             AppTopBarAction(
                                 icon = { color, size, _ -> LineIconDots(color, size) },
-                                onClick = { page.overlayArbiter.request(DetailOverlay.MORE_MENU) },
+                                onClick = { page.detailOverlayCoordinator.request(DetailOverlay.MORE_MENU) },
                             ),
                         ),
                     )
                 }
                 // U1 点空白全关：REASON_CHIPS 层的透明遮罩（开新层自动被仲裁器切换）
-                vif({ page.overlayArbiter.active == DetailOverlay.REASON_CHIPS }) {
+                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.REASON_CHIPS }) {
                     View {
                         attr { absolutePositionAllZero(); touchEnable(true) }
-                        event { click { page.overlayArbiter.close() } }
+                        event { click { page.detailOverlayCoordinator.close() } }
                     }
                 }
                 // H1 快捷理由 chips：底栏上方浮出（U1 仲裁层）
-                vif({ page.overlayArbiter.active == DetailOverlay.REASON_CHIPS }) {
+                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.REASON_CHIPS }) {
                     View {
                         attr {
                             absolutePosition(
@@ -1127,16 +1139,16 @@ internal class StockDetailPage : BasePager() {
                     }
                 }
                 // U1 点空白全关：MORE_MENU 层的透明遮罩（开新层自动被仲裁器切换）
-                vif({ page.overlayArbiter.active == DetailOverlay.MORE_MENU }) {
+                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.MORE_MENU }) {
                     View {
                         attr { absolutePositionAllZero(); touchEnable(true) }
-                        event { click { page.overlayArbiter.close() } }
+                        event { click { page.detailOverlayCoordinator.close() } }
                     }
                 }
                 // ⋯ 更多操作菜单（2026-09-10）：锚在顶栏 ⋯（右缘 12f + 57f 高的顶栏）
                 // 下方的小卡片，U1 仲裁层互斥。条目改为公共 FeatureTile 磁贴横排
                 // （与抽屉/输入栏媒体弹层同一视觉语言），只挂真实可用的动作。
-                vif({ page.overlayArbiter.active == DetailOverlay.MORE_MENU }) {
+                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.MORE_MENU }) {
                     View {
                         attr {
                             absolutePosition(
@@ -1164,7 +1176,7 @@ internal class StockDetailPage : BasePager() {
                                 icon = { LineIconPin(page.theme.textPrimary, 22f) },
                             ) {
                                 // 仲裁器语义：请求 REASON_CHIPS 即自动关闭 MORE_MENU
-                                page.overlayArbiter.request(DetailOverlay.REASON_CHIPS)
+                                page.detailOverlayCoordinator.request(DetailOverlay.REASON_CHIPS)
                             }
                             View { attr { width(8f) } }
                             FeatureTile(
@@ -1188,7 +1200,7 @@ internal class StockDetailPage : BasePager() {
                 // 的 pageX/pageY（触摸点在根 Page 坐标系，Kuikly LongPressParams 原生提供，
                 // 无需估算胶囊布局位置）；finger 在胶囊上（高 28），+20 ≈ 胶囊底+8。
                 // 松手 700ms 消失由页侧计时调度；原型同为 position:fixed，显示期间不随页面滚动。
-                vif({ page.overlayArbiter.active == DetailOverlay.TAPE_PREVIEW && page.tapePreview != null }) {
+                vif({ page.detailOverlayCoordinator.active() == DetailOverlay.TAPE_PREVIEW && page.tapePreview != null }) {
                     vbind({ page.tapePreview?.id ?: "" }) {
                         val preview = page.tapePreview
                         if (preview != null) {
@@ -1254,7 +1266,7 @@ internal class StockDetailPage : BasePager() {
                             touchEnable(shown)
                             if (!page.reduceMotion) animate(Animation.easeOut(0.20f), page.disclosurePeekVisible)
                         }
-                        event { click { page.dismissDisclosurePeek() } }
+                        event { click { page.detailOverlayCoordinator.dismissDisclosurePeek() } }
                     }
                     View {
                         attr {
@@ -1291,7 +1303,7 @@ internal class StockDetailPage : BasePager() {
                             }
                             Text {
                                 attr { text("关闭"); fontSizeScaled(11f); color(page.theme.brand) }
-                                event { click { page.dismissDisclosurePeek() } }
+                                event { click { page.detailOverlayCoordinator.dismissDisclosurePeek() } }
                             }
                         }
                         Text {
@@ -1415,29 +1427,12 @@ internal class StockDetailPage : BasePager() {
 
     /** ⋯ 菜单「复制代码」：走 Bridge 剪贴板通道（与聊天页分享文案同源）。 */
     private fun copySymbolToPasteboard() {
-        overlayArbiter.close()
+        detailOverlayCoordinator.close()
         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).copyToPasteboard(symbol)
         toastHint("代码 $symbol 已复制")
     }
 
-    // ───────────── F1 公告/研报长按预览（MarketPage peek 同构） ─────────────
-
-    private fun showDisclosurePeek(item: DisclosureItem) {
-        disclosurePeek = item
-        // peek 是挂载旗（vif）、peekVisible 是过渡旗：不能同拍翻转，否则没有淡入
-        if (reduceMotion) disclosurePeekVisible = true
-        else setTimeout(1) { if (disclosurePeek != null) disclosurePeekVisible = true }
-    }
-
-    private fun dismissDisclosurePeek() {
-        if (!disclosurePeekVisible) return
-        disclosurePeekVisible = false
-        if (reduceMotion) {
-            disclosurePeek = null
-        } else {
-            setTimeout(200) { if (!disclosurePeekVisible) disclosurePeek = null }
-        }
-    }
+    // ───────────── F1 公告/研报长按预览（MarketPage peek 同构，已迁入 D4 Coordinator）─────────────
 
     private fun toggleWatchlist() {
         if (watchlisted) {
@@ -1481,8 +1476,8 @@ internal class StockDetailPage : BasePager() {
      * ② 句图带若在气泡开启期间被覆盖，收起后重新点句即可恢复。
      */
     private fun closeChartBubble() {
-        if (overlayArbiter.active == DetailOverlay.CHART_BUBBLE) {
-            overlayArbiter.close()
+        if (detailOverlayCoordinator.active() == DetailOverlay.CHART_BUBBLE) {
+            detailOverlayCoordinator.close()
             detailChartCoordinator.clearBandRange()
             // 关气泡即中断圈选 AI 流（气泡已不可见，流完也无处展示）
             detailAiCoordinator.cancelCircleAi()
@@ -1498,7 +1493,7 @@ internal class StockDetailPage : BasePager() {
             is DetailChartEffect.ChartBubbleShown -> {
                 // 新气泡内容一律重置上一段圈选 AI 流（generation 失效使旧回调全部 no-op）
                 detailAiCoordinator.cancelCircleAi()
-                overlayArbiter.request(DetailOverlay.CHART_BUBBLE)
+                detailOverlayCoordinator.request(DetailOverlay.CHART_BUBBLE)
             }
             is DetailChartEffect.CircleSelectionCommitted -> detailAiCoordinator.requestCircleAi(effect.lo, effect.hi)
             is DetailChartEffect.CircleSelectionRejected -> toastHint(effect.message)
@@ -1609,58 +1604,36 @@ internal class StockDetailPage : BasePager() {
      * （2026-09-09 修复「点按后收起/再点起无效」）。
      */
     private fun onNewsTapped(item: NewsItem) {
+        // 与旗标/摘要的状态机分两域编排：overlay 走 Coordinator、旗标走 Chart
+        // Coordinator（D2）。本页只负责「点同一条收起/点不同展开」的语义拼接。
         if (newsSummary?.id == item.id) {
-            newsSummary = null
-            overlayArbiter.close()
+            detailOverlayCoordinator.closeSummary()
             removeNewsFlag(item)
             return
         }
-        newsSummary = item
-        overlayArbiter.request(DetailOverlay.NEWS_SUMMARY)
+        detailOverlayCoordinator.showSummary(item)
         dropNewsFlag(item)
     }
 
-    /**
-     * B1 长按先览（doc §4.2）：TAPE_PREVIEW 层；气泡在「松手 700ms 后」消失
-     * （由 onLongPressRelease 调度），另留 5s 兜底防松手回调丢失。
-     * pressX/pressY = 长按事件 pageX/pageY（触摸点在根 Page 坐标系），气泡据此
-     * 锚定在所按胶囊正下方（原型 .preview：left=胶囊左缘钳右、top=胶囊底+8）。
-     */
+    // B1 长按先览（doc §4.2）：状态机与定时器已迁入 D4 Coordinator，本页只在 DSL 转发。
     private fun showTapePreview(item: NewsItem, pressX: Float, pressY: Float) {
-        tapePreviewAnchorX = pressX
-        tapePreviewAnchorY = pressY
-        tapePreview = item
-        overlayArbiter.request(DetailOverlay.TAPE_PREVIEW)
-        val version = ++tapePreviewVersion
-        setTimeout(5000) {
-            if (version == tapePreviewVersion && overlayArbiter.active == DetailOverlay.TAPE_PREVIEW) {
-                overlayArbiter.close()
-                tapePreview = null
-            }
-        }
+        detailOverlayCoordinator.showTapePreview(item, pressX, pressY)
     }
 
     /** B1 松手 700ms 后收先览（doc §4.2「气泡消失：松手 700ms 后或点按条目」）。 */
     private fun scheduleTapePreviewDismiss() {
-        val version = ++tapePreviewVersion
-        setTimeout(700) {
-            if (version == tapePreviewVersion && overlayArbiter.active == DetailOverlay.TAPE_PREVIEW) {
-                overlayArbiter.close()
-                tapePreview = null
-            }
-        }
+        detailOverlayCoordinator.scheduleTapePreviewDismiss()
     }
 
     /** B2 摘要条「问问 AI」：新闻标题作上下文带入对话（问法为事实型：是什么意思）。 */
     private fun askAboutNews(news: NewsItem) {
-        overlayArbiter.close()
-        newsSummary = null
+        detailOverlayCoordinator.closeSummary()
         openChatWithQuestion(chipStore.promptFragment() + "「${news.title}」这条新闻是什么意思？", focusSymbol = symbol)
     }
 
     /** H1 快捷理由：写入自选 + 理由 + 当时价。 */
     private fun pickQuickReason(reason: String) {
-        overlayArbiter.close()
+        detailOverlayCoordinator.close()
         val result = watchlistStore.add(symbol, quote.name)
         if (result == WatchlistAddResult.FULL) {
             toastHint("自选已满 ${WatchlistStore.MAX_ITEMS} 只，先移除一些吧")
