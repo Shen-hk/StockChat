@@ -12,4 +12,7 @@ internal actual object PlatformProfile {
     actual val marketFixes: Boolean = true
     actual val coreThreadMarshalling: Boolean = true
     actual val debugHooks: Boolean = true
+
+    /** 保持本轮既有行为（iOS 本轮已逐页验证，未发现画布空白）。 */
+    actual val canvasBatchDrawSupported: Boolean = true
 }

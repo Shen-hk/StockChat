@@ -1,3 +1,4 @@
+
 package com.kuikly.stockchat.data.provider
 
 import platform.UIKit.UIAccessibilityIsReduceMotionEnabled

@@ -30,7 +30,6 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.Scroller
-import com.tencent.kuikly.core.views.View
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 
 /**
@@ -153,43 +152,40 @@ internal class WatchlistPage : BasePager() {
         val searchSeed = ""
         return {
             attr { backgroundColor(page.theme.page) }
-            // vbind 是虚拟节点，不能作为 Scroller 的子项：Android 会把它展开到
-            // RecyclerView 外，表现为「卡片显示但页面不可滚」。让它包住唯一的
-            // 物理 Scroller，列表内容则保持 Scroller 的直接子树。
-            vbind({ page.themeRebuildKey() }) {
-                Scroller {
-                    attr {
-                        flex(1f)
-                        paddingLeft(0f)
-                        paddingRight(0f)
-                        // 顶栏实际占用约 statusBar + 44dp；此前再加 73dp 会让首卡
-                        // 与标题栏之间多出近 30dp 的空洞，空自选时尤为明显。
-                        paddingTop(page.pagerData.statusBarHeight + 44f)
-                        paddingBottom(60f)
-                        // 只有长按已拿起卡片的那一小段手势把移动事件留给行做排序；
-                        // 平常一律由 Scroller 拦截纵向滑动。pageDidAppear 会兜底清理
-                        // 被系统打断的会话，避免旧架构中 dragSymbol 残留而永久禁滚。
-                        scrollEnable(page.drag.dragSymbol.isEmpty())
-                    }
-                    // 用物理内容根节点保证 3dp 外边距及阴影不被 RecyclerView 裁切。
-                    View {
-                        attr {
-                            marginLeft(3f)
-                            marginRight(3f)
-                        }
-                        page.WatchlistScrollContent(
-                            theme = page.theme,
-                            data = page.data,
-                            drag = page.drag,
-                            brief = page.brief,
-                            reduceMotion = page.reduceMotion,
-                            onOpenDetail = page::openRowDetail,
-                            onOpenSearchPage = { page.openPage(Routes.SEARCH) },
-                            onOpenMarketPage = { page.openPage(Routes.MARKET) },
-                            onOpenRiskPage = { page.openPage(Routes.RISK) },
-                            onOpenAlertsPage = { page.openPage(Routes.ALERTS) },
-                        )
-                    }
+            // 物理上只有这一个 Scroller，内容子树用 vbind 作为 Scroller 的子项；
+            // 换肤/字号变更只重建内容，滚动位置与拖拽状态保留。
+            Scroller {
+                attr {
+                    flex(1f)
+                    // 竖向 Scroller 水平 padding 双倍扣除（同 ChatPage/MarketPage）：
+                    // 左 14 右 0，实测左右各约 14dp 对齐；卡片阴影也留有绘制空间。
+                    paddingLeft(14f)
+                    paddingRight(0f)
+                    // 顶栏实际占用约 statusBar + 44dp；此前再加 73dp 会让首卡
+                    // 与标题栏之间多出近 30dp 的空洞，空自选时尤为明显。
+                    paddingTop(page.pagerData.statusBarHeight + 44f)
+                    paddingBottom(60f)
+                    // 只有长按已拿起卡片的那一小段手势把移动事件留给行做排序；
+                    // 平常一律由 Scroller 拦截纵向滑动。pageDidAppear 会兜底清理
+                    // 被系统打断的会话，避免旧架构中 dragSymbol 残留而永久禁滚。
+                    scrollEnable(page.drag.dragSymbol.isEmpty())
+                }
+                vbind({ page.themeRebuildKey() }) {
+                    // 必须以当前 vbind 为扩展接收者。若写成
+                    // page.WatchlistScrollContent(...)，全部物理子节点会挂到页面根节点，
+                    // 绕过 ScrollerContentView：卡片虽然可见，但滚动内容高度不含它们。
+                    WatchlistScrollContent(
+                        theme = page.theme,
+                        data = page.data,
+                        drag = page.drag,
+                        brief = page.brief,
+                        reduceMotion = page.reduceMotion,
+                        onOpenDetail = page::openRowDetail,
+                        onOpenSearchPage = { page.openPage(Routes.SEARCH) },
+                        onOpenMarketPage = { page.openPage(Routes.MARKET) },
+                        onOpenRiskPage = { page.openPage(Routes.RISK) },
+                        onOpenAlertsPage = { page.openPage(Routes.ALERTS) },
+                    )
                 }
             }
 

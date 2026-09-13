@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.foundation.ui.icon
 
+import com.kuikly.stockchat.common.PlatformProfile
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Canvas
@@ -13,6 +14,9 @@ import kotlin.math.PI
  * stroke scales losslessly with `size`.  The grid transform is applied via
  * `ctx.scale(k, k)`, which also scales `lineWidth` — coordinates below are
  * therefore written in raw 24-grid units.
+ *
+ * 画布批处理经 [PlatformProfile.canvasBatchDrawSupported] 按端放行：鸿蒙锁定的
+ * 渲染层没有 `batchDraw` 命令，一旦开启整帧绘图命令会被丢弃，图标全白。
  */
 
 private const val GRID = 24f
@@ -29,12 +33,15 @@ private fun ViewContainer<*, *>.lineIcon(
         attr { width(size); height(size) }
     }) { ctx, w, _ ->
         val k = w / GRID
-        ctx.batchDraw = true
+        ctx.batchDraw = PlatformProfile.canvasBatchDrawSupported
         ctx.scale(k, k)
         ctx.strokeStyle(color)
         ctx.fillStyle(color)
         ctx.lineWidth(strokeWidth)
         ctx.lineCapRound()
+        // 鸿蒙渲染层的路径对象只由 beginPath() 创建，且每帧开头会被 reset() 置空；
+        // 这里统一起一条空路径兜底（各图标内部仍可自行 beginPath 开新子路径）。
+        ctx.beginPath()
         ctx.draw(k)
     }
 }
@@ -271,7 +278,7 @@ fun ViewContainer<*, *>.LineIconMicWithFill(
         attr { width(size); height(size) }
     }) { ctx, w, _ ->
         val k = w / GRID
-        ctx.batchDraw = true
+        ctx.batchDraw = PlatformProfile.canvasBatchDrawSupported
         ctx.scale(k, k)
         ctx.lineWidth(STROKE)
         ctx.lineCapRound()

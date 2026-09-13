@@ -62,7 +62,7 @@ internal fun ViewContainer<*, *>.WatchlistScrollContent(
             theme = pageTheme,
             brief = brief,
             reduceMotion = reduceMotion,
-            onOpenAlerts = onOpenAlerts@{ /* 由页面注入路由 */ },
+            onOpenAlerts = onOpenAlertsPage,
         )
     }
 

@@ -820,10 +820,13 @@ internal class ChatPage : BasePager() {
                     transform(translate = Translate(0f, 0f, offsetX = panelX + 292f))
                     // R2/R3：分支互斥、每分支恰一次 animate；实参位置现场再读
                     // observable（RowGestureLayer 范式），与 ChatDrawer 面板一致。
+                    // R5 消费语义：关闭态注册的 easeIn 在「展开」时被消费播放
+                    // （2026-09-13 展开提速 0.275→0.22，与面板同步），展开态
+                    // 注册的 easeOut 在「收起」时被消费——两层注册逐分支同构。
                     when (motion.phase) {
                         DrawerGesturePhase.IDLE ->
                             animate(
-                                if (shown) Animation.easeOut(0.375f) else Animation.easeIn(0.275f),
+                                if (shown) Animation.easeOut(0.375f) else Animation.easeIn(0.22f),
                                 page.drawerPresented,
                             )
                         DrawerGesturePhase.DRAGGING -> Unit // 跟手：直接落位，不注册动画
@@ -1085,9 +1088,38 @@ internal class ChatPage : BasePager() {
                             // 停靠栏；顶部的 4dp 渐变层负责与滚动内容柔和交接。
                             else 4f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight,
                         )
-                        // 外层只保留命中区域，不能铺整片实色：输入栏的背景高度应
-                        // 由胶囊本身决定，底部安全区直接透出页面底色。
+                        // 外层只保留命中区域，不铺整片实色：胶囊背后的底色由下面
+                        // 的半高背板（实色段 + 渐隐带）承担，高度不随胶囊长大。
                         backgroundColor(page.theme.page.opacity(0f))
+                    }
+                    // ===== 输入胶囊半高背板（2026-09-13 用户反馈）：聊天记录
+                    // 滚到胶囊背后时渐隐，不再从胶囊下方/两侧透出。实色段从屏底
+                    // 垫到约胶囊高度 2/3 处（收拢态胶囊 66dp = 48 输入行 + 9×2），
+                    // 其上叠 32dp 渐隐带（page 色 0→1）柔化与列表的交接；键盘
+                    // 弹出时随 paddingBottom（含 keyboardHeight）整体上移。
+                    View {
+                        attr {
+                            absolutePosition(bottom = 0f, left = 0f, right = 0f)
+                            height(44f + 4f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight)
+                            backgroundColor(page.theme.page)
+                            touchEnable(false)
+                        }
+                    }
+                    View {
+                        attr {
+                            absolutePosition(
+                                bottom = 44f + 4f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight,
+                                left = 0f,
+                                right = 0f,
+                            )
+                            height(32f)
+                            touchEnable(false)
+                            backgroundLinearGradient(
+                                Direction.TO_BOTTOM,
+                                ColorStop(page.theme.page.opacity(0f), 0f),
+                                ColorStop(page.theme.page.opacity(1f), 1f),
+                            )
+                        }
                     }
                     // 胶囊上缘仅留 3dp、半透明的渐隐，柔化与会话列表的交接，
                     // 但不再形成一整条过高的输入栏背景。
@@ -1862,7 +1894,8 @@ internal class ChatPage : BasePager() {
                 // 流动渐变：渐变轴绕中心旋转（相位由页侧定时器推进，draw 闭包内
                 // 读取 observable，ReactiveObserver 驱动重绘）。轴长取对角线，
                 // 任意角度下渐变都完整覆盖画布，不会露边角断色。
-                context.batchDraw = true
+                // 批处理按端放行：鸿蒙 locked 渲染层未实现 batchDraw，开启即整帧丢失。
+                context.batchDraw = PlatformProfile.canvasBatchDrawSupported
                 val phase = composerRimPhase
                 val cx = width / 2f
                 val cy = height / 2f

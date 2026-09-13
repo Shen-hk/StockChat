@@ -11,10 +11,9 @@ import kotlin.math.abs
  * 横滑。因此侦察放在 Activity.dispatchTouchEvent：只读 MotionEvent、永不消费，
  * 完全不影响 Kuikly 视图层自己的触摸分发（滚动/点击/长按/拖拽均不受干扰）。
  *
- * 命中条件（用户决策 2026-09-08：特别大且快速的手势才算抽屉展开，避免与
- * 主布局交互误触）：
- *  1. 起手在屏幕左侧 ~60% 区域（用户决策二轮：从 40% 放宽到 60%，页面
- *     左侧 3/5 区域内右滑均可触发；仅避开最右侧内容区的横向交互）；
+ * 命中条件（2026-09-08 定为「大且快」横滑防误触；2026-09-13 起手区放宽到全屏）：
+ *  1. 起手位置不限（用户决策 2026-09-13：从 60% 扩大到 100% 全屏，屏幕
+ *     任意位置右滑均可触发；历史 40%→60%→100%。方向/距离/速度门限保留）；
  *  2. 横向净位移 ≥ 屏宽 24%；
  *  3. 总时长 ≤ 420ms；
  *  4. 平均速度 ≥ 900dp/s；
@@ -81,7 +80,8 @@ internal class DrawerFlingDetector(
     }
 
     private companion object {
-        const val START_ZONE_FRACTION = 0.60f
+        // 起手区占屏宽比例（用户决策 2026-09-13：全屏 100%；历史 40%→60%→100%）。
+        const val START_ZONE_FRACTION = 1.0f
         const val MIN_DISTANCE_FRACTION = 0.24f
         const val MAX_DURATION_MS = 420L
         const val MIN_VELOCITY_DPS = 900f

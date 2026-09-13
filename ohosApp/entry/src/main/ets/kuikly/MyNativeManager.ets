@@ -1,10 +1,13 @@
 import { KuiklyNativeManager } from '@kuikly-open/render';
 import Napi from 'libentry.so';
+import hilog from '@ohos.hilog';
 
 class MyNativeManager extends KuiklyNativeManager {
   protected loadNative(): number {
-    // 调用Napi接口，初始化 Kuikly Native
-    return Napi.initKuikly();
+    hilog.info(0x0000, 'testTag', 'MyNativeManager.loadNative: calling Napi.initKuikly()');
+    const handler = Napi.initKuikly();
+    hilog.info(0x0000, 'testTag', 'MyNativeManager.loadNative: Napi.initKuikly() returned %{public}d', handler);
+    return handler;
   }
 }
 

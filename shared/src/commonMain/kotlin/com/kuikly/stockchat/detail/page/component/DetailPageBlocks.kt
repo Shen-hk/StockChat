@@ -22,6 +22,7 @@ import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.data.provider.DisclosureItem
 import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.RatingSpectrum
+import kotlin.math.PI
 // doc 29 集成：共享基建 + 板块组件（事件回调经这些基建接线）
 import com.kuikly.stockchat.detail.domain.CardFootnote
 import com.kuikly.stockchat.detail.domain.ContextChip
@@ -2148,7 +2149,7 @@ private fun ViewContainer<*, *>.ForecastScenarioChart(
             val endX = xFor(visible - 1)
             val endY = yFor(path[visible - 1])
             canvas.beginPath()
-            canvas.arc(endX, endY, 2.5f, 0f, (2.0 * Math.PI).toFloat(), false)
+            canvas.arc(endX, endY, 2.5f, 0f, (2.0 * PI).toFloat(), false)
             canvas.fillStyle(tone)
             canvas.fill()
             canvas.font(8.5f)

@@ -2,6 +2,7 @@ import { ErrorReason, KRRecord, Kuikly, KuiklyRenderBaseView } from '@kuikly-ope
 import router from '@ohos.router';
 import { KuiklyViewDelegate } from '../kuikly/KuiklyViewDelegate';
 import globalNativeManager from '../kuikly/MyNativeManager';
+import hilog from '@ohos.hilog';
 
 @Entry
 @Component
@@ -14,6 +15,16 @@ struct Index {
 
   aboutToAppear() {
     AppStorage.setOrCreate<UIContext>("context", this.getUIContext());
+
+    // 真机实测（2026-09-13）：Kuikly 组件首次 onAreaChange 会同步触发
+    // doOnAttach -> doDidInit 调用 native，若此时 initKuikly() 还没跑完，
+    // native 侧 DefaultRenderNativeContextHandler 的断言直接 SIGABRT 整个进程
+    // （Assertion failed: make sure initKuikly() has been called!）。
+    // 在组件树 build() 之前同步跑一次 internalDoLoad，把 native 初始化提到
+    // 首帧布局回调之前，消掉这个初始化顺序竞争。
+    hilog.info(0x0000, 'testTag', 'Index.aboutToAppear: before internalDoLoad');
+    globalNativeManager.internalDoLoad();
+    hilog.info(0x0000, 'testTag', 'Index.aboutToAppear: after internalDoLoad');
 
     const params = router.getParams() as Record<string, Object>;
     this.pageName = params?.pageName as string;

@@ -78,7 +78,9 @@ internal class ChatDrawerCoordinator(
             setPresented(false)
             onEffect(ChatDrawerEffect.RESET_HISTORY_QUERY)
             schedule(0) { if (presentationVersion == version) setPresented(true) }
-            if (!wasOpen) schedule(395) {
+            // 触感落点对齐展开动画（0.22s + 20ms 余量；2026-09-13 展开提速同步，
+            // 原 395ms 按旧 0.375s 口径设定，实际播放的 easeIn 已远短于此）。
+            if (!wasOpen) schedule(240) {
                 if (version == presentationVersion && open && presented) onEffect(ChatDrawerEffect.HAPTIC_IMPACT)
             }
         } else {

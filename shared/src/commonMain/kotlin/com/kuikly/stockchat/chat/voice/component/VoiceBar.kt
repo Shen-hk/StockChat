@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.chat.voice.component
 
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
@@ -55,7 +56,9 @@ fun ViewContainer<*, *>.VoiceBar(
             }) { ctx, w, h ->
                 val values = amps()
                 val armed = cancelArmed()
-                ctx.batchDraw = true
+                // 批处理按端放行：鸿蒙 locked 渲染层未实现 batchDraw，开启会让整帧
+                // 命令被丢弃、波形一片空白（见 PlatformProfile 注释）。
+                ctx.batchDraw = PlatformProfile.canvasBatchDrawSupported
                 val n = values.size
                 if (n > 1 && w > 0f) {
                     val barW = 3f

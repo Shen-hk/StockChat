@@ -87,8 +87,13 @@ fun ViewContainer<*, *>.ChatDrawer(
             touchEnable(active)
             // 横向 pan 捕获：遮罩上左拖可跟手收起面板，纵向滚动与点击不受影响。
             capture(CaptureRule.pan(CaptureRuleDirection.HORIZONTAL))
-            // 时长 +25%（用户决策 2026-09-05）：0.24 → 0.30，与面板同速。
-            animate(Animation.easeOut(0.30f), presented())
+            // R5 消费语义：这里注册的是「下一个」方向要播的动画——关闭态
+            // (shown=false) 注册的 0.22 在「展开」时被消费（2026-09-13 提速，
+            // 与面板展开同速），展开态注册的 0.30 在「收起」时消费（不动）。
+            animate(
+                if (shown) Animation.easeOut(0.30f) else Animation.easeOut(0.22f),
+                presented(),
+            )
         }
         event {
             click { onClose() }
@@ -127,10 +132,13 @@ fun ViewContainer<*, *>.ChatDrawer(
             // observable，保证 animate 绑定到正确的驱动 key（RowGestureLayer 范式）。
             when (motion.phase) {
                 DrawerGesturePhase.IDLE ->
-                    // 菜单按钮开合：开先快后慢（easeOut），关先慢后快（easeIn）。
-                    // 时长 +25%（用户决策 2026-09-05）：0.30→0.375 / 0.22→0.275。
+                    // R5 消费语义（AnimationManager 源码已证 2026-09-13）：beginApply
+                    // 消费「上一周期」的注册——关闭态(shown=false)注册的 easeIn 在
+                    // 「展开」时播放，展开态注册的 easeOut 在「收起」时播放（原注释
+                    // 把两个方向写反了）。展开提速（用户决策 2026-09-13）：
+                    // easeIn 0.275→0.22；收起 easeOut(0.375) 不动。
                     animate(
-                        if (shown) Animation.easeOut(0.375f) else Animation.easeIn(0.275f),
+                        if (shown) Animation.easeOut(0.375f) else Animation.easeIn(0.22f),
                         presented(),
                     )
                 DrawerGesturePhase.DRAGGING -> Unit // 跟手：直接落位，不注册动画

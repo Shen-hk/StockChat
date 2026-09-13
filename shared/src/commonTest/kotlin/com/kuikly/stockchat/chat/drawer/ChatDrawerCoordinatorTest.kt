@@ -28,7 +28,7 @@ class ChatDrawerCoordinatorTest {
 
         fixture.scheduler.run(0)
         assertTrue(fixture.state.presented)
-        fixture.scheduler.run(395)
+        fixture.scheduler.run(240)
         assertEquals(ChatDrawerEffect.HAPTIC_IMPACT, fixture.effects.last())
     }
 

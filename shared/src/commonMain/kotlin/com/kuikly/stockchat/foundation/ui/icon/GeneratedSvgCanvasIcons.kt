@@ -1,17 +1,37 @@
 package com.kuikly.stockchat.foundation.ui.icon
 
+import com.kuikly.stockchat.common.PlatformProfile
 import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.CanvasContext
 
+/**
+ * SVG 路径（1024 网格）经画布填充绘制的图标族：搜索、铃铛、设置、返回、书签、
+ * 风险地图、书、菜单、加号、刷新、日历。
+ *
+ * 两条跨端硬约束（都只在鸿蒙上暴露，Android 会「碰巧」正常渲染）：
+ *
+ * 1. **每条路径前必须 `beginPath()`**。Android 的 `Path` 是常驻对象，空路径上直接
+ *    `moveTo` 就能起一条新子路径；鸿蒙渲染层的 `drawingPath_` **只由 `beginPath()`
+ *    创建**，且每帧 `CanvasView.draw()` 开头的 `reset()` 会把它销毁置空 —— 之后
+ *    `moveTo`/`lineTo`/`bezierCurveTo`/`arc` 全部提前 return，`fill()` 也无路径可画。
+ *    下面每个 lambda 各自以 `beginPath()` 开头（各 lambda 都以 `closePath(); fill()`
+ *    收尾，彼此独立，互不依赖上一条路径）。
+ * 2. 批处理经 [PlatformProfile.canvasBatchDrawSupported] 按端放行 —— 鸿蒙锁定的
+ *    渲染层没有 `batchDraw` 命令，开启后整帧填充命令会被丢弃，图标不可见。
+ */
 private fun ViewContainer<*, *>.generatedIcon(size: Float, color: Color, paths: List<(CanvasContext, Float) -> Unit>) {
     Canvas({ attr { width(size); height(size) } }) { ctx, w, _ ->
         val k = w / 1024f
-        ctx.batchDraw = true
+        ctx.batchDraw = PlatformProfile.canvasBatchDrawSupported
         ctx.scale(k, k)
         ctx.fillStyle(color)
-        paths.forEach { it(ctx, k) }
+        paths.forEach { path ->
+            // 见上方第 1 条：鸿蒙的路径对象必须显式创建，否则整条路径静默丢弃。
+            ctx.beginPath()
+            path(ctx, k)
+        }
     }
 }
 

@@ -11,4 +11,7 @@ internal actual object PlatformProfile {
     actual val marketFixes: Boolean = false
     actual val coreThreadMarshalling: Boolean = false
     actual val debugHooks: Boolean = false
+
+    /** `core-render-android@2.25.0` 的 `KRCanvasView` 实现了 `batchDraw`，保持批处理。 */
+    actual val canvasBatchDrawSupported: Boolean = true
 }

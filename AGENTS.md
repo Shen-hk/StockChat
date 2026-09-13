@@ -29,6 +29,7 @@ Call `animate()` once per driver observable in a given `attr {}` block. For diff
 Consequences:
 
 - Register, in every cycle (including the pre-state/mount cycle), the animation you want the **next** driver change to play. `CardSheet` and the welcome starter cards register the entrance `easeOut` unconditionally — the flip cycle then consumes exactly that.
+- Direction mapping for two-state (open/close) animations: the registration made in the **closed** state is what the **open** transition plays, and the open-state registration plays on close (`AnimationManager.willBeginAnimation` copies the previous cycle's `nextAnimations` into `curAnimations` at `beginApply`; verified against core 2.25.0 sources, 2026-09-13). The old ChatDrawer/ChatPage drawer comments had the two directions swapped.
 - Never register a zero-duration "reset" animation (e.g. `Animation.linear(0f)`) in the pre-state cycle: the presentation cycle will consume it and the entrance degrades to an instant jump. Same-value observable writes do not notify (`ObservableProperties.setValue` early-returns), so an unwanted stale registration cannot be flushed by re-writing the same value.
 - Keep a version-guarded fallback timer for entrance sequences: if the `ref` → `setTimeout` chain loses a link, the view must not stay stuck at `opacity 0` (see `ChatPage.scheduleWelcomeEntranceSafety`).
 - Never reset an animation-driver observable in the same batch as a layout/data change that also clears the corresponding transforms. Views holding a live registration keyed on that observable will consume the reset (N→0) and animate the transform clear — layout snaps instantly while the offset replays as a visible second move (2026-09-09 watchlist drag-drop flash; fix: leave `dragFrom`/`dragTo` stale in `WatchlistPage.cancelDragSession`, all reads gate on `dragSymbol`, `beginDragLift` re-seeds).
@@ -118,6 +119,35 @@ When debugging a silent Kuikly animation, inspect reactive dependency registrati
   `KR_ROOT_PAGE=<页>` 冒烟钩子直接落到目标页，看 `missing shadow`/`RuntimeException` 计数与进程存活。
 - **回归防线**：新增/重构任何 `vfor` 行渲染时，先看 creator 顶层是不是只有一条视图语句；
   崩了优先怀疑这条约束，而不是数据或主题。
+
+---
+
+## R10 — 画布批处理是**平台能力**，不是「开关」（consolidated 2026-09-12）
+
+- **症状**：鸿蒙上所有 `Canvas` 自绘内容**整块空白** —— 线性图标、SVG 图标、
+  语音波形、composer 渐变描边全部不显示，Android 上却完全正常。
+- **根因**：`CanvasContext.batchDraw = true` 会把**整帧**绘制命令缓冲起来，只向
+  native 发一条 `batchDraw`（JSON 命令数组）。鸿蒙锁定的 `@kuikly-open/render@2.25.0`
+  **没有实现这条命令**，于是整帧被静默丢弃（不报错、不崩溃）。
+  Kuikly 上游 `main` 分支持久化前没有它，升级 har 才会带上。
+- **判定方式（可复现，不必跑真机）**：
+  ```bash
+  python - <<'PY'
+  d = open("ohosApp/oh_modules/.ohpm/@kuikly-open+render@<v>/oh_modules/@kuikly-open/render/libs/arm64-v8a/libkuikly.so","rb").read()
+  for s in [b'batchDraw', b'beginPath', b'clipPathIntersect', b'createRadialGradient', b'measureText', b'setLineDash']:
+      print(s.decode(), d.count(s))
+  PY
+  ```
+  Android 侧对照物：`core-render-android-<v>-api.jar` 里 `KRCanvasView.class` 含 `batchDraw` 字符串。
+- **本仓口径**：批处理是否开启统一走 `PlatformProfile.canvasBatchDrawSupported`
+  （`com.kuikly.stockchat.common`，expect/actual）。Android/iOS/H5 = `true`（保持既有行为），
+  **鸿蒙 = `false`**（逐条下发是等价回退：native 支持全部单条命令，只是 bridge 调用次数多些）。
+  **新增任何 `Canvas` 都不要写死 `batchDraw = true`。**
+- **同源命令缺口**（鸿蒙上同样是静默 no-op，用到先确认）：`clipPathIntersect`、
+  `clipPathDifference`、`createRadialGradient`、`measureText`、`setLineDash`。
+- **教训**：多端共用的画布代码里，任何「性能优化型 API」都必须先确认**每一端 native
+  都实现了**，否则它就是一个静默的渲染开关。`:shared:compileDebugKotlinAndroid` 绿
+  不代表鸿蒙绿 —— 这类问题只有看鸿蒙渲染层产物或真机才能发现。
 
 ---
 
