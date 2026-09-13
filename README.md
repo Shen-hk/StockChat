@@ -266,7 +266,7 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 ```
 
 **特殊情况**：
-
+- 当前为 arm64-v8a 配置，请使用真实设备。
 - 别加 `--parallel`，鸿蒙 hvigor 会 OOM。
 - 设备锁屏时 `aa start` 报错 `10106102`——请用户先手动解锁再启动。
 - 签名 `signingConfigs`：material 内 7 字段全必选（含 `certpath`），`store/keyPassword` ≥ 32 字符；本机 credential 在 IDE vault 内，AI 不可达，请使用自己的证书。
@@ -373,23 +373,16 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 
 ---
 
-## 已知缺口（诚实标注）
 
-- iOS 侧已跑通页面级模拟器冒烟验证，但**宿主桥的上传与语音模块尚未实现**，且 `Info.plist` 还缺相册 / 相机用途描述。
-- 鸿蒙侧已在平板设备上跑通首页渲染（见 §「三端同时运行的真实样貌」），详情页 / 图表 / 语音等链路尚未做真机走查。
-- 推送、云同步、词库热更新等 P2 项未排期。
-
----
 
 ## 文档
 
-`docs/` 下 49 篇编号文档 + 22 篇可交互原型 HTML，覆盖调研、PRD、交互规范、技术方案与逐波重构施工书。推荐起手：
+GitHub 只保留与当前源码一致的维护参考，不收录阶段汇报、施工记录、调试材料和交互原型：
 
-- [项目级目标架构与演进蓝图](docs/39-项目级目标架构与演进蓝图_v1.0.md)
-- [界面层次分析法（LDRS）](docs/24-界面层次分析法%28LDRS%29与三模块重构规格_v1.0.md)
+- [文档索引](docs/reference/README.md)
+- [页面与功能](docs/reference/pages.md)
+- [通用组件 DSL](docs/reference/components-dsl.md)
 - [架构分层规则](docs/architecture/package-rules.md) · 门禁脚本 `scripts/check_architecture.sh`
-- [项目实施记录与后续开发计划](docs/股问StockChat_项目实施记录与后续开发计划_v1.0.md)
-- [阶段性汇报](docs/26-阶段性汇报_v1.0.md)
 
 ---
 

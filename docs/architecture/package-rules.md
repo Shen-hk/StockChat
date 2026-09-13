@@ -1,7 +1,6 @@
 # 架构门禁：包依赖规则
 
 > 落地于 `scripts/check_architecture.sh`，由 `./gradlew architectureCheck` 调用。
-> 依据 `docs/44`（四层架构审计与整改纲领）、`docs/46` A-1。
 > 目标：把「反向依赖」从口头约定变成**会失败的构建**。
 
 ## 1. 目标架构与强制依赖方向
@@ -47,7 +46,7 @@ StockChat 的目标分层是 **Page / Component / State / Data** 四层。依赖
 
 - **R1 不拦 `core.nvi.serialization.json`**：那是数据层的序列化工具，数据层用它是对的。被拦的是 `core.nvi` 下的桥/导航能力。
 - **R2 的「数据访问层」以 `data` 包界定**：只有 `com.kuikly.stockchat.data.**` 下的 `*Repository` / `*Store` / `*Provider` / `*Bridge` 才算违规。否则 Feature 自己的同名后缀类型会被误伤（例：`detail.domain.ContextChipStore` 是纯模型，不是存储）。
-- **R2 的「不得 import `page.*`」是本项目最密集的违反点**：A-1 落地时全仓命中 63 条（其中 50 条集中在 `detail/page/component/*`），A-3 完成后降至 16 条，余量由 `docs/46` 的 A-4 清账。
+- **R2 的「不得 import `page.*`」是本项目最密集的违反点**：既有债务记录在架构白名单中，新代码不得增加命中。
 - **R5 的计数口径**：`grep` 级别的字面出现次数（`setTimeout(` / `Provider(` / `by observable`），不是「语义上的定时器个数」。基线由 `--baseline` 生成，检查与基线同源，所以口径一致即可。
 - **R5 / R6 不是「必须清零」，而是「不许变差」**。它们对付的是「顺手再塞一个」——这是 Page 膨胀的主要机制。
 
