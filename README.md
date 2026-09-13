@@ -16,13 +16,16 @@
 
 ## 三端同时运行的真实样貌
 
-> Android · iOS · OpenHarmony 三台真机同框对照，同一提问、同一个数据快照。
+> 同一份 Kuikly 共享代码，在 **Android 手机 · iOS（iPhone 13）· OpenHarmony 平板** 三种设备形态上的真实运行截图。
 
 <div align="center">
 
-| 三端同框截图（同一会话、同一时刻） |
-| :---: |
-| <img src="assets/images/three-platforms.png" alt="三端同框运行截图" width="640" /> |
+| Android 手机 | iOS（iPhone 13 / 15.2） | OpenHarmony 平板 |
+| :---: | :---: | :---: |
+| <img src="assets/images/screenshot-android.jpg" alt="Android 手机端首页截图" width="196" /> | <img src="assets/images/screenshot-ios.png" alt="iOS（iPhone 13）端首页截图" width="211" /> | <img src="assets/images/screenshot-ohos-tablet.jpg" alt="OpenHarmony 平板端首页截图" width="276" /> |
+| 挖孔屏 · 双卡 5G | 刘海屏 · iOS 原生手势 | 大屏横向布局 |
+
+<sub>三端共用同一套顶栏（☰ 会话抽屉 / 全局搜索 / 新建会话）、同一套欢迎区（App 图标 +「StockChat 帮你看 ×××」+ 问 AI / 看行情 双 Tab）与同一套底部输入栏（+ / 按住说话 / 声波）；差异只落在状态栏与系统手势区。「为你推荐」的问题取自端侧话题池并按会话轮换，所以三张截图里的推荐问题各不相同——这正是同一份业务代码、不同入口上下文的体现。</sub>
 
 </div>
 
@@ -46,9 +49,24 @@
 
 | 产物 | 下载 | 说明 |
 | :--- | :---: | :--- |
-| **Android Release 包** | [📥 `releases/StockChat-android-release.apk`](releases/StockChat-android-release.apk) | arm64-v8a，minSdk 23，签名见 §「构建产物 & 签名」 |
+| **Android Release 包** | [📥 `releases/StockChat-android-release.apk`](releases/StockChat-android-release.apk) | arm64-v8a · 22.8 MB · arm64-v8a 单架构 · minSdk 23 / targetSdk 34 |
 
-> Release 包请放入 `releases/StockChat-android-release.apk`，安装前请确认来源，未签名或签名不一致勿用于正式环境。Debug 包请按 §「Android 跑通」章节自构建。
+**本仓库自带安装包的元信息（2026-09-13 构建）**
+
+| 项 | 值 |
+| :--- | :--- |
+| 路径 | `releases/StockChat-android-release.apk` |
+| 大小 | 22,871,947 字节 ≈ **21.8 MB** |
+| SHA-256 | `154a5a792e2d2efc14ed4dcd3c62715883e5ecd92496092c66f94958710a6f41` |
+| 包名 | `com.kuikly.stockchat` |
+| versionCode / versionName | `1` / `1.0` |
+| compileSdk / minSdk / targetSdk | `34` / `23` / `34` |
+| 启动 Activity | `com.kuikly.stockchat.KuiklyRenderActivity` |
+| 应用图标 | 矢量自适应图标（`res/BW.xml`） |
+| ABI | arm64-v8a（仅单架构，模拟器请自构建 universal APK） |
+| 权限 | `INTERNET` · `RECORD_AUDIO`（语音输入） · `com.kuikly.stockchat.permission.KUIKLY_NOTIFY`（Kuikly 通知） |
+
+> 安装前请自行校验 SHA-256 是否与上表一致；不一致请勿安装。Debug 包请按 §「三端跑通 · Android」章节自构建。
 
 ---
 
@@ -188,12 +206,16 @@ Windows / macOS / Linux 命令相同。
 adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
 
 # 3. 启动
-adb shell am start -n com.kuikly.stockchat/.MainActivity
+adb shell am start -n com.kuikly.stockchat/.KuiklyRenderActivity
 ```
 
 **Release 包**：
 
-- 一键使用仓库自带的 [Release 包](releases/StockChat-android-release.apk)：直接 `adb install -r releases/StockChat-android-release.apk`。
+- **直接使用仓库自带的** [Release 包](releases/StockChat-android-release.apk)：先校验 SHA-256（见 §「立即下载」），再
+  ```bash
+  adb install -r releases/StockChat-android-release.apk
+  adb shell am start -n com.kuikly.stockchat/.KuiklyRenderActivity
+  ```
 - 自构建：`./gradlew :androidApp:assembleRelease`（签名请按 §「构建产物 & 签名」自行配置）。
 
 **特殊情况**：
@@ -354,7 +376,7 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 ## 已知缺口（诚实标注）
 
 - iOS 侧已跑通页面级模拟器冒烟验证，但**宿主桥的上传与语音模块尚未实现**，且 `Info.plist` 还缺相册 / 相机用途描述。
-- 鸿蒙侧仅完成构建链路（需 DevEco SDK 环境），未做真机走查。
+- 鸿蒙侧已在平板设备上跑通首页渲染（见 §「三端同时运行的真实样貌」），详情页 / 图表 / 语音等链路尚未做真机走查。
 - 推送、云同步、词库热更新等 P2 项未排期。
 
 ---
