@@ -383,13 +383,12 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 
 ## 文档
 
-`docs/` 下 49 篇编号文档 + 22 篇可交互原型 HTML，覆盖调研、PRD、交互规范、技术方案与逐波重构施工书。推荐起手：
+GitHub 只保留与当前源码一致的维护参考，不收录阶段汇报、施工记录、调试材料和交互原型：
 
-- [项目级目标架构与演进蓝图](docs/39-项目级目标架构与演进蓝图_v1.0.md)
-- [界面层次分析法（LDRS）](docs/24-界面层次分析法%28LDRS%29与三模块重构规格_v1.0.md)
+- [文档索引](docs/reference/README.md)
+- [页面与功能](docs/reference/pages.md)
+- [通用组件 DSL](docs/reference/components-dsl.md)
 - [架构分层规则](docs/architecture/package-rules.md) · 门禁脚本 `scripts/check_architecture.sh`
-- [项目实施记录与后续开发计划](docs/股问StockChat_项目实施记录与后续开发计划_v1.0.md)
-- [阶段性汇报](docs/26-阶段性汇报_v1.0.md)
 
 ---
 

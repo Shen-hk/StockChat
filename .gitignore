@@ -104,3 +104,10 @@ v1*.png
 /_tmp_*
 /*.log
 /h5_screenshot.png
+
+# GitHub 只保留正式架构与源码参考文档；过程记录、草稿和原型不入库
+/docs/*
+!/docs/architecture/
+!/docs/architecture/**
+!/docs/reference/
+!/docs/reference/**
