@@ -95,3 +95,56 @@
 }
 
 @end
+
+#pragma mark - Kuikly 引擎网络错误弹窗抑制
+
+// 背景：KRHttpRequestTool.m:253-260 对任何非 2xx 响应调
+// +[KRLogModule logError:]，而 KRLogModule.m:135-140 会无条件调
+// KRConvertUtil.hr_alertWithTitle 弹 UIAlertController（无 #if DEBUG，
+// Release 同样弹）。行情接口（腾讯 WAF）偶发 501 时会弹出遮挡式模态框，
+// 而业务侧已有三级域名降级兜底（TencentQuoteProvider.KLINE_HOSTS），
+// 弹窗纯属噪音且打断用户。
+//
+// 范围收敛：引擎内共 25 处调用 +[KRLogModule logError:]，本 hook 只抑制
+// 含 "non-success status code" 的网络类消息（仍打 NSLog 便于排查）；其余
+// 24 处（框架配置错误、断言失败、渲染异常、PAG 素材缺失等）走原 IMP 保持
+// 弹窗，避免掩盖开发期需要立刻发现的真问题。
+//
+// 实现要点：
+//   - NSClassFromString + NSSelectorFromString：不依赖 Pods 头是否 public
+//   - 保存并转发原 IMP：非网络类消息行为与引擎原生完全一致
+//   - dispatch_once：多线程安全，仅执行一次
+//   - 找不到类/方法时 early return，绝不影响启动
+
+#import <objc/runtime.h>
+
+static void KR_SuppressNetworkErrorAlert(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        Class logClass = NSClassFromString(@"KRLogModule");
+        SEL logSelector = NSSelectorFromString(@"logError:");
+        if (!logClass || !logSelector) {
+            return;
+        }
+        Method logMethod = class_getClassMethod(logClass, logSelector);
+        if (!logMethod) {
+            return;
+        }
+
+        IMP originalImp = method_getImplementation(logMethod);
+        IMP replacementImp = imp_implementationWithBlock(^(id _self, NSString *message) {
+            if ([message isKindOfClass:[NSString class]] &&
+                [message containsString:@"non-success status code"]) {
+                NSLog(@"[KRNetworkAlertSuppressed] %@", message);
+                return;
+            }
+            ((void (*)(id, SEL, NSString *))originalImp)(_self, logSelector, message);
+        });
+        method_setImplementation(logMethod, replacementImp);
+    });
+}
+
+__attribute__((constructor(101)))
+static void KR_SuppressNetworkErrorAlert_Init(void) {
+    KR_SuppressNetworkErrorAlert();
+}
