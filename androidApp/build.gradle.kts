@@ -12,7 +12,7 @@ android {
     defaultConfig {
         applicationId = "com.kuikly.stockchat"
         minSdk = 23
-        targetSdk = 30
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
     }
