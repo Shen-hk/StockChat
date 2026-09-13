@@ -36,6 +36,13 @@ struct Index {
       Kuikly({
         pagerName: this.pageName ?? Index.DEFAULT_PAGE_NAME,
         pagerData: this.pageData ?? {},
+        // The locked OHOS renderer does not resolve assets:// URLs unless the
+        // host supplies the unpacked resource root. Page assets are mirrored
+        // into rawfile at build time and exposed below context.resourceDir.
+        assetsDir: getContext(this).resourceDir,
+        // Keep API/model configuration in HarmonyOS Preferences. The legacy
+        // shared-preferences bridge is not reliable on the native renderer.
+        useOhSharedPreferences: true,
         delegate: this.kuiklyViewDelegate,
         nativeManager: globalNativeManager,
         onRenderException: (exception: Error, reason: ErrorReason) => {

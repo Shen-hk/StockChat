@@ -14,6 +14,8 @@ import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 
+const val APP_TOP_BAR_HEIGHT = 57f
+
 /**
  * AppTopBar（顶栏）+ AppTopBarMetric/Action（顶栏数据模型）。
  *
@@ -64,7 +66,7 @@ fun ViewContainer<*, *>.AppTopBar(
             // All app chrome is a floating material; the page scroller is its
             // backdrop source and must remain visible underneath it.
             absolutePosition(top = 0f, left = 0f, right = 0f)
-            height(statusBarHeight + 57f)
+            height(statusBarHeight + APP_TOP_BAR_HEIGHT)
             paddingTop(statusBarHeight)
         }
         View {

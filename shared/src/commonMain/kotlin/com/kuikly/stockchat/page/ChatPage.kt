@@ -929,7 +929,6 @@ internal class ChatPage : BasePager() {
                                     if (!page.consumeTermClickSuppression(it)) {
                                         // 用户卡在术语上主动点高亮 = 一次真实「遇到」（doc 24 §6.3）。
                                         Glossary.keyForToken(it)?.let(page.glossaryStore::encounter)
-                                        page.viewModel.send("$it 是什么意思")
                                     }
                                 },
                                 onTermLongPress = page::handleTermEntityLongPress,

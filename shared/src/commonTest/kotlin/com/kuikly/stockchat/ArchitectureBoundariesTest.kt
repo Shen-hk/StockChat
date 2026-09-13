@@ -63,7 +63,41 @@ class ArchitectureBoundariesTest {
 
         assertTrue(reader.hasSessions())
         assertEquals(listOf("贵州茅台最近怎么样", "这里是解释"), restored.map { it.content })
-        assertEquals("贵州茅台最近怎么样", reader.listSummaries().single().title)
+        assertEquals("贵州茅台行情复盘", reader.listSummaries().single().title)
+    }
+
+    @Test
+    fun chatSessionTitleSummarizesTheWholeConversation() {
+        val storage = InMemoryKeyValueStorage()
+        val store = ChatSessionStore(storage, nowMillis = { 1_000L })
+        val sessionId = store.startSession()
+        store.save(
+            sessionId,
+            listOf(
+                ChatMessage("test", "m1", MessageRole.USER, "贵州茅台今年业绩怎么样"),
+                ChatMessage("test", "m2", MessageRole.ASSISTANT, "先看营收与利润变化。"),
+                ChatMessage("test", "m3", MessageRole.USER, "它目前最大的风险是什么"),
+                ChatMessage("test", "m4", MessageRole.ASSISTANT, "需要留意需求与估值波动。"),
+            ),
+        )
+
+        assertEquals("贵州茅台综合分析", store.listSummaries().single().title)
+    }
+
+    @Test
+    fun chatSessionTitleRecognizesComparisonAcrossQuestions() {
+        val storage = InMemoryKeyValueStorage()
+        val store = ChatSessionStore(storage, nowMillis = { 1_000L })
+        val sessionId = store.startSession()
+        store.save(
+            sessionId,
+            listOf(
+                ChatMessage("test", "m1", MessageRole.USER, "贵州茅台和五粮液哪个好"),
+                ChatMessage("test", "m2", MessageRole.ASSISTANT, "可以从增长和估值分别比较。"),
+            ),
+        )
+
+        assertEquals("贵州茅台与五粮液对比", store.listSummaries().single().title)
     }
 
     @Test

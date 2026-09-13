@@ -1,7 +1,10 @@
 package com.kuikly.stockchat.chat
 
+import com.kuikly.stockchat.data.entity.Securities
 import com.kuikly.stockchat.data.provider.platformCurrentTimeMillis
 import com.kuikly.stockchat.data.storage.KeyValueStorage
+import com.kuikly.stockchat.richtext.EntityRecognizer
+import com.kuikly.stockchat.richtext.EntityType
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 
@@ -34,7 +37,8 @@ class ChatSessionStore(
             .map { session ->
                 ChatSessionSummary(
                     id = session.id,
-                    title = session.title,
+                    // 每次读取都按完整会话重算，旧版本保存的“首问标题”也会立即升级。
+                    title = titleFor(session.messages),
                     preview = session.preview,
                     updatedAtMillis = session.updatedAtMillis,
                     groupTitle = groupTitleFor(session.updatedAtMillis, now),
@@ -162,10 +166,7 @@ class ChatSessionStore(
     }
 
     private fun titleFor(messages: List<StoredChatMessage>): String =
-        messages.firstOrNull { it.role == MessageRole.USER }?.content
-            ?.cleanForSummary()
-            ?.takeIf { it.isNotBlank() }
-            ?: "新会话"
+        summarizeConversationTitle(messages)
 
     private fun previewFor(messages: List<StoredChatMessage>): String =
         messages.lastOrNull { it.role != MessageRole.SYSTEM }?.content
@@ -286,5 +287,65 @@ private fun String.cleanForSummary(): String =
         .replace(Regex("\\s+"), " ")
         .trim()
         .let { if (it.length > 18) "${it.take(18)}…" else it }
+
+/**
+ * 从整段会话提炼稳定的主题标题，不再把首个问题原样截断当标题。
+ * 标题完全由本地实体与主题词生成：切换抽屉时即时可用，也不会为标题额外发起模型请求。
+ */
+private fun summarizeConversationTitle(messages: List<StoredChatMessage>): String {
+    val userTexts = messages
+        .asSequence()
+        .filter { it.role == MessageRole.USER }
+        .map { it.content.cleanConversationText() }
+        .filter { it.isNotBlank() }
+        .toList()
+    if (userTexts.isEmpty()) return "新会话"
+
+    val combined = userTexts.joinToString(" ")
+    val stockNames = userTexts
+        .flatMap { text ->
+            EntityRecognizer.recognize(text)
+                .filter { it.type == EntityType.STOCK }
+                .mapNotNull { span -> Securities.all.firstOrNull { it.symbol == span.target }?.name }
+        }
+        .distinct()
+    val topics = CONVERSATION_TITLE_TOPICS
+        .filter { topic -> topic.keywords.any(combined::contains) }
+        .map { it.label }
+
+    val title = when {
+        stockNames.size >= 2 && COMPARISON_WORDS.any(combined::contains) ->
+            "${stockNames[0]}与${stockNames[1]}对比"
+        stockNames.size >= 2 -> "${stockNames[0]}等${stockNames.size}只标的分析"
+        stockNames.size == 1 && topics.size == 1 -> "${stockNames[0]}${topics[0]}"
+        stockNames.size == 1 -> "${stockNames[0]}综合分析"
+        topics.size >= 2 -> "${topics[0]}与${topics[1]}"
+        topics.size == 1 -> topics[0]
+        userTexts.size >= 2 -> "多轮投资问题总结"
+        else -> "投资问题解读"
+    }
+    return title.take(18)
+}
+
+private data class ConversationTitleTopic(val label: String, val keywords: List<String>)
+
+private val CONVERSATION_TITLE_TOPICS = listOf(
+    ConversationTitleTopic("估值分析", listOf("估值", "市盈率", "市净率", "PE", "PB", "贵不贵")),
+    ConversationTitleTopic("业绩解读", listOf("业绩", "财报", "营收", "利润", "盈利", "基本面")),
+    ConversationTitleTopic("风险分析", listOf("风险", "回撤", "波动", "下跌", "亏损")),
+    ConversationTitleTopic("技术面分析", listOf("技术面", "K线", "均线", "MACD", "RSI", "走势")),
+    ConversationTitleTopic("资金面分析", listOf("资金", "主力", "北向", "流入", "流出", "换手")),
+    ConversationTitleTopic("行情复盘", listOf("行情", "涨跌", "今天", "近期", "最近")),
+    ConversationTitleTopic("公告与新闻", listOf("公告", "新闻", "消息", "事件")),
+    ConversationTitleTopic("分红回报", listOf("分红", "股息", "回报")),
+    ConversationTitleTopic("自选复盘", listOf("自选", "持仓", "组合")),
+)
+
+private val COMPARISON_WORDS = listOf("对比", "比较", "区别", "哪个好", "谁更", "相比")
+
+private fun String.cleanConversationText(): String =
+    replace(Regex("```card:[\\s\\S]*?```"), "")
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
 private fun JSONObject.long(key: String): Long = optString(key).toLongOrNull() ?: 0L

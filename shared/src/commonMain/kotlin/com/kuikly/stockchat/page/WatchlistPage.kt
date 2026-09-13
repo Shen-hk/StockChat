@@ -13,6 +13,7 @@ import com.kuikly.stockchat.data.provider.QuotePrefetchStore
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
 import com.kuikly.stockchat.foundation.ui.chrome.AppTopBar
 import com.kuikly.stockchat.foundation.ui.chrome.AppTopBarAction
+import com.kuikly.stockchat.foundation.ui.chrome.APP_TOP_BAR_HEIGHT
 import com.kuikly.stockchat.foundation.ui.icon.LineIconBellRinging
 import com.kuikly.stockchat.foundation.ui.icon.LineIconRadar
 import com.kuikly.stockchat.foundation.ui.icon.LineIconSearch
@@ -161,9 +162,8 @@ internal class WatchlistPage : BasePager() {
                     // 左 14 右 0，实测左右各约 14dp 对齐；卡片阴影也留有绘制空间。
                     paddingLeft(14f)
                     paddingRight(0f)
-                    // 顶栏实际占用约 statusBar + 44dp；此前再加 73dp 会让首卡
-                    // 与标题栏之间多出近 30dp 的空洞，空自选时尤为明显。
-                    paddingTop(page.pagerData.statusBarHeight + 44f)
+                    // 从顶栏真实底边再留 5dp，避免首张聚合卡的圆角被浮动顶栏遮住。
+                    paddingTop(page.pagerData.statusBarHeight + APP_TOP_BAR_HEIGHT + 5f)
                     paddingBottom(60f)
                     // 只有长按已拿起卡片的那一小段手势把移动事件留给行做排序；
                     // 平常一律由 Scroller 拦截纵向滑动。pageDidAppear 会兜底清理
@@ -206,7 +206,7 @@ internal class WatchlistPage : BasePager() {
 
             // ── z5 搜索浮层：原顶部长驻搜索框下沉于此（S-1：首屏 200px 让给结论） ──
             vif({ page.data.searchOpen }) {
-                page.WatchlistSearchOverlay(
+                WatchlistSearchOverlay(
                     theme = page.theme,
                     data = page.data,
                     statusBarHeight = page.pagerData.statusBarHeight,
@@ -216,7 +216,9 @@ internal class WatchlistPage : BasePager() {
 
             // ── z5 长按菜单：分组从「三态循环」改为显式选项列表（D 黑名单 #7） ──
             vif({ page.data.menuSymbol.isNotEmpty() }) {
-                page.WatchlistMenuOverlay(
+                // 使用 vif 当前容器作为接收者，才能让动态创建的菜单进入指令 DOM。
+                // 显式写 page.WatchlistMenuOverlay 会把节点旁挂到页面模板树，运行期不挂载。
+                WatchlistMenuOverlay(
                     theme = page.theme,
                     data = page.data,
                     safeAreaBottom = page.pagerData.safeAreaInsets.bottom,
@@ -225,7 +227,7 @@ internal class WatchlistPage : BasePager() {
 
             // ── z5 理由浮层（FR-W2）：一行输入 + 3 个常用理由 chip，可跳过不强制 ──
             vif({ page.data.reasonEditSymbol.isNotEmpty() }) {
-                page.WatchlistReasonEditorOverlay(
+                WatchlistReasonEditorOverlay(
                     theme = page.theme,
                     data = page.data,
                     safeAreaBottom = page.pagerData.safeAreaInsets.bottom,

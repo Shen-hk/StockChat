@@ -141,6 +141,110 @@ fun copySplitJSBundle() {
 }
 
 /**
+ * Apply two bundled-level patches to dist/h5App.js that the Kotlin/JS compiler
+ * currently emits in a way that breaks Kuikly-web's `nativevue2.js` ↔ `h5App.js`
+ * interaction. Both patches were discovered while running H5 on web; see
+ * `.workbuddy/memory/2026-09-13.md` for the root-cause analysis.
+ *
+ *   P1. `,yt(),t})` → `,window.__kuiklyMain__=yt,t})`
+ *       Defers `fun main()` to the developer; `index.html` calls it after both
+ *       bundles finish loading, so nativevue2's bridge registers before main runs.
+ *
+ *   P2. UMD copy loop `for(var i in e)("object"==typeof exports?exports:t)[i]=e[i]`
+ *       → `for(var i in e)if(i!=="com")(...)`
+ *       Prevents h5App.js from overwriting `window.com.tencent.kuikly.core.nvi`
+ *       (which nativevue2.js set up to receive `registerCallNative`).
+ *
+ * Also appends a third `<script>` to index.html that invokes __kuiklyMain__().
+ *
+ * Idempotent: missing markers are detected and the task logs but does not throw.
+ */
+fun patchH5AppForWebBridges() {
+    val h5AppPath = Paths.get(distributionsDir().toString(), "h5App.js").toFile()
+    if (!h5AppPath.exists()) {
+        println("patchH5AppForWebBridges: skipped, h5App.js not found")
+        return
+    }
+    val src = h5AppPath.readText(StandardCharsets.UTF_8)
+    var updated = src
+
+    // P1: defer main to window.__kuiklyMain__
+    if (updated.contains(",yt(),t})")) {
+        updated = updated.replace(",yt(),t})", ",window.__kuiklyMain__=yt,t})")
+        println("patchH5AppForWebBridges: P1 (defer main) applied")
+    } else if (updated.contains("window.__kuiklyMain__=yt")) {
+        println("patchH5AppForWebBridges: P1 already applied, skipped")
+    } else {
+        println("patchH5AppForWebBridges: P1 marker not found — webpack output format may have changed")
+    }
+
+    // P2: skip writing to window.com (preserve nativevue2's bridge exports)
+    val p2Old = """for(var i in e)("object"==typeof exports?exports:t)[i]=e[i]"""
+    val p2New = """for(var i in e)if(i!=="com")("object"==typeof exports?exports:t)[i]=e[i]"""
+    if (updated.contains(p2Old)) {
+        updated = updated.replace(p2Old, p2New)
+        println("patchH5AppForWebBridges: P2 (skip window.com in UMD loop) applied")
+    } else if (updated.contains(p2New)) {
+        println("patchH5AppForWebBridges: P2 already applied, skipped")
+    } else {
+        println("patchH5AppForWebBridges: P2 marker not found — webpack output format may have changed")
+    }
+
+    if (updated !== src) {
+        h5AppPath.writeText(updated, StandardCharsets.UTF_8)
+    }
+
+    // Idempotent index.html bootstrap: strip any existing patch artifacts, then re-inject fresh.
+    // This handles re-running the task without producing duplicate </body></html> blocks.
+    val htmlPath = Paths.get(distributionsDir().toString(), "index.html").toFile()
+    if (!htmlPath.exists()) {
+        println("patchH5AppForWebBridges: index.html not found, skipped")
+        return
+    }
+    var html = htmlPath.readText(StandardCharsets.UTF_8)
+
+    // Strip any previous bootstrap script block (between the bridge comment marker and </script>)
+    val bootstrapRe = Regex("""<script>\s*\n\s*// bridge \(nativevue2\.js\)[\s\S]*?</script>\s*""")
+    html = html.replace(bootstrapRe, "")
+
+    // Strip any duplicate </body></html> tail that may have leaked from earlier runs (keep only ONE).
+    // Strategy: keep the first </body></html> and remove additional ones.
+    val firstBodyMatch = Regex("""</body>""").find(html)
+    if (firstBodyMatch != null) {
+        val firstBodyEnd = firstBodyMatch.range.last + 1
+        // From firstBodyEnd, replace any subsequent </body></html> with the literal text passed below
+        val tail = html.substring(firstBodyEnd)
+        val cleanedTail = tail.replace(Regex("""(</body>\s*</html>\s*)+"""), "")
+        html = html.substring(0, firstBodyEnd) + cleanedTail
+    }
+
+    // Find the h5App.js script tag and rewrite the tail after it
+    val closingScripts = Regex("""(<script\s+src="h5App\.js"[^>]*></script>)""")
+    val match = closingScripts.find(html)
+    if (match != null) {
+        val scriptTag = match.groupValues[1]
+        val injected = """$scriptTag
+<script>
+  // bridge (nativevue2.js) must be set up before h5App's deferred main() runs
+  if (typeof window.__kuiklyMain__ === 'function') {
+    window.__kuiklyMain__();
+  } else {
+    console.error('window.__kuiklyMain__ is not a function — bridge / bundle mismatch');
+  }
+</script>
+</body>
+</html>"""
+        // Replace from h5App.js script tag through end of file, including any orphan </body></html>
+        // the kotlin-generated HTML already had after the script tag.
+        val newHtml = html.substring(0, match.range.first) + injected
+        htmlPath.writeText(newHtml, StandardCharsets.UTF_8)
+        println("patchH5AppForWebBridges: index.html injected with __kuiklyMain__() bootstrap")
+    } else {
+        println("patchH5AppForWebBridges: index.html has unexpected </script> layout, manual edit needed")
+    }
+}
+
+/**
  * Generate unified build page html file
  */
 fun generateLocalHtml() {
@@ -294,6 +398,8 @@ project.afterEvaluate {
             copyAssetsResource()
             // Finally modify html file page.js reference
             generateLocalHtml()
+            // Patch h5App.js + index.html for nativevue2.js ↔ h5App.js web-bridge interaction
+            patchH5AppForWebBridges()
         }
     }
 
