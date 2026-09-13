@@ -218,9 +218,9 @@ macOS + Xcode + CocoaPods 环境。
 ```bash
 # 1. 同步 KMP Framework 给 iOS
 ./gradlew :shared:linkPodDebugFrameworkIosX64
-
 # 2. 安装 Pod 依赖
-cd iosApp && pod install && cd ..
+cd iosApp && ./install-pods.sh && cd ..   # pod install 的兜底封装：自动绕过系统 Ruby 2.6 的
+                                          # concurrent-ruby/activesupport logger 兼容坑与 locale 编码坑
 
 # 3. 用 Xcode 打开工作空间
 open iosApp/iosApp.xcworkspace   # 选 iosApp target → Run (⌘R)
@@ -228,7 +228,7 @@ open iosApp/iosApp.xcworkspace   # 选 iosApp target → Run (⌘R)
 
 **特殊情况**：
 
-- `pod install` 失败时多跑 `cd iosApp && pod repo update --verbose`。
+- `pod install` 报 `uninitialized constant ... Logger` 或 `Encoding::CompatibilityError` 时，直接用上一步的 `./install-pods.sh`（仓库已内置，自动探测绕过，正常环境下与 `pod install` 等价）；其余失败多跑 `cd iosApp && pod repo update --verbose`。
 - 模拟器与真机要分别 sync framework：模拟器用上一步 `IosX64`；真机用 `./gradlew :shared:linkPodDebugFrameworkIosArm64`。
 - 暂时未实现桥接模块：上传、语音模块（详见 §「已知缺口」）。
 
