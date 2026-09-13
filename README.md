@@ -54,7 +54,7 @@
 
 | 端 | 演示视频 | 内容亮点 |
 | :--- | :---: | :--- |
-| **Android** | [📥 推荐下载 / 含字幕播放](assets/videos/android-demo.mp4) | 主流验证端；分时→日 K 切换、十字光标、卡片展开 |
+| **Android** | [📥 推荐下载 / 含字幕播放](assets/videos/android-demo.mp4) | 主流验证端；此视频为debug包录制，动手安装release包体验更流畅哦~|
 | **iOS** | [📥 下载 / 播放](assets/videos/ios-demo.mp4) | iOS 原生手势；Kuikly 与 UIKit 互不打架 |
 | **OpenHarmony（鸿蒙）** | [📥 下载 / 播放](assets/videos/ohos-demo.mp4) | 鸿蒙原生渲染管线下 K 线 / 卡片混排 |
 
