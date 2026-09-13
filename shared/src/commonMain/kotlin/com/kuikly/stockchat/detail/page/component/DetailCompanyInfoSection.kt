@@ -96,7 +96,6 @@ internal fun ViewContainer<*, *>.DetailCompanyInfoSection(
                     BusinessInsightItem("actions", "分红与解禁", CorporateActionCardModel(it, "actions:${symbol()}"))
                 },
             ).let { cards -> if (pinnedId == null) cards else cards.sortedByDescending { it.pinned } }
-            SectionLabel("公司数据", theme, strong = true)
             BusinessInsightGrid(
                 items = businessCards,
                 context = ctx,

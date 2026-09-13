@@ -20,6 +20,9 @@ struct ContentView: View {
         // 冒烟钩子（simctl 专用）：自动走一次媒体入口 / 语音链路，验证 iOS 桥。
         if let m = env["KR_ROOT_SMOKE_MEDIA"] { data["smokeMedia"] = m }
         if env["KR_ROOT_SMOKE_VOICE"] == "1" { data["smokeVoice"] = "1" }
+        // 冒烟钩子：知识库页直接落到二级词表（复现「浏览全部 N 个概念」入口，无需真实点击）。
+        if let m = env["KR_ROOT_GLOSSARY_MODE"] { data["glossaryMode"] = m }
+        if env["KR_ROOT_GLOSSARY_EXPAND"] == "1" { data["glossaryExpand"] = "1" }
         Self.injectAiConfigIfNeeded(env: env)
         return KuiklyRenderViewPage(
             pageName: env["KR_ROOT_PAGE"] ?? "ChatPage",

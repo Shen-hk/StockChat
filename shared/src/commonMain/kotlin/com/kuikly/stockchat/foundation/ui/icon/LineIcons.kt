@@ -121,12 +121,14 @@ fun ViewContainer<*, *>.LineIconArrowRight(color: Color, size: Float) {
 fun ViewContainer<*, *>.LineIconReset(color: Color, size: Float) {
     lineIcon(color, size, strokeWidth = 2f) {
         beginPath()
-        arc(12f, 12f, 7f, 0.45f, 5.85f, false)
+        // The open end leaves a gap at the arrowhead, avoiding the old
+        // arrow/ring overlap in the compact chart-control button.
+        arc(12f, 12f, 7f, 0.65f, 5.25f, false)
         stroke()
         beginPath()
-        moveTo(5.2f, 7f)
-        lineTo(5.2f, 12f)
-        lineTo(10f, 10f)
+        moveTo(18.5f, 5.2f)
+        lineTo(18.5f, 9.6f)
+        lineTo(14.1f, 9.6f)
         stroke()
     }
 }
@@ -194,9 +196,7 @@ fun ViewContainer<*, *>.LineIconRadar(color: Color, size: Float) {
 
 /** 异动预警：轮廓铃铛 + 一颗提示点，纯线条（钟体描边，仅提示点为实心点标记）. */
 fun ViewContainer<*, *>.LineIconBellRinging(color: Color, size: Float) {
-    GeneratedIcon1(color, size)
-    return
-    lineIcon(color, size, strokeWidth = 1.9f) {
+    lineIcon(color, size, strokeWidth = 2.0f) {
         beginPath()
         moveTo(6f, 8f)
         arc(12f, 8f, 6f, PI.toFloat(), 0f, false)

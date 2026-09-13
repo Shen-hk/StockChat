@@ -69,16 +69,20 @@ internal fun ViewContainer<*, *>.ComposerActionRow(props: ComposerActionRowProps
                         size(44f, 44f); allCenter(); borderRadius(22f)
                         backgroundColor(
                             when {
-                                props.streamState() == StreamState.STREAMING -> props.theme.divider
+                                // Keep the stop action visually related to the send action:
+                                // streaming is an active state, not a disabled grey control.
+                                props.streamState() == StreamState.STREAMING -> props.theme.brand
                                 props.sendBlocked() -> props.theme.surfaceMuted
                                 else -> props.theme.brand
                             }
                         )
-                        boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, 0.18f)))
+                        // A tight shadow gives the circular control lift without leaving a
+                        // dark, square-looking halo around it.
+                        boxShadow(BoxShadow(0f, 2f, 5f, Color(0x000000, 0.12f)))
                         opacity(if (props.voiceBusy()) 0.4f else 1f); touchEnable(!props.voiceBusy())
                     }
                     vif({ props.streamState() == StreamState.STREAMING }) {
-                        LineIconStop(color = props.theme.onBrand, size = 18f)
+                        LineIconStop(color = props.theme.onBrand, size = 15f)
                     }
                     vif({ props.streamState() != StreamState.STREAMING }) {
                         Text {

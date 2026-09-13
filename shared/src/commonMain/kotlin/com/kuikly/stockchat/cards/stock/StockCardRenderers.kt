@@ -1069,8 +1069,13 @@ internal fun MiniTimeline(
         val geometry = TimeLineCalculator.calculate(quote.timeline, width, canvasHeight, quote.previousClose)
         if (geometry.points.isEmpty()) return@Canvas
         val progress = state.progress
+        // A newly returned timeline can contain a single point. Keep the
+        // draw-on's two-point minimum for normal series, but never let it
+        // exceed the actual data count: the old value of 2 indexed past a
+        // one-point series and crashed the Watchlist page as quotes arrived.
         val visible = if (progress >= 1f) geometry.points.size
         else max(2, (geometry.points.size * progress).roundToInt())
+            .coerceAtMost(geometry.points.size)
 
         // 昨收基准虚线（结构层，直接全量呈现，不参与生长）
         canvas.beginPath()

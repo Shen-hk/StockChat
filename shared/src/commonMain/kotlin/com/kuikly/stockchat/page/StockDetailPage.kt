@@ -69,7 +69,9 @@ import com.kuikly.stockchat.detail.page.component.DetailHeroSection
 import com.kuikly.stockchat.detail.page.component.DetailNewsTicker
 import com.kuikly.stockchat.detail.page.component.DetailOverlays
 import com.kuikly.stockchat.detail.ai.state.DetailAiHostPort
+import com.kuikly.stockchat.detail.ai.state.DetailAiForecastCoordinator
 import com.kuikly.stockchat.detail.ai.state.DetailAiInsightCoordinator
+import com.kuikly.stockchat.detail.ai.state.DetailForecastState
 import com.kuikly.stockchat.detail.ai.state.DetailAiState
 import com.kuikly.stockchat.detail.ai.state.KuiklyDetailAiScheduler
 import com.kuikly.stockchat.detail.overlay.state.DetailOverlayCoordinator
@@ -207,20 +209,36 @@ internal class StockDetailPage : BasePager() {
     // 回调 → TypewriterSmoother 节拍 + jumpToMain 跳回主线程）由 session 内部
     // 守住，不再依赖页面 setTimeout(0)。
     private val detailAiState = DetailAiState()
+    // 主解读/圈选解读与 AI 走势推演共用同一 HostPort（配置/Provider/行情 getter/
+    // jumpToMain 线程纪律）。
+    private val detailAiHost by lazy {
+        object : DetailAiHostPort {
+            override val pagerId = this@StockDetailPage.pagerId
+            override fun quote(): Quote = detailDataState.quote
+            override fun insight(): StockInsightBundle = detailDataState.insight
+            override fun newsList(): List<NewsItem> = detailDataState.newsList
+            override fun timelineSeries(): List<Double> = detailTimelineSeries(detailDataState.quote)
+            override fun loadConfig(): AiConfig = aiChatDependencies.configStore.load()
+            override fun configValidationError(config: AiConfig): String? = config.validationError()
+            override fun createProvider(config: AiConfig): AiProvider = aiChatDependencies.aiProviderFactory(config)
+            override fun jumpToMain(block: () -> Unit) { setTimeout(0) { block() } }
+        }
+    }
     private val detailAiCoordinator by lazy {
         DetailAiInsightCoordinator(
             state = detailAiState,
-            host = object : DetailAiHostPort {
-                override val pagerId = this@StockDetailPage.pagerId
-                override fun quote(): Quote = detailDataState.quote
-                override fun insight(): StockInsightBundle = detailDataState.insight
-                override fun newsList(): List<NewsItem> = detailDataState.newsList
-                override fun timelineSeries(): List<Double> = detailTimelineSeries(detailDataState.quote)
-                override fun loadConfig(): AiConfig = aiChatDependencies.configStore.load()
-                override fun configValidationError(config: AiConfig): String? = config.validationError()
-                override fun createProvider(config: AiConfig): AiProvider = aiChatDependencies.aiProviderFactory(config)
-                override fun jumpToMain(block: () -> Unit) { setTimeout(0) { block() } }
-            },
+            host = detailAiHost,
+            scheduler = KuiklyDetailAiScheduler(),
+            reduceMotion = reduceMotion,
+        )
+    }
+    // AI 走势推演域（2026-09-12）：切到工作台「AI 走势」tab 时发起真实模型推演，
+    // 结构化结果（方向/区间/结论/依据/路径）渲染在 AiForecastResultCard。
+    private val forecastState = DetailForecastState()
+    private val forecastCoordinator by lazy {
+        DetailAiForecastCoordinator(
+            state = forecastState,
+            host = detailAiHost,
             scheduler = KuiklyDetailAiScheduler(),
             reduceMotion = reduceMotion,
         )
@@ -393,12 +411,15 @@ internal class StockDetailPage : BasePager() {
         // AI 解读域：中断进行中的两路流（generation 失效使残留回调全部 no-op），
         // 已显示文本保留（state=3 有文本 / state=0 无文本，与原语义一致）。
         detailAiCoordinator.onDisappear()
+        // AI 走势推演：中断进行中的流；已完成结果保留（回到页面仍可看）。
+        forecastCoordinator.onDisappear()
     }
 
     override fun pageWillDestroy() {
         detailDataCoordinator.onDestroy()
         detailChartCoordinator.onDestroy()
         detailAiCoordinator.onDestroy()
+        forecastCoordinator.onDestroy()
         detailOverlayCoordinator.onDestroy()
         super.pageWillDestroy()
     }
@@ -643,6 +664,9 @@ internal class StockDetailPage : BasePager() {
                         revealIndex = 10,
                         quote = { page.quote },
                         mainFlow = { page.insight.fundFlow?.main },
+                        forecastState = page.forecastState,
+                        onRequestForecast = { page.forecastCoordinator.maybeStart() },
+                        onRetryForecast = { page.forecastCoordinator.request() },
                         containerWidth = page.pagerData.pageViewWidth - 28f,
                     )
 

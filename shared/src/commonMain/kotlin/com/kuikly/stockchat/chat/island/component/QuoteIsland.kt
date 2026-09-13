@@ -561,7 +561,8 @@ private fun ViewContainer<*, *>.StockIsland(
                 Text {
                     attr {
                         text(title ?: "StockChat")
-                        fontSizeScaled(if (title == null) 15f else 13f)
+                        // 默认「StockChat」标题上调一号；个股上下文保持原字号，避免胶囊在长名称时溢出。
+                        fontSizeScaled(if (title == null) 16f else 13f)
                         fontWeightBold()
                         color(if (title == null) theme.textPrimary else theme.textSecondary)
                     }

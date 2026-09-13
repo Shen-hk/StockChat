@@ -40,8 +40,20 @@ class ChatWelcomeCoordinatorTest {
         coordinator.onWelcomeMounted()
 
         assertFalse(state.entranceVisible)
+        assertFalse(state.recommendationsPresented)
+        assertFalse(state.composerGuidePresented)
+        assertFalse(state.composerPresented)
         scheduler.runNext(32)
         assertTrue(state.entranceVisible)
+        assertFalse(state.recommendationsPresented)
+        scheduler.runNext(220)
+        assertTrue(state.recommendationsPresented)
+        assertFalse(state.composerGuidePresented)
+        scheduler.runNext(380)
+        assertTrue(state.composerGuidePresented)
+        assertFalse(state.composerPresented)
+        scheduler.runNext(520)
+        assertTrue(state.composerPresented)
         scheduler.runNext(600)
         assertTrue(state.entranceVisible)
     }
@@ -59,6 +71,28 @@ class ChatWelcomeCoordinatorTest {
 
         scheduler.runNext(32)
         assertTrue(state.entranceVisible)
+    }
+
+    @Test
+    fun returningAfterBadgeBounceRestartsTheEntireTimeline() {
+        val scheduler = FakeWelcomeScheduler()
+        val state = PlainChatWelcomeState()
+        val coordinator = coordinator(state, scheduler)
+
+        coordinator.onAppear(sessionEmpty = true, fullMode = true)
+        coordinator.onWelcomeMounted()
+        scheduler.runNext(32)
+        assertTrue(state.entranceVisible)
+
+        coordinator.onDisappear()
+        coordinator.onAppear(sessionEmpty = true, fullMode = true)
+
+        assertFalse(state.entranceVisible)
+        scheduler.runNext(32)
+        scheduler.runNext(220)
+        scheduler.runNext(380)
+        scheduler.runNext(520)
+        assertTrue(state.composerPresented)
     }
 
     @Test
@@ -154,6 +188,20 @@ class ChatWelcomeCoordinatorTest {
         assertFalse(state.entranceVisible)
         scheduler.runNext(32)
         assertTrue(state.entranceVisible)
+    }
+
+    @Test
+    fun newEmptySessionStartsWithMarketTabAlreadyAtHome() {
+        val scheduler = FakeWelcomeScheduler()
+        val state = PlainChatWelcomeState()
+        val coordinator = coordinator(state, scheduler)
+        coordinator.onAppear(sessionEmpty = true, fullMode = true)
+
+        coordinator.onOpenMarketRequested()
+        assertTrue(state.marketTabSelected)
+        coordinator.onNewEmptySession()
+
+        assertFalse(state.marketTabSelected)
     }
 
     private fun coordinator(

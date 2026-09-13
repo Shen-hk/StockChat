@@ -104,6 +104,42 @@ class ChatInfrastructureTest {
     }
 
     @Test
+    fun cardSanitizerCanonicalizesProviderExchangePrefixes() {
+        val response = "结论\n\n```card:stock-quote\n{\"symbol\":\"SH600519\"}\n```"
+
+        val sanitized = CardResponseSanitizer.removeUnrelatedCards(
+            question = "贵州茅台今天怎么样？",
+            conversation = emptyList(),
+            response = response,
+        )
+
+        assertEquals("结论\n\n```card:stock-quote\n{\"symbol\":\"600519.SH\"}\n```", sanitized)
+    }
+
+    @Test
+    fun cardSanitizerAddsQuoteFallbackForASingleEstablishedStock() {
+        val sanitized = CardResponseSanitizer.removeUnrelatedCards(
+            question = "宁德时代的业务怎么看？",
+            conversation = emptyList(),
+            response = "# 电池业务仍看需求\n\n关注订单、产能与行业竞争。",
+        )
+
+        assertTrue(sanitized.endsWith("```card:stock-quote\n{\"symbol\":\"300750.SZ\"}\n```"))
+    }
+
+    @Test
+    fun cardSanitizerDoesNotAddFallbackForMultipleStocks() {
+        val response = "# 两家公司业务对比\n\n应分别看产品与估值。"
+        val sanitized = CardResponseSanitizer.removeUnrelatedCards(
+            question = "宁德时代和比亚迪的业务有什么不同？",
+            conversation = emptyList(),
+            response = response,
+        )
+
+        assertEquals(response, sanitized)
+    }
+
+    @Test
     fun cardSanitizerDoesNotAddOrKeepAnUnrequestedDefinitionCard() {
         val response = "PE 是市盈率。\n\n```card:definition\n{\"term\":\"市盈率 PE\"}\n```"
 

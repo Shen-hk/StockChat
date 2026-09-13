@@ -25,6 +25,7 @@ import com.kuikly.stockchat.data.provider.MarketIndex
 import com.kuikly.stockchat.data.provider.MarketOverview
 import com.kuikly.stockchat.data.provider.MarketSnapshotFrame
 import com.kuikly.stockchat.data.provider.MarketSnapshotStore
+import com.kuikly.stockchat.data.provider.MarketDemoDaySynthesizer
 import com.kuikly.stockchat.data.provider.MarketEvent
 import com.kuikly.stockchat.data.provider.MarketEventDetector
 import com.kuikly.stockchat.data.provider.NewsItem
@@ -68,7 +69,6 @@ import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
 import com.tencent.kuikly.core.views.View
 import kotlin.math.abs
-import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -150,12 +150,6 @@ internal class MarketPage : BasePager() {
     private var axisMetric: Int by observable(0)
     /** 0 宽度情绪 / 1 量能资金 / 2 板块竞速 / 3 连板梯队。 */
     private var activeSlice: Int by observable(0)
-    /**
-     * 板块卡片切换动画状态（mount-then-present 范式 R4）：切换时 false → setTimeout_0_ → true，
-     * attr 闭包以它为 driver key，opacity + translateY 走完整 N→0 入场动画。
-     * 首次入场延迟到整体入场相位 4 完成之后，避免外层入场与内层切换动画相互打架。
-     */
-    private var sectorCardPresent: Boolean by observable(false)
     private var scrubTweenGeneration = 0
     private var liveRefreshGeneration = 0
     /** 端侧事件检测缓存（ingest 时重算，draw/卡片共用，避免每帧重跑 O(n²)）。 */
@@ -216,8 +210,6 @@ internal class MarketPage : BasePager() {
             setTimeout(225) { marketEntrancePhase = 4 }
             setTimeout(300) { breadthEntered = true; volumeEntered = true; marketEntrancePhase = 5 }
             setTimeout(375) { ladderEntered = true; marketEntrancePhase = 6 }
-            // 板块卡片切换动画：比相位 4（t=225）稍晚一帧，保证整体入场带它一起，而不是反过来重置入场态
-            setTimeout(260) { sectorCardPresent = true }
         }
         refreshOverview()
         scheduleLiveRefresh()
@@ -225,12 +217,14 @@ internal class MarketPage : BasePager() {
     }
 
     /**
-     * 快照入库：只记录在线行情的真实轮询帧。冷启动或数据源不可用时叙事轴保持空轨道，
-     * 绝不合成演示日内曲线，也不以缓存/离线值伪造新的时间点。
+     * 快照入库：在线行情只记录真实轮询帧；Mock 模式一次性装入明确标注的演示轨迹，
+     * 让叙事轴、市场宽度和回放在离线演示时同样有完整数据可看。
      */
     private fun ingestOverview(data: MarketOverview) {
         if (data.stamp.tier != SourceTier.DEMO && data.stamp.mode == DataMode.ONLINE) {
             snapshotStore.record(data, platformCurrentMinuteOfDay())
+        } else if (data.stamp.tier == SourceTier.DEMO && snapshotStore.isEmpty) {
+            MarketDemoDaySynthesizer.synthesize(data).forEach(snapshotStore::put)
         }
         snapshotFrames = snapshotStore.all()
         cachedEvents = MarketEventDetector.detect(snapshotFrames)
@@ -366,78 +360,23 @@ internal class MarketPage : BasePager() {
 
     private data class SectorRaceRow(val sector: SectorRank, val rank: Int, val delta: Int)
 
-    /**
-     * 切片区组共用切换：activeSlice 改值 + 立刻把 sectorCardPresent 置 false，
-     * 用 setTimeout_0_ 跳回 true 触发内层 fade + translateY 入场（R4 mount-then-present）。
-     * 同一切片不重置，避免重复点击当前 tab 时无谓的 fade 闪屏。
-     * 命名避开自动 setter "setActiveSlice"（activeSlice: Int 由 observable 衍生而来），
-     * 否则会与 JVM signature 冲突。
-     */
+    /** 底部洞察卡的四个 tab；排行区不受它影响。 */
     private fun switchActiveSlice(index: Int) {
         if (activeSlice == index) return
         activeSlice = index
-        if (!motionEnabled()) return
-        sectorCardPresent = false
-        setTimeout(0) { sectorCardPresent = true }
     }
 
-    /**
-     * 板块卡片 KPI 大数字 + 解释文案：随 activeSlice 切换视角。直接读 displayOverview 的 sectors，
-     * 不再二次请求；纯端侧计算，scrub 帧也可同步（与切片 vif 块同源）。
-     */
-    private fun sectorTabKpi(slice: Int, sectors: List<SectorRank>): Pair<String, String> {
-        if (sectors.isEmpty()) return "--" to "板块数据接入中"
-        return when (slice) {
-            0 -> {
-                // 宽度榜：高宽度板块（上涨家数占比 >= 60%）的数量 + 平均宽度
-                val rich = sectors.filter { it.risingCount + it.fallingCount > 0 }
-                    .filter { it.risingCount.toDouble() / (it.risingCount + it.fallingCount) >= 0.6 }
-                val avgBreadth = if (rich.isNotEmpty()) rich.sumOf { it.risingCount.toDouble() / (it.risingCount + it.fallingCount) } / rich.size else 0.0
-                "${rich.size} 个" to "高宽度板块平均 ${Format.percent(avgBreadth * 100)} 上涨"
-            }
-            1 -> {
-                // 资金榜：净流入总额 + 净流入板块数
-                val inflow = sectors.filter { it.mainFlow > 0 }
-                val totalYi = inflow.sumOf { it.mainFlow } / 1e8
-                "${Format.decimal(totalYi, 1)} 亿" to "${inflow.size} 个板块净流入"
-            }
-            2 -> {
-                // 涨幅榜：上涨板块数 + 平均涨幅
-                val up = sectors.filter { it.changePercent > 0 }
-                val avgUp = if (up.isNotEmpty()) up.sumOf { it.changePercent } / up.size else 0.0
-                "${up.size} 个" to "上涨板块平均 ${Format.percent(avgUp)}"
-            }
-            else -> {
-                // 强度榜：按涨幅×主力资金复合强度，龙头涨幅 + 强度分
-                val leader = sectors.maxByOrNull { abs(it.changePercent) * (1.0 + log10(1.0 + abs(it.mainFlow) / 1e8)) }
-                val top = leader?.changePercent ?: 0.0
-                "${Format.percent(top)}" to "龙头 ${leader?.name ?: "--"} · 涨幅×主力资金"
-            }
-        }
-    }
+    private data class StockRankRow(val symbol: String, val name: String, val sector: String, val change: Double, val boards: Int)
 
-    /** 副标题：每个切片一句话说明排序依据与口径。 */
-    private fun sectorTabSubtitle(slice: Int): String = when (slice) {
-        0 -> "按上涨家数占比排序 · 揭示宽度集中度"
-        1 -> "按主力净流入排序 · 反映资金取向"
-        2 -> "按今日涨幅排序 · 直观看到领涨方向"
-        else -> "按涨幅×主力资金强度排序 · 主线强度参考"
-    }
-
-    /** 标题旁的小徽章文本：标识当前视角。 */
-    private fun sectorTabBadge(slice: Int): String = when (slice) {
-        0 -> "宽度榜"
-        1 -> "资金榜"
-        2 -> "涨幅榜"
-        else -> "强度榜"
-    }
-
-    /** 当前切片对应的板块排序（与下方切片区同源排序逻辑）。 */
-    private fun orderedSectors(slice: Int, sectors: List<SectorRank>): List<SectorRank> = when (slice) {
-        0 -> sectors.sortedByDescending { if (it.risingCount + it.fallingCount > 0) it.risingCount.toDouble() / (it.risingCount + it.fallingCount) else -1.0 }
-        1 -> sectors.sortedByDescending { it.mainFlow }
-        2 -> sectors.sortedByDescending { it.changePercent }
-        else -> sectors.sortedByDescending { abs(it.changePercent) * (1.0 + log10(1.0 + abs(it.mainFlow) / 1e8)) }
+    /** 在线涨停池优先；Mock 兜底也给完整六行，保证排行榜和梯队始终可读。 */
+    private fun stockRankRows(): List<StockRankRow> {
+        val onlineRows = hotspots.limitUps
+            .sortedWith(compareByDescending<com.kuikly.stockchat.data.provider.LimitUpStock> { it.changePercent }.thenByDescending { it.consecutiveBoards })
+            .map { StockRankRow(it.symbol, it.name, it.sector, it.changePercent, it.consecutiveBoards) }
+        if (onlineRows.size >= 5) return onlineRows.take(6)
+        val mockRows = OfflineMarketInsightProvider.demoLimitUpsList()
+            .map { StockRankRow(it.symbol, it.name, it.sector, it.changePercent, it.consecutiveBoards) }
+        return (onlineRows + mockRows.filter { mock -> onlineRows.none { it.symbol == mock.symbol } }).take(6)
     }
 
     /** 指数下钻（J2）：跳转 App 既有详情页，市场页不新建界面。 */
@@ -1010,35 +949,7 @@ internal class MarketPage : BasePager() {
                     }
                 }
 
-                // 数据切换前置到叙事轴上方，切片区紧跟其后呈现（板块行情已下移到本行底部）
-                View { attr {
-                    marginTop(18f); padding(3f); flexDirectionRow(); borderRadius(15f); backgroundColor(theme.surfaceMuted)
-                    val entered = page.marketEntrancePhase >= 3 || !page.motionEnabled()
-                    opacity(if (entered) 1f else 0f)
-                    if (page.motionEnabled()) {
-                        transform(translate = Translate(0f, 0f, 0f, if (entered) 0f else 10f))
-                        animate(Animation.easeOut(0.24f), page.marketEntrancePhase)
-                    }
-                }
-                    listOf("宽度情绪", "量能资金", "板块竞速", "连板梯队").forEachIndexed { index, label ->
-                        View {
-                            attr {
-                                flex(1f); height(30f); allCenter(); borderRadius(12f)
-                                val selected = page.activeSlice == index
-                                backgroundColor(if (selected) theme.surface else theme.surfaceMuted)
-                                if (page.motionEnabled()) {
-                                    transform(scale = Scale(if (selected) 1f else 0.96f, if (selected) 1f else 0.96f))
-                                    animate(Animation.easeOut(0.18f), page.activeSlice)
-                                }
-                            }
-                            Text { attr { text(label); fontSizeScaled(10.5f); fontWeightMedium(); color(if (page.activeSlice == index) theme.textPrimary else theme.textTertiary) } }
-                            event { click { page.switchActiveSlice(index) } }
-                        }
-                    }
-                }
-
-                // 板块行情：随 activeSlice 切换视角的常驻头部，相位 4 紧接四 tab 入场。
-                // 切换入场动画用 sectorCardPresent 驱动（mount-then-present 范式 R4）：每次切 tab 先 false 再 setTimeout_0_ → true。
+                // 股票排行榜独立于底部洞察 tab，展示实时涨停池；数据不足时补 Mock 行并明确标识。
                 View {
                     attr {
                         marginTop(14f); padding(13f); borderRadius(16f); backgroundColor(theme.surface)
@@ -1050,130 +961,45 @@ internal class MarketPage : BasePager() {
                             animate(Animation.easeOut(0.28f), page.marketEntrancePhase)
                         }
                     }
-                    // 标题行：板块行情 + 切片徽章（标识当前视角）
                     View { attr { flexDirectionRow(); alignItemsCenter() }
-                        Text { attr { text("板块行情"); fontSizeScaled(17f); fontWeightBold(); color(theme.textPrimary) } }
+                        Text { attr { text("股票排行榜"); fontSizeScaled(17f); fontWeightBold(); color(theme.textPrimary) } }
                         View {
                             attr {
                                 marginLeft(8f); paddingLeft(7f); paddingRight(7f); height(18f); allCenter()
                                 borderRadius(9f); backgroundColor(theme.brandSoft)
                             }
-                            vbind({ page.activeSlice }) {
-                                Text {
-                                    attr {
-                                        text(page.sectorTabBadge(page.activeSlice)); fontSizeScaled(9.5f); fontWeightSemiBold(); color(theme.brand)
-                                    }
-                                }
-                            }
+                            Text { attr {
+                                text(
+                                    when {
+                                        page.hotspots.stamp.mode != DataMode.ONLINE -> "Mock"
+                                        page.hotspots.limitUps.size < 5 -> "实时 + Mock"
+                                        else -> "实时"
+                                    },
+                                )
+                                fontSizeScaled(9.5f); fontWeightSemiBold(); color(theme.brand)
+                            } }
                         }
                         Text {
                             attr {
-                                text("Top 6"); flex(1f); textAlignRight(); fontSizeScaled(9.5f)
+                                text("涨幅 Top 6"); flex(1f); textAlignRight(); fontSizeScaled(9.5f)
                                 fontWeightMedium(); color(theme.textTertiary)
                             }
                         }
                     }
-                    // KPI 大数字 + 解释 + 副标题（随 activeSlice 切换）
-                    vbind({ page.activeSlice to page.displayOverview() }) {
-                        val rawSectors = page.displayOverview().sectors
-                        val sectors = if (rawSectors.isNotEmpty()) rawSectors else OfflineMarketInsightProvider.demoSectorsList()
-                        val kpi = page.sectorTabKpi(page.activeSlice, sectors)
-                        val (kpiNum, kpiHint) = kpi
-                        View {
-                            attr { marginTop(10f); flexDirectionRow(); alignItemsFlexEnd() }
-                            Text {
-                                attr {
-                                    text(kpiNum); fontSizeScaled(22f); lineHeightScaled(26f); fontWeightBold()
-                                    color(theme.textPrimary)
+                    Text { attr {
+                        text(if (page.hotspots.stamp.mode == DataMode.ONLINE && page.hotspots.limitUps.size < 5) "实时涨停池样本不足，剩余行以 Mock 补全" else "按当日涨幅排序 · 点按查看个股详情")
+                        marginTop(5f); fontSizeScaled(10f); color(theme.textTertiary)
+                    } }
+                    vbind({ page.hotspots }) {
+                        page.stockRankRows().forEachIndexed { index, stock ->
+                            View { attr { marginTop(10f); paddingTop(if (index == 0) 0f else 10f); flexDirectionRow(); alignItemsCenter(); if (index > 0) borderTop(Border(1f, BorderStyle.SOLID, theme.divider)) }
+                                Text { attr { text((index + 1).toString().padStart(2, '0')); width(28f); fontSizeScaled(12f); fontWeightBold(); color(if (index < 3) theme.brand else theme.textTertiary) } }
+                                View { attr { flex(1f) }
+                                    Text { attr { text(stock.name); fontSizeScaled(13f); fontWeightSemiBold(); color(theme.textPrimary) } }
+                                    Text { attr { text("${stock.symbol} · ${stock.sector}${if (stock.boards > 0) " · ${stock.boards}板" else ""}"); marginTop(2f); fontSizeScaled(9.5f); color(theme.textTertiary) } }
                                 }
-                            }
-                            Text {
-                                attr {
-                                    text("  $kpiHint"); marginBottom(4f); fontSizeScaled(10f); color(theme.textTertiary); flex(1f)
-                                }
-                            }
-                        }
-                        Text {
-                            attr {
-                                text(page.sectorTabSubtitle(page.activeSlice)); marginTop(3f); fontSizeScaled(10f); color(theme.textTertiary)
-                            }
-                        }
-                        // 6 个 item 网格（跟随 tab 切换排序 + 切换入场动画）
-                        View {
-                            attr {
-                                marginTop(10f); flexDirectionRow(); flexWrapWrap()
-                                // 切换入场：每次 activeSlice 变化 / 首次 present 都走 fade + translateY
-                                opacity(if (!page.motionEnabled() || page.sectorCardPresent) 1f else 0f)
-                                if (page.motionEnabled()) {
-                                    transform(translate = Translate(0f, 0f, 0f, if (page.sectorCardPresent) 0f else 8f))
-                                    animate(Animation.easeOut(0.30f), page.sectorCardPresent)
-                                }
-                            }
-                            val ordered = page.orderedSectors(page.activeSlice, sectors).take(6)
-                            ordered.forEachIndexed { index, sector ->
-                                View {
-                                    attr {
-                                        width((page.pagerData.pageViewWidth - 28f - 26f) / 2f - 4f); marginTop(if (index < 2) 0f else 8f)
-                                        if (index % 2 == 1) marginLeft(8f)
-                                        padding(11f); borderRadius(13f); backgroundColor(theme.surfaceMuted)
-                                        border(Border(1f, BorderStyle.SOLID, page.changeColor(sector.changePercent).opacity(0.18f)))
-                                    }
-                                    // 行 1：序号徽章 + 板块名（弹性占位）+ 涨跌幅
-                                    View { attr { flexDirectionRow(); alignItemsCenter() }
-                                        View {
-                                            attr {
-                                                width(22f); height(22f); borderRadius(11f); allCenter()
-                                                backgroundColor(theme.brandSoft)
-                                            }
-                                            Text { attr { text((index + 1).toString().padStart(2, '0')); fontSizeScaled(10f); fontWeightBold(); color(theme.brand) } }
-                                        }
-                                        Text {
-                                            attr {
-                                                text(sector.name); flex(1f); marginLeft(7f); fontSizeScaled(11.5f)
-                                                fontWeightSemiBold(); color(theme.textPrimary)
-                                            }
-                                        }
-                                        Text {
-                                            attr {
-                                                text(Format.percent(sector.changePercent)); marginLeft(6f); fontSizeScaled(11.5f); fontWeightBold()
-                                                color(page.changeColor(sector.changePercent))
-                                            }
-                                        }
-                                    }
-                                    // 行 2：涨跌家数内条
-                                    val total2 = sector.risingCount + sector.fallingCount
-                                    View {
-                                        attr {
-                                            marginTop(8f); height(4f); flexDirectionRow(); borderRadius(2f); overflow(true); backgroundColor(theme.surface)
-                                        }
-                                        if (total2 > 0) {
-                                            View { attr { flex(sector.risingCount.toFloat()); height(4f); backgroundColor(theme.rise) } }
-                                            View { attr { flex(sector.fallingCount.toFloat()); height(4f); backgroundColor(theme.fall) } }
-                                        } else {
-                                            View { attr { flex(1f); height(4f); backgroundColor(theme.flat.opacity(0.5f)) } }
-                                        }
-                                    }
-                                    // 行 3：涨/跌家数文本 + 主力净流入/流出
-                                    View { attr { marginTop(6f); flexDirectionRow(); alignItemsCenter() }
-                                        Text {
-                                            attr {
-                                                text("涨 ${sector.risingCount} · 跌 ${sector.fallingCount}")
-                                                flex(1f); fontSizeScaled(9.5f); color(theme.textTertiary)
-                                            }
-                                        }
-                                        val flowYi = sector.mainFlow / 1e8
-                                        val flowAbs = if (flowYi >= 0) flowYi else -flowYi
-                                        val flowText = if (sector.mainFlow >= 0) "净流入 ${Format.decimal(flowAbs, 1)} 亿" else "净流出 ${Format.decimal(flowAbs, 1)} 亿"
-                                        Text {
-                                            attr {
-                                                text(flowText)
-                                                fontSizeScaled(9.5f); fontWeightSemiBold()
-                                                color(if (sector.mainFlow >= 0) page.changeColor(sector.mainFlow) else page.changeColor(sector.mainFlow))
-                                            }
-                                        }
-                                    }
-                                    event { click { page.showSectorPeek(sector.code) } }
-                                }
+                                Text { attr { text(Format.percent(stock.change)); fontSizeScaled(14f); fontWeightBold(); color(page.changeColor(stock.change)) } }
+                                event { click { page.openStockDetail(stock.symbol, from = Routes.MARKET) } }
                             }
                         }
                     }
@@ -1309,6 +1135,33 @@ internal class MarketPage : BasePager() {
                             Text { attr { text("AI 生成 · 仅供参考，不构成投资建议 · 锚点由端侧规则生成"); flex(1f); fontSizeScaled(9.5f); color(theme.textTertiary) } }
                             Text { attr { text("追问 ›"); fontSizeScaled(11f); fontWeightSemiBold(); color(theme.brand) }
                                 event { click { page.openChatWithQuestion(page.aiFollowUpQuestion()) } } }
+                        }
+                    }
+                }
+
+                // 底部洞察卡自己的 tab：只切换宽度/量能/板块竞速/连板内容，不影响上方股票排行。
+                View { attr {
+                    marginTop(18f); padding(3f); flexDirectionRow(); borderRadius(15f); backgroundColor(theme.surfaceMuted)
+                    val entered = page.marketEntrancePhase >= 6 || !page.motionEnabled()
+                    opacity(if (entered) 1f else 0f)
+                    if (page.motionEnabled()) {
+                        transform(translate = Translate(0f, 0f, 0f, if (entered) 0f else 10f))
+                        animate(Animation.easeOut(0.24f), page.marketEntrancePhase)
+                    }
+                }
+                    listOf("宽度情绪", "量能资金", "板块竞速", "连板梯队").forEachIndexed { index, label ->
+                        View {
+                            attr {
+                                flex(1f); height(30f); allCenter(); borderRadius(12f)
+                                val selected = page.activeSlice == index
+                                backgroundColor(if (selected) theme.surface else theme.surfaceMuted)
+                                if (page.motionEnabled()) {
+                                    transform(scale = Scale(if (selected) 1f else 0.96f, if (selected) 1f else 0.96f))
+                                    animate(Animation.easeOut(0.18f), page.activeSlice)
+                                }
+                            }
+                            Text { attr { text(label); fontSizeScaled(10.5f); fontWeightMedium(); color(if (page.activeSlice == index) theme.textPrimary else theme.textTertiary) } }
+                            event { click { page.switchActiveSlice(index) } }
                         }
                     }
                 }
@@ -1782,9 +1635,17 @@ internal class MarketPage : BasePager() {
         }
     }
 
-    private fun ladderCount(level: Int): Int = hotspots.limitUps.count { it.consecutiveBoards == level }
+    /** 小于五条的在线池以带 Mock 标签的完整演示池补齐，避免梯队出现无意义的空层。 */
+    private fun ladderRows(): List<com.kuikly.stockchat.data.provider.LimitUpStock> {
+        val onlineRows = hotspots.limitUps
+        if (onlineRows.size >= 5) return onlineRows
+        val mockRows = OfflineMarketInsightProvider.demoLimitUpsList()
+        return onlineRows + mockRows.filter { mock -> onlineRows.none { it.symbol == mock.symbol } }
+    }
+
+    private fun ladderCount(level: Int): Int = ladderRows().count { it.consecutiveBoards == level }
     private fun ladderMax(): Int = (1..4).maxOf { ladderCount(it) }.coerceAtLeast(1)
-    private fun boardSampleText(level: Int): String = hotspots.limitUps
+    private fun boardSampleText(level: Int): String = ladderRows()
         .filter { it.consecutiveBoards == level }
         .take(4)
         .joinToString(" · ") { it.name }

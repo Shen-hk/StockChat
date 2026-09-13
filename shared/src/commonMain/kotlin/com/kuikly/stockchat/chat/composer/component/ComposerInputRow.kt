@@ -8,7 +8,6 @@ import com.kuikly.stockchat.foundation.ui.icon.LineIconKeyboard
 import com.kuikly.stockchat.foundation.ui.icon.LineIconPlus
 import com.kuikly.stockchat.voice.VoiceState
 import com.tencent.kuikly.core.base.Animation
-import com.tencent.kuikly.core.base.Color
 import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind
@@ -18,6 +17,8 @@ import com.tencent.kuikly.core.views.View
 
 internal data class ComposerInputRowProps(
     val theme: StockChatTheme,
+    /** Must be read inside attr: the persistent composer is not rebuilt on theme switches. */
+    val surfaceColor: () -> com.tencent.kuikly.core.base.Color,
     val visuallyExpanded: () -> Boolean,
     val chromePresented: () -> Boolean,
     val themeKey: () -> String,
@@ -55,7 +56,9 @@ internal fun ViewContainer<*, *>.ComposerInputRow(props: ComposerInputRowProps) 
             attr {
                 flex(1f); minHeight(if (props.visuallyExpanded()) 44f else 48f)
                 paddingLeft(12f); paddingRight(12f); justifyContentCenter(); borderRadius(16f)
-                backgroundColor(Color(0xFFFFFFFF, 0f))
+                // 持久 composer 不随主题切换重建；在 attr 内读取主题色，令容器
+                // 立刻重绘，而不影响其中原生 TextArea 的编辑会话。
+                backgroundColor(props.surfaceColor())
             }
             event { click { props.onMiddleTap() } }
             props.renderTextArea(this)

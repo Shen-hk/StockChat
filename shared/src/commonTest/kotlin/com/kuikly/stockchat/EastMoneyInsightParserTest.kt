@@ -112,6 +112,75 @@ class EastMoneyInsightParserTest {
     }
 
     @Test
+    fun announcementPeekSummaryExtractsFactsAndDropsBoilerplate() {
+        // 结构对齐真实返回（600519 半年度报告摘要）：表头 + 重复标题 + 免责句 + 事实句
+        val content = """
+            贵州茅台酒股份有限公司2026 年半年度报告摘要
+
+            公司代码：600519  公司简称：贵州茅台
+
+            第一节 重要提示
+
+            1.1 本半年度报告摘要来自半年度报告全文，投资者应当到 http://www.sse.com.cn/ 仔细阅读半年度报告全文。
+            1.2 本公司董事会及董事、高级管理人员保证半年度报告内容的真实性、准确性、完整性，不存在虚假记载、误导性陈述或重大遗漏。
+            1.3 本半年度报告未经审计。
+
+            第二节 主要财务数据
+
+            报告期内，公司实现营业收入 920.9 亿元，同比下降 1.3%；归属于上市公司股东的净利润 445.2 亿元，同比下降 2.0%。
+            公司拟向全体股东每 10 股派发现金红利 315.6 元（含税）。
+        """.trimIndent()
+        val root = JSONObject(jsonContentRoot(content))
+        val base = EastMoneyInsightParser.parseAnnouncements(
+            JSONObject("""{"data":{"list":[{"art_code":"AN1","title_ch":"贵州茅台:贵州茅台2026年半年度报告摘要","notice_date":"2026-08-15 00:00:00","stock_code":"600519"}]}}"""),
+            "600519",
+        ).single()
+
+        val hydrated = EastMoneyInsightParser.withAnnouncementContent(base, root)
+        val summary = hydrated.summary
+
+        assertTrue("营业收入" in summary, "摘要必须来自原文事实句，实际：$summary")
+        assertTrue("445.2" in summary || "现金红利" in summary, "金额事实应被保留，实际：$summary")
+        assertTrue("真实性" !in summary && "未经审计" !in summary, "免责句必须整句丢弃，实际：$summary")
+        assertTrue("公司代码" !in summary && "公告编号" !in summary, "表头不能进摘要，实际：$summary")
+        assertTrue(summary.length <= 260, "摘要超预算：${summary.length}")
+    }
+
+    @Test
+    fun announcementPeekSummaryKeepsItemSummaryWhenContentMissing() {
+        val base = EastMoneyInsightParser.parseAnnouncements(
+            JSONObject("""{"data":{"list":[{"art_code":"AN1","title_ch":"贵州茅台:关于召开2026年半年度业绩说明会的公告","notice_date":"2026-08-15 00:00:00","stock_code":"600519"}]}}"""),
+            "600519",
+        ).single()
+
+        val hydrated = EastMoneyInsightParser.withAnnouncementContent(base, JSONObject("""{"data":{"notice_content":""}}"""))
+
+        assertEquals(base.summary, hydrated.summary, "正文取不到时不能污染原摘要")
+    }
+
+    @Test
+    fun announcementPeekSummaryDegradesToCleanedHeadWhenAllNoise() {
+        val base = EastMoneyInsightParser.parseAnnouncements(
+            JSONObject("""{"data":{"list":[{"art_code":"AN1","title_ch":"贵州茅台:某公告","notice_date":"2026-08-15 00:00:00","stock_code":"600519"}]}}"""),
+            "600519",
+        ).single()
+        val root = JSONObject(jsonContentRoot("无\n——\n无"))
+
+        val hydrated = EastMoneyInsightParser.withAnnouncementContent(base, root)
+
+        assertTrue(hydrated.summary.isNotBlank(), "整篇噪声也要给出可读回退")
+    }
+
+    /** Kuikly JSONObject 无 getJSONObject/put 的嵌套写法，用转义内嵌构造内容根。 */
+    private fun jsonContentRoot(content: String): String {
+        val escaped = content
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+        return """{"data":{"notice_content":"$escaped"}}"""
+    }
+
+    @Test
     fun alertRulesPersistAndProduceAnExplanation() {
         val storage = InMemoryKeyValueStorage()
         val store = AlertStore(storage, nowMillis = { 42L })

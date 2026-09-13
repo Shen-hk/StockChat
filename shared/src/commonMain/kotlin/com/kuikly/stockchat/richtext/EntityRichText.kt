@@ -251,7 +251,10 @@ private fun stockMarkdownConfig(
             // 链接在长回答中都有自己的层次，但不抢正文与涨跌色的注意力。
             codeBackground = if (dark) 0xFF202A3D else 0xFFF2F6FF,
             inlineCodeBackground = if (dark) 0xFF26334A else 0xFFE7F0FF,
-            dividerColor = if (dark) 0xFF33486A else 0xFFC9D9F2,
+            // Tables use the Markdown divider token for their row/column rules.
+            // Raise contrast slightly so dense market data remains scannable on
+            // both page palettes without making the table look boxed-in.
+            dividerColor = if (dark) 0xFF52719E else 0xFF91ADD2,
             tableBackground = if (dark) 0xFF172235 else 0xFFF5F9FF,
             blockQuoteBar = if (dark) 0xFF79B8FF else 0xFF1677D2,
             blockQuoteBackground = if (dark) 0xFF172B4D else 0xFFEAF4FF,
@@ -260,7 +263,7 @@ private fun stockMarkdownConfig(
         ),
         typography = stockMarkdownTypography(dark),
         dimens = MarkdownDimens(
-            dividerThickness = 1f,
+            dividerThickness = 1.25f,
             codeBackgroundCornerSize = 8f,
             blockQuoteThickness = 3f,
             blockQuoteCornerSize = 8f,

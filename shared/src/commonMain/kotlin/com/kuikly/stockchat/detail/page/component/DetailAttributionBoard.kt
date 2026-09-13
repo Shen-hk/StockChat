@@ -2,6 +2,7 @@ package com.kuikly.stockchat.detail.page.component
 
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.data.provider.Quote
+import com.kuikly.stockchat.detail.ai.state.DetailForecastState
 import com.kuikly.stockchat.detail.domain.FactorSpec
 import com.tencent.kuikly.core.base.ViewContainer
 
@@ -9,8 +10,9 @@ import com.tencent.kuikly.core.base.ViewContainer
  * Wave 2 D5 第六组件：涨跌归因 × AI 走势推演工作台。从 StockDetailPage.body()
  * 搬出原 lines 648-665（RevealBlock 10），零行为变更。
  *
- * 工作台内部 factors/actualPct/quote/mainFlow 均通过闭包传入——observable 在
- * attr/vif 闭包内由 R1 建立反应式依赖（详见 Kuikly AGENTS.md）。
+ * 2026-09-12：AI 走势 tab 接入真实 AI 推演（DetailForecastState，切 tab 触发、
+ * 失败回退端侧规则推演）；factors/actualPct/quote/mainFlow 均通过闭包传入——
+ * observable 在 attr/vif 闭包内由 R1 建立反应式依赖（详见 Kuikly AGENTS.md）。
  */
 internal fun ViewContainer<*, *>.DetailAttributionBoard(
     theme: StockChatTheme,
@@ -19,6 +21,9 @@ internal fun ViewContainer<*, *>.DetailAttributionBoard(
     revealIndex: Int,
     quote: () -> Quote,
     mainFlow: () -> Double?,
+    forecastState: DetailForecastState,
+    onRequestForecast: () -> Unit,
+    onRetryForecast: () -> Unit,
     containerWidth: Float,
 ) {
     RevealBlock(revealIndex, entranceVisible, reduceMotion) {
@@ -34,6 +39,9 @@ internal fun ViewContainer<*, *>.DetailAttributionBoard(
             actualPct = { quote().changePercent },
             quote = quote,
             mainFlow = mainFlow,
+            forecastState = forecastState,
+            onRequestForecast = onRequestForecast,
+            onRetryForecast = onRetryForecast,
             containerWidth = containerWidth,
             reduceMotion = reduceMotion,
         )

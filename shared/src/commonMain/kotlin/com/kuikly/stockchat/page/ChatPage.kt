@@ -218,8 +218,11 @@ import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
 import com.tencent.kuikly.core.base.BoxShadow
+import com.tencent.kuikly.core.base.Attr
 import com.tencent.kuikly.core.base.attr.AccessibilityRole
 import com.tencent.kuikly.core.base.Color
+import com.tencent.kuikly.core.base.ColorStop
+import com.tencent.kuikly.core.base.Direction
 import com.tencent.kuikly.core.base.Scale
 import com.tencent.kuikly.core.base.Translate
 import com.tencent.kuikly.core.base.ViewBuilder
@@ -238,6 +241,7 @@ import com.tencent.kuikly.core.reactive.handler.observableList
 import com.tencent.kuikly.core.module.SharedPreferencesModule
 import com.tencent.kuikly.core.views.TextArea
 import com.tencent.kuikly.core.views.TextAreaView
+import com.tencent.kuikly.core.views.TextConst
 import com.tencent.kuikly.core.views.TextInputState
 import com.tencent.kuikly.core.views.Input
 import com.tencent.kuikly.core.views.Image
@@ -788,7 +792,13 @@ internal class ChatPage : BasePager() {
     override fun body(): ViewBuilder {
         val page = this
         return {
-            attr { backgroundColor(page.theme.page) }
+            attr {
+                val theme = page.theme
+                backgroundColor(theme.page)
+                // TextArea 是持久原生视图，不能靠重建来换肤（会中断正在进行的
+                // 拼音组合/选区）。只同步视觉 prop，完全不触碰 textInputState。
+                page.syncComposerNativeTheme(theme)
+            }
             // 主内容平移层（用户决策 2026-09-08）：抽屉展开时整页内容（聊天
             // 列表 + 顶栏 + 输入栏）像被抽屉迎面"推"开一样整体右移，收起时
             // 整体左移回位。手势跟手阶段与面板同速落位；归位/程序化开合与
@@ -880,6 +890,7 @@ internal class ChatPage : BasePager() {
                             rotatingKeyword = { page.welcomeState.rotatingKeyword },
                             cursorVisible = { page.welcomeState.cursorVisible },
                             entranceVisible = { page.welcomeState.entranceVisible },
+                            recommendationsPresented = { page.welcomeState.recommendationsPresented },
                             starterRenderKeys = page.welcomeStarterRenderKey,
                             starters = { page.welcomeStarterSelection },
                             onMounted = page.welcomeCoordinator::onWelcomeMounted,
@@ -1060,17 +1071,37 @@ internal class ChatPage : BasePager() {
                 val composerGlassRenderer = page.glassRenderer
                 View {
                     attr {
-                        // Floating capsule composer on a solid page-coloured base:
-                        // the blank area around/below the capsule no longer shows
-                        // scrolled content through.
+                        // 浮动输入胶囊只保留自身的 surface；外侧不铺实色停靠栏。
                         absolutePosition(bottom = 0f, left = 0f, right = 0f)
                         paddingTop(0f)
                         paddingLeft(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
                         paddingRight(if (COMPOSER_ISOLATION_TEST) 0f else 12f)
                         paddingBottom(
                             if (COMPOSER_ISOLATION_TEST) 0f
-                            else 10f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight,
+                            // The IME overlays this Kuikly page on Android, so the floating
+                            // composer itself must follow keyboardHeight. The chrome's internal
+                            // base deliberately does not add it again (one avoidance region).
+                            // 收拢态只在输入胶囊下保留 4dp，避免底部背景看起来像一整块
+                            // 停靠栏；顶部的 4dp 渐变层负责与滚动内容柔和交接。
+                            else 4f + page.pagerData.safeAreaInsets.bottom + page.keyboardHeight,
                         )
+                        // 外层只保留命中区域，不能铺整片实色：输入栏的背景高度应
+                        // 由胶囊本身决定，底部安全区直接透出页面底色。
+                        backgroundColor(page.theme.page.opacity(0f))
+                    }
+                    // 胶囊上缘仅留 3dp、半透明的渐隐，柔化与会话列表的交接，
+                    // 但不再形成一整条过高的输入栏背景。
+                    View {
+                        attr {
+                            absolutePosition(top = 0f, left = 0f, right = 0f)
+                            height(3f)
+                            touchEnable(false)
+                            backgroundLinearGradient(
+                                Direction.TO_BOTTOM,
+                                ColorStop(page.theme.page.opacity(0f), 0f),
+                                ColorStop(page.theme.page.opacity(0.5f), 1f),
+                            )
+                        }
                     }
                     if (COMPOSER_ISOLATION_TEST) {
                         // 使用玻璃的静态表皮（色彩、描边、阴影），不能调用
@@ -1096,10 +1127,13 @@ internal class ChatPage : BasePager() {
                     ComposerChrome(
                         ComposerChromeProps(
                             theme = page.theme,
+                            pageColor = { page.theme.page },
+                            surfaceColor = { page.theme.surface },
+                            brandSoftColor = { page.theme.brandSoft },
                             emptySession = { page.viewModel.messages.isEmpty() },
-                            welcomePresented = { page.welcomeState.entranceVisible },
+                            welcomeGuidePresented = { page.welcomeState.composerGuidePresented },
+                            welcomeComposerPresented = { page.welcomeState.composerPresented },
                             expanded = { page.composerExpanded },
-                            keyboardHeight = { page.keyboardHeight },
                             bottomInset = page.pagerData.safeAreaInsets.bottom,
                             composerDropActive = {
                                 page.entityDragActive && page.entityDropTarget == EntityDropTarget.COMPOSER
@@ -1127,6 +1161,7 @@ internal class ChatPage : BasePager() {
                             ComposerInputRow(
                                 ComposerInputRowProps(
                                     theme = page.theme,
+                                    surfaceColor = { page.theme.surface },
                                     visuallyExpanded = page::isComposerVisuallyExpanded,
                                     chromePresented = { page.composerChromePresented },
                                     themeKey = page::themeRebuildKey,
@@ -1954,6 +1989,20 @@ internal class ChatPage : BasePager() {
         }
     }
 
+    /**
+     * Keeps the persistent native editor in sync with an in-place appearance change.
+     * These keys are all visual-only (`TextAreaView.NON_SHADOW_PROPS`), so unlike
+     * `textInputState` they do not restart the IME or disturb composition/selection.
+     */
+    private fun syncComposerNativeTheme(theme: StockChatTheme) {
+        val input = inputRef?.view ?: return
+        input.didSetProp(Attr.StyleConst.BACKGROUND_COLOR, theme.surface.toString())
+        input.didSetProp(TextConst.TEXT_COLOR, theme.textPrimary.toString())
+        input.didSetProp(TextConst.PLACEHOLDER_COLOR, theme.textTertiary.toString())
+        input.didSetProp(TextConst.TINT_COLOR, theme.brand.toString())
+        input.didSetProp(TextConst.SELECTION_COLOR, theme.brand.toString())
+    }
+
     private fun renderComposerTextArea(container: ViewContainer<*, *>, isolated: Boolean = false) {
         if (isolated) {
             // 与 GlobalSearchPage 保持同一类原生 TextArea 配置：不持有 ref、
@@ -1962,12 +2011,14 @@ internal class ChatPage : BasePager() {
             container.TextArea {
                 attr {
                     flex(1f)
-                    fontSizeScaled(17f)
+                    fontSizeScaled(16f)
                     lineHeightScaled(25f)
                     fontWeightMedium()
                     minHeight(25f)
                     maxHeight(40f)
                     color(this@ChatPage.theme.textPrimary)
+                    // 原生输入层必须透明：输入胶囊的玻璃表皮由外层负责，原生背景
+                    // 会盖住描边、渐变和按住说话覆盖层。
                     backgroundColor(Color(0xFFFFFFFF, 0f))
                     placeholder("问一只股票或一个术语")
                     placeholderColor(this@ChatPage.theme.textTertiary)
@@ -2013,9 +2064,10 @@ internal class ChatPage : BasePager() {
             // 跟 maxHeight 等动态属性一起重放，会在展开布局时重启刚建立的连接，
             // 形成“键盘有反应、正文无光标”的僵尸 InputConnection。
             attr {
-                fontSizeScaled(17f)
+                fontSizeScaled(16f)
                 lineHeightScaled(25f)
                 fontWeightMedium()
+                // 同上，保留玻璃输入容器的视觉层级与语音触摸覆盖层。
                 backgroundColor(Color(0xFFFFFFFF, 0f))
                 placeholder("问一只股票或一个术语")
                 returnKeyTypeSend()

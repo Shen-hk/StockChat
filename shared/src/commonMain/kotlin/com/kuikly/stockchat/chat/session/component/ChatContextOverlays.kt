@@ -125,7 +125,9 @@ internal object ChatContextOverlays {
                     absolutePosition(right = 14f, bottom = 130f + bottomInset)
                     size(40f, 40f); allCenter(); borderRadius(20f)
                     border(Border(1f, BorderStyle.SOLID, Color(0xFFFFFF, 0.35f)))
-                    boxShadow(BoxShadow(0f, 8f, 22f, Color(0x000000, if (shadowVisible()) 0.16f else 0f)))
+                    // Keep the floating button crisp: a short, soft lift avoids the
+                    // conspicuous square halo that a large blur creates on glass.
+                    boxShadow(BoxShadow(0f, 3f, 8f, Color(0x000000, if (shadowVisible()) 0.10f else 0f)))
                     accessibility("回到顶部")
                     accessibilityRole(AccessibilityRole.BUTTON)
                     accessibilityInfo(clickable = true, longClickable = false)

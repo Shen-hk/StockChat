@@ -209,13 +209,102 @@ object EastMoneyInsightParser {
     fun withAnnouncementContent(item: DisclosureItem, contentRoot: JSONObject?): DisclosureItem {
         val content = contentRoot?.optJSONObject("data")?.optString("notice_content").orEmpty()
         if (content.isBlank()) return item
-        val cleaned = content.replace(Regex("\\s+"), " ").trim()
-        val summary = cleaned
-            .substringAfter("重要提示", cleaned)
-            .take(900)
-            .trim()
-            .ifEmpty { item.summary }
+        val summary = summarizeAnnouncementBody(content, item.title).ifEmpty { item.summary }
         return item.copy(summary = summary, riskLabel = riskLabel("${item.title} $summary"))
+    }
+
+    // ───────────────────── 公告原文抽取式摘要（长按预览） ─────────────────────
+
+    /**
+     * 公告原文 → 长按摘要。notice_content 是排版文本：开头是「公司代码/简称/公告编号」
+     * 表头与重复标题，正文里混着「保证内容真实性/未经审计/请仔细阅读全文」等法定免责句；
+     * 旧实现直接 take(900) 把这些样板话术当摘要（2026-09-12 用户反馈「都是无关信息」）。
+     * 现按句清洗打分：数字/金额/占比 + 关键事实词加分，法律免责句整句丢弃，
+     * 按原文顺序取满 240 字；全被噪声占满时退回清洗后的正文开头，再退回标题模板摘要。
+     */
+    fun summarizeAnnouncementBody(content: String, title: String): String {
+        // 东财标题带「公司:」前缀（半角冒号），剥掉后再做正文重复标题行匹配
+        val normalizedTitle = title.substringAfter('：', title).substringAfter(':', title).trim()
+        val sentences = content.lines()
+            .map { line -> line.replace(Regex("\\s+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+            .filterNot { isBoilerplateLine(it, normalizedTitle) }
+            .joinToString("。")
+            .split('。', '；', '！', '？')
+            .map { it.trim().replace(Regex("^\\d+(\\.\\d+)*\\s*"), "").trim() }
+            .filter { it.length >= 8 && !isBoilerplateSentence(it) }
+            // 表格碎片：纯数字行（如「国外 119 14 21」）与无数字的超短句（如「经常性损益的净利润」）无独立信息量
+            .filter { hanCount(it) >= 3 }
+            .filter { Regex("\\d|%|％").containsMatchIn(it) || it.length >= 12 }
+        val budget = 240
+        // 早出现的句子略占优（公告通常先给结论），避免长文里凑数的尾巴挤掉开头的事实句；
+        // 基础分必须 > 0 才参选——裸公司名等零事实句不能靠位置加分混进摘要。
+        val ranked = sentences
+            .mapIndexed { index, sentence ->
+                val base = scoreAnnouncementSentence(sentence)
+                Triple(index, sentence, base + (2 - index / 10).coerceAtLeast(0)) to base
+            }
+            .filter { it.second > 0 }
+            .sortedByDescending { it.first.third }
+        val picked = linkedSetOf<Int>()
+        var used = 0
+        for ((entry, _) in ranked) {
+            val (index, sentence, _) = entry
+            val cost = sentence.length + 1
+            if (used + cost > budget) continue
+            picked.add(index)
+            used += cost
+        }
+        if (picked.isNotEmpty()) {
+            return picked.joinToString("；") { sentences[it] }
+        }
+        // 回退 1：没有可打分的句子时给清洗后的正文开头（仍是原文，不再夹免责句）
+        val head = sentences.take(3).joinToString("。").take(budget)
+        if (head.isNotEmpty()) return head
+        // 回退 2：整篇全是噪声（极少见）→ 退回标题模板摘要
+        return summarizeTitle(title)
+    }
+
+    /** 表头/重复标题/节标记等整行噪声。 */
+    private fun isBoilerplateLine(line: String, title: String): Boolean {
+        val compact = line.replace(" ", "")
+        val compactTitle = title.replace(" ", "")
+        if (compactTitle.isNotEmpty() && compactTitle in compact && line.length < 60) return true
+        val headerKeys = listOf("证券代码", "公司代码", "股票代码", "证券简称", "公司简称", "股票简称", "公告编号", "公告文号")
+        if (headerKeys.any { it in line } && line.length < 60) return true
+        if (Regex("^第[一二三四五六七八九十0-9]+节").containsMatchIn(line) && line.length < 24) return true
+        if (line in setOf("无", "——", "-", "不适用")) return true
+        return false
+    }
+
+    private fun hanCount(text: String): Int = text.count { it.code in 0x4E00..0x9FFF }
+
+    /** 法定免责/套话句：对投资者定位事实毫无信息量，整句丢弃。 */
+    private val disclosureDisclaimerKeys = listOf(
+        "真实性", "虚假记载", "误导性陈述", "重大遗漏", "未经审计", "请仔细阅读",
+        "公告全文", "全文披露", "指定媒体", "指定信息披露", "巨潮资讯", "上网公告",
+        "备查文件", "特此公告", "敬请广大投资者", "投资者应当", "公告原文",
+    )
+
+    private fun isBoilerplateSentence(sentence: String): Boolean =
+        disclosureDisclaimerKeys.any { it in sentence }
+
+    private val disclosureFactKeys = listOf(
+        "同比", "环比", "增长", "下降", "净利润", "营业收入", "归母", "每股收益", "净资产",
+        "分红", "派发", "现金红利", "股息", "转增", "回购", "增持", "减持", "质押", "解除质押",
+        "审议通过", "召开", "决议", "选举", "聘任", "解聘", "变更", "募集", "中标", "合同",
+        "诉讼", "仲裁", "处罚", "立案", "警示", "停牌", "复牌", "关联交易", "担保", "担保额度",
+        "业绩预告", "业绩说明会", "定于", "股权登记", "除权", "除息", "实施", "财务公司", "风险评估",
+    )
+
+    private fun scoreAnnouncementSentence(sentence: String): Int {
+        var score = 0
+        if (Regex("\\d").containsMatchIn(sentence)) score += 2
+        if ("%" in sentence || "％" in sentence) score += 2
+        if (Regex("\\d+(\\.\\d+)?(亿|万)").containsMatchIn(sentence)) score += 3
+        disclosureFactKeys.forEach { if (it in sentence) score += 2 }
+        if (sentence.length in 16..120) score += 1
+        return score
     }
 
     fun parseIndices(root: JSONObject): List<MarketIndex> = root.rows("data", "diff").map { row ->
@@ -362,7 +451,8 @@ object EastMoneyInsightParser {
         "分红" in title || "权益" in title -> "公告涉及股东回报或权益变动，请以登记日、除权日和实施进度为准。"
         "风险" in title -> "公告包含风险相关信息，建议直接阅读原文中的风险范围、影响期间和应对措施。"
         "股东" in title || "减持" in title || "增持" in title -> "公告涉及股东或持股变化，需区分计划、实施进展与已完成三个阶段。"
-        else -> "这是公司正式披露信息。摘要只帮助定位重点，关键事实请以公告原文为准。"
+        // 正文没取回时不再用泛泛话术冒充摘要，明确说明并引导读原文。
+        else -> "公告正文暂未取回，未能生成原文摘要，请点「查看公告原文」阅读全文。"
     }
 
     /**

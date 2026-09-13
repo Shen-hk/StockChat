@@ -159,6 +159,21 @@ class WatchlistDragCoordinatorTest {
     }
 
     @Test
+    fun pageResumeCancelsAnInterruptedDragAndReenablesScrolling() = reactive {
+        val f = Fixture()
+        f.seed("a", "b")
+        f.coordinator.beginDragLift("a")
+        f.coordinator.dragMove(80f)
+        val seededFrom = f.coordinator.dragFrom
+
+        f.coordinator.cancelActiveSession()
+
+        assertTrue(f.coordinator.dragSymbol.isEmpty(), "残留会话必须清空，否则页面滚动会一直被锁住")
+        assertEquals(seededFrom, f.coordinator.dragFrom, "R5：恢复滚动时不重置动画驱动")
+        assertEquals(0f, f.coordinator.rowSlotShift(0), "会话门控关闭后让位偏移归零")
+    }
+
+    @Test
     fun rowSlotShiftShiftsOnlyRowsBetweenFromAndTarget() = reactive {
         val f = Fixture()
         f.seed("a", "b", "c", "d")

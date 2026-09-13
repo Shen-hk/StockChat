@@ -87,6 +87,38 @@ When debugging a silent Kuikly animation, inspect reactive dependency registrati
   `./gradlew <task> --rerun-tasks`。另外本项目编译**不输出** unused import 警告，
   清理 import 用 `tools/find_unused_imports.pl`（保守检测：注释里出现过就保留；`tools/` 已 gitignore）。
 
+## R10 — vfor / vif creator 结构硬约束（consolidated 2026-09-12，「浏览全部 N 个概念」闪退事故）
+
+- **`vfor` 的 creator 闭包必须生成「恰好一个」非指令子节点。** Kuikly core
+  `directives/LoopDirectivesView.kt:156-172` 的 `invokeItemCreator` 会在调用前后比对
+  `childrenSize()`：增量 `!= 1` 立即 `throwRuntimeError("vfor creator闭包内必须需要且仅一个孩子节点的生成")`；
+  紧接着还检查 `child.isVirtualView()`（vif/vfor/vbind），命中则
+  `throwRuntimeError("vfor creator闭包内子孩子必须为非条件指令，如vif , vfor")`。
+  **两者都是硬抛，端上表现是「进到这一屏即闪退」，且 Android / iOS / H5 / 鸿蒙全端一致**
+  ——因为它在 commonMain 的框架层，与平台无关。
+- **正确写法：两个兄弟节点要包一层无色容器。**
+  ```kotlin
+  vfor({ page.rows }) { row ->
+      View {                       // ← creator 的唯一子节点
+          attr { alignSelfStretch() }
+          CardShell(...)           // ← 卡身
+          vif({ page.expandedKey == key }) { ... }   // ← 相关术语
+      }
+  }
+  ```
+  反面写法（2026-09-12 事故现场）：`vfor { CardShell(...); vif(...) }` —— 同层两条语句，
+  增量 2，必崩。`vif` 自身的 creator **没有**这个计数检查，因此 `vif` 里放几条都行；
+  约束只作用在 `vfor` 的**直接** creator 上。
+- **`when` / `if` 的分支是互斥的，每支各算一个节点**（各支内部仍须恰好 1 个），
+  所以 `vfor { when (row) { is Header -> Title(...); is Item -> { View { ... } } } }` 合法。
+- **检测手法**：只需找「`vfor` creator 体内出现 `vif`」的位置人工核对最浅缩进层语句数
+  （2026-09-12 全仓扫描仅 3 处：`GlobalSearchPage:149`、`GlossaryPage:1052`、`WatchlistPage:326`，
+  均为单节点合法）。基于缩进/括号的通用静态审计**误报率极高**（嵌套容器的子节点无法与
+  creator 骨架层区分），不要指望它；**真正可靠的判据是运行到该页**——用
+  `KR_ROOT_PAGE=<页>` 冒烟钩子直接落到目标页，看 `missing shadow`/`RuntimeException` 计数与进程存活。
+- **回归防线**：新增/重构任何 `vfor` 行渲染时，先看 creator 顶层是不是只有一条视图语句；
+  崩了优先怀疑这条约束，而不是数据或主题。
+
 ---
 
 # Vibe coding workflow conventions

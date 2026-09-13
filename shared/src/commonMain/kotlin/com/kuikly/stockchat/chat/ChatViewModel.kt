@@ -92,7 +92,7 @@ class ChatViewModel(
                     pagerId,
                     assistantId,
                     MessageRole.ASSISTANT,
-                    "$configError。请先打开右上角“API 设置”完成配置。",
+                    "$configError。请在设置中配置 API Key。",
                     failed = true,
                 ),
             )
@@ -164,6 +164,7 @@ class ChatViewModel(
                             question = payload.renderedPrompt ?: payload.text,
                             conversation = messages.filter { it.id != assistantId },
                             response = content,
+                            preferredSymbols = ChatQuoteContext.resolveSymbols(payload),
                         )
                         assistantMessage.streaming = false
                         persist()

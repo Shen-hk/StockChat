@@ -47,12 +47,18 @@ internal class ChatWelcomeCoordinator(
     // but never read it: R1 permits observable reads only in reactive closures.
     private var cursorShown = false
     private var entrancePresented = false
+    private var recommendationsShown = false
+    private var composerGuideShown = false
+    private var composerShown = false
     private var marketSelected = false
     // Only the market shortcut sets this; ordinary foregrounding must not replay welcome.
     private var refreshWelcomeAfterMarketReturn = false
     private var keywordTask: WelcomeScheduledTask? = null
     private var cursorTask: WelcomeScheduledTask? = null
     private var entranceTask: WelcomeScheduledTask? = null
+    private var recommendationsTask: WelcomeScheduledTask? = null
+    private var composerGuideTask: WelcomeScheduledTask? = null
+    private var composerTask: WelcomeScheduledTask? = null
     private var entranceSafetyTask: WelcomeScheduledTask? = null
     private var marketOpenTask: WelcomeScheduledTask? = null
     private var marketResetTask: WelcomeScheduledTask? = null
@@ -63,10 +69,12 @@ internal class ChatWelcomeCoordinator(
         state.fullMode = fullMode
         state.destroyed = false
         startKeywordLoopIfNeeded()
+        var restartedForMarketReturn = false
         if (refreshWelcomeAfterMarketReturn) {
             refreshWelcomeAfterMarketReturn = false
             if (state.sessionEmpty) {
                 restartWelcomeEntrance(refreshStarters = true)
+                restartedForMarketReturn = true
             }
             scheduleMarketTabReturnReset()
         }
@@ -74,9 +82,8 @@ internal class ChatWelcomeCoordinator(
         // restart that phase on return. The component has already registered
         // its easeOut animation, so this preserves the R4/R5 entrance instead
         // of leaving the cards at their transparent initial state.
-        if (state.sessionEmpty && state.welcomeMounted && !entrancePresented && !reducedMotion) {
-            val version = ++entranceVersion
-            scheduleEntranceStep(version, 32) { setEntrancePresented(true) }
+        if (state.sessionEmpty && state.welcomeMounted && !composerShown && !reducedMotion && !restartedForMarketReturn) {
+            startWelcomeEntranceTimeline()
         }
         scheduleEntranceSafety()
     }
@@ -103,6 +110,11 @@ internal class ChatWelcomeCoordinator(
         state.sessionEmpty = true
         state.keywordStopped = false
         state.welcomeMounted = true
+        // 新建会话时欢迎组件会重新挂载；先把滑块落在左侧再建树，绝不能让
+        // 旧的“看行情”选中态在新会话里产生一次无语义的回滑动画。
+        refreshWelcomeAfterMarketReturn = false
+        cancelMarketTasks()
+        setMarketSelected(false)
         restartWelcomeEntrance(refreshStarters = true)
         startKeywordLoopIfNeeded()
     }
@@ -130,13 +142,10 @@ internal class ChatWelcomeCoordinator(
         if (state.welcomeMounted) return
         state.welcomeMounted = true
         if (reducedMotion) {
-            setEntrancePresented(true)
+            setEntrancePhasesPresented(true)
             return
         }
-        setEntrancePresented(false)
-        val version = ++entranceVersion
-        scheduleEntranceStep(version, 32) { setEntrancePresented(true) }
-        scheduleEntranceSafety()
+        startWelcomeEntranceTimeline()
     }
 
     fun onOpenMarketRequested() {
@@ -231,6 +240,27 @@ internal class ChatWelcomeCoordinator(
         }
     }
 
+    private fun scheduleRecommendationsStep(version: Int, delay: Int, task: () -> Unit) {
+        recommendationsTask?.cancel()
+        recommendationsTask = scheduler.schedule(delay, repeating = false) {
+            if (entranceVersion == version && isActive()) task()
+        }
+    }
+
+    private fun scheduleComposerGuideStep(version: Int, delay: Int, task: () -> Unit) {
+        composerGuideTask?.cancel()
+        composerGuideTask = scheduler.schedule(delay, repeating = false) {
+            if (entranceVersion == version && isActive()) task()
+        }
+    }
+
+    private fun scheduleComposerStep(version: Int, delay: Int, task: () -> Unit) {
+        composerTask?.cancel()
+        composerTask = scheduler.schedule(delay, repeating = false) {
+            if (entranceVersion == version && isActive()) task()
+        }
+    }
+
     /** Gives the returned page one frame to paint the right tab before sliding it home. */
     private fun scheduleMarketTabReturnReset() {
         val version = ++marketVersion
@@ -243,17 +273,25 @@ internal class ChatWelcomeCoordinator(
     /** Replays the R4 mounted -> presented transition after the four cards are replaced. */
     private fun restartWelcomeEntrance(refreshStarters: Boolean) {
         if (refreshStarters) onRefreshStarters()
+        startWelcomeEntranceTimeline()
+    }
+
+    /** Four independent R4 phases keep the welcome hierarchy readable. */
+    private fun startWelcomeEntranceTimeline() {
         ++entranceVersion
-        entranceTask?.cancel()
-        entranceTask = null
+        cancelEntrancePhaseTasks()
         if (reducedMotion) {
-            setEntrancePresented(true)
+            setEntrancePhasesPresented(true)
             return
         }
-        // New vfor cards register easeOut while false; this flip consumes it (R4/R5).
-        setEntrancePresented(false)
+        // 图标/主题句回弹 → “为你推荐” → 引导语 → 输入框。每段都先留一帧
+        // 注册下一次变更要消费的动画，符合 R4/R5。
+        setEntrancePhasesPresented(false)
         val version = entranceVersion
         scheduleEntranceStep(version, 32) { setEntrancePresented(true) }
+        scheduleRecommendationsStep(version, 220) { setRecommendationsPresented(true) }
+        scheduleComposerGuideStep(version, 380) { setComposerGuidePresented(true) }
+        scheduleComposerStep(version, 520) { setComposerPresented(true) }
         scheduleEntranceSafety()
     }
 
@@ -262,19 +300,32 @@ internal class ChatWelcomeCoordinator(
         entranceSafetyTask?.cancel()
         val version = entranceVersion
         entranceSafetyTask = scheduler.schedule(600, repeating = false) {
-            if (entranceVersion == version && isActive() && state.sessionEmpty && !entrancePresented) {
+            if (
+                entranceVersion == version && isActive() && state.sessionEmpty &&
+                (!entrancePresented || !recommendationsShown || !composerGuideShown || !composerShown)
+            ) {
                 state.welcomeMounted = true
-                setEntrancePresented(true)
+                setEntrancePhasesPresented(true)
             }
         }
     }
 
     private fun cancelEntranceTasks() {
         ++entranceVersion
-        entranceTask?.cancel()
-        entranceTask = null
+        cancelEntrancePhaseTasks()
         entranceSafetyTask?.cancel()
         entranceSafetyTask = null
+    }
+
+    private fun cancelEntrancePhaseTasks() {
+        entranceTask?.cancel()
+        entranceTask = null
+        recommendationsTask?.cancel()
+        recommendationsTask = null
+        composerGuideTask?.cancel()
+        composerGuideTask = null
+        composerTask?.cancel()
+        composerTask = null
     }
 
     private fun cancelMarketTasks() {
@@ -298,6 +349,28 @@ internal class ChatWelcomeCoordinator(
     private fun setEntrancePresented(visible: Boolean) {
         entrancePresented = visible
         state.entranceVisible = visible
+    }
+
+    private fun setEntrancePhasesPresented(visible: Boolean) {
+        setEntrancePresented(visible)
+        setRecommendationsPresented(visible)
+        setComposerGuidePresented(visible)
+        setComposerPresented(visible)
+    }
+
+    private fun setRecommendationsPresented(visible: Boolean) {
+        recommendationsShown = visible
+        state.recommendationsPresented = visible
+    }
+
+    private fun setComposerGuidePresented(visible: Boolean) {
+        composerGuideShown = visible
+        state.composerGuidePresented = visible
+    }
+
+    private fun setComposerPresented(visible: Boolean) {
+        composerShown = visible
+        state.composerPresented = visible
     }
 
     private fun setMarketSelected(selected: Boolean) {

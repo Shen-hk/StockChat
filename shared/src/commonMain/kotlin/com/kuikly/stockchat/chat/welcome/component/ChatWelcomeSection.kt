@@ -84,6 +84,7 @@ internal fun ViewContainer<*, *>.WelcomeSection(
     rotatingKeyword: () -> String,
     cursorVisible: () -> Boolean,
     entranceVisible: () -> Boolean,
+    recommendationsPresented: () -> Boolean,
     starterRenderKeys: ObservableList<Int>,
     starters: () -> List<WelcomeStarter>,
     /** 「看市场」胶囊选中态（取值闭包）：驱动滑块滑到右半格并高亮文案。 */
@@ -163,6 +164,14 @@ internal fun ViewContainer<*, *>.WelcomeSection(
                 fontSizeScaled(12f)
                 fontWeightSemiBold()
                 color(theme.textTertiary)
+                if (reduceMotion) {
+                    opacity(1f)
+                } else {
+                    val presented = recommendationsPresented()
+                    opacity(if (presented) 1f else 0f)
+                    // 在图标和主题句的回弹结束后才出现，避免整块内容抢同一拍。
+                    animate(Animation.easeOut(0.24f), recommendationsPresented())
+                }
             }
         }
         // vfor 是推荐内容的重建边界：调用方先换普通快照，再 clear + add key（R7）。
@@ -174,7 +183,7 @@ internal fun ViewContainer<*, *>.WelcomeSection(
                     alignItemsFlexStart()
                 }
                 starters().forEachIndexed { index, starter ->
-                    QuestionStarterCard(starter, theme, index, entranceVisible, reduceMotion, onChoose)
+                    QuestionStarterCard(starter, theme, index, recommendationsPresented, reduceMotion, onChoose)
                 }
             }
         }
@@ -366,8 +375,8 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
             marginTop(theme.spacing.sm)
             paddingLeft(15f)
             paddingRight(15f)
-            paddingTop(9f)
-            paddingBottom(9f)
+            height(36f)
+            justifyContentCenter()
             backgroundColor(theme.surface.opacity(0.72f))
             borderRadius(12f)
             border(Border(1f, BorderStyle.SOLID, theme.divider))
@@ -410,8 +419,8 @@ private fun ViewContainer<*, *>.QuestionStarterCard(
         Text {
             attr {
                 text(starter.question)
-                // 2026-09-10 放大 10%：14 → 15.4。
-                fontSizeScaled(15.4f)
+                // 与「为你推荐」标题统一字号，卡片内通过固定高度垂直居中。
+                fontSizeScaled(12f)
                 fontWeightMedium()
                 color(theme.textPrimary)
             }

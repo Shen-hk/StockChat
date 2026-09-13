@@ -42,6 +42,9 @@ import com.kuikly.stockchat.foundation.ui.icon.LineIconMinus
 import com.kuikly.stockchat.foundation.ui.icon.LineIconArrowLeft
 import com.kuikly.stockchat.foundation.ui.icon.LineIconArrowRight
 import com.kuikly.stockchat.foundation.ui.icon.LineIconReset
+import com.kuikly.stockchat.detail.ai.state.AiForecastReason
+import com.kuikly.stockchat.detail.ai.state.AiTrendForecast
+import com.kuikly.stockchat.detail.ai.state.DetailForecastState
 import com.tencent.kuikly.core.base.Animation
 import com.tencent.kuikly.core.base.Border
 import com.tencent.kuikly.core.base.BorderStyle
@@ -53,9 +56,14 @@ import com.tencent.kuikly.core.base.ViewContainer
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.reactive.handler.observable
+import com.tencent.kuikly.core.views.Canvas
 import com.tencent.kuikly.core.views.Scroller
 import com.tencent.kuikly.core.views.Text
+import com.tencent.kuikly.core.views.TextAlign
 import com.tencent.kuikly.core.views.View
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.roundToInt
 
 private data class TrendOutlook(
     val title: String,
@@ -120,7 +128,7 @@ internal fun ViewContainer<*, *>.CompanyIndustryPanel(
                     borderRadius(6f)
                     backgroundColor(theme.surface)
                     boxShadow(BoxShadow(0f, 1f, 4f, theme.textPrimary.opacity(0.08f)))
-                    transform(Translate(if (tab == 0) 0f else ((tabTrackWidth - 6f) / 2f).coerceAtLeast(48f), 0f))
+                    transform(translate = Translate(0f, 0f, offsetX = if (tab == 0) 0f else ((tabTrackWidth - 6f) / 2f).coerceAtLeast(48f)))
                     // R5：每轮都为下次 tab 改变登记滑块动画。
                     if (!reduceMotion) animate(Animation.easeOut(0.20f), tab)
                 }
@@ -734,7 +742,8 @@ internal fun ViewContainer<*, *>.ChartSegment(
     }
     View {
         attr {
-            marginBottom(10f)
+            // Match the viewport-control group's height in the shared toolbar.
+            marginBottom(0f)
             padding(4f)
             flexDirectionRow()
             alignSelfFlexStart()
@@ -807,10 +816,10 @@ internal fun ViewContainer<*, *>.ChartViewportControls(
                     if (index > 0) marginLeft(2f)
                 }
                 when (action) {
-                    ChartViewportAction.ZOOM_IN -> LineIconPlus(theme.textPrimary, 15f)
-                    ChartViewportAction.ZOOM_OUT -> LineIconMinus(theme.textPrimary, 15f)
-                    ChartViewportAction.PAN_LEFT -> LineIconArrowLeft(theme.textPrimary, 16f)
-                    ChartViewportAction.PAN_RIGHT -> LineIconArrowRight(theme.textPrimary, 16f)
+                    ChartViewportAction.ZOOM_IN -> Text { attr { text("+"); fontSizeScaled(18f); color(theme.textPrimary) } }
+                    ChartViewportAction.ZOOM_OUT -> Text { attr { text("−"); fontSizeScaled(18f); color(theme.textPrimary) } }
+                    ChartViewportAction.PAN_LEFT -> Text { attr { text("‹"); fontSizeScaled(22f); color(theme.textPrimary) } }
+                    ChartViewportAction.PAN_RIGHT -> Text { attr { text("›"); fontSizeScaled(22f); color(theme.textPrimary) } }
                     ChartViewportAction.RESET -> LineIconReset(theme.textPrimary, 15f)
                     ChartViewportAction.NONE -> Unit
                 }
@@ -1480,6 +1489,9 @@ internal fun ViewContainer<*, *>.AttributionForecastWorkbench(
     actualPct: () -> Double,
     quote: () -> Quote,
     mainFlow: () -> Double?,
+    forecastState: DetailForecastState,
+    onRequestForecast: () -> Unit,
+    onRetryForecast: () -> Unit,
     containerWidth: Float,
     reduceMotion: Boolean,
 ) {
@@ -1520,7 +1532,7 @@ internal fun ViewContainer<*, *>.AttributionForecastWorkbench(
                             if (!reduceMotion) animate(Animation.easeOut(0.18f), active)
                         }
                     }
-                    event { click { mode.value = index } }
+                    event { click { mode.value = index; if (index == 1) onRequestForecast() } }
                 }
             }
         }
@@ -1543,7 +1555,14 @@ internal fun ViewContainer<*, *>.AttributionForecastWorkbench(
                         mainFlow = mainFlow,
                         reduceMotion = reduceMotion,
                     )
-                    AiTrendForecastBlock(theme, quote, mainFlow)
+                    AiForecastResultBlock(
+                        theme = theme,
+                        quote = quote,
+                        mainFlow = mainFlow,
+                        forecastState = forecastState,
+                        reduceMotion = reduceMotion,
+                        onRetry = onRetryForecast,
+                    )
                 }
             }
         }
@@ -1701,6 +1720,530 @@ private fun ViewContainer<*, *>.AiTrendForecastBlock(
             }
         }
     }
+}
+
+// ─────────── AI 走势推演 · 真实模型结果区（2026-09-12）───────────
+// 消费 DetailAiForecastCoordinator 的结构化输出：方向/置信度/情景区间/结论/依据
+// （含权重）+ AI 情景路径折线。旧 [AiTrendForecastBlock]（端侧规则拼文案）降级
+// 为 AI 失败时的回退渲染，不再作为主展示。
+
+/** 「AI 走势」tab 结果区三态：1/2 思考骨架、3 结果卡、4 失败回退。 */
+private fun ViewContainer<*, *>.AiForecastResultBlock(
+    theme: StockChatTheme,
+    quote: () -> Quote,
+    mainFlow: () -> Double?,
+    forecastState: DetailForecastState,
+    reduceMotion: Boolean,
+    onRetry: () -> Unit,
+) {
+    vbind({ forecastState.phase }) {
+        when (forecastState.phase) {
+            1, 2 -> AiForecastSkeleton(theme, forecastState, reduceMotion)
+            3 -> AiForecastResultCard(theme, quote, forecastState, reduceMotion, onRetry)
+            else -> AiForecastErrorCard(theme, quote, mainFlow, forecastState, reduceMotion, onRetry)
+        }
+    }
+}
+
+/** 思考/流式骨架：三点呼吸（pulseTick 低频驱动）+ 已接收字数。 */
+private fun ViewContainer<*, *>.AiForecastSkeleton(
+    theme: StockChatTheme,
+    forecastState: DetailForecastState,
+    reduceMotion: Boolean,
+) {
+    val presented = BlockState(reduceMotion)
+    if (!reduceMotion) setTimeout(0) { presented.value = true }
+    View {
+        attr {
+            marginTop(12f)
+            paddingTop(10f); paddingBottom(12f)
+            paddingLeft(12f); paddingRight(12f)
+            borderLeft(Border(3f, BorderStyle.SOLID, theme.brand))
+            backgroundColor(theme.surfaceMuted.opacity(0.68f))
+            borderRadius(10f)
+            opacity(if (presented.value) 1f else 0f)
+            transform(Translate(0f, if (presented.value) 0f else 0.10f))
+            if (!reduceMotion) animate(Animation.easeOut(0.20f), presented.value)
+        }
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            Text {
+                attr {
+                    text("AI 走势推演")
+                    fontSizeScaled(12f)
+                    fontWeightSemiBold()
+                    color(theme.textPrimary)
+                    flex(1f)
+                }
+            }
+            Text {
+                attr {
+                    text(if (forecastState.phase == 2) "接收中" else "推演中")
+                    fontSizeScaled(10f)
+                    color(theme.textTertiary)
+                }
+            }
+        }
+        View {
+            attr { marginTop(9f); flexDirectionRow(); alignItemsCenter(); height(14f) }
+            listOf(0, 1, 2).forEach { index ->
+                View {
+                    attr {
+                        width(5f); height(5f); borderRadius(2.5f)
+                        marginLeft(if (index == 0) 0f else 4f)
+                        backgroundColor(theme.brand)
+                        val lit = (forecastState.pulseTick + index) % 3 == 0
+                        opacity(if (lit) 1f else 0.30f)
+                        if (!reduceMotion) animate(Animation.linear(0.30f), lit)
+                    }
+                }
+            }
+            Text {
+                attr {
+                    text(
+                        if (forecastState.phase == 2 && forecastState.streamChars > 0) {
+                            "已接收 ${forecastState.streamChars} 字"
+                        } else {
+                            "正在结合行情、资金与资讯推演情景"
+                        }
+                    )
+                    marginLeft(8f)
+                    fontSizeScaled(9.5f)
+                    color(theme.textTertiary)
+                    flex(1f)
+                }
+            }
+        }
+        View {
+            attr { marginTop(10f); height(10f); width(190f); borderRadius(5f); backgroundColor(theme.divider.opacity(0.55f)) }
+        }
+        View {
+            attr { marginTop(6f); height(10f); width(250f); borderRadius(5f); backgroundColor(theme.divider.opacity(0.35f)) }
+        }
+    }
+}
+
+/**
+ * AI 结果卡：标题行（方向徽章 + 置信度 + 重新推演）→ 数据行（左侧情景区间/结论，
+ * 右侧情景折线图）→ 推演依据（权重条 + 错峰入场）→ 口径脚注。
+ * 折线 draw-on 与依据错峰均为两帧挂载后 setTimeout 链驱动（R4/R5）。
+ */
+private fun ViewContainer<*, *>.AiForecastResultCard(
+    theme: StockChatTheme,
+    quote: () -> Quote,
+    forecastState: DetailForecastState,
+    reduceMotion: Boolean,
+    onRetry: () -> Unit,
+) {
+    vbind({ forecastState.result }) {
+        val forecast = forecastState.result ?: return@vbind
+        val presented = BlockState(reduceMotion)
+        if (!reduceMotion) setTimeout(0) { presented.value = true }
+        // 情景折线 draw-on：0→1，30ms × 16 步 ≈ 480ms
+        val drawProgress = BlockState(if (reduceMotion) 1f else 0f)
+        if (!reduceMotion) {
+            for (step in 1..16) setTimeout(step * 30) { drawProgress.value = step / 16f }
+        }
+        // 依据条目错峰入场
+        val reasonStep = BlockState(if (reduceMotion) Int.MAX_VALUE else 0)
+        if (!reduceMotion) {
+            for (step in 1..(forecast.reasons.size + 1)) setTimeout(260 + step * 90) { reasonStep.value = step }
+        }
+        val tone = forecastDirectionColor(theme, forecast.direction)
+        View {
+            attr {
+                marginTop(12f)
+                paddingTop(10f); paddingBottom(12f)
+                paddingLeft(12f); paddingRight(12f)
+                borderLeft(Border(3f, BorderStyle.SOLID, tone))
+                backgroundColor(theme.surfaceMuted.opacity(0.68f))
+                borderRadius(10f)
+                opacity(if (presented.value) 1f else 0f)
+                transform(Translate(0f, if (presented.value) 0f else 0.10f))
+                if (!reduceMotion) animate(Animation.easeOut(0.22f), presented.value)
+            }
+            // ── 标题行 ──
+            View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text {
+                    attr {
+                        text("AI 走势推演")
+                        fontSizeScaled(12f)
+                        fontWeightSemiBold()
+                        color(theme.textPrimary)
+                        flex(1f)
+                    }
+                }
+                View {
+                    attr {
+                        paddingLeft(7f); paddingRight(7f)
+                        paddingTop(2f); paddingBottom(2f)
+                        borderRadius(8f)
+                        backgroundColor(tone.opacity(0.14f))
+                    }
+                    Text {
+                        attr {
+                            text(forecastDirectionLabel(forecast.direction))
+                            fontSizeScaled(9.5f)
+                            fontWeightSemiBold()
+                            color(tone)
+                        }
+                    }
+                }
+                Text {
+                    attr {
+                        text("置信度 ${forecastConfidenceLabel(forecast.confidence)}")
+                        marginLeft(7f)
+                        fontSizeScaled(9.5f)
+                        color(theme.textTertiary)
+                    }
+                }
+                Text {
+                    attr {
+                        text("↻ 重新推演")
+                        marginLeft(9f)
+                        fontSizeScaled(9.5f)
+                        fontWeightSemiBold()
+                        color(theme.brand)
+                    }
+                    event { click { onRetry() } }
+                }
+            }
+            // ── 数据行：左侧区间/结论，右侧情景折线图 ──
+            View {
+                attr { marginTop(9f); flexDirectionRow(); alignItemsFlexStart() }
+                View {
+                    attr { flex(1f); marginRight(10f) }
+                    Text {
+                        attr {
+                            text("情景区间")
+                            fontSizeScaled(9.5f)
+                            color(theme.textTertiary)
+                        }
+                    }
+                    Text {
+                        attr {
+                            text("${Format.percent(forecast.rangePctHigh)} ~ ${Format.percent(forecast.rangePctLow)}")
+                            marginTop(2f)
+                            fontSizeScaled(16f)
+                            fontWeightSemiBold()
+                            color(tone)
+                        }
+                    }
+                    Text {
+                        attr {
+                            val price = quote().price
+                            val hi = price * (1.0 + forecast.rangePctHigh / 100.0)
+                            val lo = price * (1.0 + forecast.rangePctLow / 100.0)
+                            text("对应 ${Format.price(lo)} ~ ${Format.price(hi)}")
+                            marginTop(1f)
+                            fontSizeScaled(9.5f)
+                            color(theme.textTertiary)
+                        }
+                    }
+                    Text {
+                        attr {
+                            text(forecast.summary)
+                            marginTop(7f)
+                            fontSizeScaled(11f)
+                            lineHeightScaled(16f)
+                            color(theme.textSecondary)
+                        }
+                    }
+                }
+                ForecastScenarioChart(theme, forecastState, drawProgress, reduceMotion)
+            }
+            // ── 推演依据 ──
+            if (forecast.reasons.isNotEmpty()) {
+                View {
+                    attr {
+                        marginTop(11f)
+                        val shown = reasonStep.value >= 1
+                        opacity(if (shown) 1f else 0f)
+                        if (!reduceMotion) animate(Animation.easeOut(0.18f), shown)
+                    }
+                    Text {
+                        attr {
+                            text("推演依据 · ${forecast.reasons.size} 条（权重为模型标注）")
+                            fontSizeScaled(10f)
+                            fontWeightSemiBold()
+                            color(theme.textSecondary)
+                        }
+                    }
+                }
+                forecast.reasons.forEachIndexed { index, reason ->
+                    AiForecastReasonRow(theme, reason, index + 2, reasonStep, reduceMotion)
+                }
+            }
+            // ── 口径脚注 ──
+            Text {
+                attr {
+                    text(
+                        buildString {
+                            append("情景推演来自 ${forecastState.model.ifEmpty { "AI 模型" }}；")
+                            append(
+                                if (forecast.pathFromModel) "折线为 AI 情景路径，" else "AI 未给出路径，折线为端侧按情景区间示意，"
+                            )
+                            append("不构成投资建议。")
+                        }
+                    )
+                    marginTop(10f)
+                    fontSizeScaled(9f)
+                    color(theme.textTertiary)
+                }
+            }
+        }
+    }
+}
+
+/** 单条推演依据：序号圈 + 因素名/权重 + 依据正文；随 reasonStep 错峰入场。 */
+private fun ViewContainer<*, *>.AiForecastReasonRow(
+    theme: StockChatTheme,
+    reason: AiForecastReason,
+    revealAt: Int,
+    reasonStep: BlockState<Int>,
+    reduceMotion: Boolean,
+) {
+    View {
+        attr {
+            marginTop(9f)
+            flexDirectionRow()
+            val shown = reduceMotion || reasonStep.value >= revealAt
+            opacity(if (shown) 1f else 0f)
+            transform(Translate(if (shown) 0f else 0.08f, 0f))
+            if (!reduceMotion) animate(Animation.easeOut(0.20f), shown)
+        }
+        View {
+            attr {
+                width(16f); height(16f); borderRadius(8f)
+                allCenter()
+                backgroundColor(theme.brand)
+            }
+            Text {
+                attr {
+                    text("${revealAt - 1}")
+                    fontSizeScaled(8.5f)
+                    fontWeightSemiBold()
+                    color(theme.onBrand)
+                }
+            }
+        }
+        View {
+            attr { flex(1f); marginLeft(7f) }
+            View {
+                attr { flexDirectionRow(); alignItemsCenter() }
+                Text {
+                    attr {
+                        text(reason.title)
+                        fontSizeScaled(10f)
+                        fontWeightSemiBold()
+                        color(theme.textPrimary)
+                    }
+                }
+                Text {
+                    attr {
+                        text("${(reason.weight * 100).roundToInt().coerceIn(0, 100)}%")
+                        marginLeft(6f)
+                        fontSizeScaled(8.5f)
+                        color(theme.textTertiary)
+                    }
+                }
+                // 权重条：AI 标注的贡献权重（与手动归因权重条同视觉语言）
+                View {
+                    attr {
+                        flex(1f); marginLeft(8f); height(3f); borderRadius(1.5f)
+                        backgroundColor(theme.divider.opacity(0.6f))
+                    }
+                    View {
+                        attr {
+                            flex(reason.weight.toFloat().coerceIn(0.03f, 1f))
+                            height(3f)
+                            borderRadius(1.5f)
+                            backgroundColor(theme.brand.opacity(0.75f))
+                        }
+                    }
+                }
+            }
+            if (reason.detail.isNotEmpty()) {
+                Text {
+                    attr {
+                        text(reason.detail)
+                        marginTop(2f)
+                        fontSizeScaled(9.5f)
+                        lineHeightScaled(14f)
+                        color(theme.textSecondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 情景折线小图（124×96）：x 轴「现在 → 下一阶段」，y 轴为相对现价的 %。
+ * 元素：虚线零轴 + 置信锥（区间随时间张开的三角形带）+ AI 情景路径折线
+ * （draw-on 入场）+ 终点标注。全部为展示层：数据来自 [AiTrendForecast]。
+ */
+private fun ViewContainer<*, *>.ForecastScenarioChart(
+    theme: StockChatTheme,
+    forecastState: DetailForecastState,
+    drawProgress: BlockState<Float>,
+    reduceMotion: Boolean,
+) {
+    Canvas({
+        attr {
+            width(124f)
+            height(96f)
+            touchEnable(false)
+        }
+    }) { canvas, width, height ->
+        val forecast = forecastState.result ?: return@Canvas
+        val progress = if (reduceMotion) 1f else drawProgress.value
+        val padLeft = 2f
+        val padTop = 4f
+        val padBottom = 14f
+        val plotW = (width - padLeft * 2).coerceAtLeast(1f)
+        val plotH = (height - padTop - padBottom).coerceAtLeast(1f)
+        // 纵轴尺度：对称于 0，包住情景区间（上限 9.9% 防极端值压扁图形）
+        val scale = maxOf(abs(forecast.rangePctHigh), abs(forecast.rangePctLow), 0.3).coerceAtMost(9.9)
+        val yFor: (Double) -> Float = { pct ->
+            padTop + ((1.0 - (pct / scale + 1.0) / 2.0) * plotH).toFloat()
+        }
+        val tone = forecastDirectionColor(theme, forecast.direction)
+
+        // 零轴（虚线）
+        canvas.beginPath()
+        canvas.moveTo(padLeft, yFor(0.0))
+        canvas.lineTo(padLeft + plotW, yFor(0.0))
+        canvas.setLineDash(listOf(3f, 3f))
+        canvas.lineWidth(0.8f)
+        canvas.strokeStyle(theme.textTertiary.opacity(0.6f))
+        canvas.stroke()
+        canvas.setLineDash(emptyList())
+
+        // 置信锥：从「现在」的 0 张开到「下一阶段」的 [low, high]
+        canvas.beginPath()
+        canvas.moveTo(padLeft, yFor(0.0))
+        canvas.lineTo(padLeft + plotW, yFor(forecast.rangePctHigh))
+        canvas.lineTo(padLeft + plotW, yFor(forecast.rangePctLow))
+        canvas.closePath()
+        canvas.fillStyle(tone.opacity(0.10f))
+        canvas.fill()
+
+        // 情景路径折线（draw-on：按 progress 截取可见点数）
+        val path = forecast.path
+        if (path.size >= 2) {
+            val xFor: (Int) -> Float = { i -> padLeft + i.toFloat() / (path.size - 1).toFloat() * plotW }
+            val visible = if (progress >= 1f) path.size else (path.size * progress).roundToInt().coerceIn(2, path.size)
+            canvas.beginPath()
+            for (i in 0 until visible) {
+                val x = xFor(i)
+                val y = yFor(path[i])
+                if (i == 0) canvas.moveTo(x, y) else canvas.lineTo(x, y)
+            }
+            canvas.lineWidth(1.6f)
+            canvas.strokeStyle(tone)
+            canvas.stroke()
+            // 终点：圆点 + 数值标注
+            val endX = xFor(visible - 1)
+            val endY = yFor(path[visible - 1])
+            canvas.beginPath()
+            canvas.arc(endX, endY, 2.5f, 0f, (2.0 * Math.PI).toFloat(), false)
+            canvas.fillStyle(tone)
+            canvas.fill()
+            canvas.font(8.5f)
+            canvas.fillStyle(theme.textSecondary)
+            canvas.textAlign(TextAlign.RIGHT)
+            canvas.fillText(Format.percent(path[visible - 1]), endX, endY - 5f)
+        }
+
+        // x 轴标注
+        canvas.font(8.5f)
+        canvas.fillStyle(theme.textTertiary)
+        canvas.textAlign(TextAlign.LEFT)
+        canvas.fillText("现在", padLeft, height - 2f)
+        canvas.textAlign(TextAlign.RIGHT)
+        canvas.fillText("下一阶段", padLeft + plotW, height - 2f)
+        canvas.textAlign(TextAlign.LEFT)
+    }
+}
+
+/** AI 失败态：错误信息 + 重试入口 + 降级为端侧规则推演（旧卡，信息不为空）。 */
+private fun ViewContainer<*, *>.AiForecastErrorCard(
+    theme: StockChatTheme,
+    quote: () -> Quote,
+    mainFlow: () -> Double?,
+    forecastState: DetailForecastState,
+    reduceMotion: Boolean,
+    onRetry: () -> Unit,
+) {
+    View {
+        attr {
+            marginTop(12f)
+            paddingTop(10f); paddingBottom(12f)
+            paddingLeft(12f); paddingRight(12f)
+            borderLeft(Border(3f, BorderStyle.SOLID, theme.textTertiary))
+            backgroundColor(theme.surfaceMuted.opacity(0.68f))
+            borderRadius(10f)
+        }
+        View {
+            attr { flexDirectionRow(); alignItemsCenter() }
+            Text {
+                attr {
+                    text("AI 走势推演")
+                    fontSizeScaled(12f)
+                    fontWeightSemiBold()
+                    color(theme.textPrimary)
+                    flex(1f)
+                }
+            }
+            Text {
+                attr {
+                    text("↻ 重试")
+                    fontSizeScaled(9.5f)
+                    fontWeightSemiBold()
+                    color(theme.brand)
+                }
+                event { click { onRetry() } }
+            }
+        }
+        Text {
+            attr {
+                text(forecastState.error.ifEmpty { "AI 暂时不可用" })
+                marginTop(6f)
+                fontSizeScaled(10f)
+                lineHeightScaled(15f)
+                color(theme.fall)
+            }
+        }
+        Text {
+            attr {
+                text("以下为端侧规则推演（非 AI 输出）：")
+                marginTop(8f)
+                fontSizeScaled(9f)
+                color(theme.textTertiary)
+            }
+        }
+        AiTrendForecastBlock(theme, quote, mainFlow)
+    }
+}
+
+private fun forecastDirectionLabel(direction: String): String = when (direction) {
+    "up" -> "偏强"
+    "down" -> "偏弱"
+    else -> "震荡"
+}
+
+private fun forecastConfidenceLabel(confidence: String): String = when (confidence) {
+    "high" -> "高"
+    "mid" -> "中"
+    else -> "低"
+}
+
+private fun forecastDirectionColor(theme: StockChatTheme, direction: String): Color = when (direction) {
+    "up" -> theme.rise
+    "down" -> theme.fall
+    else -> theme.textSecondary
 }
 
 private fun trendOutlook(q: Quote, mainFlow: Double?, theme: StockChatTheme): TrendOutlook {

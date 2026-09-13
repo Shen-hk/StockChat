@@ -10,6 +10,9 @@ internal interface ChatWelcomeStatePort {
     var rotatingKeyword: String
     var cursorVisible: Boolean
     var entranceVisible: Boolean
+    var recommendationsPresented: Boolean
+    var composerGuidePresented: Boolean
+    var composerPresented: Boolean
     var marketTabSelected: Boolean
     var keywordStopped: Boolean
     var welcomeMounted: Boolean
@@ -23,6 +26,9 @@ internal class ChatWelcomeState : ChatWelcomeStatePort {
     override var rotatingKeyword: String by observable(DEFAULT_KEYWORD)
     override var cursorVisible: Boolean by observable(false)
     override var entranceVisible: Boolean by observable(false)
+    override var recommendationsPresented: Boolean by observable(false)
+    override var composerGuidePresented: Boolean by observable(false)
+    override var composerPresented: Boolean by observable(false)
     override var marketTabSelected: Boolean by observable(false)
 
     /** Plain lifecycle flags: timer callbacks must never read UI observables. */
@@ -43,6 +49,9 @@ internal class PlainChatWelcomeState : ChatWelcomeStatePort {
     override var rotatingKeyword = ChatWelcomeState.DEFAULT_KEYWORD
     override var cursorVisible = false
     override var entranceVisible = false
+    override var recommendationsPresented = false
+    override var composerGuidePresented = false
+    override var composerPresented = false
     override var marketTabSelected = false
     override var keywordStopped = false
     override var welcomeMounted = false

@@ -38,6 +38,20 @@ class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, Disc
             SectorRank("BK0480", "医药商业", -1.35, -426_000_000.0, 19, 67),
             SectorRank("BK0474", "白酒", -2.12, -814_000_000.0, 8, 53),
         )
+
+        /**
+         * 演示涨停池覆盖首板到四板，既供排行榜冷启动，也让连板梯队在离线场景保有
+         * 可阅读的层次。所有调用方仍通过 [SourceStamp] 明确标识为演示数据。
+         */
+        fun demoLimitUpsList(): List<LimitUpStock> = listOf(
+            LimitUpStock("003005.SZ", "竞业达", 10.01, "IT 服务", 4, 226_077_300.0, 0),
+            LimitUpStock("000892.SZ", "欢瑞世纪", 9.94, "影视院线", 3, 534_509_300.0, 0),
+            LimitUpStock("000635.SZ", "英力特", 9.97, "化学原料", 2, 116_408_340.0, 0),
+            LimitUpStock("002031.SZ", "巨轮智能", 10.03, "机器人", 2, 382_640_000.0, 0),
+            LimitUpStock("300024.SZ", "机器人", 8.62, "机器人", 1, 194_720_000.0, 1),
+            LimitUpStock("688041.SH", "海光信息", 6.38, "半导体", 1, 168_520_000.0, 0),
+            LimitUpStock("002230.SZ", "科大讯飞", 5.16, "AI 应用", 1, 143_870_000.0, 2),
+        )
     }
 
     fun stock(symbol: String): StockInsightBundle = if (realMode) {
@@ -103,11 +117,7 @@ class OfflineMarketInsightProvider : FundFlowProvider, FundamentalProvider, Disc
     fun hotspotValue(): HotspotSnapshot =
         HotspotSnapshot(
             sectors = demoSectors(),
-            limitUps = listOf(
-                LimitUpStock("000635.SZ", "英力特", 9.97, "化学原料", 2, 116_408_340.0, 0),
-                LimitUpStock("000892.SZ", "欢瑞世纪", 9.94, "影视院线", 3, 534_509_300.0, 0),
-                LimitUpStock("003005.SZ", "竞业达", 10.01, "IT 服务", 4, 226_077_300.0, 0),
-            ),
+            limitUps = demoLimitUpsList(),
             stamp = demoStamp,
         )
 

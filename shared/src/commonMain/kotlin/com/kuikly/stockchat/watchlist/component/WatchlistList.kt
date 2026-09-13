@@ -211,11 +211,15 @@ internal fun ViewContainer<*, *>.WatchlistScrollContent(
                     ) {
                         View {
                             attr {
+                                alignSelfStretch()
                                 flexDirectionRow()
                                 // 原SwipeActionRow内容层承担的底色/圆角移到内容根节点
                                 // （动作层摘除后手势层不再管样式）。
                                 backgroundColor(rowTheme.surface)
                                 borderRadius(rowTheme.cardRadius)
+                                // MINI 渲染器本身不画卡壳，统一由这一层提供圆角与
+                                // 轻投影；不随各标的图表/涨跌状态变化成平铺样式。
+                                boxShadow(BoxShadow(0f, 2f, 8f, Color(0x182238, 0.07f)))
                             }
                             // 分组从「常驻按钮」收进手势后，状态不能跟着一起消失：
                             // 用一条 3dp 色带把分组留在行内（LDRS-R：关系→图形映射），

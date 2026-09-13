@@ -210,7 +210,7 @@ fun ViewContainer<*, *>.ChatDrawer(
             attr { flexDirectionRow() }
             DrawerTile("市场总览", theme, icon = { LineIconBarChart(theme.textPrimary, 22f) }) { onClose(); onOpenMarket() }
             View { attr { width(8f) } }
-            DrawerTile("异动预警", theme, icon = { LineIconBellRinging(theme.textPrimary, 22f) }) { onClose(); onOpenAlerts() }
+            DrawerTile("异动预警", theme, icon = { LineIconBellRinging(theme.textPrimary, 26f) }) { onClose(); onOpenAlerts() }
             // 全局搜索入口已移到底部固定栏（2026-09-08 五轮）。
         }
 

@@ -174,6 +174,15 @@ internal class WatchlistDragCoordinator(
         dragRefreshPending = true
     }
 
+    /**
+     * 页面被系统手势、路由切换或原生覆盖层打断时，行未必能收到 touchCancel。
+     * 主动收尾，避免遗留的 dragSymbol 让外层 Scroller 永久保持禁用。
+     * 保留 dragFrom/target，仍遵守 R5 的动画注册约束。
+     */
+    fun cancelActiveSession() {
+        if (dragSymbol.isNotEmpty()) cancelDragSession()
+    }
+
     companion object {
         /**
          * 拖拽排序的槽距估算（行内容 ≈115 + 行距 10）。MINI 行情卡行高非严格相等

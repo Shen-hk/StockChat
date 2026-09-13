@@ -122,6 +122,16 @@ internal class GlossaryPage : BasePager() {
         refreshEncounters()
         applyFilter()
         startFlow(includeRead = false)
+        // 冒烟钩子：params.glossaryMode = "list" 时直接落到二级词表（= 点「浏览全部 N 个概念」）。
+        // 本机无辅助功能权限、无法驱动真实点击，用它复现/回归该入口。
+        if (pagerData.params.optString("glossaryMode") == "list") {
+            viewMode = VIEW_LIST
+            // glossaryExpand = "1" 时再展开首个词条，覆盖 vfor 行内 vif（相关术语）分支。
+            if (pagerData.params.optString("glossaryExpand") == "1") {
+                val firstItem = rows.firstOrNull { it is GlossaryRow.Item } as? GlossaryRow.Item
+                if (firstItem != null) expandedKey = "glossary:${firstItem.entry.key}"
+            }
+        }
     }
 
     override fun body(): ViewBuilder {
@@ -1052,70 +1062,78 @@ internal class GlossaryPage : BasePager() {
                 is GlossaryRow.Item -> {
                     val entry = row.entry
                     val key = "glossary:${entry.key}"
-                    CardShell(
-                        DefinitionCardModel(
-                            term = entry.term,
-                            plainText = entry.plain,
-                            example = entry.example,
-                            cardId = key,
-                            advanced = entry.advanced,
-                            category = entry.category.label,
-                            depth = page.explanationDepth,
-                        ),
-                        CardContext(
-                            theme = page.theme,
-                            density = CardDensity.COMPACT,
-                            onOpenStock = {},
-                            expanded = page.expandedKey == key,
-                            onToggleExpanded = { page.toggleEntry(entry.key) },
-                            cardKey = key,
-                        ),
-                    )
-                    // FR-K9 相关术语：只在展开态出现（克制：不展开不占位）。
-                    // 点击 = 切换到该词条并记一笔遇到，依赖路径上的词排最前。
-                    vif({ page.expandedKey == key }) {
-                        val related = Glossary.relatedOf(entry.key)
-                        vif({ related.isNotEmpty() }) {
-                            View {
-                                attr {
-                                    marginTop(-6f)
-                                    marginBottom(8f)
-                                    marginLeft(12f)
-                                    marginRight(12f)
-                                    flexDirectionRow()
-                                    alignItemsCenter()
-                                    flexWrapWrap()
-                                }
-                                Text {
+                    // Kuikly 硬约束（core/directives/LoopDirectivesView.invokeItemCreator）：
+                    // vfor 的 creator 闭包必须**且仅**生成一个非指令子节点，否则立即
+                    // throwRuntimeError("vfor creator闭包内必须需要且仅一个孩子节点的生成")
+                    // —— 端上表现就是「进到这一屏即闪退」，且 Android / iOS / H5 全端一致。
+                    // 卡身与「相关术语」vif 是两个节点，这里由一层无色容器合成一个。
+                    View {
+                        attr { alignSelfStretch() }
+                        CardShell(
+                            DefinitionCardModel(
+                                term = entry.term,
+                                plainText = entry.plain,
+                                example = entry.example,
+                                cardId = key,
+                                advanced = entry.advanced,
+                                category = entry.category.label,
+                                depth = page.explanationDepth,
+                            ),
+                            CardContext(
+                                theme = page.theme,
+                                density = CardDensity.COMPACT,
+                                onOpenStock = {},
+                                expanded = page.expandedKey == key,
+                                onToggleExpanded = { page.toggleEntry(entry.key) },
+                                cardKey = key,
+                            ),
+                        )
+                        // FR-K9 相关术语：只在展开态出现（克制：不展开不占位）。
+                        // 点击 = 切换到该词条并记一笔遇到，依赖路径上的词排最前。
+                        vif({ page.expandedKey == key }) {
+                            val related = Glossary.relatedOf(entry.key)
+                            vif({ related.isNotEmpty() }) {
+                                View {
                                     attr {
-                                        text("相关：")
-                                        fontSizeScaled(10.5f)
-                                        color(page.theme.textTertiary)
+                                        marginTop(-6f)
+                                        marginBottom(8f)
+                                        marginLeft(12f)
+                                        marginRight(12f)
+                                        flexDirectionRow()
+                                        alignItemsCenter()
+                                        flexWrapWrap()
                                     }
-                                }
-                                related.forEach { rel ->
-                                    View {
+                                    Text {
                                         attr {
-                                            marginRight(6f)
-                                            marginTop(4f)
-                                            paddingTop(3f)
-                                            paddingBottom(3f)
-                                            paddingLeft(8f)
-                                            paddingRight(8f)
-                                            borderRadius(9f)
-                                            backgroundColor(page.theme.brandSoft)
+                                            text("相关：")
+                                            fontSizeScaled(10.5f)
+                                            color(page.theme.textTertiary)
                                         }
-                                        event {
-                                            click {
-                                                // 复用 toggleEntry：记一笔遇到 + 刷新地图快照 + 展开
-                                                page.toggleEntry(rel.key)
-                                            }
-                                        }
-                                        Text {
+                                    }
+                                    related.forEach { rel ->
+                                        View {
                                             attr {
-                                                text(rel.term)
-                                                fontSizeScaled(10.5f)
-                                                color(page.theme.brand)
+                                                marginRight(6f)
+                                                marginTop(4f)
+                                                paddingTop(3f)
+                                                paddingBottom(3f)
+                                                paddingLeft(8f)
+                                                paddingRight(8f)
+                                                borderRadius(9f)
+                                                backgroundColor(page.theme.brandSoft)
+                                            }
+                                            event {
+                                                click {
+                                                    // 复用 toggleEntry：记一笔遇到 + 刷新地图快照 + 展开
+                                                    page.toggleEntry(rel.key)
+                                                }
+                                            }
+                                            Text {
+                                                attr {
+                                                    text(rel.term)
+                                                    fontSizeScaled(10.5f)
+                                                    color(page.theme.brand)
+                                                }
                                             }
                                         }
                                     }

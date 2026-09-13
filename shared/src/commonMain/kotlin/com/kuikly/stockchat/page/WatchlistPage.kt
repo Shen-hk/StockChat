@@ -30,6 +30,7 @@ import com.tencent.kuikly.core.base.ViewBuilder
 import com.tencent.kuikly.core.directives.vbind
 import com.tencent.kuikly.core.directives.vif
 import com.tencent.kuikly.core.views.Scroller
+import com.tencent.kuikly.core.views.View
 import com.kuikly.stockchat.foundation.ui.fontSizeScaled
 
 /**
@@ -139,44 +140,56 @@ internal class WatchlistPage : BasePager() {
         data.warmPrefetch()
     }
 
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        // Android 在路由/系统手势打断长按时可能不向行分发 touchCancel；若留下
+        // dragSymbol，Scroller 会一直认为自己在拖拽会话中而拒绝拦截滚动。
+        drag.cancelActiveSession()
+    }
+
     override fun body(): ViewBuilder {
         val page = this
         // 非受控铁律：TextArea 的 text 只作挂载种子，不绑定响应式文本。
         val searchSeed = ""
         return {
             attr { backgroundColor(page.theme.page) }
-            Scroller {
-                attr {
-                    flex(1f)
-                    // 竖向 Scroller 水平 padding 会被双倍扣除，14/14 时右侧多出 28dp 留白；
-                    // 右 padding 留 0，左右各 14dp 对齐（同 ChatPage）。
-                    paddingLeft(14f)
-                    paddingRight(0f)
-                    paddingTop(page.pagerData.statusBarHeight + 73f)
-                    paddingBottom(60f)
-                    // 拖拽排序会话期间锁滚动：长按拍生效（KRRecyclerView.onInterceptTouchEvent
-                    // 首查 scrollEnabled，false 即不拦截），后续 move 留在被拿起的行上。
-                    scrollEnable(page.drag.dragSymbol.isEmpty())
-                }
-
-                // 换肤重建键（同 ChatPage/SettingsPage 约定）：自选页子树以
-                // 参数捕获 theme（body 只跑一次，R1），从通用设置改主题/字号
-                // 返回后 pageDidAppear 只重读 observable，参数捕获的旧快照
-                // 不会刷新——靠 vbind 键翻转整树重建；Scroller 不重建，滚动
-                // 位置与拖拽状态不受影响。
-                vbind({ page.themeRebuildKey() }) {
-                    page.WatchlistScrollContent(
-                        theme = page.theme,
-                        data = page.data,
-                        drag = page.drag,
-                        brief = page.brief,
-                        reduceMotion = page.reduceMotion,
-                        onOpenDetail = page::openRowDetail,
-                        onOpenSearchPage = { page.openPage(Routes.SEARCH) },
-                        onOpenMarketPage = { page.openPage(Routes.MARKET) },
-                        onOpenRiskPage = { page.openPage(Routes.RISK) },
-                        onOpenAlertsPage = { page.openPage(Routes.ALERTS) },
-                    )
+            // vbind 是虚拟节点，不能作为 Scroller 的子项：Android 会把它展开到
+            // RecyclerView 外，表现为「卡片显示但页面不可滚」。让它包住唯一的
+            // 物理 Scroller，列表内容则保持 Scroller 的直接子树。
+            vbind({ page.themeRebuildKey() }) {
+                Scroller {
+                    attr {
+                        flex(1f)
+                        paddingLeft(0f)
+                        paddingRight(0f)
+                        // 顶栏实际占用约 statusBar + 44dp；此前再加 73dp 会让首卡
+                        // 与标题栏之间多出近 30dp 的空洞，空自选时尤为明显。
+                        paddingTop(page.pagerData.statusBarHeight + 44f)
+                        paddingBottom(60f)
+                        // 只有长按已拿起卡片的那一小段手势把移动事件留给行做排序；
+                        // 平常一律由 Scroller 拦截纵向滑动。pageDidAppear 会兜底清理
+                        // 被系统打断的会话，避免旧架构中 dragSymbol 残留而永久禁滚。
+                        scrollEnable(page.drag.dragSymbol.isEmpty())
+                    }
+                    // 用物理内容根节点保证 3dp 外边距及阴影不被 RecyclerView 裁切。
+                    View {
+                        attr {
+                            marginLeft(3f)
+                            marginRight(3f)
+                        }
+                        page.WatchlistScrollContent(
+                            theme = page.theme,
+                            data = page.data,
+                            drag = page.drag,
+                            brief = page.brief,
+                            reduceMotion = page.reduceMotion,
+                            onOpenDetail = page::openRowDetail,
+                            onOpenSearchPage = { page.openPage(Routes.SEARCH) },
+                            onOpenMarketPage = { page.openPage(Routes.MARKET) },
+                            onOpenRiskPage = { page.openPage(Routes.RISK) },
+                            onOpenAlertsPage = { page.openPage(Routes.ALERTS) },
+                        )
+                    }
                 }
             }
 

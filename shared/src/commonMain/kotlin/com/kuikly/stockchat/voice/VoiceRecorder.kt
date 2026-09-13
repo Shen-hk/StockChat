@@ -54,7 +54,6 @@ internal class NativeBridgeVoiceRecorder(private val bridge: BridgeModule) : Voi
     override fun stop() {
         waitingForStop = true
         bridge.stopVoiceRecording()
-        flushPendingTranscript()
     }
 
     override fun cancel() {
@@ -71,14 +70,6 @@ internal class NativeBridgeVoiceRecorder(private val bridge: BridgeModule) : Voi
             transcriptCallback = null
         } else {
             pendingTranscript = transcript
-        }
-    }
-
-    private fun flushPendingTranscript() {
-        pendingTranscript?.let { transcript ->
-            transcriptCallback?.invoke(transcript)
-            pendingTranscript = null
-            transcriptCallback = null
         }
     }
 

@@ -1,7 +1,6 @@
 package com.kuikly.stockchat.data.provider
 
 import com.kuikly.stockchat.data.entity.Security
-import com.kuikly.stockchat.data.config.DataSourceConfig
 
 /** Traceability carried by every non-quote conclusion shown to the user. */
 data class SourceStamp(
@@ -364,31 +363,33 @@ class MarketInsightRepository(
     }
 
     fun loadOverview(onResult: (MarketOverview) -> Unit) {
-        // A memory hit is intentionally marked as cache: the UI can keep old
-        // figures visible without implying that a network refresh succeeded.
-        overviewCache?.let { cached -> onResult(cached.copy(stamp = cached.stamp.copy(mode = DataMode.CACHE))) }
+        // 首帧必须有可渲染的数据。此前只在网络 provider 回调后才走 fallback：任一
+        // 请求被系统网络层吞掉回调时，市场页会永久停在「正在连接」的空白态。
+        // 先同步发布会话缓存；没有缓存则发布明确标注为演示的完整快照。在线结果回来
+        // 后再覆盖，绝不把 fallback 的 stamp 改成 ONLINE。
+        val cached = overviewCache
+        onResult(
+            cached?.copy(stamp = cached.stamp.copy(mode = DataMode.CACHE))
+                ?: fallback.overviewValue(),
+        )
         onlineMarket.overview { value ->
-            val resolved = value ?: overviewCache ?: if (DataSourceConfig.USE_REAL_MARKET_DATA) {
-                // 真实模式不能用演示行情补洞，否则页面会把不可验证的数据画成实时走势。
-                MarketOverview(
-                    indices = emptyList(), risingCount = 0, fallingCount = 0, flatCount = 0,
-                    limitUpCount = 0, limitDownCount = 0, sectors = emptyList(),
-                    stamp = SourceStamp("行情服务暂不可用", "--", SourceTier.MARKET_DATA, DataMode.OFFLINE),
-                )
-            } else {
-                fallback.overviewValue()
+            // 空结果无需重复发布首帧 fallback/cache；有结果才覆盖画面。
+            if (value != null) {
+                overviewCache = value
+                onResult(value)
             }
-            if (value != null) overviewCache = value
-            onResult(resolved)
         }
     }
 
     fun loadHotspots(onResult: (HotspotSnapshot) -> Unit) {
-        hotspotCache?.let(onResult)
+        // 同上：排行榜不能依赖热点网络请求「最终一定回调」才拥有首批行。
+        // 这样即便热点接口超时，用户也会看到清晰标注的演示排行，而非灰色空壳。
+        onResult(hotspotCache ?: fallback.hotspotValue())
         onlineMarket.hotspots { value ->
-            val resolved = value ?: hotspotCache ?: fallback.hotspotValue()
-            hotspotCache = resolved
-            onResult(resolved)
+            if (value != null) {
+                hotspotCache = value
+                onResult(value)
+            }
         }
     }
 

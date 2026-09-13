@@ -49,6 +49,16 @@ object ModelPresets {
             keyHint = "在 platform.moonshot.cn（月之暗面开放平台）创建 API Key。",
         ),
         ModelPreset(
+            id = "mimo",
+            name = "小米 MiMo",
+            logo = "mimo-color",
+            badge = "Mi",
+            badgeColor = 0xFFFF6900,
+            endpoint = "https://api.xiaomimimo.com/v1/chat/completions",
+            models = listOf("mimo-v2.5", "mimo-v2.5-pro"),
+            keyHint = "在 platform.xiaomimimo.com 创建 API Key；mimo-v2.5 支持原生图像、音频、视频与长上下文理解。",
+        ),
+        ModelPreset(
             id = "glm",
             name = "智谱 GLM",
             logo = "zhipu-color",
@@ -97,16 +107,6 @@ object ModelPresets {
             endpoint = "https://api.openai.com/v1/chat/completions",
             models = listOf("gpt-5.6-terra", "gpt-5.6-luna"),
             keyHint = "在 platform.openai.com 创建 API Key。",
-        ),
-        ModelPreset(
-            id = "mimo",
-            name = "小米 MiMo",
-            logo = "mimo-color",
-            badge = "Mi",
-            badgeColor = 0xFFFF6900,
-            endpoint = "https://api.xiaomimimo.com/v1/chat/completions",
-            models = listOf("mimo-v2.5", "mimo-v2.5-pro"),
-            keyHint = "在 platform.xiaomimimo.com 创建 API Key；mimo-v2.5 支持原生图像、音频、视频与长上下文理解。",
         ),
         ModelPreset(
             id = "custom",
