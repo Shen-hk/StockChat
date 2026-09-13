@@ -98,3 +98,9 @@ ohosApp/build-profile.json5
 wb-*.png
 vb-*.png
 v1*.png
+
+# 本地构建器缓存与根目录一次性日志 / 临时文件
+/.hvigor/
+/_tmp_*
+/*.log
+/h5_screenshot.png
