@@ -41,6 +41,9 @@ internal expect object PlatformProfile {
     /** 数据层异步回调是否需要回跳 Kuikly 核心线程。 */
     val coreThreadMarshalling: Boolean
 
+    /** 模型请求协程是否必须在宿主主线程上恢复。 */
+    val aiProviderMainDispatcher: Boolean
+
     /** 无头验证启动参数钩子是否可用。 */
     val debugHooks: Boolean
 

@@ -32,6 +32,8 @@ typedef void (*CallKotlin)(int methodId,
                            KRRenderCValue arg3, KRRenderCValue arg4, KRRenderCValue arg5);
 typedef int (*SetCallKotlinFn)(CallKotlin callKotlin);
 
+extern "C" void stockchat_init_coroutines_main(void *env);
+
 static void NoopCallKotlin(int /*methodId*/,
                            KRRenderCValue, KRRenderCValue, KRRenderCValue,
                            KRRenderCValue, KRRenderCValue, KRRenderCValue) {
@@ -67,6 +69,7 @@ static napi_value InitKuikly(napi_env env, napi_callback_info info) {
     OH_LOG_INFO(LOG_APP, "InitKuikly: enter");
     auto api = libshared_symbols();
     int handler = api->kotlin.root.initKuikly();
+    stockchat_init_coroutines_main(env);
     OH_LOG_INFO(LOG_APP, "InitKuikly: kotlin.root.initKuikly() returned %{public}d", handler);
     napi_value result;
     napi_create_int32(env, handler, &result);

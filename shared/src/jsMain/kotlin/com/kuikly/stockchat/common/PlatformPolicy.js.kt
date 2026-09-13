@@ -4,6 +4,7 @@ package com.kuikly.stockchat.common
 internal actual object PlatformProfile {
     actual val marketFixes: Boolean = false
     actual val coreThreadMarshalling: Boolean = false
+    actual val aiProviderMainDispatcher: Boolean = false
     actual val debugHooks: Boolean = false
 
     /**

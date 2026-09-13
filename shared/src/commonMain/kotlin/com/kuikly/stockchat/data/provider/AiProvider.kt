@@ -1,5 +1,6 @@
 package com.kuikly.stockchat.data.provider
 
+import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.data.config.AiConfig
 import com.tencent.kuikly.core.nvi.serialization.json.JSONArray
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
@@ -27,7 +28,9 @@ class OpenAiCompatAiProvider(
     private val client: PlatformHttpClient = createPlatformHttpClient(),
 ) : AiProvider {
     private var generation = 0
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(
+        SupervisorJob() + if (PlatformProfile.aiProviderMainDispatcher) Dispatchers.Main else Dispatchers.Default,
+    )
     private var activeRequest: Job? = null
 
     override fun ask(messages: List<AiChatMessage>, onDelta: (String) -> Unit, onDone: () -> Unit, onError: (String) -> Unit) =

@@ -92,9 +92,11 @@ private object OhosPlatformHttpClient : PlatformHttpClient {
                     is ByteArray -> data.decodeToString()
                     else -> ""
                 }.ifEmpty { response.errorMessage }
-                if (response.errorCode == 0) {
-                    responseBody.lineSequence().forEach(onLine)
-                }
+                // NetworkKMM completes on a DP.IO worker. Do not invoke onLine
+                // here: its consumer schedules Kuikly observable updates and the
+                // OHOS renderer aborts when that bridge is entered from DP.IO.
+                // Resume the suspended request only; coroutine dispatch then
+                // returns to the provider worker, where response.body is parsed.
                 continuation.resume(
                     PlatformHttpResponse(
                         status = if (response.errorCode == 0) openAiStatus(responseBody) else 599,
