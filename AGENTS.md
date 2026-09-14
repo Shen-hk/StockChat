@@ -69,6 +69,21 @@ When debugging a silent Kuikly animation, inspect reactive dependency registrati
 - **Run the whole ohos pipeline from the Bash tool, not the PowerShell tool** (2026-09-12). In the PowerShell tool session, native exe invocation fails with `无法在管道中间运行文档` (even `where.exe`) and `Start-Process` silently no-ops — clang++ preflight, gradle, hvigor, hdc all die there. From Bash, `./gradlew.bat`, `node hvigor.js`, and `hdc.exe` all work; export `OHOS_SDK_HOME`/`DEVECO_SDK_HOME` first (hvigor also needs them and its daemon caches env — `hvigor --stop-daemon` after changing). Do not invoke `powershell.exe` from Bash — the security layer rejects it, so `runOhosApp.ps1` as a whole cannot be driven from here; execute its steps individually instead.
 - **`hdc install` wants a bare filename.** Run from the HAP output directory (`ohosApp/entry/build/default/outputs/default`) with `hdc -t <id> install -r entry-default-signed.hap`; a Windows absolute path gets mangled by MSYS/path conversion and hdc treats it as a missing relative file (symptom: `Error opening file ... path:d:\...\D://Project//...`).
 
+### R8a — 换一台机器跑鸿蒙：三个被 gitignore 吞掉的前置（re-diagnosed 2026-09-14）
+
+`runOhosApp.ps1` 的手顺只有在**原作者那台机器**上成立。新机器上按顺序会撞下面五件事，前四件已修复，第五件是环境性阻塞。
+
+1. **脚本硬编码了 DevEco 安装根目录。** 原为 `C:\Users\shenhk\DevEco Studio`；本机在 `D:\dev\DevEco Studio`，第一步 `Test-Path` 校验即 throw。改为经 `DEVECO_SDK_HOME` → 候选目录列表解析；`clang++.exe` 也用通配发现，不要钉死 `llvm-<版本>` 目录名。
+2. **`clang++` 预检在全新机器上是假阳性。** `~/.konan/dependencies` 为空是**首次 link 前的正常状态**（LLVM 会在 `:shared:linkDebugSharedOhosArm64` 时下载，本机实测 1.3G、约 12 分钟），不是被应用控制策略拦截。预检必须 warn，不能 throw。
+3. **`ohosApp/entry/libs/arm64-v8a/` 的预编译库从未入库**（`.gitignore` 第 18 行全局 `*.so`）。缺 `libpbcurlwrapper.so` / `libc++_shared.so` / `libopenssl.so` 时，Kotlin/Native link 直接死 —— `shared/build.ohos.gradle.kts` 有 `linkerOpts("-lpbcurlwrapper")`，`cpp/CMakeLists.txt` 也 `add_library(pbcurlwrapper SHARED IMPORTED)`。来源：`Tencent-TDS/KuiklyBase-components` → `NetworkKMM/ohosApp/entry/libs/arm64-v8a/`。**国内 raw.githubusercontent 不可达**，用 `gh api <path> -H "Accept: application/vnd.github.raw"`，并且**必须校验 git blob sha**：截断的下载仍然以合法 ELF 头开头（本次 `libpbcurlwrapper.so` 首次只取到 36785/991600 字节）。
+4. **`ohpm` 依赖是半装状态。** `oh_modules/.ohpm/` 下有包目录但链接目录为空、无 `lock.json5`，`ohpm install --all` 报 `ENOENT ... .ohpm\lock.json5`。把 `ohosApp/oh_modules` 与 `ohosApp/entry/oh_modules` 移开重装（均为 gitignore 的可再生缓存）。`entry/oh_modules/@kuikly-open/render/libs/arm64-v8a/libkuikly.so` 正是 `CMakeLists.txt` 要的。
+5. **hvigor 的依赖自举会在 `.npmrc.lock` 上中止（本机阻塞，未解）。** 入口必须用 `tools/hvigor/bin/hvigorw.bat`（配 `NODE_HOME=<deveco>/tools/node` 且该目录进 `PATH`）；裸 `node .../hvigor/hvigor/bin/hvigor.js` 报 `Cannot find module '@ohos/hvigor-ohos-plugin'`。用 hvigorw 后必现：`Installing dependencies...` → `[safe-delete] 操作失败: ...\.hvigor\project_caches\<hash>\workspace\.npmrc.lock: Error during a \`trash\` operation: Unknown { description: "Some operations were aborted" }`。**不是缺包**（包已装好，hvigor 仍每轮重入该分支）；`HVIGOR_DEPENDENCY_USE_NPM=true` 无效；关沙箱重试同样复现；`C:\$Recycle.Bin` 存在且 NTFS、BitBucket 配置正常，故疑为 hvigor 的 trash 式 safe-delete 在此调用上下文里不可用。**绕过方式：用 DevEco Studio 构建（Build > Build Hap(s)）或 DevEco 自带终端**。hvigor 之前的环节（Kotlin/Native link → `libshared.so`）在 Bash 里是通的。
+
+另外两条：
+
+- **`ohosApp/build-profile.json5` 实际已被跟踪**（`git ls-files -v` 返回 `H`，不是 `S`）。`.gitignore` 第 87 行对它无效，HEAD 里就存着原作者的绝对证书路径与加密口令（`C:\Users\shenhk\.ohos\config\*.p12|.cer|.p7b`）。**任何非原作者的克隆都无法签名**，必须由 DevEco 自动签名重写该文件（要登录华为账号，只能人来做）。签名 material 的 7 个字段全必填。
+- **MSYS 路径转换也会打崩 `node` 的参数列表**，不只是 hdc。传 `/d/dev/DevEco Studio/.../hvigor.js` 会让 Node 去解析 `D:\d\dev\DevEco Studio\...` 并 `MODULE_NOT_FOUND`；给 node 可执行程序传参一律用 Windows 风格（`D:/dev/...`）。`hvigorw` 非交互驱动时还要加 `--no-daemon`，否则守护进程接手后调用方约 7 秒就返回、只打印 `Starting hvigor daemon.`，不产出 HAP。仓库内也没有 `ohosApp/hvigor/outputs/sync/`，说明该工程从未被 DevEco 同步过。
+
 ---
 
 ## R9 — 本机工具链陷阱（consolidated 2026-09-12，docs/46 轨 A 施工）
