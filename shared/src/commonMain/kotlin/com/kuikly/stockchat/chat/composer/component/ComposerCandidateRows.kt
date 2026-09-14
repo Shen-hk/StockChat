@@ -20,9 +20,9 @@ internal object ComposerCandidateRows {
         row.View {
             attr { flex(1f); flexDirectionRow(); alignItemsCenter(); marginRight(8f) }
             val (pre, hit, suffix) = splitHighlight(entry.name, query)
-            if (pre.isNotEmpty()) row.Text { attr { text(pre); fontSizeScaled(14f); color(theme.textPrimary) } }
-            if (hit.isNotEmpty()) row.Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(theme.brand) } }
-            if (suffix.isNotEmpty()) row.Text { attr { text(suffix); fontSizeScaled(14f); color(theme.textPrimary) } }
+            if (pre.isNotEmpty()) Text { attr { text(pre); fontSizeScaled(14f); color(theme.textPrimary) } }
+            if (hit.isNotEmpty()) Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(theme.brand) } }
+            if (suffix.isNotEmpty()) Text { attr { text(suffix); fontSizeScaled(14f); color(theme.textPrimary) } }
         }
         row.Text {
             attr {
@@ -35,7 +35,7 @@ internal object ComposerCandidateRows {
                 width(38f); height(16f); marginRight(6f); alignItemsCenter(); justifyContentCenter()
                 backgroundColor(theme.surfaceMuted); borderRadius(4f)
             }
-            row.Text { attr { text(entry.market); fontSizeScaled(9f); color(theme.textSecondary) } }
+            Text { attr { text(entry.market); fontSizeScaled(9f); color(theme.textSecondary) } }
         }
         row.Text {
             attr {
@@ -48,7 +48,7 @@ internal object ComposerCandidateRows {
                 width(32f); height(16f); alignItemsCenter(); justifyContentCenter()
                 backgroundColor(theme.surfaceMuted); borderRadius(4f)
             }
-            row.Text { attr { text(candidate.source); fontSizeScaled(9f); color(theme.textSecondary) } }
+            Text { attr { text(candidate.source); fontSizeScaled(9f); color(theme.textSecondary) } }
         }
     }
 
@@ -62,9 +62,9 @@ internal object ComposerCandidateRows {
         row.View {
             attr { flex(1f); flexDirectionRow(); alignItemsCenter(); marginRight(8f) }
             val (pre, hit, suffix) = splitHighlight(entry.name, query)
-            if (pre.isNotEmpty()) row.Text { attr { text(pre); fontSizeScaled(14f); color(theme.brand) } }
-            if (hit.isNotEmpty()) row.Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(theme.brand) } }
-            if (suffix.isNotEmpty()) row.Text { attr { text(suffix); fontSizeScaled(14f); color(theme.brand) } }
+            if (pre.isNotEmpty()) Text { attr { text(pre); fontSizeScaled(14f); color(theme.brand) } }
+            if (hit.isNotEmpty()) Text { attr { text(hit); fontSizeScaled(14f); fontWeightBold(); color(theme.brand) } }
+            if (suffix.isNotEmpty()) Text { attr { text(suffix); fontSizeScaled(14f); color(theme.brand) } }
         }
         row.Text { attr { text("共 ${entry.boardCount} 只"); fontSizeScaled(11f); color(theme.textTertiary); marginRight(6f) } }
         row.View {
@@ -72,14 +72,14 @@ internal object ComposerCandidateRows {
                 paddingLeft(5f); paddingRight(5f); height(16f); marginRight(6f); alignItemsCenter(); justifyContentCenter()
                 backgroundColor(theme.brandSoft); borderRadius(4f)
             }
-            row.Text { attr { text("板块"); fontSizeScaled(9f); color(theme.brand) } }
+            Text { attr { text("板块"); fontSizeScaled(9f); color(theme.brand) } }
         }
         row.View {
             attr {
                 paddingLeft(5f); paddingRight(5f); height(16f); alignItemsCenter(); justifyContentCenter()
                 backgroundColor(theme.surfaceMuted); borderRadius(4f)
             }
-            row.Text { attr { text(candidate.source); fontSizeScaled(9f); color(theme.textSecondary) } }
+            Text { attr { text(candidate.source); fontSizeScaled(9f); color(theme.textSecondary) } }
         }
     }
 

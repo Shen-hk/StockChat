@@ -103,6 +103,11 @@ class KuiklyRenderActivity : AppCompatActivity(), KuiklyRenderViewBaseDelegatorD
         KRBridgeModule.handleComposerMediaResult(this, requestCode, resultCode, data)
     }
 
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        KRBridgeModule.handleNotificationPermissionResult(this, requestCode, grantResults)
+    }
+
     override fun onPause() {
         super.onPause()
         KRBridgeModule.cancelActiveVoiceRecording()

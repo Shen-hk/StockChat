@@ -1,0 +1,3 @@
+feat(ohos): 接入网络传输层、依赖与 ohosArm64 运行脚本
+
+新增 PlatformHttpClient/Motion/Navigation/QuoteClock 的 ohos 实现，为 NetworkKMM 接入 pbcurlwrapper，切换到 KBA-native 版协程/序列化依赖，申请 INTERNET 权限，锁定 targetSdkVersion，并补充 THIRD_PARTY_NOTICES 与 DevEco 运行脚本。

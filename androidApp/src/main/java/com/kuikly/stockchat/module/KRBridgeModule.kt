@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.Manifest
 import android.content.ContentValues
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -30,6 +31,7 @@ import android.util.Base64
 import android.view.HapticFeedbackConstants
 import android.view.View
 import android.widget.Toast
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
@@ -82,6 +84,10 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
             "hapticImpact" -> {
                 hapticImpact()
+            }
+
+            "postTestNotification", "postMockStockAlert" -> {
+                postMockStockAlert(params)
             }
 
             "openComposerMediaSource" -> {
@@ -189,6 +195,25 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
 
     private fun hapticImpact() {
         activity?.window?.decorView?.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+    }
+
+    private fun postMockStockAlert(params: String?) {
+        val currentActivity = activity ?: return
+        val vibrate = params?.let { JSONObject(it).optBoolean("vibrate", true) } ?: true
+        val delayMillis = params?.let { JSONObject(it).optLong("delayMillis", 0L) } ?: 0L
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(currentActivity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingMockNotification = PendingMockNotification(vibrate, delayMillis)
+            ActivityCompat.requestPermissions(currentActivity, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATION_PERMISSION)
+            Toast.makeText(currentActivity, "允许通知后会自动试播", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (!NotificationManagerCompat.from(currentActivity).areNotificationsEnabled()) {
+            Toast.makeText(currentActivity, "系统已关闭本应用通知，请在系统设置中开启后再试播", Toast.LENGTH_SHORT).show()
+            return
+        }
+        MockStockAlertNotification.schedule(currentActivity, vibrate, delayMillis)
     }
 
     /**
@@ -591,6 +616,25 @@ class KRBridgeModule : KuiklyRenderBaseModule() {
     companion object {
         const val MODULE_NAME = "HRBridgeModule"
         private const val REQUEST_RECORD_AUDIO = 8301
+        private const val REQUEST_NOTIFICATION_PERMISSION = 8302
+        private data class PendingMockNotification(val vibrate: Boolean, val delayMillis: Long)
+        @Volatile
+        private var pendingMockNotification: PendingMockNotification? = null
+
+        fun handleNotificationPermissionResult(
+            activity: KuiklyRenderActivity,
+            requestCode: Int,
+            grantResults: IntArray,
+        ) {
+            if (requestCode != REQUEST_NOTIFICATION_PERMISSION) return
+            val pending = pendingMockNotification ?: return
+            pendingMockNotification = null
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                MockStockAlertNotification.schedule(activity, pending.vibrate, pending.delayMillis)
+            } else {
+                Toast.makeText(activity, "通知权限未开启，无法试播系统提醒", Toast.LENGTH_SHORT).show()
+            }
+        }
 
         // 输入栏媒体选择（onActivityResult 请求码，避开语音的 8301）。
         const val RC_COMPOSER_LIBRARY = 8311

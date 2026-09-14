@@ -1,0 +1,8 @@
+feat(app): 详情页行情预取、全局搜索 v2 与属性修复加固
+
+- detail: 分页级 QuotePrefetchStore（LRU16，60s 窗口），创建即预取并接入 ChartLoadingSkeleton
+- search: 市场分 tab 浏览、全市场关键词搜索，并加代际校验防止过期远程结果覆盖
+- ui: CardShell/ApiConfigPage/NewsTape 的条件属性改为无条件赋值，清理残留边框
+- topbar: 自选星标直接切换；设置页返回键层级修复
+- market: 叙事轴分层 canvas；新闻跑马灯胶囊修复
+- data: 扩充证券目录种子行情；补充腾讯行情解析测试

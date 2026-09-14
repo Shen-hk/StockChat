@@ -7,6 +7,7 @@
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
 #import <AVFoundation/AVFoundation.h>
 #import <Speech/Speech.h>
+#import <UserNotifications/UserNotifications.h>
 #include <stdbool.h>
 
 @class IOSVoiceSession;
@@ -459,6 +460,46 @@ static NSString *HRReadTextDocument(NSString *path) {
 
 // 状态栏图标明暗：iOS 由宿主 Info.plist/偏好控制，页侧同步忽略。
 - (void)setStatusBarIconsDark:(NSDictionary *)args {
+}
+
+// 风险预警页的本地系统通知试播。授权只在用户主动点击试播时请求；
+// UNTimeIntervalNotificationTrigger 由系统持有，App 进入后台后 3 秒延时仍可送达。
+- (void)postMockStockAlert:(NSDictionary *)args {
+    NSDictionary *params = [args[KR_PARAM_KEY] hr_stringToDictionary];
+    BOOL vibrate = params[@"vibrate"] == nil ? YES : [params[@"vibrate"] boolValue];
+    NSTimeInterval delay = MAX(0.0, [params[@"delayMillis"] doubleValue] / 1000.0);
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert |
+                                                  UNAuthorizationOptionSound |
+                                                  UNAuthorizationOptionBadge)
+                                  completionHandler:^(BOOL granted, NSError *error) {
+            if (!granted || error) {
+                NSLog(@"[HRBridgeModule] notification permission unavailable: %@", error);
+                return;
+            }
+            UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
+            content.title = @"贵州茅台上涨 4.28%（测试）";
+            content.body = @"AI 归因（模拟）：模拟行情上涨 ¥68.80（+4.28%）。本条仅用于演示预警样式，请以真实行情、公告与数据源为准。";
+            content.threadIdentifier = @"stockchat_mock_stock_alert";
+            if (vibrate) {
+                // iOS 的通知震动跟随通知声音与用户的系统触感设置。
+                content.sound = [UNNotificationSound defaultSound];
+            }
+            UNNotificationTrigger *trigger = delay > 0.0
+                ? [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:MAX(1.0, delay) repeats:NO]
+                : nil;
+            NSString *identifier = [NSString stringWithFormat:@"stockchat_mock_%@", NSUUID.UUID.UUIDString];
+            UNNotificationRequest *request = [UNNotificationRequest requestWithIdentifier:identifier
+                                                                                   content:content
+                                                                                   trigger:trigger];
+            [center addNotificationRequest:request withCompletionHandler:^(NSError *addError) {
+                if (addError) {
+                    NSLog(@"[HRBridgeModule] failed to schedule local notification: %@", addError);
+                }
+            }];
+        }];
+    });
 }
 
 - (NSString *)currentTimestamp:(NSDictionary *)args {

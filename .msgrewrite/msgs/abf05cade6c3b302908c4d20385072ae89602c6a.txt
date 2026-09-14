@@ -1,0 +1,1 @@
+refactor(chat): 迁移实体交互状态机

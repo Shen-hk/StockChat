@@ -9,6 +9,7 @@ import com.kuikly.stockchat.data.storage.InMemoryKeyValueStorage
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -194,5 +195,20 @@ class EastMoneyInsightParserTest {
 
         assertEquals(42L, rule.createdAtMillis)
         assertTrue("先核对" in trigger.attribution)
+    }
+
+    @Test
+    fun alertRuleCanTriggerOnConfiguredPriceChangeAmount() {
+        val storage = InMemoryKeyValueStorage()
+        val store = AlertStore(storage, nowMillis = { 42L })
+        store.upsert("600519.SH", "贵州茅台", thresholdPercent = 3.0, thresholdAmount = 5.0)
+
+        val base = com.kuikly.stockchat.data.mock.MockDataBank.quote("600519.SH")!!
+        val belowBothThresholds = base.copy(price = 102.0, previousClose = 100.0)
+        val reachesAmountOnly = base.copy(price = 106.0, previousClose = 100.0)
+
+        assertNull(LocalAlertProvider.evaluate(store.list().single(), belowBothThresholds))
+        assertNotNull(LocalAlertProvider.evaluate(store.list().single(), reachesAmountOnly))
+        assertEquals(5.0, store.list().single().thresholdAmount)
     }
 }

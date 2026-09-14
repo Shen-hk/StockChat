@@ -14,6 +14,7 @@ import com.kuikly.stockchat.cards.core.FinancialCardModel
 import com.kuikly.stockchat.cards.core.FundFlowCardModel
 import com.kuikly.stockchat.cards.core.ShareholderCardModel
 import com.kuikly.stockchat.cards.core.ProductConceptCardModel
+import com.kuikly.stockchat.cards.core.CompanyOverviewCardModel
 import com.kuikly.stockchat.common.Format
 import com.kuikly.stockchat.foundation.ui.feedback.SourceStampLine
 import com.tencent.kuikly.core.base.ViewContainer
@@ -25,8 +26,45 @@ object MarketCardRenderers {
     fun ensureRegistered() {
         if (registered) return
         registered = true
-        listOf(FundFlowRenderer, FinancialRenderer, ShareholderRenderer, BillboardRenderer, CorporateActionRenderer, DisclosureRenderer, ProductConceptRenderer)
+        listOf(FundFlowRenderer, FinancialRenderer, CompanyOverviewRenderer, ShareholderRenderer, BillboardRenderer, CorporateActionRenderer, DisclosureRenderer, ProductConceptRenderer)
             .forEach(CardRegistry::register)
+    }
+}
+
+private object CompanyOverviewRenderer : CardRenderer {
+    override val cardType = "company-overview"
+    override fun render(container: ViewContainer<*, *>, model: CardModel, context: CardContext) {
+        val value = model as? CompanyOverviewCardModel ?: return
+        container.CardTitle("主营与赛道", "公司档案", context)
+        container.Text {
+            attr {
+                text(value.summary ?: "公司主营资料暂未接入，请以公司公告和定期报告为准。")
+                fontSizeScaled(11.5f)
+                lineHeightScaled(18f)
+                color(context.theme.textSecondary)
+            }
+        }
+        if (value.tags.isNotEmpty()) {
+            container.Text {
+                attr {
+                    text(value.tags.joinToString(" · "))
+                    marginTop(8f)
+                    fontSizeScaled(10.5f)
+                    color(context.theme.brand)
+                }
+            }
+        }
+        value.focus?.let { focus ->
+            container.Text {
+                attr {
+                    text("阅读线索：$focus")
+                    marginTop(8f)
+                    fontSizeScaled(10.5f)
+                    lineHeightScaled(16f)
+                    color(context.theme.textTertiary)
+                }
+            }
+        }
     }
 }
 

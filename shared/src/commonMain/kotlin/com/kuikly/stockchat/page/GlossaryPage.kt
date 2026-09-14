@@ -81,6 +81,9 @@ internal class GlossaryPage : BasePager() {
     private var handoffFadeActive = false
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
 
+    /** 轮转区下方卡片的全局搜索同款阶梯入场（R4/R5）。 */
+    private var mapCardsPresented: Boolean by observable(false)
+
     // ── 二级词表的状态（沿用 v1）──
     private var query: String by observable("")
     private var activeCategory: GlossaryCategory? by observable(null)
@@ -131,6 +134,16 @@ internal class GlossaryPage : BasePager() {
                 val firstItem = rows.firstOrNull { it is GlossaryRow.Item } as? GlossaryRow.Item
                 if (firstItem != null) expandedKey = "glossary:${firstItem.entry.key}"
             }
+        }
+    }
+
+    override fun pageDidAppear() {
+        super.pageDidAppear()
+        mapCardsPresented = reduceMotion
+        if (!reduceMotion) {
+            // 首帧先登记 easeOut，下一帧翻转后由 R5 消费；丢链时用终态兜底。
+            setTimeout(0) { mapCardsPresented = true }
+            setTimeout(600) { mapCardsPresented = true }
         }
     }
 
@@ -212,50 +225,52 @@ internal class GlossaryPage : BasePager() {
             // 统计区必须在 reactive closure 内读取快照，读卡后才会立即重建。
             vbind({ page.encounterSnapshot }) {
                 // z1 五域面板：按未遇到数降序——缺口最大的域排最前。
-                page.domainStats().forEach { stat ->
-                    View {
-                        attr {
-                            marginTop(10f)
-                            padding(14f)
-                            borderRadius(14f)
-                            backgroundColor(page.theme.surface)
-                        }
-                        event { click { page.openCategoryInList(stat.category) } }
+                page.domainStats().forEachIndexed { index, stat ->
+                    GlossaryRevealBlock(index, { page.mapCardsPresented }, page.reduceMotion) {
                         View {
-                            attr { flexDirectionRow(); alignItemsCenter() }
-                            Text {
-                                attr {
-                                    text(stat.category.label)
-                                    fontSizeScaled(13.5f)
-                                    fontWeightSemiBold()
-                                    color(page.theme.textPrimary)
+                            attr {
+                                marginTop(10f)
+                                padding(14f)
+                                borderRadius(14f)
+                                backgroundColor(page.theme.surface)
+                            }
+                            event { click { page.openCategoryInList(stat.category) } }
+                            View {
+                                attr { flexDirectionRow(); alignItemsCenter() }
+                                Text {
+                                    attr {
+                                        text(stat.category.label)
+                                        fontSizeScaled(13.5f)
+                                        fontWeightSemiBold()
+                                        color(page.theme.textPrimary)
+                                    }
+                                }
+                                View { attr { flex(1f) } }
+                                Text {
+                                    attr {
+                                        text("已遇 ${stat.encountered} / 共 ${stat.total}")
+                                        fontSizeScaled(11f)
+                                        color(page.theme.textTertiary)
+                                    }
                                 }
                             }
-                            View { attr { flex(1f) } }
+                            View {
+                                attr { marginTop(10f) }
+                                SegmentBar(
+                                    theme = page.theme,
+                                    unseen = stat.unseen,
+                                    seen = stat.seen,
+                                    common = stat.common,
+                                    known = stat.known,
+                                )
+                            }
                             Text {
                                 attr {
-                                    text("已遇 ${stat.encountered} / 共 ${stat.total}")
-                                    fontSizeScaled(11f)
+                                    text("未遇到 ${stat.unseen} · 见过 ${stat.seen} · 常见 ${stat.common} · 已读 ${stat.known}")
+                                    marginTop(7f)
+                                    fontSizeScaled(10f)
                                     color(page.theme.textTertiary)
                                 }
-                            }
-                        }
-                        View {
-                            attr { marginTop(10f) }
-                            SegmentBar(
-                                theme = page.theme,
-                                unseen = stat.unseen,
-                                seen = stat.seen,
-                                common = stat.common,
-                                known = stat.known,
-                            )
-                        }
-                        Text {
-                            attr {
-                                text("未遇到 ${stat.unseen} · 见过 ${stat.seen} · 常见 ${stat.common} · 已读 ${stat.known}")
-                                marginTop(7f)
-                                fontSizeScaled(10f)
-                                color(page.theme.textTertiary)
                             }
                         }
                     }
@@ -263,37 +278,39 @@ internal class GlossaryPage : BasePager() {
 
                 // z2 最近在聊天里遇到：按触发次数降序，×N 是事实标注，不是分数。
                 vif({ page.recentByHits().isNotEmpty() }) {
-                    View {
-                        attr { marginTop(16f) }
-                        Text {
-                            attr {
-                                text("最近在聊天里遇到")
-                                fontSizeScaled(12f)
-                                fontWeightSemiBold()
-                                color(page.theme.term)
-                            }
-                        }
+                    GlossaryRevealBlock(5, { page.mapCardsPresented }, page.reduceMotion) {
                         View {
-                            attr { marginTop(8f); flexDirectionRow(); flexWrapWrap() }
-                            page.recentByHits().forEach { enc ->
-                                val term = Glossary.byKey(enc.key)?.term ?: enc.key
-                                View {
-                                    attr {
-                                        marginRight(7f)
-                                        marginBottom(7f)
-                                        paddingLeft(10f)
-                                        paddingRight(10f)
-                                        height(26f)
-                                        allCenter()
-                                        borderRadius(8f)
-                                        backgroundColor(page.theme.surfaceMuted)
-                                    }
-                                    event { click { page.openEntryInList(enc.key) } }
-                                    Text {
+                            attr { marginTop(16f) }
+                            Text {
+                                attr {
+                                    text("最近在聊天里遇到")
+                                    fontSizeScaled(12f)
+                                    fontWeightSemiBold()
+                                    color(page.theme.term)
+                                }
+                            }
+                            View {
+                                attr { marginTop(8f); flexDirectionRow(); flexWrapWrap() }
+                                page.recentByHits().forEach { enc ->
+                                    val term = Glossary.byKey(enc.key)?.term ?: enc.key
+                                    View {
                                         attr {
-                                            text("$term ×${enc.hitCount}")
-                                            fontSizeScaled(11f)
-                                            color(page.theme.textSecondary)
+                                            marginRight(7f)
+                                            marginBottom(7f)
+                                            paddingLeft(10f)
+                                            paddingRight(10f)
+                                            height(26f)
+                                            allCenter()
+                                            borderRadius(8f)
+                                            backgroundColor(page.theme.surfaceMuted)
+                                        }
+                                        event { click { page.openEntryInList(enc.key) } }
+                                        Text {
+                                            attr {
+                                                text("$term ×${enc.hitCount}")
+                                                fontSizeScaled(11f)
+                                                color(page.theme.textSecondary)
+                                            }
                                         }
                                     }
                                 }
@@ -304,21 +321,23 @@ internal class GlossaryPage : BasePager() {
             }
 
             // z1 底部：完整词表折叠入口（just-in-case 浏览降级为二级）。
-            View {
-                attr {
-                    marginTop(14f)
-                    height(48f)
-                    allCenter()
-                    borderRadius(14f)
-                    backgroundColor(page.theme.surfaceMuted)
-                }
-                event { click { page.viewMode = VIEW_LIST } }
-                Text {
+            GlossaryRevealBlock(6, { page.mapCardsPresented }, page.reduceMotion) {
+                View {
                     attr {
-                        text("浏览全部 ${Glossary.all.size} 个概念 ›")
-                        fontSizeScaled(13f)
-                        fontWeightSemiBold()
-                        color(page.theme.textSecondary)
+                        marginTop(14f)
+                        height(48f)
+                        allCenter()
+                        borderRadius(14f)
+                        backgroundColor(page.theme.surfaceMuted)
+                    }
+                    event { click { page.viewMode = VIEW_LIST } }
+                    Text {
+                        attr {
+                            text("浏览全部 ${Glossary.all.size} 个概念 ›")
+                            fontSizeScaled(13f)
+                            fontWeightSemiBold()
+                            color(page.theme.textSecondary)
+                        }
                     }
                 }
             }
@@ -1331,6 +1350,27 @@ internal class GlossaryPage : BasePager() {
 internal sealed class GlossaryRow {
     data class Header(val label: String, val count: Int) : GlossaryRow()
     data class Item(val entry: GlossaryEntry) : GlossaryRow()
+}
+
+/** 全局搜索同款：轮转区下方卡片从下方轻推淡入，并按顺序错开。 */
+private fun ViewContainer<*, *>.GlossaryRevealBlock(
+    index: Int,
+    visible: () -> Boolean,
+    reduceMotion: Boolean,
+    content: ViewContainer<*, *>.() -> Unit,
+) {
+    View {
+        attr {
+            val shown = visible()
+            opacity(if (shown) 1f else 0f)
+            if (!reduceMotion) {
+                transform(Translate(0f, if (shown) 0f else 0.28f))
+                // visible 是本 attr 最后读取的驱动，animate 保持末句（R2/R5）。
+                animate(Animation.easeOut(0.375f).delay(0.08f + 0.094f * index), visible())
+            }
+        }
+        content()
+    }
 }
 
 private fun GlossarySectionTitle(

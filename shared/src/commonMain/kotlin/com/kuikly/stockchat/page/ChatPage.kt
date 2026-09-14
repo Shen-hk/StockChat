@@ -284,7 +284,7 @@ internal class ChatPage : BasePager() {
     // component and this page-level platform-effect adapter.
     private val welcomeStarterStore by lazy {
         WelcomeStarterStore(
-            KuiklyKeyValueStorage(pagerId),
+            platformKeyValueStorage(pagerId),
             defaultWelcomeStarters().map { it.kind.name }.toSet(),
         )
     }
@@ -689,6 +689,8 @@ internal class ChatPage : BasePager() {
         pendingRouteQuestion = pagerData.params.optString("question")
         pendingAutoAsk = pagerData.params.optString("autoAsk").isNotEmpty()
         pendingAutoAskDelay = pagerData.params.optString("autoAskDelay").toIntOrNull() ?: 600
+        pendingSmokeMediaSource = pagerData.params.optString("smokeMedia")
+        pendingSmokeVoice = pagerData.params.optString("smokeVoice") == "1"
         pendingRouteFocusNote = pagerData.params.optString("focusNote")
         pendingRouteFocusSymbol = pagerData.params.optString("focusSymbol")
         StockCardRenderers.ensureRegistered()
@@ -1616,8 +1618,20 @@ internal class ChatPage : BasePager() {
                         acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已清屏")
                     }
                     "monitor" -> {
-                        finishCommandSideEffect("")
-                        acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已建立盯盘：${payload.command?.args?.values?.filter { it.isNotBlank() }?.joinToString(" · ").orEmpty()}")
+                        val target = payload.mentions.firstOrNull()
+                            ?: ComposerCatalog.all.firstOrNull { entry ->
+                                entry.name == payload.command?.args?.get("target") || entry.symbol == payload.command?.args?.get("target")
+                            }?.let(com.kuikly.stockchat.composer.MentionEntity::of)
+                        if (target != null) {
+                            alertStore.upsert(target.symbol, target.name)
+                            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已识别 ${target.name}，已建立风险预警（默认 ±3%）")
+                            finishCommandSideEffect("")
+                        } else {
+                            commandValidationMessage = "输入 @股票名或代码后发送；从详情页进入对话时可直接发送"
+                            closeAssistantPanel()
+                            inputRef?.view?.focus()
+                            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(commandValidationMessage)
+                        }
                     }
                     else -> finishCommandSideEffect("")
                 }
@@ -1727,6 +1741,7 @@ internal class ChatPage : BasePager() {
         bridge.openComposerMediaSource(action.source) { data ->
             if (data != null && data.optString("code") == "-1") {
                 KLog.i(COMPOSER_LOG_TAG, "mediaAction failed ${data.optString("message")}")
+                bridge.toast("当前浏览器暂不支持这个媒体入口")
             }
         }
         trackComposerEvent("composer_media_open", "source" to action.source)
@@ -3199,9 +3214,8 @@ internal class ChatPage : BasePager() {
         assistantPanel = AssistantPanel.SLASH
     }
 
-    /** 命令定型后的参数态（规范 §5.4）。简化 P1：展示槽位提示，参数由用户继续输入。 */
+    /** 命令定型后的参数态（规范 §5.4）。 */
     private fun enterCommandParams(command: SlashCommand) {
-        paramCommand = command
         // 把输入框里的 "/q" 规范为 "/命令名 "（带尾空格，光标移到末尾继续填参数）。
         val text = viewModel.inputText
         val session = triggerSession
@@ -3217,6 +3231,18 @@ internal class ChatPage : BasePager() {
         }
         slashCandidates.clear()
         slashUnknown = ""
+        if (command.id == "monitor") {
+            // 盯盘不再把用户困在参数卡里：保留 /盯盘 让用户继续写，点击发送后自动
+            // 从 @提及、代码/名称，或路由带入的当前标的中识别监控对象。
+            clearActiveCommand()
+            triggerSession = null
+            closeAssistantPanel()
+            commandValidationMessage = "在 /盯盘 后输入 @股票名或代码，再点击发送"
+            inputRef?.view?.focus()
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast(commandValidationMessage)
+            return
+        }
+        paramCommand = command
         assistantPanel = AssistantPanel.COMMAND_PARAMS
     }
 
@@ -3340,6 +3366,13 @@ internal class ChatPage : BasePager() {
         if (recentMentions.size > 8) recentMentions.subList(8, recentMentions.size).clear()
         commandValidationMessage = ""
         assistantPanel = AssistantPanel.COMMAND_PARAMS
+        if (command.id == "monitor") {
+            alertStore.upsert(entity.symbol, entity.name)
+            finishCommandSideEffect("")
+            acquireModule<BridgeModule>(BridgeModule.MODULE_NAME).toast("已为 ${entity.name} 建立风险预警（默认 ±3%）")
+            trackComposerEvent("slash_monitor_created", "symbol" to entity.symbol, "via" to "candidate")
+            return
+        }
         trackComposerEvent(
             "slash_param_complete",
             "commandId" to command.id,
@@ -3516,6 +3549,7 @@ internal class ChatPage : BasePager() {
                 candidates = { slashCandidates },
                 highlight = { slashHighlight },
                 suggest = CommandRegistry::suggest,
+                quickActions = CommandRegistry.all.filter { it.id == "monitor" || it.id == "clear" },
                 onSelect = ::selectSlashCommand,
             ),
         )

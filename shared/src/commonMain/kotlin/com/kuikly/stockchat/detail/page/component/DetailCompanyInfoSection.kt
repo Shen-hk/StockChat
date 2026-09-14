@@ -3,6 +3,7 @@ package com.kuikly.stockchat.detail.page.component
 import com.kuikly.stockchat.cards.core.BillboardCardModel
 import com.kuikly.stockchat.cards.core.CardContext
 import com.kuikly.stockchat.cards.core.CorporateActionCardModel
+import com.kuikly.stockchat.cards.core.CompanyOverviewCardModel
 import com.kuikly.stockchat.cards.core.FinancialCardModel
 import com.kuikly.stockchat.cards.core.FundFlowCardModel
 import com.kuikly.stockchat.cards.core.ShareholderCardModel
@@ -86,6 +87,13 @@ internal fun ViewContainer<*, *>.DetailCompanyInfoSection(
             val businessCards = listOfNotNull(
                 insight().fundFlow?.let { BusinessInsightItem("fund-flow", "资金流", FundFlowCardModel(it, "fund-flow:${symbol()}")) },
                 fundamentals?.financial?.let { BusinessInsightItem("financial", "财务", FinancialCardModel(it, "financial:${symbol()}")) },
+                DetailCompanyProfileCatalog.forSymbol(symbol()).let { profile ->
+                    BusinessInsightItem(
+                        "company-overview",
+                        "主营与赛道",
+                        CompanyOverviewCardModel(profile.summary, profile.tags, profile.focus, "company-overview:${symbol()}"),
+                    )
+                },
                 fundamentals?.shareholder?.let {
                     BusinessInsightItem("shareholders", "股东户数", ShareholderCardModel(it, "shareholders:${symbol()}"), footnote = shareholderNote)
                 },

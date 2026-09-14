@@ -1,0 +1,3 @@
+refactor(data): 将 SSE 流式处理迁入 PlatformHttpClient 抽象层
+
+PlatformHttpClient 收敛为一个各平台自持的小接口（get/postStream）；AiProvider 改为消费该接口，不再直接调用 Ktor。ohos 的实现在 ohos 相关提交中落地。

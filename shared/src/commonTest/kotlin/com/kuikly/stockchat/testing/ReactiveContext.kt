@@ -7,6 +7,7 @@ import com.tencent.kuikly.core.manager.BridgeManager
 import com.tencent.kuikly.core.manager.PagerManager
 import com.tencent.kuikly.core.nvi.serialization.json.JSONObject
 import com.tencent.kuikly.core.pager.Pager
+import kotlin.random.Random
 
 /**
  * 单测用的 Kuikly 响应式上下文：Kuikly 的全局 `observable` / `observableList`
@@ -21,7 +22,7 @@ import com.tencent.kuikly.core.pager.Pager
  * 用法：`reactive { val c = Coordinator(...); c.reload(); assertEquals(...) }`
  */
 fun <T> reactive(block: () -> T): T {
-    val pagerId = "test-pager-${System.nanoTime()}"
+    val pagerId = "test-pager-${Random.nextLong()}"
     PagerManager.registerPageRouter("kuikly_reactive_test") { ReactiveContextPager() }
     PagerManager.createPager(pagerId, "kuikly_reactive_test", "{}")
     BridgeManager.currentPageId = pagerId

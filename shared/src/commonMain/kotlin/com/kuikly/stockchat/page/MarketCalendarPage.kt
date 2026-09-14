@@ -5,7 +5,6 @@ import com.kuikly.stockchat.foundation.ui.lineHeightScaled
 
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
-import com.kuikly.stockchat.common.PlatformProfile
 import com.kuikly.stockchat.common.Routes
 import com.kuikly.stockchat.common.closePage
 import com.kuikly.stockchat.common.openStockDetail
@@ -81,10 +80,9 @@ internal class MarketCalendarPage : BasePager() {
                         event { click { if (item.symbol.contains('.')) page.openStockDetail(item.symbol, Routes.CALENDAR) } }
                     }
                 }
-                // 空态（2026-09-11）：真实模式下日历数据源未接入时列表为空，此前只留一片
-                // 空白，看起来像页面坏了。这里如实说明「未接入」，并给出这一步的作用。
-                // 只在 PlatformProfile.marketFixes（当前 iOS）打开——其余平台保持改动前的纯空白。
-                vif({ PlatformProfile.marketFixes && page.events.isEmpty() }) {
+                // 空态：真实模式下日历数据源未接入时列表为空。不能留下空白页，所有端都
+                // 如实说明「未接入」并给出用途，H5 也能明确知道页面处于什么状态。
+                vif({ page.events.isEmpty() }) {
                     View {
                         attr { marginTop(10f); padding(14f); borderRadius(13f); backgroundColor(page.theme.surface) }
                         Text { attr { text("日历事件待接入"); fontSizeScaled(13f); fontWeightSemiBold(); color(page.theme.textPrimary) } }

@@ -59,7 +59,7 @@ internal object CardResponseSanitizer {
     }
 
     private fun String.replaceSymbol(oldSymbol: String, newSymbol: String): String =
-        replace(Regex("(\\\"symbol\\\"\\s*:\\s*\\\")${Regex.escape(oldSymbol)}(\\\")", RegexOption.IGNORE_CASE)) {
+        replace(Regex("""("symbol"\s*:\s*")${Regex.escape(oldSymbol)}(")""", RegexOption.IGNORE_CASE)) {
             it.groupValues[1] + newSymbol + it.groupValues[2]
         }
 

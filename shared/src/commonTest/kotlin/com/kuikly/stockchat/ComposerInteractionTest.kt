@@ -26,7 +26,7 @@ class ComposerInteractionTest {
     @Test
     fun triggerDetectorOnlyStartsOnWordBoundary() {
         assertNotNull(TriggerDetector.detect("@茅台", 3))
-        assertNotNull(TriggerDetector.detect("看一下 /复盘", 7))
+        assertNotNull(TriggerDetector.detect("看一下 /盯盘", 7))
         assertNull(TriggerDetector.detect("abc@163.com", 7))
         assertNull(TriggerDetector.detect("https://example.com", 8))
         assertNull(TriggerDetector.detect("@贵州 茅台", 4))
@@ -60,55 +60,43 @@ class ComposerInteractionTest {
 
     @Test
     fun slashCommandsResolveAliasesAndExecutionMode() {
-        assertEquals("compare", CommandRegistry.resolve("vs")?.id)
+        assertEquals("monitor", CommandRegistry.resolve("dp")?.id)
         assertEquals(CommandExecution.LOCAL_ACTION, CommandRegistry.resolve("盯盘")?.execution)
-        assertTrue(CommandRegistry.filter("复").any { it.id == "fupan" })
+        assertEquals(setOf("monitor", "clear"), CommandRegistry.all.map { it.id }.toSet())
+        assertTrue(CommandRegistry.filter("盯").any { it.id == "monitor" })
         assertTrue(CommandRegistry.suggest("请屏").any { it.id == "clear" })
-    }
-
-    @Test
-    fun promptTemplateRendersHumanParameters() {
-        val compare = CommandRegistry.resolve("对比")!!
-        val prompt = CommandRegistry.renderPrompt(
-            compare,
-            mapOf("left" to "600519.SH 贵州茅台", "right" to "000858.SZ 五粮液", "dim" to "估值"),
-        )
-
-        assertTrue(prompt.contains("估值"))
-        assertTrue(prompt.contains("600519.SH 贵州茅台"))
-        assertTrue(prompt.contains("000858.SZ 五粮液"))
     }
 
     @Test
     fun commandParserBuildsTypedArgumentsOutsideThePageLayer() {
         val maotai = MentionEntity.of(ComposerCatalog.find("600519.SH")!!)
-        val wuliangye = MentionEntity.of(ComposerCatalog.find("000858.SZ")!!)
 
         val invocation = CommandInvocationParser.parse(
-            "/对比 @贵州茅台 @五粮液 估值",
-            listOf(maotai, wuliangye),
+            "/盯盘 @贵州茅台",
+            listOf(maotai),
             isExactSecurity = { false },
         )
 
-        assertEquals("compare", invocation?.commandId)
-        assertEquals(
-            mapOf("left" to "贵州茅台", "right" to "五粮液", "dim" to "估值"),
-            invocation?.args,
-        )
-        assertTrue(CommandInvocationParser.missingRequiredParams(CommandRegistry.resolve("对比")!!, invocation!!.args).isEmpty())
+        assertEquals("monitor", invocation?.commandId)
+        assertEquals(mapOf("target" to "贵州茅台"), invocation?.args)
+        assertTrue(CommandInvocationParser.missingRequiredParams(CommandRegistry.resolve("盯盘")!!, invocation!!.args).isEmpty())
+
+        val noTarget = CommandInvocationParser.parse("/盯盘", emptyList()) { false }
+        assertEquals(mapOf("target" to ""), noTarget?.args)
+        assertTrue(CommandInvocationParser.missingRequiredParams(CommandRegistry.resolve("盯盘")!!, noTarget!!.args).isEmpty())
     }
 
     @Test
     fun commandParserFallsBackToExactPlainTextSecurity() {
         val invocation = CommandInvocationParser.parse(
-            "/解读 600519.SH",
+            "/盯盘 600519.SH",
             emptyList(),
             isExactSecurity = { it == "600519.SH" },
         )
 
         assertEquals(mapOf("target" to "600519.SH"), invocation?.args)
-        assertEquals("600519.SH", CommandInvocationParser.currentParameterQuery("/解读 600519.SH", "解读"))
-        assertEquals("贵州茅台怎么看", CommandInvocationParser.remainder("/ssq 贵州茅台怎么看", "深水区"))
+        assertEquals("600519.SH", CommandInvocationParser.currentParameterQuery("/盯盘 600519.SH", "盯盘"))
+        assertEquals("600519.SH", CommandInvocationParser.remainder("/dp 600519.SH", "盯盘"))
     }
 
     @Test
@@ -145,16 +133,16 @@ class ComposerInteractionTest {
         val payload = SendPayload(
             text = "@白酒(板块) 怎么看",
             mentions = listOf(board),
-            command = CommandInvocation("fupan", "复盘", mapOf("period" to "周")),
-            renderedPrompt = "请对白酒做周线级别复盘。",
-            contextNotes = listOf("深水区模式"),
+            command = CommandInvocation("monitor", "盯盘", mapOf("target" to "白酒")),
+            renderedPrompt = "白酒",
+            contextNotes = emptyList(),
         )
         val note = payload.systemNote().orEmpty()
 
         assertTrue(note.contains("BK0477 白酒"))
         assertTrue(note.contains("600519.SH 贵州茅台"))
         assertTrue(note.contains("000858.SZ 五粮液"))
-        assertTrue(note.contains("深水区模式"))
+        assertTrue(note.contains("盯盘"))
     }
 
     @Test

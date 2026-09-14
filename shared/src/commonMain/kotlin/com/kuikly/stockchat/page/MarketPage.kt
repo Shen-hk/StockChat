@@ -199,21 +199,36 @@ internal class MarketPage : BasePager() {
         super.created()
         marketNews = OfflineMarketInsightProvider().marketNewsValue()
         startTapeTimer()
-        // Entry motion is one-shot and decorative-free; it never repeats while prices update.
-        if (motionEnabled()) {
-            setTimeout(1) {
-                heroEntered = true
-                marketEntrancePhase = 1
-            }
-            setTimeout(75) { stripEntered = true; marketEntrancePhase = 2 }
-            setTimeout(150) { marketEntrancePhase = 3 }
-            setTimeout(225) { marketEntrancePhase = 4 }
-            setTimeout(300) { breadthEntered = true; volumeEntered = true; marketEntrancePhase = 5 }
-            setTimeout(375) { ladderEntered = true; marketEntrancePhase = 6 }
-        }
+        scheduleMarketEntrance()
         refreshOverview()
         scheduleLiveRefresh()
         dependencies.insightRepository.loadHotspots { hotspots = it }
+    }
+
+    /**
+     * 首屏按「市场状态 → 指数带/主卡 → 数据切片」苏醒。首轮 attr 已在 phase 0
+     * 注册下一次切换所需的动画（R5）；因此不要用 0 时长 reset 来清初态。
+     * 600ms 兜底覆盖极少数 native timer 链路丢失的情况，不能让内容停在透明态。
+     */
+    private fun scheduleMarketEntrance() {
+        if (!motionEnabled()) return
+        setTimeout(1) {
+            heroEntered = true
+            marketEntrancePhase = 1
+        }
+        setTimeout(75) { stripEntered = true; marketEntrancePhase = 2 }
+        setTimeout(150) { marketEntrancePhase = 3 }
+        setTimeout(225) { marketEntrancePhase = 4 }
+        setTimeout(300) { breadthEntered = true; volumeEntered = true; marketEntrancePhase = 5 }
+        setTimeout(375) { ladderEntered = true; marketEntrancePhase = 6 }
+        setTimeout(600) {
+            heroEntered = true
+            stripEntered = true
+            breadthEntered = true
+            volumeEntered = true
+            ladderEntered = true
+            marketEntrancePhase = 6
+        }
     }
 
     /**

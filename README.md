@@ -24,10 +24,10 @@
 
 ## 一分钟体验路径
 
-1. 播放任意一个四端演示视频，查看「聊天提问 → 行情卡片 → 个股详情 → 返回追问」主链路。
+1. 播放任意一个四端演示视频（推荐安卓，做了功能介绍），查看「聊天提问 → 行情卡片 → 个股详情 → 返回追问」主链路。
 2. Android 用户可直接安装仓库内的 Release APK；其他平台按下文步骤自行构建。
 3. 进入「API 设置」，推荐「小米 MiMo」(有多模态)，填入自己的 API Key 并通过连接测试。
-4. 输入「腾讯和宁德时代最近怎么样」，体验 Markdown、实体识别与实时行情卡片混排。
+4. 输入「茅台和五粮液最近怎么样」，体验 Markdown、实体识别灵动岛与实时行情卡片混排，感受交互与数据的碰撞吧~。
 
 ---
 
@@ -66,7 +66,9 @@
 
 | 产物 | 下载 | 说明 |
 | :--- | :---: | :--- |
-| **Android Release 包** | [📥 `releases/StockChat-android-release.apk`](releases/StockChat-android-release.apk) | arm64-v8a · 22.8 MB · arm64-v8a 单架构 · minSdk 23 / targetSdk 34 |
+| **Android Release 包** | [📥 `releases/StockChat-android-release.apk`](releases/StockChat-android-release.apk) | arm64-v8a · 22.9 MB · arm64-v8a 单架构 · minSdk 23 / targetSdk 34 |
+
+SHA-256：`7749A8742BCD92206F2D00C143AC9E4BDE6ED8B8A0BEB1A5403B57BEDCFC09B1`
 
 ---
 
@@ -162,7 +164,7 @@ ChatViewModel（依赖经 ChatDependencies 注入）
 
 ---
 
-## 三端跑通 · 拉下项目以后
+## 四端跑通 · 拉下项目以后
 
 > **共同的先决条件**：JDK 17、Gradle 8.7（仓库内 `./gradlew`）、Kotlin 2.1.21（OHOS 变体 2.0.21-ohos）、Kuikly 2.25.0-2.1.21。
 >
@@ -233,6 +235,34 @@ open iosApp/iosApp.xcworkspace   # 选 iosApp target → Run (⌘R)
 - 模拟器与真机要分别 sync framework：模拟器用上一步 `IosX64`；真机用 `./gradlew :shared:linkPodDebugFrameworkIosArm64`。
 - 暂时未实现桥接模块：上传、语音模块（详见 §「已知缺口」）。
 
+### OpenHarmony（鸿蒙）
+
+Windows + DevEco Studio + hvigor 环境；需 `OHOS_SDK_HOME` 与 `DEVECO_SDK_HOME` 同条 `&&` 链内 export。
+
+```bash
+# 1. 构建 libshared.so（独立 settings 文件）
+./gradlew -c settings.ohos.gradle.kts :shared:linkDebugSharedOhosArm64 --no-daemon
+
+# 2. so 拷到鸿蒙工程 + 头文件同步
+cp shared/build/ohos/arm64-v8a/libshared.so ohosApp/entry/libs/arm64-v8a/
+# （头文件与页面资源同步脚本见 ohosApp/entry/oh-package.json5 注释）
+
+# 3. hvigor 打包（Windows 下用 Bash 跑，PowerShell 跑会秒退）
+cd ohosApp && node hvigor.js --mode module -p module=entry@default assembleHap --no-daemon --no-parallel
+
+# 4. 安装到设备 / 启动
+hdc install -r entry/build/default/outputs/default/entry-default.hap
+hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
+```
+
+**特殊情况**：
+- 当前为 arm64-v8a 配置，请使用真实设备。
+- 别加 `--parallel`，鸿蒙 hvigor 会 OOM。
+- 设备锁屏时 `aa start` 报错 `10106102`——请用户先手动解锁再启动。
+- 签名 `signingConfigs`：material 内 7 字段全必选（含 `certpath`），`store/keyPassword` ≥ 32 字符；本机 credential 在 IDE vault 内，AI 不可达，请使用自己的证书。
+- 临时 Mock：见上文「数据来源说明」。
+
+
 ### H5（Web）
 
 **最简单的一条路径**：在浏览器里把整套 App 跑起来，**不需要 Android Studio / Xcode / DevEco Studio / 真机**。
@@ -263,6 +293,7 @@ python -m http.server 8088 --bind 127.0.0.1 --directory h5App/build/distribution
 # 在浏览器打开：
 #   http://127.0.0.1:8088/index.html
 ```
+使用特别注意：可以点击浏览器刷新按钮来展开侧边抽屉与部分返回键，chat页右上角搜索和新建去侧边抽屉点击进入（部分按钮点击无效）
 
 页面会停在 `ChatPage`（默认）。想看其它 13 个页面，URL 加 `?page_name=`：
 
@@ -325,32 +356,6 @@ PAGES="ChatPage StockDetailPage" bash scripts/h5_regression.sh
 - 同一份代码与 Android / iOS / OHOS 完全一致（Kuikly 的 `jsMain`），不引入额外状态层
 - bundled-level 补丁固化在 `h5App/build.gradle.kts#patchH5AppForWebBridges`，钩在 `publishLocalJSBundle` 的 `doLast` 末尾，每次重新打产物自动应用
 
-### OpenHarmony（鸿蒙）
-
-Windows + DevEco Studio + hvigor 环境；需 `OHOS_SDK_HOME` 与 `DEVECO_SDK_HOME` 同条 `&&` 链内 export。
-
-```bash
-# 1. 构建 libshared.so（独立 settings 文件）
-./gradlew -c settings.ohos.gradle.kts :shared:linkDebugSharedOhosArm64 --no-daemon
-
-# 2. so 拷到鸿蒙工程 + 头文件同步
-cp shared/build/ohos/arm64-v8a/libshared.so ohosApp/entry/libs/arm64-v8a/
-# （头文件与页面资源同步脚本见 ohosApp/entry/oh-package.json5 注释）
-
-# 3. hvigor 打包（Windows 下用 Bash 跑，PowerShell 跑会秒退）
-cd ohosApp && node hvigor.js --mode module -p module=entry@default assembleHap --no-daemon --no-parallel
-
-# 4. 安装到设备 / 启动
-hdc install -r entry/build/default/outputs/default/entry-default.hap
-hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
-```
-
-**特殊情况**：
-- 当前为 arm64-v8a 配置，请使用真实设备。
-- 别加 `--parallel`，鸿蒙 hvigor 会 OOM。
-- 设备锁屏时 `aa start` 报错 `10106102`——请用户先手动解锁再启动。
-- 签名 `signingConfigs`：material 内 7 字段全必选（含 `certpath`），`store/keyPassword` ≥ 32 字符；本机 credential 在 IDE vault 内，AI 不可达，请使用自己的证书。
-- 临时 Mock：见上文「数据来源说明」。
 
 ---
 
@@ -359,7 +364,7 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 | 产物 | 路径 | 备注 |
 | :--- | :--- | :--- |
 | Android Debug APK | `androidApp/build/outputs/apk/debug/androidApp-debug.apk` | 自构建 |
-| Android Release APK | `releases/StockChat-android-release.apk` | 仓库内置 |
+| Android Release APK | `releases/StockChat-android-release.apk` | 仓库内置，debug keystore 签名（评审 / 内测） |
 | OpenHarmony HAP | `ohosApp/entry/build/default/outputs/default/` | 自构建 |
 | iOS | `iosApp/iosApp.xcworkspace` | Xcode Run |
 
@@ -375,7 +380,7 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 
 ### 输入增强
 
-`@` 唤起标的联想，`/` 唤起斜杠指令（指令面板带参数填写）；按住说话、松开发送、上滑取消的语音输入（对标微信范式）；多行自适应输入框。
+`@` 唤起标的联想，`/` 唤起斜杠指令；指令收敛为「盯盘 / 清屏」两个本地动作——`/盯盘` 不再把用户困在参数卡里：输入 `/盯盘` + `@标的` 后点击发送，自动识别实体、写入风险预警（默认 ±3% 震幅），并与预警中心、系统通知演示联动；按住说话、松开发送、上滑取消的语音输入（对标微信范式）；多行自适应输入框。
 
 ### 实体交互
 
@@ -403,6 +408,12 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 
 三者构成闭环：**自选（我在看什么）→ 风险地图（押了哪些共同变量）→ 知识库（还缺什么）→ 回自选**。
 
+### 异动预警 · 系统通知演示 · 入场特效
+
+- **预警收件箱**：聚合价格异动、暴露变化、事件与 pinned 事实消息；支持消息级静默（按 symbol / 整类）、免打扰（收盘后触发合并次日）、「稍后看」分诊队列与主动删除；未读角标扣除已分诊消息，删除的派生消息在触发条件变化产生新 id 前不再重现。
+- **系统通知演示（三端）**：预警中心可一键演示本地系统通知——立刻送达或延时 3 秒（Android `AlarmManager` + 双通知渠道、iOS `UNUserNotificationCenter`、鸿蒙 `notificationManager`，统一经 `postMockStockAlert` 桥下发）；系统横幅与收件箱写入同一条演示消息，并明确标注「模拟 / 测试」，不构成真实 AI 结论；通知振动可在收件箱内开关。本能力为本地 Mock 演示，项目不含远程推送。
+- **阶梯入场特效**：预警中心（全页 + 消息卡）与知识库轮转区采用全局搜索同款入场——内容从下方轻推上浮、列表项按序错开（每项 +94ms）；行情 / 日历等异步数据到达后补走两拍动画不丢入场；系统「减弱动态效果」开启时直接展示终态。
+
 ### 其他
 
 全局搜索（代码 / 名称 / 拼音 / 术语）、异动预警中心（前台轮询 + 归因说明）、分享长图与文案复制、明暗主题 + 字号档、卡片画廊页（开发期组件独立预览）。
@@ -425,7 +436,7 @@ hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
 | 热点 | `HotspotPage` | 板块热点 |
 | 财报日历 | `MarketCalendarPage` | 日历与历史回放 |
 | 全局搜索 | `GlobalSearchPage` | 代码 / 名称 / 拼音 / 术语 |
-| 异动预警 | `AlertCenterPage` | 预警收件箱 |
+| 异动预警 | `AlertCenterPage` | 预警收件箱、系统通知演示、阶梯入场 |
 | 设置 | `SettingsPage` | 主题、字号、表格样式、归档、数据源切换 |
 | API 设置 | `ApiConfigPage` | 服务商、Key、连接测试 |
 | 卡片画廊 | `CardGallery` | 14 类卡片预览（调试用） |

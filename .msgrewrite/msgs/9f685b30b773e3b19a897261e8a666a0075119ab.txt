@@ -1,0 +1,3 @@
+fix(welcome): 页面消失时复位市场 tab 滑块
+
+420ms 的自动复位计时器无法在 openPage 跳转到市场页后存活；cancelMarketTasks 让 marketTabSelected 卡在 true，导致滑块返回时停在半程。改为在页面消失时直接复位。

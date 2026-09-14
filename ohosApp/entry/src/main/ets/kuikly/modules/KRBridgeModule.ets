@@ -10,6 +10,7 @@ import { fileUri } from '@kit.CoreFileKit';
 import picker from '@ohos.file.picker';
 import cameraPicker from '@ohos.multimedia.cameraPicker';
 import audio from '@ohos.multimedia.audio';
+import { notificationManager } from '@kit.NotificationKit';
 
 interface MediaResult {
   type: string;
@@ -25,6 +26,7 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   static readonly COPY_TO_PASTE_BOARD = "copyToPasteboard";
   static readonly TOAST = "toast";
   static readonly HAPTIC_IMPACT = "hapticImpact";
+  static readonly POST_MOCK_STOCK_ALERT = "postMockStockAlert";
   static readonly LOG = "log";
   static readonly REPORT_DT = "reportDT";
   static readonly REPORT_REAL_TIME = "reportRealtime";
@@ -81,6 +83,10 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
       }
       case KRBridgeModule.HAPTIC_IMPACT: {
         this.hapticImpact();
+        break;
+      }
+      case KRBridgeModule.POST_MOCK_STOCK_ALERT: {
+        this.postMockStockAlert(params);
         break;
       }
       case KRBridgeModule.LOG: {
@@ -158,6 +164,56 @@ export class KRBridgeModule extends KuiklyRenderBaseModule {
   }
 
   private hapticImpact() {
+  }
+
+  /** 风险预警页的本地系统通知试播；首次点击时由系统弹出通知授权。 */
+  private postMockStockAlert(params: KRAny): void {
+    let records = JSON.parse(params as string) as Record<string, Object>;
+    let vibrateValue = records["vibrate"];
+    let delayValue = records["delayMillis"];
+    let vibrate = vibrateValue === undefined ? true : vibrateValue as boolean;
+    let delayMillis = delayValue === undefined ? 0 : delayValue as number;
+    let context = getContext(this) as common.UIAbilityContext;
+
+    notificationManager.isNotificationEnabled()
+      .then((enabled: boolean): Promise<void> => {
+        if (enabled) {
+          return Promise.resolve();
+        }
+        return notificationManager.requestEnableNotification(context);
+      })
+      .then((): void => {
+        if (delayMillis > 0) {
+          setTimeout((): void => this.publishMockStockAlert(vibrate), delayMillis);
+        } else {
+          this.publishMockStockAlert(vibrate);
+        }
+      })
+      .catch((error: BusinessError): void => {
+        console.error(`notification permission failed: ${error.code}, ${error.message}`);
+      });
+  }
+
+  private publishMockStockAlert(vibrate: boolean): void {
+    let request: notificationManager.NotificationRequest = {
+      id: Date.now() % 0x0FFFFFFF,
+      notificationSlotType: vibrate
+        ? notificationManager.SlotType.SERVICE_INFORMATION
+        : notificationManager.SlotType.CONTENT_INFORMATION,
+      content: {
+        notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
+        normal: {
+          title: "贵州茅台上涨 4.28%（测试）",
+          text: "AI 归因（模拟）：模拟行情上涨 ¥68.80（+4.28%）。本条仅用于演示预警样式，请以真实行情、公告与数据源为准。",
+        },
+      },
+      tapDismissed: true,
+      isAlertOnce: false,
+      showDeliveryTime: true,
+    };
+    notificationManager.publish(request).catch((error: BusinessError): void => {
+      console.error(`notification publish failed: ${error.code}, ${error.message}`);
+    });
   }
 
   private startVoiceRecording(callback: KuiklyRenderCallback) {

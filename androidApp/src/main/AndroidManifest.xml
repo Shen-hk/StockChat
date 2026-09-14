@@ -14,6 +14,8 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:name=".KRApplication"
@@ -32,6 +34,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name=".module.MockStockAlertNotificationReceiver"
+            android:exported="false" />
 
         <!-- 输入栏拍照：ACTION_IMAGE_CAPTURE 的 EXTRA_OUTPUT 缓存 URI 授权。
              注意宿主不声明 CAMERA 权限（声明了反而要求运行时授权，而拍摄由

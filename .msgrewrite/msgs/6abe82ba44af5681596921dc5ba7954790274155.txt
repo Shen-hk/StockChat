@@ -1,0 +1,5 @@
+fix(data): 腾讯行情 K线/分时多主机降级 + 编译修复
+
+web.ifzq.gtimg.cn 的 fqkline 接口被 WAF 拦截（返回 501 HTML）；改为按顺序尝试 ifzq.gtimg.cn 与 proxy.finance.qq.com，取第一个有效 JSON。snapshot/timeline/kLines 统一走共享的请求辅助函数。
+
+修复尾随 lambda 绑定问题：将 hostIndex 移到 onResult 之前，使尾随 lambda 正确绑定到回调而不是 hostIndex（此前 Android 与 ohos 均编译失败，各 21 处错误）。

@@ -1,0 +1,1 @@
+refactor(chat): 抽取回到顶部协调器

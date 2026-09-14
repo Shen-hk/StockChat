@@ -1,0 +1,1 @@
+refactor(welcome): 迁移欢迎区组件位置

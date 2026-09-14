@@ -1,0 +1,3 @@
+feat(market): 新闻跑马灯 v2 + 速览弹层与流式 AI 摘要
+
+页面级 33ms 节拍驱动无边框跑马灯（点击暂停，reduceMotion 下静止）；点击后打开两段式速览弹层，与 AI 复盘卡同一线程节拍下流式展示摘要。NewsTape 把摘要拆到共享的 NewsSummaryBar；新增 NewsMarquee 组件。

@@ -1,0 +1,3 @@
+fix(appearance): 子页面通过 themeRebuildKey 重建主题子树
+
+AppTopBar 与 Scroller 子树会把主题状态缓存为首帧快照（R1），导致设置页切换主题/字号返回后不生效。改为在设置、API 配置、卡片画廊、预警中心、全局搜索、热点、财报日历与自选页统一用 vbind(themeRebuildKey) 包裹；Scroller 在重建后保留滚动位置。

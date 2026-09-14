@@ -1,0 +1,4 @@
+docs(agents): 补记录 R8——ohos 构建改由 Bash 驱动，hdc install 需用不带路径的文件名
+
+- PowerShell 工具会话会拦截原生 exe 调用，gradle/hvigor/hdc 改由 Bash 驱动，并导出 OHOS_SDK_HOME/DEVECO_SDK_HOME。
+- hdc install 传入 Windows 绝对路径会被路径转换搞乱，需改传不带路径的裸文件名。

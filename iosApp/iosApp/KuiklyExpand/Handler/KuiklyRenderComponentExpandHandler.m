@@ -14,7 +14,22 @@
  * @return 是否处理该图片设置，返回值为YES，则交给该代理实现，否则sdk内部自己处理
  */
 - (BOOL)hr_setImageWithUrl:(NSString *)url forImageView:(UIImageView *)imageView {
-    [imageView sd_setImageWithURL:[NSURL URLWithString:url]];
+    // Chat attachments are copied into the app cache and Kuikly passes them as
+    // file:// URLs. SDWebImage's downloader only handles network URLs, so load
+    // local files directly while leaving the existing remote-image path intact.
+    [imageView sd_cancelCurrentImageLoad];
+    if (url.length == 0) {
+        imageView.image = nil;
+        return YES;
+    }
+
+    NSURL *imageURL = [NSURL URLWithString:url];
+    if (imageURL.isFileURL) {
+        imageView.image = [UIImage imageWithContentsOfFile:imageURL.path];
+        return YES;
+    }
+
+    [imageView sd_setImageWithURL:imageURL];
     return YES;
 }
 /*

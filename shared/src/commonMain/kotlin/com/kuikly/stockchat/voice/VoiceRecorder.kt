@@ -47,6 +47,7 @@ internal class NativeBridgeVoiceRecorder(private val bridge: BridgeModule) : Voi
                 "partial" -> pendingTranscript = data?.optString("text").orEmpty()
                 "transcript" -> handleTranscript(data?.optString("text").orEmpty())
                 "error" -> onError(data?.optString("error").orEmpty().toVoiceError())
+                else -> if (data?.optString("code") == "-1") onError(VoiceError.UNAVAILABLE)
             }
         }
     }

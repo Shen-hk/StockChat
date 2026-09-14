@@ -1,0 +1,7 @@
+feat(riskmap): 收敛为两层结构、聊天式选股思维导图与流式 AI 解读块
+
+- SkyLayer 收敛为抱团/牵连两层（用户评审：颠簸/日程/热度没用），其视觉元素转为常驻装饰；删除时间刷组件与相关状态
+- 拖星牵引放宽到两图层（长按武装后）；页侧 LINK 守卫移除
+- 卡底新增 AI 详细解读：DeepSeek 流式通路 + 打字机平滑，事实就绪自动生成一次，未配置/失败回落端侧速览并如实标注
+- 导图重做：ChatThinkingProfile 六环标准选股思路 × 用户聊天关键词归档（端侧零 LLM），缺失环节可点一键补课问句；ChatSessionStore 新增 peekAllMessages 无副作用读取
+- ChatThinkingProfileTest 5 例 + StarLayoutTest 11 例全绿；Android 目标编译通过（JS 目标暂被并行会话 QuotePrefetchStore WIP 阻塞）

@@ -169,3 +169,14 @@ data class ProductConceptCardModel(
     override val cardType = "product-concept"
     override val expandMode = ExpandMode.ACCORDION
 }
+
+/** 公司详情页的已核验主营与赛道摘要；未知标的明确保留为待接入状态。 */
+data class CompanyOverviewCardModel(
+    val summary: String?,
+    val tags: List<String>,
+    val focus: String?,
+    override val cardId: String,
+) : CardModel {
+    override val cardType = "company-overview"
+    override val expandMode = ExpandMode.ACCORDION
+}

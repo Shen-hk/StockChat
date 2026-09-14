@@ -49,9 +49,12 @@ data class AlertMessage(
 /**
  * 预警收件箱状态存储（doc 30）：
  * - 已读 id 集合：消息本身是每次构建派生的，落盘只存「已读过哪些 id」；
+ * - 稍后看 id 集合：把暂时不处理的消息移出主收件箱，保留在独立分诊队列；
  * - 静默：按规则 symbol 静默价格异动、整类静默暴露变化（消息级一等动作，不藏设置里）；
  * - 免打扰：收盘后（15 点后）触发的异动合并进次日，不即时出卡；
- * - pinned 消息：风险地图「转预警」手工写入的事实消息，持久化且恒显示。
+ * - pinned 消息：风险地图「转预警」手工写入的事实消息，持久化且恒显示；
+ * - 删除：用户主动清除一条消息——pinned/extra 直接从持久化列表移除，派生消息
+ *   （每次打开都会重算）记入 dismissedIds，构建时过滤，直到 id 变化才会重现。
  *
  * 合规注释：本 store 不含任何远程推送、不含用户资产数据；消息只解释已发生的事
  * （doc 23 N-R6 维持：无推送）。
@@ -78,10 +81,33 @@ class AlertInboxStore(
         write(state.copy(readIds = (state.readIds + ids).toList().takeLast(MAX_READ_IDS).toSet())) // 集成修复：Set 无 takeLast，先转 List
     }
 
-    /** 未读数 = 消息里 id 不在已读集合中的条数（派生消息天然可能过期消失）。 */
+    /** 未读数 = 既未读、也未被分诊到「稍后看」的消息数。 */
     fun unreadCount(messages: List<AlertMessage>): Int {
-        val read = readIds()
-        return messages.count { it.id !in read }
+        val state = read()
+        return messages.count { it.id !in state.readIds && it.id !in state.deferredIds }
+    }
+
+    fun deferredIds(): Set<String> = read().deferredIds
+
+    /**
+     * 切换「稍后看」。加入队列同时记为已读，避免已经完成分诊的消息继续占用未读角标；
+     * 移出队列保留已读状态，回到主收件箱后不会制造一条伪新消息。
+     *
+     * @return true 表示切换后位于稍后看队列。
+     */
+    fun toggleDeferred(id: String): Boolean {
+        if (id.isEmpty()) return false
+        val state = read()
+        val isDeferred = id !in state.deferredIds
+        val nextDeferred = if (isDeferred) state.deferredIds + id else state.deferredIds - id
+        val nextRead = if (isDeferred) state.readIds + id else state.readIds
+        write(
+            state.copy(
+                readIds = nextRead.toList().takeLast(MAX_READ_IDS).toSet(),
+                deferredIds = nextDeferred.toList().takeLast(MAX_DEFERRED_IDS).toSet(),
+            ),
+        )
+        return isDeferred
     }
 
     fun mutedRuleSymbols(): Set<String> = read().mutedSymbols
@@ -109,6 +135,14 @@ class AlertInboxStore(
         write(state.copy(quietHours = enabled))
     }
 
+    fun notificationVibrationEnabled(): Boolean = read().notificationVibration
+
+    fun setNotificationVibrationEnabled(enabled: Boolean) {
+        val state = read()
+        if (state.notificationVibration == enabled) return
+        write(state.copy(notificationVibration = enabled))
+    }
+
     /** 风险地图「转预警」写入的持久化消息（含 pinned EXPOSURE），按写入时间正序返回。 */
     fun extraMessages(): List<AlertMessage> = read().extra
 
@@ -120,14 +154,35 @@ class AlertInboxStore(
         write(state.copy(extra = (state.extra + msg).takeLast(MAX_EXTRA)))
     }
 
+    fun dismissedIds(): Set<String> = read().dismissedIds
+
+    /**
+     * 用户主动删除一条消息（doc 30 收件箱）：pinned/extra 消息直接从持久化列表移除；
+     * 派生消息（MOVE/EVENT/EXPOSURE，规则引擎每次打开都会重算）本身不落盘，
+     * 记入 dismissedIds 让下次构建时过滤掉，直到触发条件变化产生新 id 才会再出现。
+     */
+    fun deleteMessage(id: String) {
+        if (id.isEmpty()) return
+        val state = read()
+        write(
+            state.copy(
+                extra = state.extra.filterNot { it.id == id },
+                dismissedIds = (state.dismissedIds + id).toList().takeLast(MAX_DISMISSED_IDS).toSet(),
+            ),
+        )
+    }
+
     // ── 磁盘（单 key，内部实现）──
 
     private data class InboxState(
         val readIds: Set<String> = emptySet(),
+        val deferredIds: Set<String> = emptySet(),
         val mutedSymbols: Set<String> = emptySet(),
         val exposureMuted: Boolean = false,
         val quietHours: Boolean = false,
+        val notificationVibration: Boolean = true,
         val extra: List<AlertMessage> = emptyList(),
+        val dismissedIds: Set<String> = emptySet(),
     )
 
     private fun read(): InboxState {
@@ -137,10 +192,13 @@ class AlertInboxStore(
             val obj = JSONObject(raw)
             InboxState(
                 readIds = stringSet(obj.optJSONArray("readIds")),
+                deferredIds = stringSet(obj.optJSONArray("deferredIds")),
                 mutedSymbols = stringSet(obj.optJSONArray("mutedSymbols")),
                 exposureMuted = obj.optBoolean("exposureMuted"),
                 quietHours = obj.optBoolean("quietHours"),
+                notificationVibration = if (obj.has("notificationVibration")) obj.optBoolean("notificationVibration") else true,
                 extra = parseExtra(obj.optJSONArray("extra")),
+                dismissedIds = stringSet(obj.optJSONArray("dismissedIds")),
             )
         }.getOrElse { InboxState() }
     }
@@ -148,10 +206,13 @@ class AlertInboxStore(
     private fun write(state: InboxState) {
         val obj = JSONObject()
         obj.put("readIds", JSONArray().apply { state.readIds.forEach { put(it) } })
+        obj.put("deferredIds", JSONArray().apply { state.deferredIds.forEach { put(it) } })
         obj.put("mutedSymbols", JSONArray().apply { state.mutedSymbols.forEach { put(it) } })
         obj.put("exposureMuted", state.exposureMuted)
         obj.put("quietHours", state.quietHours)
+        obj.put("notificationVibration", state.notificationVibration)
         obj.put("extra", JSONArray().apply { state.extra.forEach { put(messageJson(it)) } })
+        obj.put("dismissedIds", JSONArray().apply { state.dismissedIds.forEach { put(it) } })
         obj.put("savedAt", nowMillis())
         storage.setString(KEY, obj.toString())
     }
@@ -213,6 +274,8 @@ class AlertInboxStore(
     private companion object {
         const val KEY = "stockchat_alert_inbox_v1"
         const val MAX_READ_IDS = 200
+        const val MAX_DEFERRED_IDS = 100
         const val MAX_EXTRA = 50
+        const val MAX_DISMISSED_IDS = 200
     }
 }

@@ -1,0 +1,1 @@
+refactor(chat): 抽取欢迎区协调器

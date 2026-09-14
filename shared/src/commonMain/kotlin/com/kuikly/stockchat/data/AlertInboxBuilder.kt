@@ -65,12 +65,12 @@ object AlertInboxBuilder {
             val direction = if (quote.changePercent >= 0) "上涨" else "下跌"
             add(
                 AlertMessage(
-                    id = "MOVE:${rule.symbol}:${rule.thresholdPercent}",
+                    id = "MOVE:${rule.symbol}:${rule.thresholdPercent}:${rule.thresholdAmount}",
                     kind = AlertKind.MOVE,
                     symbol = rule.symbol,
                     name = name,
                     title = "${name}${direction}达到 ${formatPct(quote.changePercent)}",
-                    summary = "触发了你设置的 ±${trimNum(rule.thresholdPercent)}% 阈值，先核对板块与公告再下判断。",
+                    summary = ruleSummary(rule),
                     facts = listOf(
                         "① 板块是否同步：对照同板块行情，先区分是个股波动还是板块整体波动",
                         "② 有无最新公告：近 7 天公告可在详情页查看，公告常是异动的直接解释",
@@ -195,4 +195,9 @@ object AlertInboxBuilder {
 
     private fun trimNum(value: Double): String =
         if (value == value.toLong().toDouble()) value.toLong().toString() else value.toString()
+
+    private fun ruleSummary(rule: AlertRule): String = when {
+        rule.thresholdAmount > 0.0 -> "触发了你设置的 ±${trimNum(rule.thresholdPercent)}% 或 ±${trimNum(rule.thresholdAmount)} 元阈值，先核对板块与公告再下判断。"
+        else -> "触发了你设置的 ±${trimNum(rule.thresholdPercent)}% 阈值，先核对板块与公告再下判断。"
+    }
 }

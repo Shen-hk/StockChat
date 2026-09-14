@@ -29,6 +29,7 @@ internal data class SlashCommandPanelProps(
     val candidates: () -> ObservableList<SlashCommand>,
     val highlight: () -> Int,
     val suggest: (String) -> List<SlashCommand>,
+    val quickActions: List<SlashCommand>,
     val onSelect: (SlashCommand) -> Unit,
 )
 
@@ -139,8 +140,22 @@ internal object ComposerAssistantCandidatePanels {
             }
             vif({ props.unknown().isEmpty() && props.candidates().isEmpty() }) {
                 View {
-                    attr { height(36f); alignItemsCenter(); justifyContentCenter() }
-                    Text { attr { text("输入 / 唤起指令"); fontSizeScaled(12f); color(props.theme.textTertiary) } }
+                    attr { padding(10f); flexDirectionColumn() }
+                    Text { attr { text("快捷操作"); fontSizeScaled(11f); color(props.theme.textTertiary) } }
+                    View {
+                        attr { marginTop(7f); flexDirectionRow(); alignItemsCenter() }
+                        props.quickActions.forEach { command ->
+                            View {
+                                attr {
+                                    height(30f); marginRight(7f); paddingLeft(10f); paddingRight(10f)
+                                    alignItemsCenter(); justifyContentCenter(); borderRadius(8f)
+                                    backgroundColor(props.theme.brandSoft)
+                                }
+                                event { click { props.onSelect(command) } }
+                                Text { attr { text("${command.icon} /${command.name}"); fontSizeScaled(11f); color(props.theme.brand) } }
+                            }
+                        }
+                    }
                 }
             }
             vif({ props.unknown().isEmpty() && props.candidates().isNotEmpty() }) {

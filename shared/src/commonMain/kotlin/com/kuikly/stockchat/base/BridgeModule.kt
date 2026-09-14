@@ -90,6 +90,14 @@ internal class BridgeModule : Module() {
         callNativeMethod("hapticImpact", methodArgs, null)
     }
 
+    /** Android / iOS / 鸿蒙 Mock 股票预警：支持立刻或延时派发。 */
+    fun postMockStockAlert(vibrate: Boolean, delayMillis: Long = 0L) {
+        val methodArgs = JSONObject()
+        methodArgs.put("vibrate", vibrate)
+        methodArgs.put("delayMillis", delayMillis)
+        callNativeMethod("postMockStockAlert", methodArgs, null)
+    }
+
     fun openComposerMediaSource(source: String, callbackFn: CallbackFn? = null) {
         val methodArgs = JSONObject()
         methodArgs.put("source", source)

@@ -87,7 +87,7 @@ internal class RiskMapPage : BasePager() {
     private val glossaryStore get() = dependencies.glossaryStore
     private val riskSnapshotStore get() = dependencies.riskSnapshotStore
     private val skyAiDependencies by lazy { ChatFeatureGraph.forPager(pagerId) }
-    private val skyStorage by lazy { KuiklyKeyValueStorage(pagerId) }
+    private val skyStorage by lazy { platformKeyValueStorage(pagerId) }
     private val reduceMotion by lazy { platformPrefersReducedMotion() }
 
     // ── 数据域：rows / indexQuote / industries / events / limitUps / dataModeLabel ──
@@ -315,7 +315,7 @@ internal class RiskMapPage : BasePager() {
                         color(page.theme.brand)
                     }
                 }
-                event { click { page.openPage(Routes.SEARCH) } }
+                event { click { page.openPage(Routes.WATCHLIST) } }
             }
         }
     }

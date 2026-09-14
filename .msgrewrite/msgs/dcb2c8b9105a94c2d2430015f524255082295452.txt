@@ -1,0 +1,1 @@
+refactor(chat): 抽取卡片交互协调器

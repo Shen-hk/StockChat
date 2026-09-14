@@ -1,0 +1,1 @@
+refactor(chat): 抽取输入栏焦点协调器

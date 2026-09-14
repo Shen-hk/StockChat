@@ -1,0 +1,1 @@
+refactor(chat): 隔离卡片面板协调器

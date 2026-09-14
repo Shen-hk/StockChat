@@ -656,7 +656,9 @@ private fun ViewContainer<*, *>.StockIsland(
                         }
                         event {
                             click {
-                                if (expanded()) quote()?.let { onToggleWatchlist(it.symbol) }
+                                // 自选是明确的独立按钮；折叠态仍可见就必须可点，不能要求用户
+                                // 先猜到要展开卡片才允许加入。
+                                quote()?.let { onToggleWatchlist(it.symbol) }
                             }
                         }
                     }
@@ -753,7 +755,14 @@ private fun ViewContainer<*, *>.StockIsland(
                 // The visible handle stays intentionally small, while its
                 // capture area is large enough for a reliable one-thumb swipe.
                 // Up dismisses; down continues into the current stock detail.
-                IslandGestureHandle(gestureMotion, onGesture)
+                IslandGestureHandle(
+                    gestureMotion = gestureMotion,
+                    enabled = {
+                        expanded() && termEntry() == null && !dropActive() &&
+                            !compareVisible() && gestureMotion().phase != IslandGesturePhase.OPENING_DETAIL
+                    },
+                    onGesture = onGesture,
+                )
                 event { click { onInteraction() } }
             }
 
@@ -856,7 +865,14 @@ private fun ViewContainer<*, *>.StockIsland(
                         color(theme.textSecondary)
                     }
                 }
-                IslandGestureHandle(gestureMotion, onGesture)
+                IslandGestureHandle(
+                    gestureMotion = gestureMotion,
+                    enabled = {
+                        expanded() && termEntry() != null && !dropActive() &&
+                            !compareVisible() && gestureMotion().phase != IslandGesturePhase.OPENING_DETAIL
+                    },
+                    onGesture = onGesture,
+                )
                 event { click { onInteraction() } }
             }
 
@@ -1112,6 +1128,7 @@ private fun islandSketchPoints(q: Quote): List<QuotePoint> {
  */
 private fun ViewContainer<*, *>.IslandGestureHandle(
     gestureMotion: () -> IslandGestureMotion,
+    enabled: () -> Boolean,
     onGesture: (String, Float) -> Unit,
 ) {
     View {
@@ -1121,7 +1138,11 @@ private fun ViewContainer<*, *>.IslandGestureHandle(
             height(44f)
             alignItemsCenter()
             capture(CaptureRule.pan(CaptureRuleDirection.VERTICAL))
-            touchEnable(motion.phase != IslandGesturePhase.OPENING_DETAIL)
+            // H5 descendants can opt back into pointer events even when their
+            // transparent parent is disabled.  Keep this capture layer off
+            // until its card is actually visible, otherwise it covers the
+            // collapsed title island and makes the primary click unreachable.
+            touchEnable(enabled())
         }
         View {
             attr {
