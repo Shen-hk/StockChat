@@ -1,5 +1,6 @@
 param(
-    [string]$DeviceId = "127.0.0.1:5555"
+    [Parameter(Mandatory = $true)]
+    [string]$DeviceId
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,8 +71,16 @@ try {
     }
 
     & $hdc -t $DeviceId shell aa force-stop com.kuikly.stockchat
-    & $hdc -t $DeviceId install -r $hap.FullName
-    if ($LASTEXITCODE -ne 0) { throw "HAP installation failed." }
+    # hdc expects a bare HAP filename. Passing an absolute Windows path through
+    # a Unix-like shell can rewrite the path and make installation fail.
+    Push-Location $hap.DirectoryName
+    try {
+        & $hdc -t $DeviceId install -r $hap.Name
+        if ($LASTEXITCODE -ne 0) { throw "HAP installation failed." }
+    }
+    finally {
+        Pop-Location
+    }
     & $hdc -t $DeviceId shell aa start -a EntryAbility -b com.kuikly.stockchat
     if ($LASTEXITCODE -ne 0) { throw "App launch failed." }
 

@@ -1,5 +1,6 @@
 param(
-    [string]$DeviceId = "127.0.0.1:5555"
+    [Parameter(Mandatory = $true)]
+    [string]$DeviceId
 )
 
 $projectScript = Join-Path $PSScriptRoot "..\runOhosApp.ps1"

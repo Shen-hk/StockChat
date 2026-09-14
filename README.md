@@ -98,38 +98,98 @@ SHA-256：`7749A8742BCD92206F2D00C143AC9E4BDE6ED8B8A0BEB1A5403B57BEDCFC09B1`
 
 ## 项目架构
 
-### 总览
+StockChat 采用 **Kotlin Multiplatform + Kuikly 的共享优先架构**：产品规则、页面和绝大多数 UI 都在 `shared` 中实现；各端宿主只负责启动 Kuikly、提供系统能力和打包。这样一个功能从聊天流到行情详情的行为，在 Android、iOS、OpenHarmony 和 H5 上有相同的业务定义，而不是四套代码分别追赶。
+
+### 先看仓库：模块各自负责什么
+
+```text
+StockChat/
+├── shared/                       共享业务与 Kuikly UI：项目的主体
+│   └── src/
+│       ├── commonMain/            四端共用的页面、领域逻辑、协议、数据抽象
+│       ├── commonTest/            可脱离 UI 运行的单元测试
+│       ├── androidMain/           Android 的 actual 实现（OkHttp、时钟等）
+│       ├── iosMain/               iOS 的 actual 实现（Darwin、系统能力等）
+│       ├── jsMain/                H5 的 actual 实现（浏览器存储、路由等）
+│       └── ohosArm64Main/         OpenHarmony 的 actual 实现与兼容回退
+├── androidApp/                    Android 宿主：Activity、Android 打包配置
+├── iosApp/                        iOS 宿主：Xcode 工程、Pod 与 UIKit 入口
+├── h5App/                         Web 宿主：Kotlin/JS 构建产物与网页入口
+├── ohosApp/                       鸿蒙宿主：ArkTS/Native 工程、HAP 打包配置
+├── assets/                        README 图片、演示视频等对外资源
+├── docs/architecture/             架构规则与门禁说明
+└── scripts/                       构建、H5 回归和架构检查脚本
+```
+
+**日常开发默认从 `shared/src/commonMain` 开始。** 只有某项能力确实依赖操作系统或运行时，才通过 Kotlin 的 `expect/actual` 下沉到对应平台源集；不要为同一个产品功能在四个宿主目录重复实现。
+
+### 共享代码的业务地图
 
 ```
 shared/src/commonMain/kotlin/com/kuikly/stockchat
-├── page/                  Kuikly 页面（13 个业务页 + components/ 共享组件）
-├── chat/                  聊天域：ViewModel、会话抽屉、欢迎区、输入、实体、灵动岛
-├── detail/  watchlist/  risk/   详情、自选、风险域编排
-├── cards/                 14 类卡片渲染器与三密度体系
-├── protocol/              卡片协议解析（AiResponseLexer / CardPayloadParser）
-├── chart/                 图表数据模型（commonMain 纯 Kotlin）
-├── composer/ richtext/ voice/   输入编排、实体富文本、语音
-├── data/                  端口与实现：provider（行情 / AI）、storage、mock
-├── foundation/ common/ base/    设计 token、外观体系、路由与工具
+├── page/                  13 个 Kuikly 页面；仅做页面装配、路由和 UI effect 适配
+├── chat/                  聊天域：会话、流式回复、欢迎区、实体与抽屉状态
+├── detail/ watchlist/ risk/     个股详情、自选、风险等 feature 的 domain / state / component
+├── cards/                 14 类结构化卡片渲染器，以及 FULL / COMPACT / MINI 三种密度
+├── protocol/              AI 输出协议：SSE 切分、意图块识别、CardPayload 解析与容错
+├── chart/                 分时/K 线的数据模型、坐标计算和 Canvas 绘制算法（纯 Kotlin）
+├── composer/ richtext/ voice/   输入编排、Markdown/实体富文本、语音交互
+├── data/                  数据端口与实现：AI、行情、缓存、配置、存储、确定性离线数据
+├── foundation/            跨 feature 可复用的设计 token、基础 UI、图标和工具
+├── common/ base/          路由、平台策略、通用模型与基础能力
 └── app/
-    ├── assembly/          装配根（FeatureGraph，唯一构造 Provider 的地方）
-    └── platform/          Kuikly 适配器
+    ├── assembly/          依赖装配根（FeatureGraph）；Provider 在这里创建并注入 feature
+    └── platform/          Kuikly/浏览器存储等适配器
 ```
 
-### 四层架构与依赖方向
+可以把目录按职责理解为四类：`page` 负责“**显示与转场**”，各 feature 负责“**状态和交互**”，`data` 负责“**事实与持久化**”，`foundation/common` 负责“**任何 feature 都可依赖的基座**”。`cards`、`chart`、`protocol` 是跨 feature 的垂直能力，不承担页面路由或数据源构造。
+
+### 四层依赖：谁可以依赖谁
 
 | 层 | 职责 | 依赖方向 |
 | :--- | :--- | :--- |
-| **page（页面层）** | 业务页面与共享组件 | → 域编排 → data 端口 |
-| **domain（域编排）** | 聊天、自选、风险、详情、市场、术语等业务用例 | → data 端口 |
-| **data（数据端口）** | Provider、Repository、Mock、Storage | — 不依赖 UI |
-| **platform（适配层）** | Kuikly 适配、平台差异（iOS/Android/OHOS/Web） | → 平台 SDK |
+| **Page** | `page/*Page.kt`；组装页面、接收路由参数、承接一次性 UI effect | → feature component/state → data 的公开端口 |
+| **Component** | 各 feature 的 `component/` 与基础 UI；只渲染只读状态并发出 Action | → state/domain；不直接请求网络或读存储 |
+| **State / Domain** | `state/`、Coordinator、Reducer、领域模型；拥有状态迁移和业务用例 | → data 端口；可用 fake 在 commonTest 中验证 |
+| **Data / Platform** | Provider、Repository、Cache、Storage 与平台 `actual` 实现 | → 网络、存储、平台 SDK；绝不反向依赖 UI |
 
-- **Page 不直接构造 Provider**——唯一装配点在 `app/assembly/FeatureGraph`。
-- **Kuikly 适配器仅在 `app/platform` 内**，跨页面的 UI 行为不外溢到端口层。
-- **规则由架构门禁强制**：白名单 + 基线双清单管理（`./gradlew :shared:architectureCheck`）。
+```text
+Page ──────▶ Component ──────▶ State / Domain ──────▶ Data port / Repository
+  │                │                    │                       │
+  │                └──── reads state ───┘                       ▼
+  └── route / UI effect                                    Network · Cache · Storage
 
-### 聊天请求链路（意图与数据分离）
+foundation / common  ◀──── 可被上面所有层依赖；自身不能依赖任一 feature 或 page
+platform actual      ◀──── 只在边缘替换 HTTP、存储、时钟、导航与渲染策略
+```
+
+- **页面不直接构造 Provider**：`app/assembly/ChatFeatureGraph`、`MarketFeatureGraph` 等是依赖的唯一装配点。
+- **组件不直接访问 Provider / Repository / Storage**：组件参数应是只读数据和回调；状态层决定何时加载及如何降级。
+- **平台差异不外溢**：公共代码依赖 `expect` 声明或平台端口；`androidMain`、`iosMain`、`jsMain`、`ohosArm64Main` 提供 `actual`。
+- **规则不是建议**：`./gradlew :shared:architectureCheck` 会扫描依赖方向；白名单只记录已有、带删除计划的债务。完整规则见 [架构分层规则](docs/architecture/package-rules.md)。
+
+### 从启动到页面：运行时如何装配
+
+```text
+Android / iOS / H5 / OpenHarmony 宿主
+                 │ 启动 Kuikly 页面并传递路由参数
+                 ▼
+          shared/page/*Page
+                 │ 从 FeatureGraph 取得 feature dependencies
+                 ▼
+       feature state / coordinator / component
+            │                       │
+            │ UI state              └── Action（提问、刷新、收藏、切换）
+            ▼
+       Kuikly reactive UI  ◀─────────────────────────────────────┘
+                 │
+                 ▼
+   data Provider / Repository → HTTP、缓存、配置、离线数据
+```
+
+页面是短生命周期的 UI 入口；会话、加载、错误、刷新和选择等可测试状态应该落在 feature 的状态机或协调器中。依赖通过 Graph 注入，因而单测可以传入 Fake Provider、Fake Scheduler 或内存 Storage，而无需启动任一端的 Kuikly 运行时。
+
+### 聊天请求链路：模型给意图，端侧给事实
 
 ```
 用户问题 / 语音
@@ -147,6 +207,8 @@ ChatViewModel（依赖经 ChatDependencies 注入）
 混排回答（Markdown / 行情卡 / 图片）──卡片或实体点击──▶ StockDetailPage
 ```
 
+这里最重要的边界是：**模型不拥有行情事实。** AI 只返回 Markdown 和卡片“意图”；`CardPayloadParser` 将意图变为安全的协议对象，`QuoteRepository` 再用真实接口、缓存或离线数据补齐价格、涨跌幅和 K 线。这样即使模型输出过时或不完整，卡片仍可显示数据来源与抓取时间。
+
 ### 数据层降级策略
 
 ```
@@ -161,6 +223,19 @@ ChatViewModel（依赖经 ChatDependencies 注入）
    │ UI 标注时间 │              │  UI 标注"离线演示"   │
    └────────────┘              └────────────────────┘
 ```
+
+### 新功能应该放在哪里
+
+| 需求 | 推荐落点 | 不应该做的事 |
+| :--- | :--- | :--- |
+| 新页面或新路由 | `page/`，由已有 Graph 注入依赖 | 在页面里 new Provider、维护复杂定时器 |
+| 某一业务的状态、刷新与交互规则 | 对应 feature 的 `state/` / `domain/` | 让组件直接修改存储或发网络请求 |
+| 新卡片协议或流式解析规则 | `protocol/` + `cards/` | 把未验证的 AI 原文直接当行情数值展示 |
+| 复用 UI / token / 图标 | `foundation/` | 向历史 `page/components/` 新增通用文件 |
+| API、缓存、配置或 Mock | `data/` | 从数据层 import Page、View 或导航能力 |
+| 平台专有实现 | 对应 `*Main` 源集的 `actual` | 在 commonMain 中散落平台条件判断 |
+
+提交前至少运行 `./gradlew :shared:architectureCheck`；涉及共享业务逻辑时再运行 `./gradlew :shared:testDebugUnitTest`。这样新增功能既能跨端复用，也不会逐步把页面变成数据和时序的“万能入口”。
 
 ---
 
@@ -237,27 +312,43 @@ open iosApp/iosApp.xcworkspace   # 选 iosApp target → Run (⌘R)
 
 ### OpenHarmony（鸿蒙）
 
-Windows + DevEco Studio + hvigor 环境；需 `OHOS_SDK_HOME` 与 `DEVECO_SDK_HOME` 同条 `&&` 链内 export。
+Windows + DevEco Studio 环境。目前直接在 DevEco Studio 打开 `ohosApp`，选择 `entry` 模块后点击 **Run** 即可启动；这是日常调试的首选路径。**当前仅支持 arm64-v8a 真机，不支持模拟器。**
+
+共享 Kotlin 代码或原生库变更后，如需在命令行完成「构建 → 安装 → 启动」，从仓库根目录执行：
+
+```powershell
+.\runOhosApp.ps1 -DeviceId "<真机设备ID>"
+```
+
+脚本会设置 SDK 环境、用 OHOS 专用 settings 编译 `libshared.so`、同步所需头文件和资源、打包签名 HAP 并安装启动。先用 `hdc list targets` 查看已连接**真机**的设备 ID；不要填写模拟器常见的 `127.0.0.1:5555`。
+
+如果需要逐步执行，请在 **Bash** 中使用以下命令（将 DevEco 路径换成自己的安装位置）：
 
 ```bash
-# 1. 构建 libshared.so（独立 settings 文件）
-./gradlew -c settings.ohos.gradle.kts :shared:linkDebugSharedOhosArm64 --no-daemon
+export OHOS_SDK_HOME="C:/Users/shenhk/DevEco Studio/sdk/default/openharmony"
+export DEVECO_SDK_HOME="C:/Users/shenhk/DevEco Studio"
+
+# 1. 构建 libshared.so（必须使用独立 settings 文件）
+./gradlew.bat -c settings.ohos.gradle.kts :shared:linkDebugSharedOhosArm64 --no-daemon
 
 # 2. so 拷到鸿蒙工程 + 头文件同步
-cp shared/build/ohos/arm64-v8a/libshared.so ohosApp/entry/libs/arm64-v8a/
-# （头文件与页面资源同步脚本见 ohosApp/entry/oh-package.json5 注释）
+cp shared/build/bin/ohosArm64/debugShared/libshared.so ohosApp/entry/libs/arm64-v8a/
+cp shared/build/bin/ohosArm64/debugShared/libshared_api.h ohosApp/entry/src/main/cpp/
 
-# 3. hvigor 打包（Windows 下用 Bash 跑，PowerShell 跑会秒退）
-cd ohosApp && node hvigor.js --mode module -p module=entry@default assembleHap --no-daemon --no-parallel
+# 3. hvigor 打包；资源由 entry/hvigorfile.ts 自动同步
+cd ohosApp
+node "$DEVECO_SDK_HOME/tools/hvigor/hvigor/bin/hvigor.js" \
+  --mode module -p module=entry@default -p product=default \
+  -p requiredDeviceType=phone assembleHap --analyze=normal --parallel
 
-# 4. 安装到设备 / 启动
-hdc install -r entry/build/default/outputs/default/entry-default.hap
-hdc shell aa start -b com.kuikly.stockchat -a EntryAbility
+# 4. 安装到设备 / 启动：进入产物目录，hdc 只接收裸文件名
+cd entry/build/default/outputs/default
+"$OHOS_SDK_HOME/toolchains/hdc.exe" -t <设备ID> install -r entry-default-signed.hap
+"$OHOS_SDK_HOME/toolchains/hdc.exe" -t <设备ID> shell aa start -b com.kuikly.stockchat -a EntryAbility
 ```
 
 **特殊情况**：
-- 当前为 arm64-v8a 配置，请使用真实设备。
-- 别加 `--parallel`，鸿蒙 hvigor 会 OOM。
+- 当前为 arm64-v8a 配置，请使用真实设备；模拟器不受支持。
 - 设备锁屏时 `aa start` 报错 `10106102`——请用户先手动解锁再启动。
 - 签名 `signingConfigs`：material 内 7 字段全必选（含 `certpath`），`store/keyPassword` ≥ 32 字符；本机 credential 在 IDE vault 内，AI 不可达，请使用自己的证书。
 - 临时 Mock：见上文「数据来源说明」。
