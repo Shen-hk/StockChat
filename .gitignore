@@ -16,6 +16,16 @@ rename_native.py
 .cxx
 local.properties
 *.so
+# 例外：鸿蒙端必须【预置】的第三方原生库，不是可再生的构建产物。
+# 缺 libpbcurlwrapper.so 会让 Kotlin/Native 链接阶段直接失败
+# （shared/build.ohos.gradle.kts 里的 linkerOpts("-lpbcurlwrapper")），
+# 因而必须入库，否则新克隆一律跑不起来。来源与许可见
+# ohosApp/THIRD_PARTY_NOTICES.md（KuiklyBase NetworkKMM，Apache-2.0）。
+# 注意：libshared.so / libshared_api.h 是本地构建产物，仍由
+# ohosApp/.gitignore 忽略，不要在这里放行。
+!ohosApp/entry/libs/arm64-v8a/libpbcurlwrapper.so
+!ohosApp/entry/libs/arm64-v8a/libc++_shared.so
+!ohosApp/entry/libs/arm64-v8a/libopenssl.so
 node_modules
 Pods
 Pods/*
