@@ -245,6 +245,17 @@ ChatViewModel（依赖经 ChatDependencies 注入）
 >
 > **共同的配置动作**：App 启动后进入聊天页 → 右上角「⋮」→「API 设置」，填入 API 地址 / 模型名 / Key，先「测试连接」通过再保存；配置只存当前设备，**不写源码、不写 `local.properties`、不写 URL 参数、不写 `BuildConfig`**。
 
+### 一次性迁移：`.kotlin` 构建缓存已移出版本库（2026-09-14）
+
+历史提交曾把 Kotlin 插件的本机构建缓存（`.kotlin/` 下 8 个文件）误入库，内容是构建机器的绝对路径，导致每台机器构建后 `git status` 都出现无意义的「已修改」。现已解除跟踪（`.gitignore` 早已覆盖 `.kotlin/`），影响如下：
+
+- **全新克隆**：无感，构建后 `.kotlin/` 由 gitignore 自动忽略，`git status` 保持干净。
+- **在旧版本基础上构建过的本地仓库**：pull 时 git 会提示本地 `.kotlin` 改动会被合并覆盖并拒绝执行，这是预期行为。先丢弃缓存改动再拉取即可（**一次性**，之后不再出现）：
+
+```bash
+git restore .kotlin && git pull    # 或 git checkout -- .kotlin
+```
+
 ### 数据来源说明（请阅读后再调试各端）
 
 | 端 | 行情数据来源 | 备注 |
