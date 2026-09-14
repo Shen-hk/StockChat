@@ -291,24 +291,86 @@ adb shell am start -n com.kuikly.stockchat/.KuiklyRenderActivity
 
 ### iOS
 
-macOS + Xcode + CocoaPods 环境。
+macOS + Xcode 15.3+（验证环境：Xcode 15.3 / iOS 17.4 SDK）+ CocoaPods + JDK 17。
+
+**先确认芯片架构，后面命令里的 `archs` 参数跟它走**：
+
+| 你的 Mac 芯片 | 模拟器 `archs` | 真机 `archs` |
+| :--- | :--- | :--- |
+| Intel | `x86_64` | `arm64` |
+| Apple Silicon（M1/M2/M3…） | `arm64` | `arm64` |
+
+#### 方式 A：Xcode 图形界面跑（三步）
 
 ```bash
-# 1. 同步 KMP Framework 给 iOS
-./gradlew :shared:linkPodDebugFrameworkIosX64
+# 1. 编译并把 KMP Framework 同步到 Pod 引用位置（约 1–2 分钟，已构建过会秒过）
+./gradlew :shared:syncFramework -Pkotlin.native.cocoapods.platform=iphonesimulator -Pkotlin.native.cocoapods.archs=x86_64 -Pkotlin.native.cocoapods.configuration=Debug
+#    Apple Silicon 把 archs=x86_64 改为 archs=arm64；真机调试用 -Pkotlin.native.cocoapods.platform=iphoneos
+
 # 2. 安装 Pod 依赖
 cd iosApp && ./install-pods.sh && cd ..   # pod install 的兜底封装：自动绕过系统 Ruby 2.6 的
                                           # concurrent-ruby/activesupport logger 兼容坑与 locale 编码坑
 
 # 3. 用 Xcode 打开工作空间
-open iosApp/iosApp.xcworkspace   # 选 iosApp target → Run (⌘R)
+open iosApp/iosApp.xcworkspace   # 选 iosApp target → Run (⌘R)，Xcode 会按所选目标自动重新同步 Framework
 ```
 
-**特殊情况**：
+#### 方式 B：纯命令行全流程（不打开 Xcode，直接推到模拟器）
 
-- `pod install` 报 `uninitialized constant ... Logger` 或 `Encoding::CompatibilityError` 时，直接用上一步的 `./install-pods.sh`（仓库已内置，自动探测绕过，正常环境下与 `pod install` 等价）；其余失败多跑 `cd iosApp && pod repo update --verbose`。
-- 模拟器与真机要分别 sync framework：模拟器用上一步 `IosX64`；真机用 `./gradlew :shared:linkPodDebugFrameworkIosArm64`。
-- 暂时未实现桥接模块：上传、语音模块（详见 §「已知缺口」）。
+> 全程已在 Intel Mac（Xcode 15.3）从零验证通过。改了 Kotlin 共享代码后，只需重跑第 1、4、6 步。
+
+```bash
+# 1. Framework 同步（命令同方式 A 第 1 步）
+./gradlew :shared:syncFramework -Pkotlin.native.cocoapods.platform=iphonesimulator -Pkotlin.native.cocoapods.archs=x86_64 -Pkotlin.native.cocoapods.configuration=Debug
+
+# 2. 安装 Pod 依赖
+cd iosApp && ./install-pods.sh && cd ..
+
+# 3. 编 Pods 依赖（OpenKuiklyIOSRender / SDWebImage / shared）——不能跳过，
+#    命令行 -project 直构不会自动编 Pods，跳过会报 no such module 'stockchat'
+cd iosApp && xcodebuild -project Pods/Pods.xcodeproj -target Pods-iosApp \
+  -configuration Debug -sdk iphonesimulator \
+  ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES build && cd ..
+
+# 4. 编主工程（产物 iosApp/build/Debug-iphonesimulator/iosApp.app）
+cd iosApp && xcodebuild -project iosApp.xcodeproj -target iosApp \
+  -configuration Debug -sdk iphonesimulator \
+  ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES \
+  ASSETCATALOG_COMPILER_APPICON_NAME= ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME= build && cd ..
+
+# 5. 准备模拟器：找一台可用的 iPhone 并启动（以 iPhone 13 为例）
+xcrun simctl list devices available | grep "iPhone"      # 挑一台，记下 UDID
+xcrun simctl boot <UDID> 2>/dev/null || true             # 已启动会静默跳过
+open -a Simulator                                        # 调出模拟器窗口
+
+# 6. 安装 + 启动（bundle id 固定为 orgIdentifier.iosApp）
+xcrun simctl install <UDID> iosApp/build/Debug-iphonesimulator/iosApp.app
+xcrun simctl launch <UDID> orgIdentifier.iosApp
+
+# （可选）确认进程存活：有输出即存活
+xcrun simctl spawn <UDID> launchctl list | grep iosApp
+```
+
+#### 真机调试
+
+1. 第 1 步命令换成 `-Pkotlin.native.cocoapods.platform=iphoneos -Pkotlin.native.cocoapods.archs=arm64`；
+2. USB 连接真机，在 Xcode 里选设备 Run（方式 A 第 3 步），签名使用自己的开发者证书。
+
+#### 排坑快查（iOS）
+
+| 现象 | 原因与修法 |
+| :--- | :--- |
+| `pod install` 报 `Kotlin framework 'stockchat' doesn't exist yet` | 第 1 步没跑或产物被清理，重跑第 1 步再 `./install-pods.sh` |
+| `pod install` 报 `uninitialized constant ... Logger` / `Encoding::CompatibilityError` | 用 `./install-pods.sh`（仓库内置，自动探测绕过）；仍失败跑 `cd iosApp && pod repo update --verbose` |
+| `xcodebuild: error: You cannot specify targets with a workspace` | `-workspace` 与 `-target` 互斥。命令行构建统一用 `-project`（见方式 B）；workspace+scheme 只适合 Xcode GUI |
+| `xcodebuild: error: Found no destinations for the scheme ...`（exit 70） | 命令行下 workspace+scheme 解析不出 destination（本仓库验证环境如此），改走方式 B 的 `-project` 两步构建 |
+| 链接报 `Undefined symbols for architecture arm64`（KRBaseModule / KuiklyRenderBridge 等） | 没指定 destination 时 xcodebuild 会把 arm64 也编进来，而 Framework 只有当前芯片架构。命令行构建必须带 `ARCHS=x86_64 ONLY_ACTIVE_ARCH=YES`（Apple Silicon 相应改为 `ARCHS=arm64`） |
+| `no such module 'stockchat'` 或找不到 `OpenKuiklyIOSRender/*.h` | 跳过了方式 B 第 3 步（Pods targets 没编），或 `shared/build/cocoapods/framework` 被清理（重跑第 1 步） |
+| `xcrun: error: unable to find utility "simctl"` | `xcode-select` 指向了 Command Line Tools。临时方案：命令前加 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`（Xcode 装在别处则写实际路径）；一劳永逸：`sudo xcode-select -s /Applications/Xcode.app/Contents/Developer` |
+| actool 报 `Failed to locate any simulator runtime` | 本机没装与 SDK 匹配的模拟器 runtime（如只装了 iOS 15.2 而 SDK 是 17.4）。构建加 `ASSETCATALOG_COMPILER_APPICON_NAME= ASSETCATALOG_COMPILER_LAUNCHIMAGE_NAME=` 绕过（项目无自定义 AppIcon，不影响页面），或去 Xcode → Settings → Platforms 下载对应 runtime |
+| 模拟器上一直是旧包 | 产物被缓存。全清重编：`rm -rf iosApp/build shared/build/cocoapods/framework` 后从方式 B 第 1 步重来 |
+
+> iOS 宿主桥当前未实现：图片/文件上传与语音录制在 iOS 端点按钮无响应（Android / 鸿蒙 / H5 正常），其余功能不受影响。
 
 ### OpenHarmony（鸿蒙）
 
@@ -457,7 +519,7 @@ PAGES="ChatPage StockDetailPage" bash scripts/h5_regression.sh
 | Android Debug APK | `androidApp/build/outputs/apk/debug/androidApp-debug.apk` | 自构建 |
 | Android Release APK | `releases/StockChat-android-release.apk` | 仓库内置，debug keystore 签名（评审 / 内测） |
 | OpenHarmony HAP | `ohosApp/entry/build/default/outputs/default/` | 自构建 |
-| iOS | `iosApp/iosApp.xcworkspace` | Xcode Run |
+| iOS | `iosApp/build/Debug-iphonesimulator/iosApp.app`（自构建） | 方式 A Xcode Run / 方式 B 命令行，见 §「iOS」 |
 
 > Release 签名：仓库自带的 Release APK 由本机签名证书签出，仅用于评审 / 内测。请勿转给他人使用；正式分发请按合规要求自行签。
 
