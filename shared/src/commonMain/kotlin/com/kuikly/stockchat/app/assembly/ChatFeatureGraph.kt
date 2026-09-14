@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.app.assembly
 
-import com.kuikly.stockchat.app.platform.KuiklyKeyValueStorage
 import com.kuikly.stockchat.app.platform.KuiklyPlatformScheduler
+import com.kuikly.stockchat.app.platform.platformKeyValueStorage
 import com.kuikly.stockchat.chat.ChatDependencies
 import com.kuikly.stockchat.chat.ChatSessionStore
 import com.kuikly.stockchat.data.AlertStore
@@ -40,7 +40,7 @@ class ChatFeatureDependencies(
 object ChatFeatureGraph {
     fun forPager(
         pagerId: String,
-        storage: KeyValueStorage = KuiklyKeyValueStorage(pagerId),
+        storage: KeyValueStorage = platformKeyValueStorage(pagerId),
     ): ChatDependencies {
         val market = MarketFeatureGraph.forPager(pagerId, storage)
         val scheduler = KuiklyPlatformScheduler(pagerId)
@@ -63,7 +63,7 @@ object ChatFeatureGraph {
      */
     fun aiConfigStore(
         pagerId: String,
-        storage: KeyValueStorage = KuiklyKeyValueStorage(pagerId),
+        storage: KeyValueStorage = platformKeyValueStorage(pagerId),
     ): AiConfigStore = AiConfigStore(storage)
 
     /**
@@ -76,7 +76,7 @@ object ChatFeatureGraph {
     /** Chat Feature 最小依赖集入口（doc 47 §4(5)）。 */
     fun feature(
         pagerId: String,
-        storage: KeyValueStorage = KuiklyKeyValueStorage(pagerId),
+        storage: KeyValueStorage = platformKeyValueStorage(pagerId),
     ): ChatFeatureDependencies {
         val market = MarketFeatureGraph.forPager(pagerId, storage)
         return ChatFeatureDependencies(

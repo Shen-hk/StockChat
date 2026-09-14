@@ -1,8 +1,8 @@
 package com.kuikly.stockchat.app.assembly
 
-import com.kuikly.stockchat.app.platform.KuiklyKeyValueStorage
 import com.kuikly.stockchat.app.platform.KuiklyPlatformScheduler
 import com.kuikly.stockchat.app.platform.KuiklyQuoteJsonClient
+import com.kuikly.stockchat.app.platform.platformKeyValueStorage
 import com.kuikly.stockchat.data.AlertInboxStore
 import com.kuikly.stockchat.data.AlertStore
 import com.kuikly.stockchat.data.GlossaryStore
@@ -67,7 +67,7 @@ class MarketDependencies(
 object MarketFeatureGraph {
     fun forPager(
         pagerId: String,
-        storage: KeyValueStorage = KuiklyKeyValueStorage(pagerId),
+        storage: KeyValueStorage = platformKeyValueStorage(pagerId),
     ): MarketDependencies {
         val scheduler = KuiklyPlatformScheduler(pagerId)
         val quoteJson = KuiklyQuoteJsonClient(pagerId)

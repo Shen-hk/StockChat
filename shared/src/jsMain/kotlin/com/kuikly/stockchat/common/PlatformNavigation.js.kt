@@ -2,8 +2,13 @@ package com.kuikly.stockchat.common
 
 import kotlinx.browser.window
 
-internal actual fun platformOpenPage(page: String): Boolean {
-    window.location.assign("${window.location.origin}${window.location.pathname}?page_name=$page")
+internal actual fun platformOpenPage(page: String, params: Map<String, String>): Boolean {
+    val encode: (String) -> String = { value -> window.asDynamic().encodeURIComponent(value) as String }
+    val query = buildList {
+        add("page_name=${encode(page)}")
+        params.forEach { (key, value) -> add("${encode(key)}=${encode(value)}") }
+    }.joinToString("&")
+    window.location.assign("${window.location.origin}${window.location.pathname}?$query")
     return true
 }
 

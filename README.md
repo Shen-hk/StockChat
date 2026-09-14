@@ -8,7 +8,7 @@
 
 基于 Kotlin Multiplatform 与腾讯 Kuikly 构建的跨端 AI 股票工作台。用户可以用自然语言提问，在流式回答中直接查看可点击的实时行情卡片，再进入个股详情继续研究走势、事件与风险。
 
-项目用一套共享业务与 UI 代码运行在 **Android / iOS / OpenHarmony（鸿蒙）**，把 AI 对话、行情数据、结构化卡片、金融图表和会话上下文串成一条完整链路。
+项目用一套共享业务与 UI 代码运行在 **Android / iOS / OpenHarmony（鸿蒙）/ H5（Web）**，把 AI 对话、行情数据、结构化卡片、金融图表和会话上下文串成一条完整链路。
 
 [Kotlin Multiplatform] · [Kuikly 2.25.0] · [JDK 17] · [Gradle 8.7] · [AGP 8.5.2]
 
@@ -16,7 +16,7 @@
 
 <div align="center">
 
-[项目亮点](#项目亮点) · [架构设计](#项目架构) ·  [三端运行](#三端演示) · [测试质量](#测试与代码质量)
+[项目亮点](#项目亮点) · [架构设计](#项目架构) ·  [四端运行](#四端演示视频) · [测试质量](#测试与代码质量)
 
 </div>
 
@@ -24,39 +24,40 @@
 
 ## 一分钟体验路径
 
-1. 播放任意一个三端演示视频，查看「聊天提问 → 行情卡片 → 个股详情 → 返回追问」主链路。
+1. 播放任意一个四端演示视频，查看「聊天提问 → 行情卡片 → 个股详情 → 返回追问」主链路。
 2. Android 用户可直接安装仓库内的 Release APK；其他平台按下文步骤自行构建。
 3. 进入「API 设置」，推荐「小米 MiMo」(有多模态)，填入自己的 API Key 并通过连接测试。
 4. 输入「腾讯和宁德时代最近怎么样」，体验 Markdown、实体识别与实时行情卡片混排。
 
 ---
 
-## 三端同时运行的真实样貌
+## 四端同时运行的真实样貌
 
-> 同一份 Kuikly 共享代码，在 **Android 手机 · iOS（iPhone 13）· OpenHarmony 平板** 三种设备形态上的真实运行截图。
+> 同一份 Kuikly 共享代码，在 **Android 手机 · iOS（iPhone 13）· OpenHarmony 平板 · H5 浏览器** 四种设备形态上的真实运行截图。
 
 <div align="center">
 
-| Android 手机 | iOS | OpenHarmony |
-| :---: | :---: | :---: |
-| <img src="assets/images/screenshot-android.jpg" alt="Android 手机端首页截图" width="196" /> | <img src="assets/images/screenshot-ios.png" alt="iOS（iPhone 13）端首页截图" width="211" /> | <img src="assets/images/screenshot-ohos-tablet.jpg" alt="OpenHarmony 平板端首页截图" width="276" /> |
+| Android 手机 | iOS | OpenHarmony | H5（Web） |
+| :---: | :---: | :---: | :---: |
+| <img src="assets/images/screenshot-android.jpg" alt="Android 手机端首页截图" width="196" /> | <img src="assets/images/screenshot-ios.png" alt="iOS（iPhone 13）端首页截图" width="211" /> | <img src="assets/images/screenshot-ohos-tablet.jpg" alt="OpenHarmony 平板端首页截图" width="276" /> | <img src="assets/images/screenshot-h5.png" alt="H5 浏览器端首页截图" width="276" /> |
 
 
-<sub>三端共用同一套顶栏（☰ 会话抽屉 / 全局搜索 / 新建会话）、同一套欢迎区（App 图标 +「StockChat 帮你看 ×××」+ 问 AI / 看行情 双 Tab）与同一套底部输入栏（+ / 按住说话 / 声波）；差异只落在状态栏与系统手势区。「为你推荐」的问题取自端侧话题池并按会话轮换，所以三张截图里的推荐问题各不相同——这正是同一份业务代码、不同入口上下文的体现。</sub>
+<sub>四端共用同一套顶栏（☰ 会话抽屉 / 全局搜索 / 新建会话）、同一套欢迎区（App 图标 +「StockChat 帮你看 ×××」+ 问 AI / 看行情 双 Tab）与同一套底部输入栏（+ / 按住说话 / 声波）；差异只落在状态栏、系统手势区与浏览器外壳。「为你推荐」的问题取自端侧话题池并按会话轮换，所以各张截图里的推荐问题各不相同——这正是同一份业务代码、不同入口上下文的体现。</sub>
 
 </div>
 
 ---
 
-## 三端演示视频
+## 四端演示视频
 
-每个视频演示同一段问股流程在三端原生机器上的真实表现（流式打字机、行情卡混排、点击下钻详情、长按实体弹灵动岛）。
+每个视频演示同一段问股流程在四端真实环境上的表现（流式打字机、行情卡混排、点击下钻详情、长按实体弹灵动岛）。
 
 | 端 | 演示视频 | 内容亮点 |
 | :--- | :---: | :--- |
 | **Android** | [📥 推荐下载 / 含字幕播放](assets/videos/android-demo.mp4) | 主流验证端；此视频为debug包录制，动手安装release包体验更流畅哦~|
 | **iOS** | [📥 下载 / 播放](assets/videos/ios-demo.mp4) | iOS 原生手势；Kuikly 与 UIKit 互不打架 |
 | **OpenHarmony（鸿蒙）** | [📥 下载 / 播放](assets/videos/ohos-demo.mp4) | 鸿蒙原生渲染管线下 K 线 / 卡片混排 |
+| **H5（Web）** | [📥 下载 / 播放](assets/videos/h5-demo.mp4) | 浏览器直跑同一份 Kotlin 代码；跑起来的三步见 [§ H5（Web）](#h5web) |
 
 
 ---
@@ -120,7 +121,7 @@ shared/src/commonMain/kotlin/com/kuikly/stockchat
 | **page（页面层）** | 业务页面与共享组件 | → 域编排 → data 端口 |
 | **domain（域编排）** | 聊天、自选、风险、详情、市场、术语等业务用例 | → data 端口 |
 | **data（数据端口）** | Provider、Repository、Mock、Storage | — 不依赖 UI |
-| **platform（适配层）** | Kuikly 适配、平台差异（iOS/Android/OHOS） | → 平台 SDK |
+| **platform（适配层）** | Kuikly 适配、平台差异（iOS/Android/OHOS/Web） | → 平台 SDK |
 
 - **Page 不直接构造 Provider**——唯一装配点在 `app/assembly/FeatureGraph`。
 - **Kuikly 适配器仅在 `app/platform` 内**，跨页面的 UI 行为不外溢到端口层。
@@ -231,6 +232,98 @@ open iosApp/iosApp.xcworkspace   # 选 iosApp target → Run (⌘R)
 - `pod install` 报 `uninitialized constant ... Logger` 或 `Encoding::CompatibilityError` 时，直接用上一步的 `./install-pods.sh`（仓库已内置，自动探测绕过，正常环境下与 `pod install` 等价）；其余失败多跑 `cd iosApp && pod repo update --verbose`。
 - 模拟器与真机要分别 sync framework：模拟器用上一步 `IosX64`；真机用 `./gradlew :shared:linkPodDebugFrameworkIosArm64`。
 - 暂时未实现桥接模块：上传、语音模块（详见 §「已知缺口」）。
+
+### H5（Web）
+
+**最简单的一条路径**：在浏览器里把整套 App 跑起来，**不需要 Android Studio / Xcode / DevEco Studio / 真机**。
+
+> 在 Kuikly 设计里，h5 端不是 Cordova-style 套壳，而是把 `:shared` 的 Kotlin 代码编成 JS 跑在 web 上。所以代码量、UI 状态、行情、卡片都是同一份，比真机调试更快。
+
+#### 前置
+
+| 工具 | 为什么需要 | 怎么装 |
+| :--- | :--- | :--- |
+| **JDK 17** | 跑 Gradle / Kotlin 编译 | macOS: `brew install openjdk@17` / Windows: 下载 OpenJDK 17 并加到 `PATH` / Linux: `apt-get install openjdk-17-jdk` |
+| **Python 3**（**已在 PATH 里**） | 自带 `http.server` 起静态服务（不能用 0.0.0.0） | macOS / Linux 自带 / Windows: `winget install Python.Python.3.12` |
+| （可选）**Chromium / Chrome** | 看构建产物的实际页面 | 自带操作系统或装 Chrome |
+
+> Windows 用户：项目里 `gradlew.bat` 在一些 Bash 环境下会被杀进程，所以 **h5 这条路径始终走 `./gradlew`**（sh 版），稳。
+
+#### 跑起来 · 三步
+
+```bash
+# 0. 确认已经在仓库根（pwd 应该看到 androidApp/ shared/ h5App/ iosApp/ ohosApp/ 五个子目录）
+cd /path/to/StockChat
+
+# 1. 编译 h5 产物（约 1m30s；已构建过会秒过）
+./gradlew :h5App:publishLocalJSBundle --no-daemon -q
+
+# 2. 起静态服务并自动打开浏览器（约 5 秒）
+python -m http.server 8088 --bind 127.0.0.1 --directory h5App/build/distributions
+# 在浏览器打开：
+#   http://127.0.0.1:8088/index.html
+```
+
+页面会停在 `ChatPage`（默认）。想看其它 13 个页面，URL 加 `?page_name=`：
+
+| URL | 看到的页 |
+| :--- | :--- |
+| `index.html` 或 `index.html?page_name=ChatPage` | 主页（对话 + 推荐 + 行情卡） |
+| `index.html?page_name=MarketPage` | 市场总览 |
+| `index.html?page_name=WatchlistPage` | 自选 |
+| `index.html?page_name=GlossaryPage` | 知识库 |
+| `index.html?page_name=RiskMapPage` | 风险地图 |
+| `index.html?page_name=StockDetailPage&symbol=600519` | 个股详情（贵州茅台） |
+| `…?page_name=SettingsPage` | 设置 |
+| `…?page_name=ApiConfigPage` | API 设置 |
+| `…?page_name=CardGallery` | 卡片画廊（14 类预览） |
+| `…?page_name=HotspotPage` | 热点 |
+| `…?page_name=GlobalSearchPage` | 全局搜索 |
+| `…?page_name=MarketCalendarPage` | 财报日历 |
+| `…?page_name=AlertCenterPage` | 预警中心 |
+
+#### 13 页一键回归（推荐）
+
+仓库自带 `scripts/h5_regression.sh` —— 自动起 http 服务 + 启动 headless Chromium + 对每个页面跑 DOM 探针（`#root` 是否挂载、canvas 数、有没有真实文本），跑完退出码 0 = 13/13 PASS。
+
+```bash
+bash scripts/h5_regression.sh
+```
+
+预期输出：
+
+```
+ChatPage             PASS  {"rootOK":true,"kids":1,"canvases":21,"t":20,"s":["StockChat帮你看",...]}
+MarketPage           PASS  {"rootOK":true,"kids":1,"canvases":6, "t":119,...}
+WatchlistPage        PASS  ...
+...
+==== summary ====
+PASS: 13 / 13    FAIL: 0
+exit=$? 0
+```
+
+想只跑某个页面，把名字放到 `PAGES` 环境变量即可：
+
+```bash
+PAGES="ChatPage StockDetailPage" bash scripts/h5_regression.sh
+```
+
+#### 排坑速查（h5）
+
+| 现象 | 自查与修法 |
+| :--- | :--- |
+| 浏览器 Console 报 `registerCallNative undefined` | 重新跑一次 step 1：构建钩子没跑过去。运行 `./gradlew :h5App:publishLocalJSBundle --no-daemon -q` 末尾应连续出现 `patchH5AppForWebBridges: P1/P2 applied` + `index.html injected with __kuiklyMain__()` 三行 |
+| 浏览器 Console 报 `window.__kuiklyMain__ is not a function — bridge / bundle mismatch` | 是构建产物被替换成开发版了。重新跑 step 1 |
+| 打开页面是空白（无任何文字） | 1. 静态服务还在跑吗？ → 再开一个终端跑 `curl http://127.0.0.1:8088/index.html`，应该回到 HTML 文本 2. `python -m http.server 8088` 端口是否被占用？ → 换端口 |
+| 图表图标全部空白 / 残缺 | 确认 `shared/src/jsMain/.../PlatformPolicy.js.kt#canvasBatchDrawSupported = false`（已默认） |
+| Bash 工具下 `gradlew.bat` 4 秒就被杀 | 改用 `./gradlew`（sh 版），仓库自带 |
+| 8088 已被占用 | `lsof -ti tcp:8088 | xargs kill -9`，或换 `8089` 等端口 |
+
+#### h5 的设计取向（仅这一端）
+
+- h5 端只读 API、不写 ——「设置 → 数据源」可在 Mock / 在线真实间切换；UI 顶部明示数据来源与时点
+- 同一份代码与 Android / iOS / OHOS 完全一致（Kuikly 的 `jsMain`），不引入额外状态层
+- bundled-level 补丁固化在 `h5App/build.gradle.kts#patchH5AppForWebBridges`，钩在 `publishLocalJSBundle` 的 `doLast` 末尾，每次重新打产物自动应用
 
 ### OpenHarmony（鸿蒙）
 
@@ -381,6 +474,7 @@ GitHub 只保留与当前源码一致的维护参考，不收录阶段汇报、�
 | AI 回答空白 / 「连接失败」 | 「API 设置」→ 测试连接；检查 Key / Base URL / 模型名是否拼写一致 |
 | Android Gradle `fileHashes.lock` access denied | `./gradlew --stop` 后重试 |
 | OHOS `aa start` 报 `10106102` | 设备先解锁再启动 |
+| **h5 浏览器页面空白、Console 报 `registerCallNative undefined`** | 重新跑一次 `./gradlew :h5App:publishLocalJSBundle --no-daemon -q`，看末尾是否三行 `patchH5AppForWebBridges` 都触发 |
 
 ---
 

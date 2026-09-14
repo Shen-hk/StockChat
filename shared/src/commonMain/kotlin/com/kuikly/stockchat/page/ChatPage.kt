@@ -132,7 +132,7 @@ import com.kuikly.stockchat.data.provider.Quote
 import com.kuikly.stockchat.data.provider.DataMode
 import com.kuikly.stockchat.data.provider.QuotePrefetchStore
 import com.kuikly.stockchat.data.provider.platformPrefersReducedMotion
-import com.kuikly.stockchat.app.platform.KuiklyKeyValueStorage
+import com.kuikly.stockchat.app.platform.platformKeyValueStorage
 import com.kuikly.stockchat.chat.welcome.data.WelcomeStarterStore
 import com.kuikly.stockchat.chat.welcome.state.ChatWelcomeCoordinator
 import com.kuikly.stockchat.chat.welcome.state.ChatWelcomeEffect

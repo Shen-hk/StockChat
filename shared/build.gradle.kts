@@ -128,6 +128,15 @@ ksp {
     arg(KEY_PAGE_NAME, getPageName())
 }
 
+// The Kuikly processor emits the same exported `callKotlinMethod` entry for
+// jsTest as it does for jsMain. Linking the browser-test executable then sees
+// two identical JS symbols and the Kotlin/JS compiler aborts. Tests consume the
+// already generated jsMain entry, so a second test entry is neither needed nor
+// valid.
+tasks.matching { it.name == "kspTestKotlinJs" }.configureEach {
+    enabled = false
+}
+
 dependencies {
     compileOnly("com.tencent.kuikly-open:core-ksp:${Version.getKuiklyVersion()}") {
         add("kspAndroid", this)

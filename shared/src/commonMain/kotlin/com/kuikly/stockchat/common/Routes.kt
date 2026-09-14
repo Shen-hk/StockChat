@@ -36,17 +36,17 @@ fun PagerScope.openStockDetail(
     if (symbol.isNotBlank()) {
         runCatching { QuotePrefetchStore.warm(listOf(symbol), MarketFeatureGraph.prefetchTarget(pagerId)) }
     }
-    getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
-        Routes.STOCK_DETAIL,
-        JSONObject().apply {
-            put("symbol", symbol)
-            put("from", from)
-            // 容器变换交接：灵动岛玻璃卡片刚好铺满全屏，原生侧对该路由做
-            // 无动画 push（去掉系统右侧推入），详情页内容再就地淡入接管
-            // 这一帧，读起来就是"卡片长成了详情页"。
-            if (islandExpand) put("krTransition", "islandExpand")
-        },
-    )
+    val params = buildMap {
+        put("symbol", symbol)
+        put("from", from)
+        if (islandExpand) put("krTransition", "islandExpand")
+    }
+    if (!platformOpenPage(Routes.STOCK_DETAIL, params)) {
+        getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
+            Routes.STOCK_DETAIL,
+            JSONObject().apply { params.forEach { (key, value) -> put(key, value) } },
+        )
+    }
 }
 
 /**
@@ -60,33 +60,35 @@ fun PagerScope.openStockDetail(
  * 固化为发送侧提及，AI 才知道"问的是哪只股票"，行情上下文也会随之注入。
  */
 fun PagerScope.openChatWithQuestion(question: String, focusNote: String = "", focusSymbol: String = "") {
-    getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
-        Routes.CHAT,
-        JSONObject().apply {
-            put("question", question)
-            if (focusNote.isNotBlank()) put("focusNote", focusNote)
-            if (focusSymbol.isNotBlank()) put("focusSymbol", focusSymbol)
-            // 「问AI」跳转标记：宿主路由据此收拢导航栈。没有它的话，
-            // 「详情 ⇄ 对话」反复横跳会把历史页一层层压在栈里，
-            // 返回键要逐页退完所有旧页才能回到最初的对话页。
-            put("openedViaAskAi", "1")
-        },
-    )
+    val params = buildMap {
+        put("question", question)
+        if (focusNote.isNotBlank()) put("focusNote", focusNote)
+        if (focusSymbol.isNotBlank()) put("focusSymbol", focusSymbol)
+        // 「问AI」跳转标记：宿主路由据此收拢导航栈。没有它的话，
+        // 「详情 ⇄ 对话」反复横跳会把历史页一层层压在栈里，
+        // 返回键要逐页退完所有旧页才能回到最初的对话页。
+        put("openedViaAskAi", "1")
+    }
+    if (!platformOpenPage(Routes.CHAT, params)) {
+        getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
+            Routes.CHAT,
+            JSONObject().apply { params.forEach { (key, value) -> put(key, value) } },
+        )
+    }
 }
 
 fun PagerScope.openGlossary(islandExpand: Boolean = false) {
-    getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
-        Routes.GLOSSARY,
-        JSONObject().apply {
-            // 术语岛下滑 → 术语表与股票岛下滑 → 详情页共用同一条容器变换
-            // 交接：原生无动画 push，页面内容就地淡入接管玻璃帧。
-            if (islandExpand) put("krTransition", "islandExpand")
-        },
-    )
+    val params = if (islandExpand) mapOf("krTransition" to "islandExpand") else emptyMap()
+    if (!platformOpenPage(Routes.GLOSSARY, params)) {
+        getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(
+            Routes.GLOSSARY,
+            JSONObject().apply { params.forEach { (key, value) -> put(key, value) } },
+        )
+    }
 }
 
 fun PagerScope.openPage(page: String) {
-    if (!platformOpenPage(page)) {
+    if (!platformOpenPage(page, emptyMap())) {
         getPager().acquireModule<RouterModule>(RouterModule.MODULE_NAME).openPage(page, JSONObject())
     }
 }
@@ -106,6 +108,6 @@ fun PagerScope.openUrl(url: String) {
     }
 }
 
-internal expect fun platformOpenPage(page: String): Boolean
+internal expect fun platformOpenPage(page: String, params: Map<String, String>): Boolean
 internal expect fun platformClosePage(): Boolean
 internal expect fun platformOpenUrl(url: String): Boolean

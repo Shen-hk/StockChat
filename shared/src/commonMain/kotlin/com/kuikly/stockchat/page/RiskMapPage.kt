@@ -1,7 +1,7 @@
 package com.kuikly.stockchat.page
 
 import com.kuikly.stockchat.app.assembly.ChatFeatureGraph
-import com.kuikly.stockchat.app.platform.KuiklyKeyValueStorage
+import com.kuikly.stockchat.app.platform.platformKeyValueStorage
 import com.kuikly.stockchat.base.BasePager
 import com.kuikly.stockchat.cards.theme.StockChatTheme
 import com.kuikly.stockchat.common.Routes
