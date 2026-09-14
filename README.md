@@ -16,7 +16,7 @@
 
 <div align="center">
 
-[项目亮点](#项目亮点) · [架构设计](#项目架构) ·  [四端运行](#四端演示视频) · [测试质量](#测试与代码质量)
+[项目亮点](#项目亮点) · [架构设计](#项目架构) ·  [四端跑通](#四端跑通--拉下项目以后) · [四端运行](#四端演示视频) · [测试质量](#测试与代码质量)
 
 </div>
 
@@ -385,46 +385,119 @@ xcrun simctl spawn <UDID> launchctl list | grep iosApp
 
 ### OpenHarmony（鸿蒙）
 
-Windows + DevEco Studio 环境。目前直接在 DevEco Studio 打开 `ohosApp`，选择 `entry` 模块后点击 **Run** 即可启动；这是日常调试的首选路径。**当前仅支持 arm64-v8a 真机，不支持模拟器。**
+> **一句话**：这是四端里唯一需要**先做一次性准备**才能真正跑起来的一端 —— 因为鸿蒙宿主依赖三个**必须预置的第三方原生库**和一份**本机生成的签名**，而这两样都不随源码逻辑走。按下面做完一次，之后日常就是 DevEco 里点 Run。
 
-共享 Kotlin 代码或原生库变更后，如需在命令行完成「构建 → 安装 → 启动」，从仓库根目录执行：
+#### 前置条件
+
+| 项 | 要求 | 为什么 |
+| :--- | :--- | :--- |
+| **DevEco Studio** | 6.x（本仓库在 DevEco 26.0 / `DS-261.x` 上实测） | 提供 SDK、hvigor、ohpm、hdc，以及**一键自动签名** |
+| **设备** | **arm64-v8a 真机** | 当前只配置 arm64-v8a；**模拟器不受支持** |
+| **JDK** | 17，且 `JAVA_HOME` 指向它 | hvigor 侧编译需要 JDK 11+ |
+| **Node** | 用 DevEco 自带的 `<DevEco>/tools/node` | `hvigorw` 按 `NODE_HOME` / `PATH` 查找 node |
+
+#### 一次性准备（只做一遍，漏任一项都跑不起来）
+
+**1. 确认三个预置原生库在位**（已随仓库提供，正常克隆即有）
+
+```text
+ohosApp/entry/libs/arm64-v8a/
+├── libpbcurlwrapper.so     # 鸿蒙端唯一的原生 HTTP 传输，Kotlin/Native 链接必需
+├── libc++_shared.so        # 上面那个的 C++ 运行时依赖
+└── libopenssl.so           # 它的 TLS 后端
+```
+
+> 三个库来自 KuiklyBase NetworkKMM 0.0.3，来源与许可见 [`ohosApp/THIRD_PARTY_NOTICES.md`](ohosApp/THIRD_PARTY_NOTICES.md)。
+> 缺 `libpbcurlwrapper.so` 时链接报 `cannot find -lpbcurlwrapper`，**看着像依赖版本问题，实际只是少文件**（`shared/build.ohos.gradle.kts` 里写着 `linkerOpts("-lpbcurlwrapper")`）。
+> `libshared.so` 与 `libshared_api.h` 是**本地构建产物**，不入库，由下面「命令行运行」的第 1–2 步生成。
+
+**2. 安装 ohpm 依赖**（`oh_modules` 不入库，必须装一次）
+
+```bash
+cd ohosApp && ohpm install --all && cd ..
+```
+
+> 跳过这步的症状：`ohosApp/entry/oh_modules/@kuikly-open/render/libs/arm64-v8a/libkuikly.so` 不存在，打包时 CMake 报找不到 `kuikly_render`。
+
+**3. 在 DevEco 里配置一次自动签名（必须，脚本和 AI 都替代不了）**
+
+- DevEco Studio 打开 `ohosApp` → `File > Project Structure > Signing Configs`
+- 勾选 **Automatically generate signature**（需登录华为账号）
+- 它会生成 `~/.ohos/config/*.{p12,cer,p7b}` 并把路径写回 `ohosApp/build-profile.json5`
+
+> 顺带一提：第一次在 DevEco 里打开工程，它还会替你把 hvigor 的依赖装好（写入 `~/.hvigor/project_caches/<hash>/workspace/`）。
+>
+> 但要有个心理准备：**这不等于命令行就能跑 hvigor。** 本机实测 —— 即使 DevEco 已经成功构建出签名 HAP，命令行跑 hvigor 仍会卡在排坑表里的 `.npmrc.lock` / `trash` 那一条。所以**命令行路径请以「编出 `libshared.so`」为界，HAP 打包交给 DevEco**；确实需要纯命令行出包时，用 DevEco 自带的终端。
+
+> ⚠️ **`ohosApp/build-profile.json5` 含本机证书路径与加密口令，但仍在版本控制里。** 请在提交前隔离它，避免把自己的凭证推上去：
+>
+> ```bash
+> git update-index --skip-worktree ohosApp/build-profile.json5
+> ```
+>
+> 如果你拿到的这份文件里是**别人机器上的绝对路径**（例如 `C:\Users\<别人的用户名>\...`），那更需要这一步 —— 本机根本不存在那些路径，签名必然失败，换成自己的自动签名即可。
+
+#### 日常运行（首选：DevEco Studio）
+
+打开 `ohosApp` → 选择 `entry` 模块 → 点 **Run**。签名、hvigor、安装、启动都由 IDE 接管，这是最省事的路径。
+
+#### 命令行运行（可选：CI 或改完原生代码后快跑）
+
+从仓库根目录执行：
 
 ```powershell
 .\runOhosApp.ps1 -DeviceId "<真机设备ID>"
 ```
 
-脚本会设置 SDK 环境、用 OHOS 专用 settings 编译 `libshared.so`、同步所需头文件和资源、打包签名 HAP 并安装启动。先用 `hdc list targets` 查看已连接**真机**的设备 ID；不要填写模拟器常见的 `127.0.0.1:5555`。
+脚本会：编译 `libshared.so` → 同步 so 与头文件 → 打包签名 HAP → 安装并启动。设备 ID 用 `hdc list targets` 查看，**不要填模拟器常见的 `127.0.0.1:5555`**。
 
-如果需要逐步执行，请在 **Bash** 中使用以下命令（将 DevEco 路径换成自己的安装位置）：
+> 首次运行会下载约 **1.3 GB** 的 Kotlin/Native 工具链（LLVM + OHOS sysroot），耗时约 **10–15 分钟**；之后是增量，很快。
+
+> ⚠️ 脚本的最后一步（HAP 打包）在部分环境下会被 hvigor 的 `.npmrc.lock` 问题挡住（详见排坑表最后一条）。**被挡住时不要怀疑自己的配置** —— 前面的 `libshared.so` 已经编译好了，直接改用上面的「日常运行（DevEco Studio）」出包即可。
+
+逐步执行（把 DevEco 路径换成自己的安装位置）：
 
 ```bash
-export OHOS_SDK_HOME="C:/Users/shenhk/DevEco Studio/sdk/default/openharmony"
-export DEVECO_SDK_HOME="C:/Users/shenhk/DevEco Studio"
+export DEVECO_SDK_HOME="D:/path/to/DevEco Studio"
+export OHOS_SDK_HOME="$DEVECO_SDK_HOME/sdk/default/openharmony"
 
-# 1. 构建 libshared.so（必须使用独立 settings 文件）
+# 1. 编译 libshared.so（必须使用 OHOS 专用 settings；默认 settings 下没有这个 task）
 ./gradlew.bat -c settings.ohos.gradle.kts :shared:linkDebugSharedOhosArm64 --no-daemon
 
-# 2. so 拷到鸿蒙工程 + 头文件同步
+# 2. 同步产物进鸿蒙工程
 cp shared/build/bin/ohosArm64/debugShared/libshared.so ohosApp/entry/libs/arm64-v8a/
 cp shared/build/bin/ohosArm64/debugShared/libshared_api.h ohosApp/entry/src/main/cpp/
 
-# 3. hvigor 打包；资源由 entry/hvigorfile.ts 自动同步
+# 3. 打包 HAP：用 DevEco 的 hvigorw 包装器，不要直接 node hvigor.js
 cd ohosApp
-node "$DEVECO_SDK_HOME/tools/hvigor/hvigor/bin/hvigor.js" \
+export NODE_HOME="D:/path/to/DevEco Studio/tools/node"
+export PATH="$NODE_HOME:$PATH"
+"$DEVECO_SDK_HOME/tools/hvigor/bin/hvigorw.bat" \
   --mode module -p module=entry@default -p product=default \
-  -p requiredDeviceType=phone assembleHap --analyze=normal --parallel
+  -p requiredDeviceType=phone assembleHap --analyze=normal --parallel --no-daemon
 
-# 4. 安装到设备 / 启动：进入产物目录，hdc 只接收裸文件名
+# 4. 安装 / 启动：先进产物目录，hdc 只接收裸文件名
 cd entry/build/default/outputs/default
 "$OHOS_SDK_HOME/toolchains/hdc.exe" -t <设备ID> install -r entry-default-signed.hap
 "$OHOS_SDK_HOME/toolchains/hdc.exe" -t <设备ID> shell aa start -b com.kuikly.stockchat -a EntryAbility
 ```
 
-**特殊情况**：
-- 当前为 arm64-v8a 配置，请使用真实设备；模拟器不受支持。
-- 设备锁屏时 `aa start` 报错 `10106102`——请用户先手动解锁再启动。
-- 签名 `signingConfigs`：material 内 7 字段全必选（含 `certpath`），`store/keyPassword` ≥ 32 字符；本机 credential 在 IDE vault 内，AI 不可达，请使用自己的证书。
-- 临时 Mock：见上文「数据来源说明」。
+#### 排坑速查（鸿蒙）
+
+| 现象 | 原因与修法 |
+| :--- | :--- |
+| 链接报 `cannot find -lpbcurlwrapper` | `ohosApp/entry/libs/arm64-v8a/` 少了预置库。库已入库，先确认没被本地忽略规则挡掉；来源见 `ohosApp/THIRD_PARTY_NOTICES.md` |
+| `ohpm install` 报 `ENOENT ... .ohpm\lock.json5` | 上次安装被中断，留下半装状态。把 `ohosApp/oh_modules` 与 `ohosApp/entry/oh_modules` 移开重装（二者都是 gitignore 的可再生缓存） |
+| `Cannot find module '@ohos/hvigor-ohos-plugin'` | 用了裸 `node hvigor.js`。改用 `<DevEco>/tools/hvigor/bin/hvigorw.bat`，只有它会挂载 DevEco 自带的插件 |
+| Node 报 `MODULE_NOT_FOUND 'D:\d\dev\...'` | MSYS 会把 node 的**参数**也做路径转换。给 node 传参一律用 Windows 风格（`D:/...`） |
+| `JAVA_HOME is set to an invalid directory` | `gradlew.bat` 不认 `/c/Users/...`，要 Windows 风格 `C:/Users/...` |
+| 只打印 `Starting hvigor daemon.` 就退出、无产物 | 守护进程接手后调用方提前返回。加 `--no-daemon` |
+| `[safe-delete] 操作失败 ... .npmrc.lock: trash operation` | 排在排坑表最后是因为它**最容易被误判**：与缺包无关 —— 实测即使依赖已装好、DevEco 也已成功构建出签名 HAP，命令行的 hvigor 仍会复现。改用 DevEco Studio 的 `Build > Build Hap(s)` 或其自带终端 |
+| 报错 `10106102` | 设备锁屏，先手动解锁再启动 |
+| 产物目录里没有 `*-signed.hap` | 没配置签名。回到「一次性准备」第 3 步 |
+| 想用平板 / 折叠屏跑 | `entry/src/main/module.json5` 已声明 `phone` / `tablet` / `2in1`，平板可直接安装 |
+| 行情接口失效 / 想看离线数据 | 见上文「数据来源说明」，切换 Mock 离线演示 |
+
 
 
 ### H5（Web）
@@ -649,6 +722,8 @@ GitHub 只保留与当前源码一致的维护参考，不收录阶段汇报、�
 | AI 回答空白 / 「连接失败」 | 「API 设置」→ 测试连接；检查 Key / Base URL / 模型名是否拼写一致 |
 | Android Gradle `fileHashes.lock` access denied | `./gradlew --stop` 后重试 |
 | OHOS `aa start` 报 `10106102` | 设备先解锁再启动 |
+| **OHOS 链接报 `cannot find -lpbcurlwrapper`** | `ohosApp/entry/libs/arm64-v8a/` 少了预置原生库，见 [§ OpenHarmony](#openharmony鸿蒙)「一次性准备」第 1 步 |
+| **OHOS 没有 `*-signed.hap` / 打包失败** | 通常两因：没在 DevEco 配自动签名，或 hvigor 报 `.npmrc.lock`（改用 DevEco 构建）。见 [§ OpenHarmony](#openharmony鸿蒙) 排坑速查 |
 | **h5 浏览器页面空白、Console 报 `registerCallNative undefined`** | 重新跑一次 `./gradlew :h5App:publishLocalJSBundle --no-daemon -q`，看末尾是否三行 `patchH5AppForWebBridges` 都触发 |
 
 ---
