@@ -54,7 +54,7 @@
 
 | 端 | 演示视频 | 内容亮点 |
 | :--- | :---: | :--- |
-| **Android** | [📥 推荐下载 / 含字幕播放](assets/videos/android-demo.mp4) | 主流验证端；此视频为debug包录制，动手安装release包体验更流畅哦~|
+| **Android** | [📥 推荐下载 / 含字幕播放](assets/videos/android-demo.mp4) | 主流验证端；录制的功能最齐全|
 | **iOS** | [📥 下载 / 播放](assets/videos/ios-demo.mp4) | iOS 原生手势；Kuikly 与 UIKit 互不打架 |
 | **OpenHarmony（鸿蒙）** | [📥 下载 / 播放](assets/videos/ohos-demo.mp4) | 鸿蒙原生渲染管线下 K 线 / 卡片混排 |
 | **H5（Web）** | [📥 下载 / 播放](assets/videos/h5-demo.mp4) | 浏览器直跑同一份 Kotlin 代码；跑起来的三步见 [§ H5（Web）](#h5web) |
